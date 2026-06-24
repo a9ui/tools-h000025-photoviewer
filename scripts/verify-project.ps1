@@ -16,6 +16,9 @@ try {
     $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
     if ($pnpm) {
       & pnpm @Args
+      if ($LASTEXITCODE -ne 0) {
+        throw "pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
+      }
       return
     }
 
@@ -27,6 +30,9 @@ try {
     $env:COREPACK_HOME = Join-Path $Root ".cache\corepack"
     New-Item -ItemType Directory -Force $env:COREPACK_HOME | Out-Null
     & corepack pnpm @Args
+    if ($LASTEXITCODE -ne 0) {
+      throw "corepack pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
+    }
   }
 
   $required = @(

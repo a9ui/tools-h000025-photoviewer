@@ -1,5 +1,5 @@
 {
-  "name": "h000024-photoviewer",
+  "name": "h000025-photoviewer",
   "private": true,
   "version": "0.1.0",
   "description": "Local-first PhotoViewer focused on extreme runtime lightness without removing existing user-facing functions",

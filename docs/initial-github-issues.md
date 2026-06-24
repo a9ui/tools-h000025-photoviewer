@@ -9,6 +9,7 @@ Acceptance:
 - GitHub Actions verify runs on PRs and main.
 - Local verify result is recorded.
 - M1 baseline issues exist.
+- M0 setup failures and fixes are recorded in `docs/operations-log.md`.
 
 ## M1: Define repeatable PhotoViewer performance baseline
 
@@ -22,6 +23,16 @@ Acceptance:
 - Measure local API timings for scan, search, image, thumbnail, settings,
   favorites, tags, delete, and open flows.
 - Record the baseline report in `docs/performance/`.
+
+## M0: Ask PRO to review the current plan and success metrics
+
+Acceptance:
+
+- Prepare a compact review packet with current code state, roadmap, constraints,
+  local verify result, and proposed performance metrics.
+- Send it to the new ChatGPT Project using GPT PRO.
+- Record adopted feedback in `PROJECT.md`, `DESIGN.md`, or follow-up issues.
+- Record rejected or deferred feedback with a short reason.
 
 ## M1: Prove optional heavy jobs are isolated
 

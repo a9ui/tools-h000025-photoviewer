@@ -1,6 +1,6 @@
 param(
   [string]$Owner = "a9ui",
-  [string]$RepoName = "tools-h000024-photoviewer",
+  [string]$RepoName = "tools-h000025-photoviewer",
   [string]$MilestoneTitle = "M0"
 )
 

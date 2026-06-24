@@ -8,7 +8,7 @@ Codex用 PhotoViewer
 
 ## Fixed Context
 
-PhotoViewer is H000024 in the Tools workspace. It is a local-first Windows
+PhotoViewer is H000025 in the Tools workspace. It is a local-first Windows
 image viewer. The current milestone keeps existing user-facing functions while
 making browsing, scanning, thumbnails, modal navigation, search, local APIs, and
 optional explicit enhancement jobs as light as possible.

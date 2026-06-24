@@ -71,6 +71,8 @@ Exit criteria:
 - `pnpm test:unit`, `pnpm typecheck`, and `pnpm build` status is known.
 - Baseline performance plan and first measurement issue exist.
 - ChatGPT Project URL is recorded in `project.toml`.
+- M0 bootstrap lessons are recorded so repeated setup steps can become a
+  reusable skill if they recur.
 
 ### M1 - Performance Baseline
 
@@ -82,6 +84,23 @@ Exit criteria:
   invisible.
 - Create a prioritized bottleneck list.
 
+Measurement targets:
+
+- Launch to first usable screen: record cold and warm local values, then target
+  at least 30% improvement from the first reliable baseline.
+- Scan: record time to first visible result, progress cadence, and full
+  completion; target non-blocking controls throughout the scan and at least 25%
+  faster time to first visible result.
+- Thumbnails: record visible viewport fill time and queue size; target visible
+  thumbnails before offscreen warming and no unbounded queue growth.
+- Modal navigation: record previous/next latency for cached and uncached images;
+  target cached movement that feels immediate and uncached movement with clear
+  loading state.
+- Local APIs: record p50 and slowest observed timings for browse, scan, search,
+  image, thumbnail warm, settings, favorites, tags, delete, and open routes.
+- Optional enhancement jobs: prove normal browsing, preview, and modal
+  navigation never enqueue heavy work without explicit user action.
+
 ### M2 - Viewer Lightness Pass
 
 Exit criteria:
@@ -91,6 +110,13 @@ Exit criteria:
 - Bound thumbnail warming and visible-item prioritization.
 - Keep all current viewer workflows intact.
 - Compare before/after metrics.
+
+Stop condition:
+
+- Continue one bottleneck per issue until the measured browsing path is stable,
+  the remaining bottlenecks are either outside app control or low-impact, and
+  PRO review agrees the product is sufficiently lightweight for the stated
+  local Windows use case.
 
 ### M3 - Scan And Local API Lightness Pass
 

@@ -1,6 +1,6 @@
 # PhotoViewer
 
-PhotoViewer is a local-first Windows-oriented image viewer. This H24 reboot
+PhotoViewer is a local-first Windows-oriented image viewer. This H25 project
 keeps the existing viewer functions and focuses the project on making browsing,
 scanning, thumbnailing, search, modal navigation, and local API behavior as
 light as possible.
@@ -45,6 +45,6 @@ pnpm build
 
 ## Docs
 
-- `docs/requirements.md`: what this H24 reboot must preserve and improve.
+- `docs/requirements.md`: what this H25 project must preserve and improve.
 - `docs/spec.md`: how measurement and optimization work should proceed.
-- `docs/legacy/`: copied reference material from the previous H24 workspace.
+- `docs/legacy/`: copied reference material from the previous workspace.
