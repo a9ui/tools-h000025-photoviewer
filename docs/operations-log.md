@@ -51,6 +51,10 @@ same manual sequence appears more than twice.
   `composer-2.5-fast` is the fast variant. Use `agent --print --model
   composer-2.5 --trust --workspace <project> <prompt>` as the fallback direct
   Cursor lane when the harness scripts are missing.
+- Do not run `pnpm typecheck` and `pnpm build` in parallel for this Next.js app.
+  `tsconfig.json` includes `.next/types/**/*.ts`, so parallel build/typecheck can
+  race while `.next/types` is being regenerated and produce false missing-file
+  errors. Run `scripts/verify-project.ps1` or run the commands sequentially.
 
 Skill candidate:
 

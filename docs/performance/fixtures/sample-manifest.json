@@ -1,0 +1,15 @@
+{
+  "notes": "Sample manifest for harness validation only. No real image folder is required yet.",
+  "fileCount": 0,
+  "totalBytes": 0,
+  "dimensions": {
+    "minWidth": 0,
+    "maxWidth": 0,
+    "minHeight": 0,
+    "maxHeight": 0
+  },
+  "formats": [],
+  "maxDirectoryDepth": 0,
+  "malformedFileCount": 0,
+  "lockedFileCount": 0
+}

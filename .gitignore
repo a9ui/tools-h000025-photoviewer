@@ -11,3 +11,5 @@ coverage/
 *.db
 *.tsbuildinfo
 tmp/
+artifacts/perf/*.json
+!artifacts/perf/.gitkeep
