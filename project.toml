@@ -1,0 +1,20 @@
+﻿[project]
+id = "H000024"
+name = "PhotoViewer"
+kind = "H"
+
+[commands]
+setup = ""
+dev = ""
+verify = "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-project.ps1"
+
+[links]
+github = ""
+chatgpt_project = ""
+deployment = ""
+production = ""
+
+[workflow]
+linear = false
+source_of_truth = "github"
+local_ledger = "sqlite"
