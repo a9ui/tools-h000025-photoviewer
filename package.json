@@ -1,0 +1,54 @@
+{
+  "name": "h000024-photoviewer",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Local-first PhotoViewer focused on extreme runtime lightness without removing existing user-facing functions",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=18.18.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest",
+    "test:unit": "vitest run",
+    "test:e2e": "playwright test",
+    "playwright": "playwright",
+    "comfy:smoke": "node scripts/comfy_upscale_smoke.js",
+    "ncnn:smoke": "node scripts/ncnn_upscale_smoke.js",
+    "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
+  },
+  "dependencies": {
+    "fast-glob": "^3.3.3",
+    "lucide-react": "^1.7.0",
+    "next": "^15.0.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "sharp": "^0.34.5"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@testing-library/user-event": "^14.0.0",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "autoprefixer": "^10.4.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "eslint-config-prettier": "^9.1.0",
+    "eslint-plugin-testing-library": "^6.2.0",
+    "jsdom": "^25.0.0",
+    "postcss": "^8.4.0",
+    "prettier": "^3.0.0",
+    "turbo": "^1.9.0",
+    "typescript": "^5.4.0",
+    "vite-tsconfig-paths": "^4.3.2",
+    "vitest": "^1.0.0"
+  }
+}

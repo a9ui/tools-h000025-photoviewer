@@ -1,0 +1,23 @@
+﻿{
+    "ok":  true,
+    "project":  {
+                    "ok":  true,
+                    "dry_run":  false,
+                    "project_id":  "H000024",
+                    "name":  "PhotoViewer",
+                    "kind":  "H",
+                    "folder":  "H000024_PhotoViewer",
+                    "path":  "C:\\Users\\a9ui\\Desktop\\Tools\\H000024_PhotoViewer",
+                    "github_repo_name":  "tools-h000024-photoviewer",
+                    "github_create_requested":  false,
+                    "milestone_title":  "M0",
+                    "created_at":  "2026-06-24T15:02:18.3902115+09:00"
+                },
+    "github":  null,
+    "next_actions":  [
+                         "Create or confirm the GitHub repository if not already created with -CreateGitHub.",
+                         "Create a ChatGPT Project and paste its URL into project.toml.",
+                         "Create or refine the first GitHub milestone and issues.",
+                         "Use Cursor for normal implementation issues and Codex for PR/CI/oracle control."
+                     ]
+}

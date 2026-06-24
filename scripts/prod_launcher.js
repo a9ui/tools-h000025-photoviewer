@@ -1,0 +1,379 @@
+/**
+ * Production launcher for Photoviewer.
+ *
+ * 1. Finds an open port starting at 3000.
+ * 2. Builds the app if `.next/BUILD_ID` is missing or source/config files changed.
+ * 3. Starts `next start` and opens the browser when ready.
+ */
+const net = require('net');
+const { spawn, spawnSync } = require('child_process');
+const fs = require('fs');
+const path = require('path');
+
+const ROOT = path.join(__dirname, '..');
+const BUILD_ID_FILE = path.join(ROOT, '.next', 'BUILD_ID');
+const NEXT_BIN = require.resolve('next/dist/bin/next', { paths: [ROOT] });
+const START_PORT = 3000;
+const MAX_PORT = 3999;
+const COMFY_ROOT = process.env.PVU_COMFY_ROOT || 'C:\\AI\\ComfyUI';
+const COMFY_HOST = process.env.PVU_COMFY_HOST || '127.0.0.1';
+const COMFY_PORT = Number(process.env.PVU_COMFY_PORT || 8188);
+const COMFY_URL = process.env.PVU_COMFY_URL || `http://${COMFY_HOST}:${COMFY_PORT}`;
+process.env.PVU_COMFY_URL = COMFY_URL;
+let serverChild = null;
+let comfyChild = null;
+let ownsComfy = false;
+let cleanedUp = false;
+
+function escapeForPowerShellSingleQuoted(value) {
+  return value.replace(/'/g, "''");
+}
+
+function killProcessTree(pid) {
+  if (!pid) return;
+  if (process.platform === 'win32') {
+    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    return;
+  }
+
+  try {
+    process.kill(pid, 'SIGTERM');
+  } catch {
+    // Already stopped.
+  }
+}
+
+function cleanupServer() {
+  if (cleanedUp) return;
+  cleanedUp = true;
+  if (serverChild && !serverChild.killed) {
+    console.log('[Photoviewer] Stopping production server...');
+    killProcessTree(serverChild.pid);
+  }
+  cleanupComfy();
+}
+
+function cleanupComfy() {
+  if (!ownsComfy || !comfyChild || comfyChild.killed) return;
+  console.log('[Photoviewer] Stopping managed ComfyUI...');
+  killProcessTree(comfyChild.pid);
+  comfyChild = null;
+  ownsComfy = false;
+}
+
+function cleanupStaleServers() {
+  if (process.platform !== 'win32') return;
+
+  const root = escapeForPowerShellSingleQuoted(ROOT);
+  const script = [
+    `$root = '${root}'`,
+    `$self = ${process.pid}`,
+    'Get-CimInstance Win32_Process |',
+    '  Where-Object {',
+    '    $_.ProcessId -ne $self -and',
+    "    $_.Name -match '^(node|cmd)\\.exe$' -and",
+    '    $_.CommandLine -and',
+    '    $_.CommandLine.Contains($root) -and',
+    "    ($_.CommandLine -match 'next.*start|pnpm.*start|prod_launcher|serve_with_parent_watch')",
+    '  } |',
+    '  ForEach-Object {',
+    "    Write-Host ('[Photoviewer] Stopping leftover server process ' + $_.ProcessId)",
+    '    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue',
+    '  }',
+  ].join('\n');
+
+  spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+}
+
+function findAvailablePort(port) {
+  return new Promise((resolve, reject) => {
+    if (port > MAX_PORT) {
+      reject(new Error('No available port found in range 3000-3999.'));
+      return;
+    }
+
+    const server = net.createServer();
+    server.once('error', () => resolve(findAvailablePort(port + 1)));
+    server.once('listening', () => {
+      server.close(() => resolve(port));
+    });
+    server.listen(port);
+  });
+}
+
+function isPortListening(port, host = '127.0.0.1') {
+  return new Promise((resolve) => {
+    const socket = net.createConnection({ port, host });
+    socket.once('connect', () => {
+      socket.destroy();
+      resolve(true);
+    });
+    socket.once('error', () => {
+      socket.destroy();
+      resolve(false);
+    });
+  });
+}
+
+async function waitForPort(port, host, timeoutMs) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    if (await isPortListening(port, host)) return true;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  return false;
+}
+
+function openBrowser(url) {
+  console.log(`[Photoviewer] Opening browser: ${url}`);
+  try {
+    const child = spawn('cmd', ['/c', 'start', '', url], {
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    child.on('error', (err) => {
+      console.log(`[Photoviewer] Browser launch failed (${err.message}). Open manually: ${url}`);
+    });
+    child.unref();
+  } catch (err) {
+    console.log(`[Photoviewer] Browser launch failed (${err.message}). Open manually: ${url}`);
+  }
+}
+
+function newestMtimeMs(targetPath) {
+  if (!fs.existsSync(targetPath)) return 0;
+
+  const stat = fs.statSync(targetPath);
+  if (stat.isFile()) return stat.mtimeMs;
+  if (!stat.isDirectory()) return 0;
+
+  let newest = stat.mtimeMs;
+  const entries = fs.readdirSync(targetPath, { withFileTypes: true });
+  for (const entry of entries) {
+    if (
+      entry.name === 'node_modules' ||
+      entry.name === '.next' ||
+      entry.name === '.cache' ||
+      entry.name === '.local' ||
+      entry.name === 'exports'
+    ) {
+      continue;
+    }
+    newest = Math.max(newest, newestMtimeMs(path.join(targetPath, entry.name)));
+  }
+  return newest;
+}
+
+function needsBuild() {
+  if (!fs.existsSync(BUILD_ID_FILE)) {
+    console.log('[Photoviewer] Build missing; running build.');
+    return true;
+  }
+
+  const buildMtime = fs.statSync(BUILD_ID_FILE).mtimeMs;
+  const watchedPaths = [
+    'src',
+    'scripts',
+    'package.json',
+    'pnpm-lock.yaml',
+    'next.config.js',
+    'next.config.ts',
+    'tsconfig.json',
+    'postcss.config.js',
+  ];
+
+  for (const relPath of watchedPaths) {
+    const absPath = path.join(ROOT, relPath);
+    const mtime = newestMtimeMs(absPath);
+    if (mtime > buildMtime) {
+      console.log(`[Photoviewer] Build stale because ${relPath} changed after .next/BUILD_ID.`);
+      return true;
+    }
+  }
+
+  console.log(`[Photoviewer] Build up to date. BUILD_ID mtime: ${new Date(buildMtime).toISOString()}`);
+  return false;
+}
+
+function runBuild() {
+  console.log('[Photoviewer] Running Next build... (first-time setup, please wait ~1 min)');
+  const result = spawnSync(process.execPath, [NEXT_BIN, 'build'], {
+    cwd: ROOT,
+    stdio: 'inherit',
+    windowsHide: true,
+  });
+
+  if (result.status !== 0) {
+    console.error('[Photoviewer] Build failed. Please check the error above.');
+    process.exit(1);
+  }
+  console.log('[Photoviewer] Build complete.');
+}
+
+async function startManagedComfy() {
+  if (process.env.PVU_COMFY_AUTOSTART !== '1') {
+    console.log('[Photoviewer] ComfyUI autostart disabled by default. Set PVU_COMFY_AUTOSTART=1 for Advanced ComfyUI Workflow.');
+    return;
+  }
+  if (process.env.PVU_COMFY_AUTOSTART === '0') {
+    console.log('[Photoviewer] ComfyUI autostart disabled by PVU_COMFY_AUTOSTART=0.');
+    return;
+  }
+  if (!Number.isFinite(COMFY_PORT) || COMFY_PORT <= 0) {
+    console.log('[Photoviewer] ComfyUI autostart skipped because PVU_COMFY_PORT is invalid.');
+    return;
+  }
+
+  if (await isPortListening(COMFY_PORT, COMFY_HOST)) {
+    console.log(`[Photoviewer] ComfyUI is already listening at ${COMFY_URL}; reusing it.`);
+    return;
+  }
+
+  const comfyPython = path.join(COMFY_ROOT, 'venv', 'Scripts', 'python.exe');
+  const comfyMain = path.join(COMFY_ROOT, 'main.py');
+  if (!fs.existsSync(comfyPython) || !fs.existsSync(comfyMain)) {
+    console.log(`[Photoviewer] ComfyUI autostart skipped. Expected ${comfyPython} and ${comfyMain}.`);
+    return;
+  }
+
+  console.log(`[Photoviewer] Starting managed ComfyUI on ${COMFY_URL} ...`);
+  comfyChild = spawn(comfyPython, [
+    'main.py',
+    '--listen',
+    COMFY_HOST,
+    '--port',
+    String(COMFY_PORT),
+  ], {
+    cwd: COMFY_ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+    env: {
+      ...process.env,
+      PVU_COMFY_URL: COMFY_URL,
+    },
+  });
+  ownsComfy = true;
+
+  comfyChild.stdout.on('data', (data) => process.stdout.write(`[ComfyUI] ${data}`));
+  comfyChild.stderr.on('data', (data) => process.stderr.write(`[ComfyUI] ${data}`));
+  comfyChild.on('error', (err) => {
+    console.log(`[Photoviewer] ComfyUI launch failed (${err.message}). AI upscale will need manual ComfyUI start.`);
+    comfyChild = null;
+    ownsComfy = false;
+  });
+  comfyChild.on('close', (code) => {
+    if (ownsComfy) {
+      console.log(`[Photoviewer] Managed ComfyUI stopped${typeof code === 'number' ? ` with code ${code}` : ''}.`);
+    }
+    comfyChild = null;
+    ownsComfy = false;
+  });
+
+  const ready = await waitForPort(COMFY_PORT, COMFY_HOST, 30_000);
+  if (ready) {
+    console.log(`[Photoviewer] Managed ComfyUI ready at ${COMFY_URL}.`);
+  } else {
+    console.log('[Photoviewer] ComfyUI did not become ready within 30s; continuing viewer startup.');
+  }
+}
+
+async function main() {
+  cleanupStaleServers();
+
+  const port = await findAvailablePort(START_PORT);
+  if (port !== START_PORT) {
+    console.log(`[Photoviewer] Port ${START_PORT} is busy. Using port ${port}.`);
+  }
+
+  if (needsBuild()) {
+    runBuild();
+  } else {
+    console.log('[Photoviewer] Existing build found. Skipping build step.');
+  }
+
+  await startManagedComfy();
+
+  const url = `http://localhost:${port}`;
+  console.log(`[Photoviewer] Starting production server on ${url} ...`);
+
+  let browserOpened = false;
+
+  const child = spawn(process.execPath, [
+    path.join(__dirname, 'serve_with_parent_watch.js'),
+    String(process.pid),
+    String(port),
+  ], {
+    cwd: ROOT,
+    stdio: ['ignore', 'pipe', 'pipe'],
+    windowsHide: true,
+  });
+  serverChild = child;
+
+  const onData = (data) => {
+    process.stdout.write(data);
+    if (!browserOpened && /ready|started server|localhost/i.test(data.toString())) {
+      browserOpened = true;
+      openBrowser(url);
+    }
+  };
+
+  child.stdout.on('data', onData);
+  child.stderr.on('data', (data) => {
+    process.stderr.write(data);
+    if (!browserOpened && /ready|started server|localhost/i.test(data.toString())) {
+      browserOpened = true;
+      openBrowser(url);
+    }
+  });
+
+  setTimeout(() => {
+    if (!browserOpened) {
+      browserOpened = true;
+      console.log('[Photoviewer] Server ready signal not detected, opening browser anyway...');
+      openBrowser(url);
+    }
+  }, 8000);
+
+  child.on('error', (err) => {
+    console.error(`[Photoviewer] Failed to launch server: ${err.message}`);
+    process.exit(1);
+  });
+
+  child.on('close', (code) => {
+    serverChild = null;
+    cleanupComfy();
+    cleanedUp = true;
+    process.exit(code ?? 0);
+  });
+}
+
+process.once('exit', cleanupServer);
+for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+  process.once(signal, () => {
+    cleanupServer();
+    process.exit(signal === 'SIGINT' ? 130 : 0);
+  });
+}
+process.once('uncaughtException', (err) => {
+  console.error(`[Photoviewer] ${err.message}`);
+  cleanupServer();
+  process.exit(1);
+});
+process.once('unhandledRejection', (err) => {
+  console.error(`[Photoviewer] ${err instanceof Error ? err.message : String(err)}`);
+  cleanupServer();
+  process.exit(1);
+});
+
+main().catch((err) => {
+  console.error(`[Photoviewer] ${err.message}`);
+  cleanupServer();
+  process.exit(1);
+});

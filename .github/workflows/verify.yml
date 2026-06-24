@@ -10,11 +10,16 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Verify project
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - name: Install
         shell: pwsh
-        run: |
-          if (Test-Path .\scripts\verify-project.ps1) {
-            powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1
-          } else {
-            Write-Host "No project verifier yet."
-          }
+        run: pnpm install --frozen-lockfile
+      - name: Verify
+        shell: pwsh
+        run: powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1

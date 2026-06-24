@@ -1,0 +1,384 @@
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
+import crypto from 'crypto';
+import sharp from 'sharp';
+
+export const THUMB_DIR = path.join(process.cwd(), '.cache', 'thumbs');
+export const DISPLAY_DIR = path.join(process.cwd(), '.cache', 'display');
+const THUMB_WIDTH = 300;
+const DISPLAY_MAX_SIZE = 2200;
+const DEFAULT_THUMB_CONCURRENCY = Math.max(
+  4,
+  Math.min(12, typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length)
+);
+export const MAX_THUMB_CONCURRENCY = Math.max(
+  1,
+  Math.min(
+    16,
+    Number.parseInt(process.env.PV_THUMB_CONCURRENCY || String(DEFAULT_THUMB_CONCURRENCY), 10) ||
+      DEFAULT_THUMB_CONCURRENCY
+  )
+);
+const WARMUP_RESERVED_VISIBLE_SLOTS = MAX_THUMB_CONCURRENCY >= 6 ? 2 : 1;
+const MAX_WARMUP_WORKERS = Math.max(1, MAX_THUMB_CONCURRENCY - WARMUP_RESERVED_VISIBLE_SLOTS);
+
+type WarmupState = {
+  running: boolean;
+  total: number;
+  queued: number;
+  completed: number;
+  failed: number;
+  startedAt: string | null;
+  updatedAt: string | null;
+  source: string;
+  current: string;
+};
+
+interface ThumbTask {
+  priority: number;
+  sequence: number;
+  started: boolean;
+  run: () => Promise<void>;
+  resolve: () => void;
+  reject: (error: unknown) => void;
+  promise: Promise<void>;
+}
+
+sharp.concurrency(MAX_THUMB_CONCURRENCY);
+sharp.cache({ files: 100, memory: 256 });
+
+let activeThumbJobs = 0;
+let thumbJobSequence = 0;
+let warmupGeneration = 0;
+
+const thumbQueue: ThumbTask[] = [];
+const pendingThumbs = new Map<string, ThumbTask>();
+const usableCacheMemo = new Map<string, { size: number; mtimeMs: number; usable: boolean }>();
+const warmupState: WarmupState = {
+  running: false,
+  total: 0,
+  queued: 0,
+  completed: 0,
+  failed: 0,
+  startedAt: null,
+  updatedAt: null,
+  source: '',
+  current: '',
+};
+
+export function ensureThumbDir() {
+  if (!fs.existsSync(THUMB_DIR)) {
+    fs.mkdirSync(THUMB_DIR, { recursive: true });
+  }
+}
+
+export function ensureDisplayDir() {
+  if (!fs.existsSync(DISPLAY_DIR)) {
+    fs.mkdirSync(DISPLAY_DIR, { recursive: true });
+  }
+}
+
+export async function getThumbnailPath(resolved: string) {
+  const stat = await fs.promises.stat(resolved);
+  const hash = Buffer.from(`${resolved}|${stat.mtimeMs}`).toString('base64url');
+  return path.join(THUMB_DIR, `${hash}.webp`);
+}
+
+export async function getDisplayPath(resolved: string) {
+  const stat = await fs.promises.stat(resolved);
+  const hash = Buffer.from(`${resolved}|${stat.mtimeMs}|display:${DISPLAY_MAX_SIZE}`).toString('base64url');
+  return path.join(DISPLAY_DIR, `${hash}.webp`);
+}
+
+async function isUsableCachedImage(filePath: string) {
+  try {
+    const stat = await fs.promises.stat(filePath);
+    if (stat.size <= 0) return false;
+    const memo = usableCacheMemo.get(filePath);
+    if (memo && memo.size === stat.size && memo.mtimeMs === stat.mtimeMs) return memo.usable;
+    await sharp(filePath, { failOn: 'none' }).metadata();
+    usableCacheMemo.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, usable: true });
+    return true;
+  } catch {
+    usableCacheMemo.delete(filePath);
+    return false;
+  }
+}
+
+async function removeBrokenCacheFile(filePath: string) {
+  usableCacheMemo.delete(filePath);
+  await fs.promises.rm(filePath, { force: true }).catch(() => {});
+}
+
+function getTempCachePath(finalPath: string) {
+  const suffix = crypto.randomBytes(6).toString('hex');
+  return `${finalPath}.${process.pid}.${Date.now()}.${suffix}.tmp`;
+}
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientWindowsFileError(error: unknown) {
+  if (!error || typeof error !== 'object') return false;
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === 'EPERM' || code === 'EBUSY' || code === 'EACCES';
+}
+
+async function renameCacheFileWithRetry(tmpPath: string, finalPath: string) {
+  const delays = [20, 50, 100, 200];
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await fs.promises.rm(finalPath, { force: true }).catch(() => {});
+      await fs.promises.rename(tmpPath, finalPath);
+      return;
+    } catch (error) {
+      if (!isTransientWindowsFileError(error) || attempt >= delays.length) throw error;
+      await wait(delays[attempt]);
+    }
+  }
+}
+
+async function writeCacheAtomically(finalPath: string, write: (tmpPath: string) => Promise<void>) {
+  const tmpPath = getTempCachePath(finalPath);
+  try {
+    await write(tmpPath);
+    await renameCacheFileWithRetry(tmpPath, finalPath);
+    usableCacheMemo.delete(finalPath);
+  } catch (error) {
+    await fs.promises.rm(tmpPath, { force: true }).catch(() => {});
+    throw error;
+  }
+}
+
+function takeNextThumbTask(): ThumbTask | null {
+  if (thumbQueue.length === 0) return null;
+
+  let bestIndex = 0;
+  for (let i = 1; i < thumbQueue.length; i++) {
+    const current = thumbQueue[i];
+    const best = thumbQueue[bestIndex];
+    if (
+      current.priority < best.priority ||
+      (current.priority === best.priority && current.sequence < best.sequence)
+    ) {
+      bestIndex = i;
+    }
+  }
+
+  const [task] = thumbQueue.splice(bestIndex, 1);
+  return task ?? null;
+}
+
+function runNextThumbJob() {
+  while (activeThumbJobs < MAX_THUMB_CONCURRENCY) {
+    const next = takeNextThumbTask();
+    if (!next) return;
+
+    next.started = true;
+    activeThumbJobs += 1;
+    void next.run()
+      .then(next.resolve)
+      .catch(next.reject)
+      .finally(() => {
+        activeThumbJobs = Math.max(0, activeThumbJobs - 1);
+        runNextThumbJob();
+      });
+  }
+}
+
+export async function ensureThumbnail(resolved: string, priority: number) {
+  ensureThumbDir();
+  const thumbPath = await getThumbnailPath(resolved);
+
+  const pending = pendingThumbs.get(thumbPath);
+  if (pending) {
+    if (!pending.started && priority < pending.priority) {
+      pending.priority = priority;
+    }
+    await pending.promise;
+    return { thumbPath, created: true };
+  }
+
+  if (fs.existsSync(thumbPath) && await isUsableCachedImage(thumbPath)) {
+    return { thumbPath, created: false };
+  }
+  await removeBrokenCacheFile(thumbPath);
+
+  let resolveTask!: () => void;
+  let rejectTask!: (error: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolveTask = resolve;
+    rejectTask = reject;
+  });
+
+  const task: ThumbTask = {
+    priority,
+    sequence: thumbJobSequence++,
+    started: false,
+    resolve: resolveTask,
+    reject: rejectTask,
+    promise,
+    run: async () => {
+      await writeCacheAtomically(thumbPath, async (tmpPath) => {
+        await sharp(resolved, { sequentialRead: true, failOn: 'none' })
+          .resize(THUMB_WIDTH, undefined, { withoutEnlargement: true })
+          .webp({ quality: 72, effort: 3 })
+          .toFile(tmpPath);
+      });
+    },
+  };
+
+  pendingThumbs.set(thumbPath, task);
+  thumbQueue.push(task);
+  runNextThumbJob();
+
+  try {
+    await promise;
+  } finally {
+    pendingThumbs.delete(thumbPath);
+  }
+
+  return { thumbPath, created: true };
+}
+
+export async function ensureDisplayImage(resolved: string, priority: number) {
+  ensureDisplayDir();
+  const displayPath = await getDisplayPath(resolved);
+
+  const pending = pendingThumbs.get(displayPath);
+  if (pending) {
+    if (!pending.started && priority < pending.priority) {
+      pending.priority = priority;
+    }
+    await pending.promise;
+    return { displayPath, created: true };
+  }
+
+  if (fs.existsSync(displayPath) && await isUsableCachedImage(displayPath)) {
+    return { displayPath, created: false };
+  }
+  await removeBrokenCacheFile(displayPath);
+
+  let resolveTask!: () => void;
+  let rejectTask!: (error: unknown) => void;
+  const promise = new Promise<void>((resolve, reject) => {
+    resolveTask = resolve;
+    rejectTask = reject;
+  });
+
+  const task: ThumbTask = {
+    priority,
+    sequence: thumbJobSequence++,
+    started: false,
+    resolve: resolveTask,
+    reject: rejectTask,
+    promise,
+    run: async () => {
+      await writeCacheAtomically(displayPath, async (tmpPath) => {
+        await sharp(resolved, { sequentialRead: true, failOn: 'none' })
+          .resize(DISPLAY_MAX_SIZE, DISPLAY_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
+          .webp({ quality: 86, effort: 3 })
+          .toFile(tmpPath);
+      });
+    },
+  };
+
+  pendingThumbs.set(displayPath, task);
+  thumbQueue.push(task);
+  runNextThumbJob();
+
+  try {
+    await promise;
+  } finally {
+    pendingThumbs.delete(displayPath);
+  }
+
+  return { displayPath, created: true };
+}
+
+export function enqueueThumbnails(paths: string[], priority: number) {
+  const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+  for (const target of uniquePaths) {
+    void ensureThumbnail(target, priority).catch(() => {
+      // Best-effort warmup; visible image requests can retry.
+    });
+  }
+  return getThumbnailWarmupState();
+}
+
+export function startThumbnailWarmup(paths: string[], source: string) {
+  const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
+  const generation = ++warmupGeneration;
+  const now = new Date().toISOString();
+
+  warmupState.running = uniquePaths.length > 0;
+  warmupState.total = uniquePaths.length;
+  warmupState.queued = uniquePaths.length;
+  warmupState.completed = 0;
+  warmupState.failed = 0;
+  warmupState.startedAt = now;
+  warmupState.updatedAt = now;
+  warmupState.source = source;
+  warmupState.current = '';
+
+  if (uniquePaths.length === 0) return getThumbnailWarmupState();
+
+  let cursor = 0;
+  const workerCount = Math.min(MAX_WARMUP_WORKERS, uniquePaths.length);
+
+  const runWorker = async () => {
+    while (generation === warmupGeneration) {
+      const currentIndex = cursor++;
+      if (currentIndex >= uniquePaths.length) return;
+      const target = uniquePaths[currentIndex];
+      warmupState.current = target;
+      warmupState.queued = Math.max(0, uniquePaths.length - currentIndex - 1);
+      try {
+        await ensureThumbnail(target, 3);
+        warmupState.completed += 1;
+      } catch {
+        warmupState.failed += 1;
+      } finally {
+        warmupState.updatedAt = new Date().toISOString();
+      }
+    }
+  };
+
+  void Promise.all(Array.from({ length: workerCount }, runWorker)).finally(() => {
+    if (generation !== warmupGeneration) return;
+    warmupState.running = false;
+    warmupState.queued = 0;
+    warmupState.current = '';
+    warmupState.updatedAt = new Date().toISOString();
+  });
+
+  return getThumbnailWarmupState();
+}
+
+export function cancelThumbnailWarmup() {
+  warmupGeneration += 1;
+  warmupState.running = false;
+  warmupState.queued = 0;
+  warmupState.current = '';
+  warmupState.updatedAt = new Date().toISOString();
+  return getThumbnailWarmupState();
+}
+
+export function getThumbnailWarmupState(): WarmupState & {
+  activeThumbJobs: number;
+  pendingThumbs: number;
+  queuedThumbJobs: number;
+  maxConcurrency: number;
+  maxWarmupWorkers: number;
+} {
+  return {
+    ...warmupState,
+    activeThumbJobs,
+    pendingThumbs: pendingThumbs.size,
+    queuedThumbJobs: thumbQueue.length,
+    maxConcurrency: MAX_THUMB_CONCURRENCY,
+    maxWarmupWorkers: MAX_WARMUP_WORKERS,
+  };
+}

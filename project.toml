@@ -4,8 +4,8 @@ name = "PhotoViewer"
 kind = "H"
 
 [commands]
-setup = ""
-dev = ""
+setup = "pnpm install --frozen-lockfile"
+dev = "pnpm dev"
 verify = "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-project.ps1"
 
 [links]

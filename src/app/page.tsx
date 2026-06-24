@@ -1,0 +1,504 @@
+'use client';
+
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { ImageProvider, useImageStore } from '../store/ImageContext';
+import SearchBar from '../components/SearchBar';
+import ImageGrid from '../components/ImageGrid';
+import ImageModal from '../components/ImageModal';
+import SettingsModal from '../components/SettingsModal';
+import Sidebar from '../components/Sidebar';
+import RightPreviewPanel from '../components/RightPreviewPanel';
+import BottomPreviewTabs from '../components/BottomPreviewTabs';
+import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
+import { getResultCountLabel } from '../lib/viewerUi';
+import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
+import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
+import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
+
+function ViewerApp() {
+  const {
+    phase, dirPath, setDirPath, startScan, scanProgress,
+    searchTotal, totalIndexed, searchQuery,
+    setPhase, view, setView,
+    selectedIds, clearSelection, deleteImage,
+    cycleFavoriteLevel, decreaseFavoriteLevel, selectedIndex,
+    keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview,
+  } = useImageStore();
+
+  const [browseError, setBrowseError] = useState('');
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [recentDirs, setRecentDirs] = useState<string[]>([]);
+  const [lastDirSet, setLastDirSet] = useState('');
+  const [pasteFolders, setPasteFolders] = useState('');
+  const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
+  const selectedCount = selectedIds.length;
+  const scanProgressTotal = Math.max(0, scanProgress?.total ?? 0);
+  const scanProgressProcessed = Math.max(0, scanProgress?.processed ?? 0);
+  const scanProgressPercent = scanProgressTotal > 0
+    ? Math.min(100, Math.round((scanProgressProcessed / scanProgressTotal) * 100))
+    : 0;
+  const scanProgressUnit = scanProgress?.message?.startsWith('[')
+    ? 'overall'
+    : scanProgress?.stage === 'preparing'
+      ? 'folders'
+      : 'files';
+  const scanProgressMessage = scanProgress?.message ?? (
+    scanProgress?.stage === 'preparing' ? 'Preparing file list...' : 'Scanning files...'
+  );
+  const resultCountLabel = getResultCountLabel({
+    searchQuery,
+    searchTotal,
+    totalIndexed,
+    dateFrom: view.dateFrom,
+    dateTo: view.dateTo,
+    hiddenFolders: view.hiddenFolders,
+  });
+
+  useEffect(() => {
+    migrateLegacyPhotoviewerState();
+    let localRecentDirs: string[] = [];
+    let localLastDirSet = '';
+    try {
+      const raw = localStorage.getItem('pvu_recent_dirs');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          localRecentDirs = parsed
+            .filter((v): v is string => typeof v === 'string')
+            .map((v) => formatDirSet(parseDirSet(v)))
+            .filter(Boolean)
+            .slice(0, 8);
+          setRecentDirs(localRecentDirs);
+        }
+      }
+      const last = localStorage.getItem('pvu_last_dir_set');
+      if (last) {
+        localLastDirSet = formatDirSet(parseDirSet(last));
+        setLastDirSet(localLastDirSet);
+      }
+    } catch {
+      // ignore broken localStorage entry
+    }
+
+    let serverLegacyAlreadyImported = false;
+    try {
+      serverLegacyAlreadyImported = localStorage.getItem('pvu_server_legacy_imported') === '1';
+    } catch {
+      serverLegacyAlreadyImported = false;
+    }
+    void fetch('/api/legacy-state', { cache: 'no-store' })
+      .then((res) => res.ok ? res.json() : null)
+      .then((data) => {
+        if (!data) return;
+        const legacyRecent = Array.isArray(data.recentDirs)
+          ? data.recentDirs
+            .filter((v: unknown): v is string => typeof v === 'string')
+            .map((v: string) => formatDirSet(parseDirSet(v)))
+            .filter(Boolean)
+          : [];
+        const legacyLast = typeof data.lastDirSet === 'string'
+          ? formatDirSet(parseDirSet(data.lastDirSet))
+          : '';
+        if (legacyRecent.length === 0 && !legacyLast) return;
+
+        const combined = [
+          ...(serverLegacyAlreadyImported ? localRecentDirs : legacyRecent),
+          ...(serverLegacyAlreadyImported ? legacyRecent : localRecentDirs),
+        ].filter(Boolean);
+        const seen = new Set<string>();
+        const nextRecent = combined.filter((value) => {
+          const key = value.toLowerCase();
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        }).slice(0, 8);
+        const nextLast = serverLegacyAlreadyImported
+          ? (localLastDirSet || legacyLast)
+          : (legacyLast || localLastDirSet);
+
+        setRecentDirs(nextRecent);
+        if (nextLast) setLastDirSet(nextLast);
+        try {
+          localStorage.setItem('pvu_recent_dirs', JSON.stringify(nextRecent));
+          if (nextLast) localStorage.setItem('pvu_last_dir_set', nextLast);
+          localStorage.setItem('pvu_server_legacy_imported', '1');
+        } catch {
+          // ignore localStorage write errors
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  const rememberRecentDir = useCallback((dir: string) => {
+    const normalized = formatDirSet(parseDirSet(dir));
+    if (!normalized) return;
+    setLastDirSet(normalized);
+    setRecentDirs((prev) => {
+      const next = [normalized, ...prev.filter((v) => v !== normalized)].slice(0, 8);
+      try {
+        localStorage.setItem('pvu_recent_dirs', JSON.stringify(next));
+        localStorage.setItem('pvu_last_dir_set', normalized);
+      } catch {
+        // ignore localStorage write errors
+      }
+      return next;
+    });
+  }, []);
+
+  const addFolders = useCallback((folders: string[] | string) => {
+    const next = appendDirSet(dirPath, folders);
+    setDirPath(next);
+    return next;
+  }, [dirPath, setDirPath]);
+
+  const removeFolder = useCallback((folder: string) => {
+    setDirPath(removeFromDirSet(dirPath, folder));
+  }, [dirPath, setDirPath]);
+
+  const handleStartScan = useCallback((
+    event?: React.MouseEvent<HTMLButtonElement>,
+    overrideDir?: string
+  ) => {
+    const targetDir = formatDirSet(parseDirSet(overrideDir ?? dirPath));
+    if (!targetDir) return;
+    startScan({
+      full: Boolean(event?.shiftKey),
+      dir: targetDir,
+      onComplete: rememberRecentDir,
+    });
+  }, [dirPath, rememberRecentDir, startScan]);
+
+  const handleBrowseFolders = useCallback(async () => {
+    try {
+      const res = await fetch('/api/browse?multi=1', { method: 'POST' });
+      const data = await res.json();
+      const selected = Array.isArray(data.paths)
+        ? data.paths.filter((item: unknown): item is string => typeof item === 'string')
+        : parseDirSet(data.path);
+      if (res.ok && selected.length > 0) {
+        addFolders(selected);
+        setBrowseError('');
+      } else if (res.ok) {
+        setBrowseError('');
+      } else {
+        setBrowseError(data.error || 'Failed to open folder dialog.');
+      }
+    } catch (e) {
+      console.error('Browse failed', e);
+      setBrowseError('Failed to open folder dialog.');
+    }
+  }, [addFolders]);
+
+  const handleAddPastedFolders = useCallback(() => {
+    const parsed = parseDirSet(pasteFolders);
+    if (parsed.length === 0) return;
+    addFolders(parsed);
+    setPasteFolders('');
+    setBrowseError('');
+  }, [addFolders, pasteFolders]);
+
+  const markSelectedAsFavorite = useCallback(() => {
+    if (selectedCount === 0) return;
+    for (const id of selectedIds) {
+      cycleFavoriteLevel(id);
+    }
+  }, [cycleFavoriteLevel, selectedCount, selectedIds]);
+
+  const lowerSelectedFavorite = useCallback(() => {
+    if (selectedCount === 0) return;
+    for (const id of selectedIds) {
+      decreaseFavoriteLevel(id);
+    }
+  }, [decreaseFavoriteLevel, selectedCount, selectedIds]);
+
+  const deleteSelected = useCallback(async () => {
+    if (selectedCount === 0) return;
+    const targets = [...selectedIds];
+    for (const id of targets) {
+      await deleteImage(id);
+    }
+    clearSelection();
+  }, [clearSelection, deleteImage, selectedCount, selectedIds]);
+
+  useEffect(() => {
+    if (phase !== 'viewer') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
+      if (isTyping) return;
+      if (selectedIndex !== null) return;
+      if (selectedCount === 0) return;
+
+      if (event.key === keyBindings.deleteImage) {
+        event.preventDefault();
+        if (confirmBeforeDelete) setShowBulkDeleteConfirm(true);
+        else void deleteSelected();
+        return;
+      }
+      if (event.key.toLowerCase() === keyBindings.toggleFavorite.toLowerCase()) {
+        event.preventDefault();
+        markSelectedAsFavorite();
+        return;
+      }
+      if (event.key.toLowerCase() === keyBindings.decreaseFavorite.toLowerCase()) {
+        event.preventDefault();
+        lowerSelectedFavorite();
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    confirmBeforeDelete,
+    deleteSelected,
+    keyBindings.decreaseFavorite,
+    keyBindings.deleteImage,
+    keyBindings.toggleFavorite,
+    lowerSelectedFavorite,
+    markSelectedAsFavorite,
+    phase,
+    selectedCount,
+    selectedIndex,
+  ]);
+
+  useEffect(() => {
+    if (phase !== 'viewer') return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && event.shiftKey && event.key.toLowerCase() === 't') {
+        event.preventDefault();
+        restoreLastClosedPreview();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [phase, restoreLastClosedPreview]);
+
+  if (phase === 'landing' || phase === 'scanning') {
+    return (
+      <div className="landing">
+        <h1 className="landing-title">Photoviewer Upscale</h1>
+        <p className="landing-subtitle">Index and search Stable Diffusion PNG metadata locally</p>
+
+        <div className="folder-set-panel">
+          <div className="folder-set-actions">
+            <button
+              className="browse-btn"
+              onClick={handleBrowseFolders}
+              disabled={phase === 'scanning'}
+              title="Add folders"
+              type="button"
+            >
+              <FolderOpen size={18} aria-hidden="true" />
+              Add folder
+            </button>
+            <button
+              className="scan-btn"
+              onClick={(event) => handleStartScan(event)}
+              disabled={phase === 'scanning' || selectedFolders.length === 0}
+              type="button"
+            >
+              {phase === 'scanning' ? 'Scanning...' : 'Open folder set'}
+            </button>
+          </div>
+
+          <div className="selected-folder-list" aria-label="Selected folders">
+            {selectedFolders.length > 0 ? (
+              selectedFolders.map((folder) => (
+                <div className="selected-folder-row" key={folder} title={folder}>
+                  <span className="selected-folder-bullet" aria-hidden="true">・</span>
+                  <span className="selected-folder-name">{folder}</span>
+                  <button
+                    className="selected-folder-remove"
+                    type="button"
+                    aria-label={`Remove ${folder}`}
+                    title="Remove folder"
+                    onClick={() => removeFolder(folder)}
+                    disabled={phase === 'scanning'}
+                  >
+                    ×
+                  </button>
+                </div>
+              ))
+            ) : (
+              <div className="selected-folder-empty">No folders selected yet.</div>
+            )}
+          </div>
+
+          <div className="folder-paste-row">
+            <textarea
+              className="dir-input folder-paste-input"
+              placeholder="Paste one absolute path per line..."
+              value={pasteFolders}
+              onChange={(e) => setPasteFolders(e.target.value)}
+              onKeyDown={(e) => {
+                if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') handleAddPastedFolders();
+              }}
+              disabled={phase === 'scanning'}
+            />
+            <button
+              className="browse-btn folder-paste-add"
+              type="button"
+              onClick={handleAddPastedFolders}
+              disabled={phase === 'scanning' || parseDirSet(pasteFolders).length === 0}
+            >
+              Add pasted
+            </button>
+          </div>
+        </div>
+        {lastDirSet && (
+          <div className="last-dir-set">
+            <button
+              className="last-dir-set-btn"
+              type="button"
+              title={lastDirSet}
+              onClick={() => handleStartScan(undefined, lastDirSet)}
+              disabled={phase === 'scanning'}
+            >
+              Open last folder set
+              <span>{summarizeDirSet(lastDirSet)}</span>
+            </button>
+          </div>
+        )}
+        {recentDirs.length > 0 && (
+          <div className="recent-dirs">
+            <div className="recent-dirs-label">Recent folder sets</div>
+            <div className="recent-dirs-list">
+              {recentDirs.map((dir) => (
+                <button
+                  key={dir}
+                  className="recent-dir-item"
+                  title={dir}
+                  onClick={() => handleStartScan(undefined, dir)}
+                  disabled={phase === 'scanning'}
+                >
+                  {summarizeDirSet(dir)}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        {browseError && <p className="landing-error">{browseError}</p>}
+
+        {phase === 'scanning' && scanProgress && (
+          <div className="progress-container">
+            <div className="progress-label">
+              <span>
+                {scanProgressProcessed.toLocaleString()} / {scanProgressTotal.toLocaleString()} {scanProgressUnit}
+                {scanProgress.stage !== 'preparing' && scanProgress.newFiles > 0 && ` (${scanProgress.newFiles} new)`}
+              </span>
+              <span>{scanProgressPercent}%</span>
+            </div>
+            <div className="progress-bar">
+              <div
+                className="progress-fill"
+                style={{
+                  width: `${scanProgressPercent}%`,
+                }}
+              />
+            </div>
+            <div className="progress-waiting">{scanProgressMessage}</div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      <div className="viewer">
+        <header className="viewer-header">
+          <button
+            className="icon-btn sidebar-toggle-btn"
+            onClick={() => setView({ sidebarOpen: !view.sidebarOpen })}
+            title={view.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+            </svg>
+          </button>
+          <span className="viewer-logo" onClick={() => setPhase('landing')} title="Back to folder selection">
+            Photoviewer Upscale
+          </span>
+          <button
+            className="icon-btn sidebar-toggle-btn"
+            onClick={handleStartScan}
+            title="Refresh active folder (Shift-click: full verify)"
+            disabled={!dirPath.trim()}
+          >
+            <RefreshCw size={18} aria-hidden="true" />
+          </button>
+          <SearchBar />
+          <span className="header-stats">{resultCountLabel}</span>
+          <button
+            className="icon-btn sidebar-toggle-btn"
+            onClick={() => setView({ rightPanelOpen: !view.rightPanelOpen })}
+            title={view.rightPanelOpen ? 'Hide right panel' : 'Show right panel'}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+              <line x1="15" y1="3" x2="15" y2="21" />
+            </svg>
+          </button>
+          <button
+            className="icon-btn sidebar-toggle-btn"
+            onClick={() => setView({ enhanceQueueOpen: !view.enhanceQueueOpen })}
+            title={view.enhanceQueueOpen ? 'Hide enhance queue' : 'Show enhance queue'}
+          >
+            <Sparkles size={18} aria-hidden="true" />
+          </button>
+        </header>
+
+        <div className="viewer-body">
+          <Sidebar />
+          <main className="viewer-main">
+            <ImageGrid />
+          </main>
+          <RightPreviewPanel />
+        </div>
+        <BottomPreviewTabs />
+        <ImageModal />
+        <EnhanceQueuePanel />
+        <SettingsModal />
+      </div>
+
+      {showBulkDeleteConfirm && (
+        <div className="confirm-overlay">
+          <div className="confirm-backdrop" onClick={() => setShowBulkDeleteConfirm(false)} />
+          <div className="confirm-panel">
+            <h3>Move selected images to Recycle Bin?</h3>
+            <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
+            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+              <input
+                type="checkbox"
+                checked={!confirmBeforeDelete}
+                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+              />
+              <span>Do not ask again</span>
+            </label>
+            <div className="confirm-actions">
+              <button className="btn-cancel" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</button>
+              <button
+                className="btn-danger"
+                onClick={async () => {
+                  setShowBulkDeleteConfirm(false);
+                  await deleteSelected();
+                }}
+              >
+                Move to Recycle Bin
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function App() {
+  return (
+    <ImageProvider>
+      <ViewerApp />
+    </ImageProvider>
+  );
+}

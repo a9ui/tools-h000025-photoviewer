@@ -1,0 +1,141 @@
+import { NextRequest } from 'next/server';
+import { scanDirectory, setIndex } from '@/lib/indexer';
+import { cancelThumbnailWarmup } from '@/lib/thumbnailCache';
+import { basenameFromPath, parseDirSet } from '@/lib/pathSet';
+import type { ImageFile } from '@/lib/types';
+
+export const dynamic = 'force-dynamic';
+
+/**
+ * GET /api/scan?dir=PATH
+ *
+ * Incrementally scans a directory for supported local image files, extracts
+ * Stable Diffusion PNG metadata when available, and streams progress via SSE.
+ */
+export async function GET(request: NextRequest) {
+  const dir = request.nextUrl.searchParams.get('dir');
+  const forceFull = request.nextUrl.searchParams.get('full') === '1';
+
+  const dirs = parseDirSet(dir);
+
+  if (dirs.length === 0) {
+    return new Response(JSON.stringify({ error: 'Missing dir parameter' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const encoder = new TextEncoder();
+  cancelThumbnailWarmup();
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const keepAlive = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(': keepalive\n\n'));
+        } catch {
+          clearInterval(keepAlive);
+        }
+      }, 10000);
+      try {
+        const seen = new Set<string>();
+        const allImages: ImageFile[] = [];
+        const failedRoots: string[] = [];
+        let completedRoots = 0;
+        let cumulativeProcessed = 0;
+        let cumulativeNewFiles = 0;
+
+        for (const root of dirs) {
+          const rootIndex = completedRoots + 1;
+          const rootLabel = basenameFromPath(root) || root;
+          let rootLatestNewFiles = 0;
+          let images: ImageFile[] = [];
+          try {
+            images = await scanDirectory(root, (processed, total, newFiles, status) => {
+              rootLatestNewFiles = newFiles;
+              const currentTotal = Math.max(1, total);
+              const currentFraction = Math.max(0, Math.min(1, processed / currentTotal));
+              const displayProcessed = dirs.length > 1
+                ? Math.min(99, Math.round(((completedRoots + currentFraction) / dirs.length) * 100))
+                : cumulativeProcessed + processed;
+              const displayTotal = dirs.length > 1
+                ? 100
+                : Math.max(cumulativeProcessed + total, dirs.length);
+              const event = JSON.stringify({
+                type: 'progress',
+                processed: displayProcessed,
+                total: displayTotal,
+                newFiles: cumulativeNewFiles + newFiles,
+                stage: status?.stage,
+                message: dirs.length > 1
+                  ? `[${rootIndex}/${dirs.length}] ${rootLabel}: ${status?.message ?? 'Scanning...'}`
+                  : status?.message,
+              });
+              controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+            }, { forceFull });
+          } catch (err) {
+            failedRoots.push(`${rootLabel}: ${err instanceof Error ? err.message : String(err)}`);
+            const event = JSON.stringify({
+              type: 'progress',
+              processed: dirs.length > 1 ? Math.min(99, Math.round(((completedRoots + 1) / dirs.length) * 100)) : 0,
+              total: dirs.length > 1 ? 100 : 1,
+              newFiles: cumulativeNewFiles,
+              stage: 'scanning',
+              message: `Skipped ${rootLabel}: ${err instanceof Error ? err.message : String(err)}`,
+            });
+            controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+          }
+
+          for (const image of images) {
+            if (seen.has(image.id)) continue;
+            seen.add(image.id);
+            allImages.push(image);
+          }
+          cumulativeProcessed = allImages.length;
+          cumulativeNewFiles += rootLatestNewFiles;
+          completedRoots += 1;
+        }
+
+        if (allImages.length === 0 && failedRoots.length > 0) {
+          throw new Error(`Scan failed: ${failedRoots.join('; ')}`);
+        }
+
+        // Store in memory for search
+        setIndex(allImages);
+
+        const completeEvent = JSON.stringify({
+          type: 'complete',
+          processed: allImages.length,
+          total: allImages.length,
+          newFiles: 0,
+          stage: 'complete',
+          message: failedRoots.length > 0
+            ? `Scan complete with ${failedRoots.length} skipped folder(s). ${allImages.length} images indexed.`
+            : `Scan complete. ${allImages.length} images indexed.`,
+        });
+        controller.enqueue(encoder.encode(`data: ${completeEvent}\n\n`));
+        controller.close();
+      } catch (err) {
+        const errorEvent = JSON.stringify({
+          type: 'error',
+          processed: 0,
+          total: 0,
+          newFiles: 0,
+          message: String(err),
+        });
+        controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
+        controller.close();
+      } finally {
+        clearInterval(keepAlive);
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
+}
