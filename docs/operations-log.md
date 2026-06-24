@@ -43,6 +43,14 @@ same manual sequence appears more than twice.
   `items`, and full-history forked agents cannot override reasoning effort;
   pass `items` only and omit fork context when a specific reasoning effort is
   requested.
+- The documented Composer Bridge harness paths
+  `I000003_AgentHarness\scripts\verify-harness.ps1` and
+  `I000005_CodexSystemCore\scripts\test-composer25-light.ps1` were not present
+  under `C:\Users\a9ui\Desktop\Tools` in this project setup.
+- `agent models` confirmed `composer-2.5` is the standard Composer model and
+  `composer-2.5-fast` is the fast variant. Use `agent --print --model
+  composer-2.5 --trust --workspace <project> <prompt>` as the fallback direct
+  Cursor lane when the harness scripts are missing.
 
 Skill candidate:
 

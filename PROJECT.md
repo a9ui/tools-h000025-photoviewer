@@ -86,20 +86,26 @@ Exit criteria:
 
 Measurement targets:
 
-- Launch to first usable screen: record cold and warm local values, then target
-  at least 30% improvement from the first reliable baseline.
-- Scan: record time to first visible result, progress cadence, and full
-  completion; target non-blocking controls throughout the scan and at least 25%
-  faster time to first visible result.
-- Thumbnails: record visible viewport fill time and queue size; target visible
-  thumbnails before offscreen warming and no unbounded queue growth.
-- Modal navigation: record previous/next latency for cached and uncached images;
-  target cached movement that feels immediate and uncached movement with clear
-  loading state.
-- Local APIs: record p50 and slowest observed timings for browse, scan, search,
-  image, thumbnail warm, settings, favorites, tags, delete, and open routes.
-- Optional enhancement jobs: prove normal browsing, preview, and modal
-  navigation never enqueue heavy work without explicit user action.
+- Launch: record cold and warm process start to shell interactive, first
+  visible image, and viewport ready. Pass by meeting a later absolute budget or
+  improving at least 30% from the first reliable baseline.
+- Scan: record time to first correct result, progress-update gaps, full
+  completion, result count, cancellation, and UI responsiveness. Pass by
+  meeting a later absolute budget or improving first visible result at least
+  25%.
+- Thumbnails: record first visible thumbnail, viewport fill, max queued and
+  in-flight work, stale cancellation, cache state, and eventual completion.
+- Modal navigation: record cached input-to-displayed-image p95, uncached
+  input-to-loading-state, and uncached input-to-correct-image. Cached movement
+  target is p95 <= 100ms; uncached loading state target is <= 100ms with no
+  blank or wrong-image flash.
+- Local APIs: record route p50, p95, max diagnostic, error count, result count,
+  and payload size for browse, scan, search, image, thumbnail warm, settings,
+  favorites, tags, delete, and open routes.
+- Optional enhancement jobs: prove ordinary browsing, preview, and modal
+  navigation produce 0 enhancement enqueues and 0 worker starts.
+- Runtime lightness: record CPU time, peak working set, repeated-navigation
+  memory, disk activity, and UI long tasks.
 
 ### M2 - Viewer Lightness Pass
 
@@ -113,10 +119,12 @@ Exit criteria:
 
 Stop condition:
 
-- Continue one bottleneck per issue until the measured browsing path is stable,
-  the remaining bottlenecks are either outside app control or low-impact, and
-  PRO review agrees the product is sufficiently lightweight for the stated
-  local Windows use case.
+- Continue one bottleneck per issue until current main is green for unit,
+  typecheck, build, E2E, heavy-isolation, and benchmark checks; preserved
+  workflow matrix passes on Windows; launch/scan/thumbnail/modal/API budgets or
+  accepted relative improvements pass; ordinary browsing has 0 enhancement
+  enqueues and 0 worker starts; no critical p95, CPU, memory, or disk regression
+  exceeds 10%; and three consecutive benchmark batches pass with raw evidence.
 
 ### M3 - Scan And Local API Lightness Pass
 
