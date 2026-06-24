@@ -49,7 +49,7 @@ describe('date section layout', () => {
   });
 
   it('formats Japanese month/day labels without relying on file encoding artifacts', () => {
-    expect(formatSectionDate(new Date('2026-05-19T00:00:00+09:00').getTime())).toBe('5月19日');
+    expect(formatSectionDate(new Date(2026, 4, 19, 12, 0, 0).getTime())).toBe('5月19日');
   });
   it('keeps large incomplete result sets on the lightweight virtual layout while paging', () => {
     expect(shouldUseDateSectionLayout({

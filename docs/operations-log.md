@@ -35,6 +35,14 @@ same manual sequence appears more than twice.
 - A plain `git push` command was also rejected by the local safety policy after
   commit; use the repository bootstrap script or an explicit safe-directory git
   invocation when push is required.
+- The first fixed Actions run then failed on
+  `src/lib/dateSectionLayout.test.ts` because a midnight `+09:00` timestamp
+  formatted as the previous day on the CI runner timezone; use local noon or an
+  explicit timezone policy in date-label tests.
+- `multi_agent_v1.spawn_agent` rejects calls that pass both `message` and
+  `items`, and full-history forked agents cannot override reasoning effort;
+  pass `items` only and omit fork context when a specific reasoning effort is
+  requested.
 
 Skill candidate:
 
