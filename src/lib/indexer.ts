@@ -464,41 +464,62 @@ function buildImageFiles(cache: CacheData): ImageFile[] {
 }
 
 let _index: ImageFile[] = [];
-let _sortedBySort: Record<SortBy, ImageFile[]> | null = null;
+let _sortedBySort: Partial<Record<SortBy, ImageFile[]>> = {};
 let _searchTextById: Map<string, string> | null = null;
 let _searchCache = new Map<string, ImageFile[]>();
 let _tagCache: Array<{ tag: string; count: number }> | null = null;
 let _folderCache = new Map<string, FolderBucket[]>();
 
 function invalidateDerivedCaches() {
-  _sortedBySort = null;
+  _sortedBySort = {};
   _searchTextById = null;
   _searchCache = new Map<string, ImageFile[]>();
   _tagCache = null;
   _folderCache = new Map<string, FolderBucket[]>();
 }
 
-function ensureSortedCache() {
-  if (_sortedBySort) return;
-  _sortedBySort = {
-    newest: [..._index].sort((a, b) => b.mtime - a.mtime),
-    oldest: [..._index].sort((a, b) => a.mtime - b.mtime),
-    'created-newest': [..._index].sort((a, b) => {
-      const byCreated = (b.createdAt ?? b.mtime) - (a.createdAt ?? a.mtime);
-      if (byCreated !== 0) return byCreated;
-      const byModified = b.mtime - a.mtime;
-      if (byModified !== 0) return byModified;
-      return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
-    }),
-    'created-oldest': [..._index].sort((a, b) => {
-      const byCreated = (a.createdAt ?? a.mtime) - (b.createdAt ?? b.mtime);
-      if (byCreated !== 0) return byCreated;
-      const byModified = a.mtime - b.mtime;
-      if (byModified !== 0) return byModified;
-      return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
-    }),
-    name: [..._index].sort((a, b) => a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' })),
-  };
+function compareByFilename(a: ImageFile, b: ImageFile) {
+  return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
+}
+
+function getSortedSource(sortBy: SortBy) {
+  const cached = _sortedBySort[sortBy];
+  if (cached) return cached;
+
+  let sorted: ImageFile[];
+  switch (sortBy) {
+    case 'oldest':
+      sorted = [..._index].sort((a, b) => a.mtime - b.mtime);
+      break;
+    case 'created-newest':
+      sorted = [..._index].sort((a, b) => {
+        const byCreated = (b.createdAt ?? b.mtime) - (a.createdAt ?? a.mtime);
+        if (byCreated !== 0) return byCreated;
+        const byModified = b.mtime - a.mtime;
+        if (byModified !== 0) return byModified;
+        return compareByFilename(a, b);
+      });
+      break;
+    case 'created-oldest':
+      sorted = [..._index].sort((a, b) => {
+        const byCreated = (a.createdAt ?? a.mtime) - (b.createdAt ?? b.mtime);
+        if (byCreated !== 0) return byCreated;
+        const byModified = a.mtime - b.mtime;
+        if (byModified !== 0) return byModified;
+        return compareByFilename(a, b);
+      });
+      break;
+    case 'name':
+      sorted = [..._index].sort(compareByFilename);
+      break;
+    case 'newest':
+    default:
+      sorted = [..._index].sort((a, b) => b.mtime - a.mtime);
+      break;
+  }
+
+  _sortedBySort[sortBy] = sorted;
+  return sorted;
 }
 
 function ensureSearchTextCache() {
@@ -590,20 +611,15 @@ function buildFilteredAndSorted(
   dirPath?: string,
   hiddenFolders?: string[]
 ): ImageFile[] {
-  ensureSortedCache();
-  ensureSearchTextCache();
-
-  const source = (_sortedBySort ?? {
-    newest: [],
-    oldest: [],
-    'created-newest': [],
-    'created-oldest': [],
-    name: [],
-  })[sortBy];
+  const source = getSortedSource(sortBy);
   const terms = query
     .split(',')
     .map((token) => token.trim().toLowerCase())
     .filter(Boolean);
+
+  if (terms.length > 0) {
+    ensureSearchTextCache();
+  }
 
   const normalizedDirs = normalizeDirPaths(dirPath);
   const hiddenSet = new Set(
