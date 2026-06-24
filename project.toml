@@ -10,7 +10,7 @@ verify = "powershell -ExecutionPolicy Bypass -File .\\scripts\\verify-project.ps
 
 [links]
 github = "https://github.com/a9ui/tools-h000025-photoviewer"
-chatgpt_project = ""
+chatgpt_project = "https://chatgpt.com/g/g-p-6a3b8904d18c8191bd0023cb75f44cf0/project"
 deployment = ""
 production = ""
 
