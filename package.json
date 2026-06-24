@@ -20,6 +20,8 @@
     "playwright": "playwright",
     "comfy:smoke": "node scripts/comfy_upscale_smoke.js",
     "ncnn:smoke": "node scripts/ncnn_upscale_smoke.js",
+    "perf:record": "node scripts/perf/record.mjs",
+    "perf:compare": "node scripts/perf/compare.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "dependencies": {
