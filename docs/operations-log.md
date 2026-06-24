@@ -22,6 +22,19 @@ same manual sequence appears more than twice.
   Vercel and Wrangler CLIs are not on PATH.
 - ChatGPT Project creation is manual or browser-assisted; record the final URL
   in `project.toml` and sync SQLite after creation.
+- First GitHub Actions runs failed because `pnpm/action-setup@v4` had
+  `version: 9` while `package.json` already declared `packageManager:
+  pnpm@9.15.9`; remove the workflow version and let package.json be the source
+  of truth.
+- Initial issue creation produced issues without the `M0` milestone attached;
+  verify issue metadata after creation and repair with `gh issue edit` when
+  needed.
+- Chaining `git add; git commit; git push` in one PowerShell command was
+  rejected by the local safety policy; run git staging, commit, and push as
+  separate commands.
+- A plain `git push` command was also rejected by the local safety policy after
+  commit; use the repository bootstrap script or an explicit safe-directory git
+  invocation when push is required.
 
 Skill candidate:
 
