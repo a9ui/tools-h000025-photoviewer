@@ -64,7 +64,11 @@ try {
   $issues = @(
     @{
       title = "M0: Project spine and baseline"
-      body = "Acceptance:`n- GitHub repository exists and is private.`n- project.toml contains the GitHub URL and ChatGPT Project URL.`n- GitHub Actions verify runs on PRs and main.`n- Local verify result is recorded.`n- M1 baseline issues exist."
+      body = "Acceptance:`n- GitHub repository exists and is private.`n- project.toml contains the GitHub URL and ChatGPT Project URL.`n- GitHub Actions verify runs on PRs and main.`n- Local verify result is recorded.`n- M1 baseline issues exist.`n- M0 setup failures and fixes are recorded in docs/operations-log.md."
+    },
+    @{
+      title = "M0: Ask PRO to review the current plan and success metrics"
+      body = "Acceptance:`n- Prepare a compact review packet with current code state, roadmap, constraints, local verify result, and proposed performance metrics.`n- Send it to the new ChatGPT Project using GPT PRO.`n- Record adopted feedback in PROJECT.md, DESIGN.md, or follow-up issues.`n- Record rejected or deferred feedback with a short reason."
     },
     @{
       title = "M1: Define repeatable PhotoViewer performance baseline"
