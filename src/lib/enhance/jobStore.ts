@@ -4,6 +4,7 @@ import path from 'path';
 import type { EnhancementJob, EnhancementJobStoreData, EnhancementPreset, SourceSignature } from './types';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 import { getEnhanceRoot, getJobsFilePath, hashPreset } from './outputPath';
+import { recordEnhancementEnqueue } from './isolationMetrics';
 
 const STORE_VERSION = 1;
 
@@ -241,6 +242,7 @@ export class EnhancementJobStore {
       };
       data.jobs.push(job);
       await this.writeUnlocked(data);
+      recordEnhancementEnqueue();
       return job;
     });
   }

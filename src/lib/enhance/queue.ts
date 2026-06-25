@@ -1,6 +1,7 @@
 import { getEnhancementOutputPath } from './outputPath';
 import { getEnhancementAdapter } from './adapters';
 import { getEnhancementJobStore } from './jobStore';
+import { recordEnhancementWorkerStart } from './isolationMetrics';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 import type { EnhancementJob, EnhancementPreset } from './types';
 import fs from 'fs';
@@ -24,6 +25,7 @@ export function isEnhancementQueueRunning() {
 export function startEnhancementQueue() {
   if (running) return;
   running = true;
+  recordEnhancementWorkerStart();
   void runQueue().finally(() => {
     running = false;
   });
