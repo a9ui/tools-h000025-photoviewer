@@ -4,6 +4,7 @@ import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
+import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import {
   buildDateSectionLayout,
   findDateSectionItemTop,
@@ -82,7 +83,7 @@ export default function ImageGrid() {
     showEnhancedOnly, enhancedSourceIds,
     closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
-    modalImageIds, setModalImageIds, selectedIndex,
+    modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     dirPath,
   } = useImageStore();
 
@@ -254,16 +255,33 @@ export default function ImageGrid() {
 
   useEffect(() => {
     if (!isClientFiltered || modalImageIds.length === 0) return;
-    if (filteredOrderedIds.length === 0) return;
-    const nextKey = filteredOrderedIds.join('\u0001');
-    if (modalImageIdKey === nextKey) return;
-    setModalImageIds(filteredOrderedIds);
+    const currentId = selectedIndex !== null ? searchResults[selectedIndex]?.id ?? null : null;
+    const nextState = reconcileModalOrderAfterFilterChange(
+      currentId,
+      modalImageIds,
+      filteredOrderedIds
+    );
+    const nextKey = nextState.orderedIds.join('\u0001');
+    if (modalImageIdKey !== nextKey) {
+      setModalImageIds(nextState.orderedIds);
+    }
+
+    const nextIndex = nextState.selectedId
+      ? searchResults.findIndex((image) => image?.id === nextState.selectedId)
+      : null;
+    const resolvedNextIndex = nextIndex !== null && nextIndex >= 0 ? nextIndex : null;
+    if (selectedIndex !== resolvedNextIndex) {
+      setSelectedIndex(resolvedNextIndex);
+    }
   }, [
     filteredOrderedIds,
     isClientFiltered,
     modalImageIdKey,
-    modalImageIds.length,
+    modalImageIds,
+    searchResults,
+    selectedIndex,
     setModalImageIds,
+    setSelectedIndex,
   ]);
 
   const handleThumbWheel = (event: React.WheelEvent<HTMLDivElement>) => {
