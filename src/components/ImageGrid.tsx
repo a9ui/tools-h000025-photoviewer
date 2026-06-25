@@ -26,6 +26,7 @@ const MODAL_WARMUP_THUMB_BUDGET = 18;
 const MODAL_WARMUP_SEARCH_PAGES = 1;
 const BACKGROUND_SEARCH_PAGE_DELAY_MS = 90;
 const BACKGROUND_SEARCH_PAGES = 2;
+const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
 
 function withThumbPriorityParams(fileUrl: string, priority: 'visible' | 'nearby' = 'visible') {
   const separator = fileUrl.includes('?') ? '&' : '?';
@@ -109,7 +110,10 @@ export default function ImageGrid() {
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
     if (!container || !scrollEl) return;
 
+    let metricsFrameId: number | null = null;
+
     const updateMetrics = () => {
+      metricsFrameId = null;
       const style = window.getComputedStyle(container);
       const leftPad = Number.parseFloat(style.paddingLeft || '0') || 0;
       const rightPad = Number.parseFloat(style.paddingRight || '0') || 0;
@@ -119,17 +123,25 @@ export default function ImageGrid() {
       setScrollTop(scrollEl.scrollTop);
     };
 
+    const scheduleMetricsUpdate = () => {
+      if (metricsFrameId !== null) return;
+      metricsFrameId = window.requestAnimationFrame(updateMetrics);
+    };
+
     updateMetrics();
-    scrollEl.addEventListener('scroll', updateMetrics, { passive: true });
-    const resizeObserver = new ResizeObserver(updateMetrics);
+    scrollEl.addEventListener('scroll', scheduleMetricsUpdate, { passive: true });
+    const resizeObserver = new ResizeObserver(scheduleMetricsUpdate);
     resizeObserver.observe(scrollEl);
     resizeObserver.observe(container);
-    window.addEventListener('resize', updateMetrics);
+    window.addEventListener('resize', scheduleMetricsUpdate);
 
     return () => {
-      scrollEl.removeEventListener('scroll', updateMetrics);
+      scrollEl.removeEventListener('scroll', scheduleMetricsUpdate);
       resizeObserver.disconnect();
-      window.removeEventListener('resize', updateMetrics);
+      window.removeEventListener('resize', scheduleMetricsUpdate);
+      if (metricsFrameId !== null) {
+        window.cancelAnimationFrame(metricsFrameId);
+      }
     };
   }, []);
 
@@ -177,7 +189,10 @@ export default function ImageGrid() {
   }, [getSearchScrollPosition, scrollMemoryKey]);
 
   useEffect(() => {
-    setSearchScrollPosition(scrollMemoryKey, scrollTop);
+    const timeoutId = window.setTimeout(() => {
+      setSearchScrollPosition(scrollMemoryKey, scrollTop);
+    }, SCROLL_MEMORY_WRITE_DELAY_MS);
+    return () => window.clearTimeout(timeoutId);
   }, [scrollMemoryKey, scrollTop, setSearchScrollPosition]);
 
   useEffect(() => {
