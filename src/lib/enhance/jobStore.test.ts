@@ -1,11 +1,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { EnhancementJobStore, setEnhancementJobStoreForTests } from './jobStore';
 import { getEnhancementOutputPath, hashPreset } from './outputPath';
-import { startEnhancementQueue } from './queue';
+import { isEnhancementQueueRunning, startEnhancementQueue } from './queue';
+import { getEnhancementIsolationMetrics, resetEnhancementIsolationMetricsForTests } from './isolationMetrics';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 
 async function waitFor(
@@ -21,6 +22,10 @@ async function waitFor(
 }
 
 describe('enhancement job store', () => {
+  beforeEach(() => {
+    resetEnhancementIsolationMetricsForTests();
+  });
+
   it('persists jobs with pvu-safe durable JSON state', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-store-'));
     const store = new EnhancementJobStore(root);
@@ -58,6 +63,52 @@ describe('enhancement job store', () => {
     expect(path.basename(jobOutput)).not.toContain(':');
     expect(path.basename(jobOutput)).not.toContain('?');
   });
+
+  it('keeps ordinary reads idle and counts only explicit enhancement work', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-isolation-'));
+    const store = new EnhancementJobStore(root);
+    setEnhancementJobStoreForTests(store);
+    const sourcePath = path.join(root, 'source.png');
+    await sharp({
+      create: {
+        width: 8,
+        height: 8,
+        channels: 4,
+        background: '#224466ff',
+      },
+    })
+      .png()
+      .toFile(sourcePath);
+
+    expect(await store.listJobs()).toEqual([]);
+    expect(getEnhancementIsolationMetrics()).toEqual({
+      enhancementEnqueues: 0,
+      enhancementWorkerStarts: 0,
+    });
+
+    const stat = fs.statSync(sourcePath);
+    const job = await store.createJob({
+      sourceId: sourcePath,
+      sourcePath,
+      sourceSignature: { size: stat.size, mtimeMs: stat.mtimeMs },
+    });
+    expect(getEnhancementIsolationMetrics()).toEqual({
+      enhancementEnqueues: 1,
+      enhancementWorkerStarts: 0,
+    });
+
+    startEnhancementQueue();
+    expect(getEnhancementIsolationMetrics()).toEqual({
+      enhancementEnqueues: 1,
+      enhancementWorkerStarts: 1,
+    });
+
+    await waitFor(async () => {
+      const current = await store.getJob(job.id);
+      if (current?.status === 'failed') throw new Error(current.errorMessage || 'Enhancement job failed');
+      return current?.status === 'succeeded' && !isEnhancementQueueRunning();
+    }, 15000);
+  }, 15000);
 
   it('persists model family, scale, format, and detailed settings on each job', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-settings-'));
