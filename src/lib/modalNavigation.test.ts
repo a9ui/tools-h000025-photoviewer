@@ -3,6 +3,7 @@ import {
   clampModalEdgeRatio,
   getModalClickAction,
   getSwipeNavigation,
+  reconcileModalOrderAfterFilterChange,
 } from './modalNavigation';
 
 describe('getSwipeNavigation', () => {
@@ -54,5 +55,37 @@ describe('getModalClickAction', () => {
     expect(clampModalEdgeRatio(0.03)).toBe(0.1);
     expect(clampModalEdgeRatio(0.55)).toBe(0.4);
     expect(clampModalEdgeRatio(Number.NaN)).toBe(0.28);
+  });
+});
+
+describe('reconcileModalOrderAfterFilterChange', () => {
+  it('keeps the current image when it remains visible', () => {
+    expect(
+      reconcileModalOrderAfterFilterChange('b', ['a', 'b', 'c'], ['a', 'b', 'c'])
+    ).toEqual({ orderedIds: ['a', 'b', 'c'], selectedId: 'b' });
+  });
+
+  it('selects the next visible image when the current image is filtered out', () => {
+    expect(
+      reconcileModalOrderAfterFilterChange('b', ['a', 'b', 'c', 'd'], ['a', 'c', 'd'])
+    ).toEqual({ orderedIds: ['a', 'c', 'd'], selectedId: 'c' });
+  });
+
+  it('selects the previous visible image when the removed image was last', () => {
+    expect(
+      reconcileModalOrderAfterFilterChange('d', ['a', 'b', 'c', 'd'], ['a', 'b', 'c'])
+    ).toEqual({ orderedIds: ['a', 'b', 'c'], selectedId: 'c' });
+  });
+
+  it('returns no selection when no filtered images remain', () => {
+    expect(
+      reconcileModalOrderAfterFilterChange('a', ['a'], [])
+    ).toEqual({ orderedIds: [], selectedId: null });
+  });
+
+  it('falls back to the first visible image if the previous order is missing the current image', () => {
+    expect(
+      reconcileModalOrderAfterFilterChange('x', ['a', 'b'], ['b', 'c'])
+    ).toEqual({ orderedIds: ['b', 'c'], selectedId: 'b' });
   });
 });
