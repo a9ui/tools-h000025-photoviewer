@@ -13,25 +13,25 @@ try {
   function Invoke-Pnpm {
     param([Parameter(ValueFromRemainingArguments = $true)][string[]]$Args)
 
-    $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
-    if ($pnpm) {
-      & pnpm @Args
+    $corepack = Get-Command corepack -ErrorAction SilentlyContinue
+    if ($corepack) {
+      $env:COREPACK_HOME = Join-Path $Root ".cache\corepack"
+      New-Item -ItemType Directory -Force $env:COREPACK_HOME | Out-Null
+      & corepack pnpm @Args
       if ($LASTEXITCODE -ne 0) {
-        throw "pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
+        throw "corepack pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
       }
       return
     }
 
-    $corepack = Get-Command corepack -ErrorAction SilentlyContinue
-    if (-not $corepack) {
-      throw "pnpm is not on PATH and corepack is not available"
+    $pnpm = Get-Command pnpm -ErrorAction SilentlyContinue
+    if (-not $pnpm) {
+      throw "corepack is not available and pnpm is not on PATH"
     }
 
-    $env:COREPACK_HOME = Join-Path $Root ".cache\corepack"
-    New-Item -ItemType Directory -Force $env:COREPACK_HOME | Out-Null
-    & corepack pnpm @Args
+    & pnpm @Args
     if ($LASTEXITCODE -ne 0) {
-      throw "corepack pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
+      throw "pnpm $($Args -join ' ') failed with exit code $LASTEXITCODE"
     }
   }
 
