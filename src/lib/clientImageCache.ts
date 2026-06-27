@@ -5,6 +5,8 @@ type CacheKind = 'thumb' | 'display';
 interface CacheEntry {
   objectUrl?: string;
   promise?: Promise<string>;
+  abortController?: AbortController;
+  consumers: number;
   lastUsed: number;
 }
 
@@ -43,32 +45,67 @@ export function getCachedImageUrl(cacheKey: string, kind: CacheKind) {
 
 export function evictCachedImageUrl(cacheKey: string, kind: CacheKind) {
   const entry = caches[kind].get(cacheKey);
+  entry?.abortController?.abort();
   if (entry?.objectUrl) URL.revokeObjectURL(entry.objectUrl);
   caches[kind].delete(cacheKey);
 }
 
-export function loadCachedImageUrl(cacheKey: string, requestUrl: string, kind: CacheKind) {
+type CachedImageLoadHandle = {
+  promise: Promise<string>;
+  cancel: () => void;
+};
+
+function createResolvedHandle(objectUrl: string): CachedImageLoadHandle {
+  return {
+    promise: Promise.resolve(objectUrl),
+    cancel: () => {},
+  };
+}
+
+export function loadCancellableCachedImageUrl(cacheKey: string, requestUrl: string, kind: CacheKind): CachedImageLoadHandle {
   const cache = caches[kind];
   const existing = cache.get(cacheKey);
   if (existing?.objectUrl) {
     existing.lastUsed = performance.now();
-    return Promise.resolve(existing.objectUrl);
+    return createResolvedHandle(existing.objectUrl);
   }
-  if (existing?.promise) return existing.promise;
+  if (existing?.promise) {
+    existing.consumers += 1;
+    existing.lastUsed = performance.now();
+    let cancelled = false;
+    return {
+      promise: existing.promise,
+      cancel: () => {
+        if (cancelled) return;
+        cancelled = true;
+        existing.consumers = Math.max(0, existing.consumers - 1);
+        if (existing.consumers === 0 && !existing.objectUrl) {
+          existing.abortController?.abort();
+        }
+      },
+    };
+  }
 
+  const abortController = new AbortController();
   const entry: CacheEntry = {
+    abortController,
+    consumers: 1,
     lastUsed: performance.now(),
   };
 
-  entry.promise = fetch(requestUrl, { cache: 'force-cache' })
+  entry.promise = fetch(requestUrl, { cache: 'force-cache', signal: abortController.signal })
     .then((response) => {
       if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
       return response.blob();
     })
     .then((blob) => {
+      if (abortController.signal.aborted) {
+        throw new DOMException('Image load aborted', 'AbortError');
+      }
       const objectUrl = URL.createObjectURL(blob);
       entry.objectUrl = objectUrl;
       entry.promise = undefined;
+      entry.abortController = undefined;
       entry.lastUsed = performance.now();
       trimCache(kind);
       return objectUrl;
@@ -79,5 +116,40 @@ export function loadCachedImageUrl(cacheKey: string, requestUrl: string, kind: C
     });
 
   cache.set(cacheKey, entry);
-  return entry.promise;
+  let cancelled = false;
+  return {
+    promise: entry.promise,
+    cancel: () => {
+      if (cancelled) return;
+      cancelled = true;
+      entry.consumers = Math.max(0, entry.consumers - 1);
+      if (entry.consumers === 0 && !entry.objectUrl) {
+        abortController.abort();
+      }
+    },
+  };
+}
+
+export function loadCachedImageUrl(cacheKey: string, requestUrl: string, kind: CacheKind) {
+  return loadCancellableCachedImageUrl(cacheKey, requestUrl, kind).promise;
+}
+
+export function clearClientImageCacheForTests() {
+  for (const cache of Object.values(caches)) {
+    for (const entry of cache.values()) {
+      entry.abortController?.abort();
+      if (entry.objectUrl) URL.revokeObjectURL(entry.objectUrl);
+    }
+    cache.clear();
+  }
+}
+
+export function getClientImageCacheStatsForTests(kind: CacheKind) {
+  const cache = caches[kind];
+  return {
+    entries: cache.size,
+    pending: Array.from(cache.values()).filter((entry) => entry.promise).length,
+    objectUrls: Array.from(cache.values()).filter((entry) => entry.objectUrl).length,
+    consumers: Array.from(cache.values()).reduce((count, entry) => count + entry.consumers, 0),
+  };
 }

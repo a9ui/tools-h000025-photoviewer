@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useState } from 'react';
-import { evictCachedImageUrl, getCachedImageUrl, loadCachedImageUrl } from '../lib/clientImageCache';
+import { evictCachedImageUrl, getCachedImageUrl, loadCancellableCachedImageUrl } from '../lib/clientImageCache';
 
 type CacheKind = 'thumb' | 'display';
 
@@ -127,7 +127,8 @@ function BlobCachedImage({
     }
 
     setRenderedSrc(null);
-    loadCachedImageUrl(src, requestSrc ?? src, cacheKind)
+    const load = loadCancellableCachedImageUrl(src, requestSrc ?? src, cacheKind);
+    load.promise
       .then((objectUrl) => {
         if (!cancelled) setRenderedSrc(objectUrl);
       })
@@ -137,6 +138,7 @@ function BlobCachedImage({
 
     return () => {
       cancelled = true;
+      load.cancel();
     };
   }, [cacheKind, fallbackSrc, requestSrc, src]);
 
