@@ -7,6 +7,7 @@ import type { CacheData, ImageFile, SDMetadata } from './types';
 import { IMAGE_GLOB_EXTENSIONS } from './imageFormats';
 import { basenameFromPath, parseDirSet } from './pathSet';
 import { legacyCacheFilePath } from './legacyPhotoviewer';
+import { shouldReportScanProgress } from './scanProgress';
 
 const CACHE_DIR = path.join(process.cwd(), '.cache');
 const CACHE_VERSION = 1;
@@ -274,11 +275,36 @@ export async function scanDirectory(
   const now = Date.now();
   const prepareTotal = Math.max(1, scanTargets.length);
   let preparedTargets = 0;
+  let lastPrepareProgress = -1;
+  let lastPrepareProgressAt = 0;
 
   onProgress?.(0, prepareTotal, 0, {
     stage: 'preparing',
     message: 'Preparing file list...',
   });
+  lastPrepareProgress = 0;
+  lastPrepareProgressAt = Date.now();
+
+  const reportPrepareProgress = () => {
+    if (!onProgress) return;
+    const nowMs = Date.now();
+    if (!shouldReportScanProgress({
+      processed: preparedTargets,
+      total: prepareTotal,
+      lastReportedProcessed: lastPrepareProgress,
+      lastReportedAt: lastPrepareProgressAt,
+      now: nowMs,
+    })) {
+      return;
+    }
+
+    onProgress(preparedTargets, prepareTotal, 0, {
+      stage: 'preparing',
+      message: 'Preparing file list...',
+    });
+    lastPrepareProgress = preparedTargets;
+    lastPrepareProgressAt = nowMs;
+  };
 
   for (const target of scanTargets) {
     currentScanKeys.add(target.key);
@@ -298,10 +324,7 @@ export async function scanDirectory(
       skippedCachedFiles += cachedPaths.length;
       if (previousSignature !== currentSignature) signatureChanged = true;
       preparedTargets++;
-      onProgress?.(preparedTargets, prepareTotal, 0, {
-        stage: 'preparing',
-        message: 'Preparing file list...',
-      });
+      reportPrepareProgress();
       continue;
     }
 
@@ -331,10 +354,7 @@ export async function scanDirectory(
     }
 
     preparedTargets++;
-    onProgress?.(preparedTargets, prepareTotal, 0, {
-      stage: 'preparing',
-      message: 'Preparing file list...',
-    });
+    reportPrepareProgress();
   }
 
   for (const key of Object.keys(folderSignatures)) {
