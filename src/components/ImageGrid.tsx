@@ -5,6 +5,7 @@ import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
+import { createThumbnailWarmupBatcher } from '../lib/thumbnailWarmupBatcher';
 import {
   buildDateSectionLayout,
   findDateSectionItemTop,
@@ -33,7 +34,7 @@ function withThumbPriorityParams(fileUrl: string, priority: 'visible' | 'nearby'
   return `${fileUrl}${separator}priority=${priority}`;
 }
 
-function warmThumbnails(paths: string[], dirPath: string, priority: 'visible' | 'nearby' = 'nearby') {
+function dispatchThumbnailWarmup(paths: string[], dirPath: string, priority: 'visible' | 'nearby' = 'nearby') {
   if (paths.length === 0) return;
   void fetch('/api/thumbs/warm', {
     method: 'POST',
@@ -100,6 +101,18 @@ export default function ImageGrid() {
   const restoredScrollKeyRef = useRef<string | null>(null);
   const previousThumbSizeRef = useRef(view.thumbSize);
   const previousGridMetricsRef = useRef<GridMetricsSnapshot | null>(null);
+  const warmupBatcherRef = useRef<ReturnType<typeof createThumbnailWarmupBatcher> | null>(null);
+
+  if (warmupBatcherRef.current === null) {
+    warmupBatcherRef.current = createThumbnailWarmupBatcher({
+      dispatch: dispatchThumbnailWarmup,
+    });
+  }
+
+  useEffect(() => {
+    const batcher = warmupBatcherRef.current;
+    return () => batcher?.clear();
+  }, []);
 
   useEffect(() => {
     thumbSizeRef.current = view.thumbSize;
@@ -604,12 +617,16 @@ export default function ImageGrid() {
       warmPaths.push(image.id);
       queued++;
     }
-    warmThumbnails(warmPaths, dirPath, 'nearby');
+    warmupBatcherRef.current?.enqueue(warmPaths, {
+      dirPath,
+      contextKey: scrollMemoryKey,
+      priority: 'nearby',
+    });
     if (preloadRef.current.size > 400) {
       const trimmed = Array.from(preloadRef.current).slice(-300);
       preloadRef.current = new Set(trimmed);
     }
-  }, [clientFilteredVisible, dirPath, fullCount, gridColumns, isClientFiltered, searchResults, searchTotal, virtualRange.end, virtualRange.start]);
+  }, [clientFilteredVisible, dirPath, fullCount, gridColumns, isClientFiltered, scrollMemoryKey, searchResults, searchTotal, virtualRange.end, virtualRange.start]);
 
   useEffect(() => {
     if (searchTotal <= 0) return;
@@ -628,7 +645,11 @@ export default function ImageGrid() {
       warmPaths.push(image.id);
     }
 
-    warmThumbnails(warmPaths, dirPath, 'visible');
+    warmupBatcherRef.current?.enqueue(warmPaths, {
+      dirPath,
+      contextKey: scrollMemoryKey,
+      priority: 'visible',
+    });
     if (visibleWarmRef.current.size > 1200) {
       const trimmed = Array.from(visibleWarmRef.current).slice(-800);
       visibleWarmRef.current = new Set(trimmed);
@@ -678,7 +699,11 @@ export default function ImageGrid() {
         }
         inspected++;
       }
-      warmThumbnails(warmPaths, dirPath, 'nearby');
+      warmupBatcherRef.current?.enqueue(warmPaths, {
+        dirPath,
+        contextKey: scrollMemoryKey,
+        priority: 'nearby',
+      });
 
       modalWarmCursorRef.current = (cursor + inspected) % totalSlots;
       if (preloadRef.current.size > 800) {
@@ -693,7 +718,7 @@ export default function ImageGrid() {
       window.clearTimeout(timeoutId);
       window.clearInterval(intervalId);
     };
-  }, [dirPath, ensureSearchRange, searchResults, searchTotal, selectedIndex]);
+  }, [dirPath, ensureSearchRange, scrollMemoryKey, searchResults, searchTotal, selectedIndex]);
 
   useEffect(() => {
     if (!revealImageId) return;
