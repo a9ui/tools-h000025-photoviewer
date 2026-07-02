@@ -1405,6 +1405,45 @@ a { color: inherit; text-decoration: none; }
   fill: var(--favorite);
 }
 
+.display-style-compact .image-card {
+  border-radius: var(--radius-sm);
+  background: #030304;
+}
+
+.display-style-compact .image-card:hover {
+  transform: none;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+}
+
+.display-style-compact .card-overlay {
+  padding: 0.45rem;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.78) 0%, transparent 42%);
+}
+
+.display-style-compact .card-filename {
+  font-size: 0.68rem;
+}
+
+.display-style-poster .image-card {
+  border-radius: var(--radius-md);
+  background: #050507;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+}
+
+.display-style-poster .image-card img {
+  object-fit: cover;
+}
+
+.display-style-poster .card-overlay {
+  opacity: 1;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.74) 0%, rgba(0, 0, 0, 0.18) 34%, transparent 62%);
+}
+
+.display-style-poster .card-filename {
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
 /* Skeleton */
 .skeleton {
   background: var(--bg-secondary);

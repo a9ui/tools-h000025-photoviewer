@@ -3,6 +3,7 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import { afterEach, describe, expect, it } from 'vitest';
+import type { ImageFile } from './types';
 import { getFolderBuckets, scanDirectory, searchIndex, setIndex } from './indexer';
 
 const ONE_BY_ONE_PNG = Buffer.from(
@@ -33,6 +34,22 @@ function writePng(filePath: string) {
 function writeImagePlaceholder(filePath: string) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, Buffer.from('placeholder image bytes'));
+}
+
+function makeIndexedImage(filename: string, index: number): ImageFile {
+  const absolutePath = path.join('C:\\PhotoViewerTest', filename);
+  const encodedPath = encodeURIComponent(absolutePath);
+  return {
+    id: absolutePath,
+    filename,
+    absolutePath,
+    fileUrl: `/api/image?path=${encodedPath}&thumb=true`,
+    displayUrl: `/api/image?path=${encodedPath}&display=true`,
+    fullUrl: `/api/image?path=${encodedPath}`,
+    metadata: null,
+    createdAt: index,
+    mtime: index,
+  };
 }
 
 afterEach(() => {
@@ -235,5 +252,31 @@ describe('scanDirectory', () => {
 
     const folders = getFolderBuckets(dirSet);
     expect(folders.map((folder) => folder.key).sort()).toEqual(['0:day-a', '1:day-b']);
+  });
+
+  it('keeps random ordering stable for the same seed and changes it for another seed', () => {
+    setIndex([
+      makeIndexedImage('alpha.png', 1),
+      makeIndexedImage('beta.png', 2),
+      makeIndexedImage('gamma.png', 3),
+      makeIndexedImage('delta.png', 4),
+      makeIndexedImage('epsilon.png', 5),
+      makeIndexedImage('zeta.png', 6),
+    ]);
+
+    const first = searchIndex('', 0, 20, 'random', undefined, undefined, undefined, undefined, undefined, 'seed-a')
+      .results
+      .map((image) => image.filename);
+    const repeat = searchIndex('', 0, 20, 'random', undefined, undefined, undefined, undefined, undefined, 'seed-a')
+      .results
+      .map((image) => image.filename);
+    const reshuffled = searchIndex('', 0, 20, 'random', undefined, undefined, undefined, undefined, undefined, 'seed-b')
+      .results
+      .map((image) => image.filename);
+
+    expect(repeat).toEqual(first);
+    expect(reshuffled).not.toEqual(first);
+    expect([...first].sort()).toEqual(['alpha.png', 'beta.png', 'delta.png', 'epsilon.png', 'gamma.png', 'zeta.png']);
+    expect([...reshuffled].sort()).toEqual(['alpha.png', 'beta.png', 'delta.png', 'epsilon.png', 'gamma.png', 'zeta.png']);
   });
 });

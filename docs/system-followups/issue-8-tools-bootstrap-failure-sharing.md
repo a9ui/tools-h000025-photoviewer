@@ -1,4 +1,4 @@
-# Issue #8 Tools Bootstrap Failure Sharing
+﻿# Issue #8 Tools Bootstrap Failure Sharing
 
 ## Result
 
@@ -14,7 +14,7 @@ Updated files:
 - `C:\Users\a9ui\Desktop\Tools\System\scripts\check-services.ps1`
 - `C:\Users\a9ui\Desktop\Tools\System\scripts\verify-system.ps1`
 - `C:\Users\a9ui\Desktop\Tools\System\scripts\integration-smoke.ps1`
-- `C:\Users\a9ui\Desktop\Tools\H000025_PhotoViewer\scripts\verify-project.ps1`
+- `C:\Users\a9ui\Desktop\Tools\Projects\H000025_PhotoViewer\scripts\verify-project.ps1`
 
 ## Rules Added
 
@@ -39,7 +39,7 @@ Updated files:
 - `powershell -ExecutionPolicy Bypass -File C:\Users\a9ui\Desktop\Tools\System\scripts\check-services.ps1 -Json`
 - `powershell -ExecutionPolicy Bypass -File C:\Users\a9ui\Desktop\Tools\System\scripts\verify-system.ps1 -Json`
 - `powershell -ExecutionPolicy Bypass -File C:\Users\a9ui\Desktop\Tools\System\scripts\integration-smoke.ps1 -Json`
-- `powershell -ExecutionPolicy Bypass -File C:\Users\a9ui\Desktop\Tools\H000025_PhotoViewer\scripts\verify-project.ps1`
+- `powershell -ExecutionPolicy Bypass -File C:\Users\a9ui\Desktop\Tools\Projects\H000025_PhotoViewer\scripts\verify-project.ps1`
 
 Observed service-check findings:
 
@@ -73,3 +73,4 @@ PhotoViewer `verify-project.ps1` passed after switching to `corepack pnpm`:
 - typecheck: passed
 - production build: passed
 - build output: `/` first load JS 133 kB, shared JS 102 kB
+

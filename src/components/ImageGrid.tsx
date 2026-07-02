@@ -163,9 +163,11 @@ export default function ImageGrid() {
       dir: dirPath,
       q: searchQuery,
       sortBy: view.sortBy,
+      randomSeed: view.sortBy === 'random' ? view.randomSeed : '',
       dateFrom: view.dateFrom,
       dateTo: view.dateTo,
       mode: view.viewMode,
+      style: view.displayStyle,
       fav: showFavOnly ? 1 : 0,
       unfav: showUnfavOnly ? 1 : 0,
       favLevel: favoriteFilterLevel,
@@ -181,7 +183,9 @@ export default function ImageGrid() {
       showUnfavOnly,
       view.dateFrom,
       view.dateTo,
+      view.displayStyle,
       view.hiddenFolders,
+      view.randomSeed,
       view.sortBy,
       view.viewMode,
     ]
@@ -362,6 +366,11 @@ export default function ImageGrid() {
   }, [aspectRatioValue, gridCellWidth, view.aspectMode, view.viewMode]);
   const compactGridActions = view.viewMode === 'grid' && gridCellWidth > 0 && gridCellWidth <= COMPACT_ACTIONS_MAX_WIDTH;
   const showDateSeparators = view.sortBy === 'created-newest' || view.sortBy === 'created-oldest';
+  const imageObjectStyle: React.CSSProperties = view.displayStyle === 'poster'
+    ? {}
+    : view.aspectMode === 'original'
+      ? { objectFit: 'contain', background: 'var(--bg-tertiary)' }
+      : {};
 
   const fullCount = isClientFiltered ? clientFilteredVisible.length : searchTotal;
   const loadedSearchCount = useMemo(
@@ -945,7 +954,7 @@ export default function ImageGrid() {
           loading="eager"
           decoding="async"
           fetchPriority="high"
-          style={view.aspectMode === 'original' ? { objectFit: 'contain', background: 'var(--bg-tertiary)' } : {}}
+          style={imageObjectStyle}
         />
         {compactGridActions ? (
           favLevel > 0 && (
@@ -1026,7 +1035,10 @@ export default function ImageGrid() {
     <div className="grid-container" ref={containerRef}
       onWheel={handleThumbWheel}
       onClick={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
-      <div className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'}`} style={{ height: virtualRange.totalHeight }}>
+      <div
+        className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}
+        style={{ height: virtualRange.totalHeight }}
+      >
         {items}
       </div>
       {isSearching && <div className="virtual-loading-indicator" />}
