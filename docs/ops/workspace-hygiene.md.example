@@ -1,0 +1,23 @@
+# Workspace Hygiene
+
+Use this when a project creates large generated output, worktrees, caches, or
+temporary artifacts.
+
+Workspace rule source:
+
+- `..\..\System\docs\workspace-hygiene.md`
+- `..\..\System\scripts\workspace-hygiene-check.ps1`
+
+## Local Contract
+
+- Keep source, durable reports, user state, and expensive generated outputs.
+- Treat caches, build output, extracted duplicates, and abandoned worktrees as
+  cleanup candidates only after classification.
+- Take a rescue snapshot before cleaning uncommitted or user-visible work.
+- Do not delete H/W/I project folders outside the active scope.
+
+Run from the Tools root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\System\scripts\workspace-hygiene-check.ps1 -Json
+```

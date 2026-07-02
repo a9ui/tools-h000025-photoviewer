@@ -40,9 +40,15 @@ gallery manager.
   decoding, and avoidable client re-renders.
 - Add small instrumentation where needed to prove improvements.
 - Keep GitHub as the source of truth for milestones, issues, PRs, and CI.
-- Keep SQLite as Codex's local job ledger.
+- GitHub is the official source of truth for code, issues, PRs, CI, and
+  milestone state.
+- SQLite is a local ledger/cache for Codex jobs and service state, not a source
+  of truth.
 - Use Cursor for normal implementation tasks and Codex for control, review,
   small fixes, and integration.
+- Large artifacts follow the workspace context-budget policy: do not load raw
+  local DBs, generated reports, caches, `.codex`, `.agents`, or large logs into
+  model context by default.
 
 ## Non-goals
 

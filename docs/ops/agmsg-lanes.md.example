@@ -1,0 +1,29 @@
+# Agmsg Lanes
+
+Use this when the project enables Agmsg.
+
+Workspace rule source:
+
+- `..\..\System\docs\agmsg.md`
+- `..\..\System\docs\agent-roles.md`
+- `..\..\System\docs\services.md`
+
+## Lane Contract
+
+- Agmsg carries short pointers, ACKs, status, and artifact paths.
+- GitHub remains the official source of truth after publication.
+- Do not put secrets, raw credentials, browser state, or long transcripts in
+  Agmsg.
+- Use `required_reply=answer` only when a human or lane session is expected to
+  consume the inbox during the milestone.
+
+## Smoke
+
+From the Tools root:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-console.ps1 -NoConsume
+powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-trace.ps1 -CorrelationId <id>
+```
+
+Record the result in the project issue or milestone report.

@@ -43,7 +43,15 @@ try {
     "package.json",
     "src\app\page.tsx",
     "docs\requirements.md",
-    "docs\spec.md"
+    "docs\spec.md",
+    "tasks\README.md",
+    "tasks\system-migration-20260702-h000025\task.md",
+    "docs\ops\README.md",
+    "docs\ops\agmsg-lanes.md.example",
+    "docs\ops\oracle-lrb-pro.md.example",
+    "docs\ops\cursor-dispatch.md.example",
+    "docs\ops\workspace-hygiene.md.example",
+    "docs\ops\milestone-closeout.md.example"
   )
 
   $missing = @($required | Where-Object { -not (Test-Path $_) })
@@ -51,6 +59,59 @@ try {
     [pscustomobject]@{ ok = $false; missing = $missing } | ConvertTo-Json -Depth 5
     exit 1
   }
+
+  function Read-ProjectFile {
+    param([string]$RelativePath)
+    Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $Root $RelativePath)
+  }
+
+  function Test-TextContains {
+    param(
+      [string]$Name,
+      [string]$Text,
+      [string[]]$Needles
+    )
+    $missingNeedles = @($Needles | Where-Object { $Text -notmatch [regex]::Escape($_) })
+    if ($missingNeedles.Count -gt 0) {
+      throw "$Name missing required text: $($missingNeedles -join ', ')"
+    }
+  }
+
+  $agents = Read-ProjectFile "AGENTS.md"
+  Test-TextContains "AGENTS.md" $agents @(
+    "Feature Switches",
+    "Agmsg: ON",
+    "LRB Oracle: ON",
+    "CursorAgent: ON",
+    "Claude UI: optional",
+    "GrokSwarmSystem: optional",
+    "TaskBarQuota WatchDog: OFF",
+    "Linear: OFF by default",
+    "system-migration-20260702-h000025",
+    "context-budget"
+  )
+
+  $project = Read-ProjectFile "PROJECT.md"
+  Test-TextContains "PROJECT.md" $project @(
+    "GitHub is the official source of truth",
+    "SQLite is a local ledger",
+    "Large artifacts follow"
+  )
+
+  $design = Read-ProjectFile "DESIGN.md"
+  Test-TextContains "DESIGN.md" $design @(
+    "Human Surface",
+    "Data / State",
+    "Error / Empty / Warning States"
+  )
+
+  $opsReadme = Read-ProjectFile "docs\ops\README.md"
+  Test-TextContains "docs/ops/README.md" $opsReadme @(
+    "Ops Examples",
+    "agmsg.md",
+    "oracle.md",
+    "workflow.md"
+  )
 
   Invoke-Pnpm test:unit
   Invoke-Pnpm typecheck
