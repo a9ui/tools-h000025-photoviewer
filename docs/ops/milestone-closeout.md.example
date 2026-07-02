@@ -1,0 +1,20 @@
+# Milestone Closeout
+
+Use this at milestone end.
+
+Workspace rule source:
+
+- `..\..\System\docs\session-hygiene.md`
+- `..\..\System\docs\workflow.md`
+- `..\..\System\docs\github-pr-rules.md`
+- `..\..\System\docs\current-system-summary.md`
+
+## Checklist
+
+- Verify passed locally and, when applicable, in GitHub Actions.
+- PR/issue state is recorded with links.
+- External advice is classified as ADOPT, PARTIAL_ADOPT, REJECT, DEFER, or
+  NEEDS_HUMAN.
+- Missing replies or untested lanes are recorded honestly.
+- Remaining work is moved to one bounded issue or next milestone handoff.
+- The next Codex Goal is milestone-sized, or the system issue is closed.

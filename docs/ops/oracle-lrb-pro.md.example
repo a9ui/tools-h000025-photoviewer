@@ -1,0 +1,26 @@
+# Oracle / LRB / PRO
+
+Use this when the project enables LRB Oracle or human-run ChatGPT PRO review.
+
+Workspace rule source:
+
+- `..\..\System\docs\oracle.md`
+- `..\..\System\docs\oracle-milestone-pack.md`
+- `..\..\System\docs\oracle-runner-procedure.md`
+- `..\..\System\docs\services.md`
+
+## Contract
+
+- Local Review Bridge is the preferred local-folder review route when it passes
+  ON/status preflight.
+- ZIP or sanitized packs are fallback routes.
+- PRO review is human-run unless the user explicitly authorizes browser
+  interaction for a bounded test.
+- Oracle advice is classified as ADOPT, PARTIAL_ADOPT, REJECT, DEFER, or
+  NEEDS_HUMAN before it changes the repo.
+
+## Forbidden
+
+- Do not read credentials, browser state, or raw local databases.
+- Do not add paid polling, provider refresh loops, or repository mutations from
+  the browser/oracle runner.

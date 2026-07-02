@@ -1,0 +1,24 @@
+# Cursor Dispatch
+
+Use this when the project delegates implementation to Cursor.
+
+Workspace rule source:
+
+- `..\..\System\docs\workflow.md`
+- `..\..\System\docs\agent-roles.md`
+- `..\..\System\docs\github-pr-rules.md`
+- `..\..\System\docs\context-budget.md`
+
+## Dispatch Packet
+
+Each task file should name:
+
+- target branch or PR,
+- files allowed to touch,
+- files/directories forbidden,
+- acceptance checks,
+- verify command,
+- expected handoff format.
+
+Default rally count is zero. Use one return round only when a narrow fix is
+cheaper than local repair. Codex PM owns final adoption, PR review, and merge.

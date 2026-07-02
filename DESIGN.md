@@ -34,6 +34,24 @@ slows scanning and browsing workflows.
 - Keyboard and pointer navigation in the modal should remain consistent with
   the current app behavior.
 
+## Human Surface
+
+The app should read as a local operator tool: dense, predictable, and quiet.
+Controls should name concrete actions, status should be plain, and warnings
+should explain what is blocked without suggesting cloud or paid workflows.
+
+## Data / State
+
+Local folder paths, scan progress, favorites, tags, settings, enhancement jobs,
+and cache state should remain explicit. User-visible state must not be inferred
+from background enhancement workers.
+
+## Error / Empty / Warning States
+
+Empty folders, inaccessible files, missing thumbnails, failed enhancement jobs,
+and unavailable local tools should produce stable messages and leave normal
+browsing controls usable.
+
 ## Responsive
 
 The main target is a Windows desktop viewport. Smaller widths should preserve
