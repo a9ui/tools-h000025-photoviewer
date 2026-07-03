@@ -69,8 +69,52 @@ describe('thumbnail warmup batcher', () => {
     batcher.flush();
 
     expect(calls).toEqual([
-      { dirPath: 'C:/images', priority: 'nearby', paths: ['a.png'] },
       { dirPath: 'C:/images', priority: 'visible', paths: ['b.png'] },
+      { dirPath: 'C:/images', priority: 'nearby', paths: ['a.png'] },
+    ]);
+  });
+
+  it('dispatches visible paths before earlier queued nearby overscan', () => {
+    const { batcher, calls } = createManualBatcher();
+
+    batcher.enqueue(['before-visible.png'], {
+      dirPath: 'C:/images',
+      contextKey: 'grid',
+      priority: 'nearby',
+    });
+    batcher.enqueue(['visible.png'], {
+      dirPath: 'C:/images',
+      contextKey: 'grid',
+      priority: 'visible',
+    });
+
+    batcher.flush();
+
+    expect(calls).toEqual([
+      { dirPath: 'C:/images', priority: 'visible', paths: ['visible.png'] },
+      { dirPath: 'C:/images', priority: 'nearby', paths: ['before-visible.png'] },
+    ]);
+  });
+
+  it('lets focused modal work outrank visible thumbnails', () => {
+    const { batcher, calls } = createManualBatcher();
+
+    batcher.enqueue(['visible.png'], {
+      dirPath: 'C:/images',
+      contextKey: 'grid',
+      priority: 'visible',
+    });
+    batcher.enqueue(['modal.png'], {
+      dirPath: 'C:/images',
+      contextKey: 'modal',
+      priority: 'focused',
+    });
+
+    batcher.flush();
+
+    expect(calls).toEqual([
+      { dirPath: 'C:/images', priority: 'focused', paths: ['modal.png'] },
+      { dirPath: 'C:/images', priority: 'visible', paths: ['visible.png'] },
     ]);
   });
 

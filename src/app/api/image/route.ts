@@ -28,6 +28,7 @@ function parseThumbPriority(request: NextRequest, warmOnly: boolean): number {
     ''
   ).toLowerCase();
 
+  if (value === 'focused' || value === 'current' || value === 'modal') return -1;
   if (value === 'high' || value === 'visible') return 0;
   if (value === 'low' || value === 'preload' || value === 'nearby') return 2;
   return warmOnly ? 2 : 1;

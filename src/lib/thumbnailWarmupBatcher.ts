@@ -1,4 +1,4 @@
-export type ThumbnailWarmupPriority = 'visible' | 'nearby';
+export type ThumbnailWarmupPriority = 'focused' | 'visible' | 'nearby';
 
 type PendingWarmup = {
   path: string;
@@ -32,9 +32,14 @@ export type ThumbnailWarmupEnqueueOptions = {
 
 const DEFAULT_DELAY_MS = 40;
 const DEFAULT_DEDUPE_MS = 3500;
+const PRIORITY_RANK: Record<ThumbnailWarmupPriority, number> = {
+  focused: 0,
+  visible: 1,
+  nearby: 2,
+};
 
 function isHigherPriority(next: ThumbnailWarmupPriority, previous: ThumbnailWarmupPriority) {
-  return next === 'visible' && previous !== 'visible';
+  return PRIORITY_RANK[next] < PRIORITY_RANK[previous];
 }
 
 function getWarmupKey(dirPath: string, contextKey: string, imagePath: string) {
@@ -125,7 +130,7 @@ export function createThumbnailWarmupBatcher({
     const currentTime = now();
     const records = Array.from(pending.entries())
       .map(([key, record]) => ({ key, ...record }))
-      .sort((a, b) => a.sequence - b.sequence);
+      .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.sequence - b.sequence);
     pending.clear();
 
     const groups = new Map<string, PendingWarmup[]>();

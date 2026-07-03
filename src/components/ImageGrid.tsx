@@ -5,7 +5,7 @@ import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
-import { createThumbnailWarmupBatcher } from '../lib/thumbnailWarmupBatcher';
+import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
 import {
   buildDateSectionLayout,
   findDateSectionItemTop,
@@ -29,12 +29,12 @@ const BACKGROUND_SEARCH_PAGE_DELAY_MS = 90;
 const BACKGROUND_SEARCH_PAGES = 2;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
 
-function withThumbPriorityParams(fileUrl: string, priority: 'visible' | 'nearby' = 'visible') {
+function withThumbPriorityParams(fileUrl: string, priority: ThumbnailWarmupPriority = 'visible') {
   const separator = fileUrl.includes('?') ? '&' : '?';
   return `${fileUrl}${separator}priority=${priority}`;
 }
 
-function dispatchThumbnailWarmup(paths: string[], dirPath: string, priority: 'visible' | 'nearby' = 'nearby') {
+function dispatchThumbnailWarmup(paths: string[], dirPath: string, priority: ThumbnailWarmupPriority = 'nearby') {
   if (paths.length === 0) return;
   void fetch('/api/thumbs/warm', {
     method: 'POST',
@@ -498,6 +498,12 @@ export default function ImageGrid() {
     };
   }, [fullCount, gridCellHeight, gridColumns, scrollTop, sectionLayout, view.viewMode, viewportHeight]);
 
+  const getThumbPriority = (virtualIndex: number): ThumbnailWarmupPriority => (
+    virtualIndex >= visiblePriorityRange.start && virtualIndex <= visiblePriorityRange.end
+      ? 'visible'
+      : 'nearby'
+  );
+
   useEffect(() => {
     if (view.viewMode !== 'grid') {
       previousThumbSizeRef.current = view.thumbSize;
@@ -814,6 +820,7 @@ export default function ImageGrid() {
     const isFav = favLevel > 0;
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = !seenImageIds[image.id];
+    const thumbPriority = getThumbPriority(virtualIndex);
     const previousImage = isClientFiltered
       ? clientFilteredVisible[virtualIndex - 1]?.image ?? null
       : searchResults[sourceIndex - 1] ?? null;
@@ -843,13 +850,13 @@ export default function ImageGrid() {
         <div className="list-thumb">
           <CachedImage
             src={image.fileUrl}
-            requestSrc={withThumbPriorityParams(image.fileUrl, 'visible')}
+            requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
             fallbackSrc={image.fullUrl}
             cacheKind="thumb"
             alt={image.filename}
-            loading="eager"
+            loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
             decoding="async"
-            fetchPriority="high"
+            fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
           />
         </div>
         <div className="list-info">
@@ -914,6 +921,7 @@ export default function ImageGrid() {
     const isFav = favLevel > 0;
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = !seenImageIds[image.id];
+    const thumbPriority = getThumbPriority(virtualIndex);
     const previousImage = isClientFiltered
       ? clientFilteredVisible[virtualIndex - 1]?.image ?? null
       : searchResults[sourceIndex - 1] ?? null;
@@ -947,13 +955,13 @@ export default function ImageGrid() {
         )}
         <CachedImage
           src={image.fileUrl}
-          requestSrc={withThumbPriorityParams(image.fileUrl, 'visible')}
+          requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
           fallbackSrc={image.fullUrl}
           cacheKind="thumb"
           alt={image.filename}
-          loading="eager"
+          loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
           decoding="async"
-          fetchPriority="high"
+          fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
           style={imageObjectStyle}
         />
         {compactGridActions ? (

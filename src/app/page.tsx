@@ -54,6 +54,17 @@ function ViewerApp() {
     hiddenFolders: view.hiddenFolders,
   });
 
+  const rememberLastDirSet = useCallback((dir: string) => {
+    const normalized = formatDirSet(parseDirSet(dir));
+    if (!normalized) return;
+    setLastDirSet(normalized);
+    try {
+      localStorage.setItem('pvu_last_dir_set', normalized);
+    } catch {
+      // ignore localStorage write errors
+    }
+  }, []);
+
   useEffect(() => {
     migrateLegacyPhotoviewerState();
     let localRecentDirs: string[] = [];
@@ -129,21 +140,24 @@ function ViewerApp() {
       .catch(() => {});
   }, []);
 
+  useEffect(() => {
+    rememberLastDirSet(dirPath);
+  }, [dirPath, rememberLastDirSet]);
+
   const rememberRecentDir = useCallback((dir: string) => {
     const normalized = formatDirSet(parseDirSet(dir));
     if (!normalized) return;
-    setLastDirSet(normalized);
+    rememberLastDirSet(normalized);
     setRecentDirs((prev) => {
       const next = [normalized, ...prev.filter((v) => v !== normalized)].slice(0, 8);
       try {
         localStorage.setItem('pvu_recent_dirs', JSON.stringify(next));
-        localStorage.setItem('pvu_last_dir_set', normalized);
       } catch {
         // ignore localStorage write errors
       }
       return next;
     });
-  }, []);
+  }, [rememberLastDirSet]);
 
   const addFolders = useCallback((folders: string[] | string) => {
     const next = appendDirSet(dirPath, folders);

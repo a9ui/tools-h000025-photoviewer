@@ -454,12 +454,12 @@ export default function ImageModal() {
   useEffect(() => {
     if (!img || selectedIndex === null) return;
 
-    const candidates = new Map<string, { id: string; displayUrl: string; priority: 'high' | 'auto' }>();
-    candidates.set(img.id, { id: img.id, displayUrl: img.displayUrl || img.fullUrl, priority: 'high' });
+    const candidates = new Map<string, { id: string; displayUrl: string; priority: 'focused' | 'nearby' }>();
+    candidates.set(img.id, { id: img.id, displayUrl: img.displayUrl || img.fullUrl, priority: 'focused' });
 
     const addCandidate = (candidate: typeof img | null | undefined) => {
       if (!candidate) return;
-      candidates.set(candidate.id, { id: candidate.id, displayUrl: candidate.displayUrl || candidate.fullUrl, priority: 'auto' });
+      candidates.set(candidate.id, { id: candidate.id, displayUrl: candidate.displayUrl || candidate.fullUrl, priority: 'nearby' });
     };
 
     if (modalImageIds.length > 0 && modalOrderIndex >= 0) {
@@ -477,7 +477,7 @@ export default function ImageModal() {
       const key = getFullImageKey(candidate.id, candidate.displayUrl);
       if (readyFullImageKeys.includes(key) || failedFullImageKeys.includes(key)) continue;
       const separator = candidate.displayUrl.includes('?') ? '&' : '?';
-      const requestUrl = `${candidate.displayUrl}${separator}priority=${candidate.priority === 'high' ? 'visible' : 'nearby'}`;
+      const requestUrl = `${candidate.displayUrl}${separator}priority=${candidate.priority}`;
       loadCachedImageUrl(candidate.displayUrl, requestUrl, 'display')
         .then(() => {
           if (!cancelled) rememberFullImageReady(key);
@@ -972,7 +972,7 @@ export default function ImageModal() {
             <CachedImage
               key={fullImageKey}
               src={modalImageSrc}
-              requestSrc={`${modalImageSrc}${modalImageSrc.includes('?') ? '&' : '?'}priority=visible`}
+              requestSrc={`${modalImageSrc}${modalImageSrc.includes('?') ? '&' : '?'}priority=focused`}
               fallbackSrc={img.fullUrl}
               cacheKind="display"
               alt={img.filename}

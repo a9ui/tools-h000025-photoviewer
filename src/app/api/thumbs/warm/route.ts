@@ -41,11 +41,13 @@ export async function POST(request: NextRequest) {
       .map((item) => path.resolve(item))
     : [];
   const priorityRaw = String((body as { priority?: unknown }).priority ?? '').toLowerCase();
-  const priority = priorityRaw === 'visible' || priorityRaw === 'high'
-    ? 0
-    : priorityRaw === 'nearby'
-      ? 1
-      : 2;
+  const priority = priorityRaw === 'focused' || priorityRaw === 'current' || priorityRaw === 'modal'
+    ? -1
+    : priorityRaw === 'visible' || priorityRaw === 'high'
+      ? 0
+      : priorityRaw === 'nearby'
+        ? 1
+        : 2;
   const limitValue = Number((body as { limit?: unknown }).limit);
   const limit = Number.isFinite(limitValue) && limitValue > 0
     ? Math.min(Math.trunc(limitValue), 200000)
