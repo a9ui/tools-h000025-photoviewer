@@ -19,7 +19,7 @@ const OUTSIDE_FOLDER_KEY = '__OUTSIDE__';
 const SCAN_ROOT_KEY = '__SCAN_ROOT__';
 const RECENT_SCAN_TARGET_VERIFY_MS = 48 * 60 * 60 * 1000;
 
-type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name';
+type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
 type ScanStage = 'preparing' | 'scanning';
 
@@ -484,14 +484,14 @@ function buildImageFiles(cache: CacheData): ImageFile[] {
 }
 
 let _index: ImageFile[] = [];
-let _sortedBySort: Partial<Record<SortBy, ImageFile[]>> = {};
+let _sortedBySort = new Map<string, ImageFile[]>();
 let _searchTextById: Map<string, string> | null = null;
 let _searchCache = new Map<string, ImageFile[]>();
 let _tagCache: Array<{ tag: string; count: number }> | null = null;
 let _folderCache = new Map<string, FolderBucket[]>();
 
 function invalidateDerivedCaches() {
-  _sortedBySort = {};
+  _sortedBySort = new Map<string, ImageFile[]>();
   _searchTextById = null;
   _searchCache = new Map<string, ImageFile[]>();
   _tagCache = null;
@@ -502,8 +502,18 @@ function compareByFilename(a: ImageFile, b: ImageFile) {
   return a.filename.localeCompare(b.filename, undefined, { sensitivity: 'base' });
 }
 
-function getSortedSource(sortBy: SortBy) {
-  const cached = _sortedBySort[sortBy];
+function getRandomSortKey(imageId: string, seed: string) {
+  return crypto
+    .createHash('sha1')
+    .update(seed)
+    .update('\0')
+    .update(imageId.toLowerCase())
+    .digest('hex');
+}
+
+function getSortedSource(sortBy: SortBy, randomSeed = '') {
+  const cacheKey = sortBy === 'random' ? `${sortBy}:${randomSeed || 'default'}` : sortBy;
+  const cached = _sortedBySort.get(cacheKey);
   if (cached) return cached;
 
   let sorted: ImageFile[];
@@ -532,13 +542,25 @@ function getSortedSource(sortBy: SortBy) {
     case 'name':
       sorted = [..._index].sort(compareByFilename);
       break;
+    case 'random': {
+      const seed = randomSeed || 'default';
+      sorted = _index
+        .map((image) => ({ image, randomKey: getRandomSortKey(image.id, seed) }))
+        .sort((a, b) => {
+          const bySeed = a.randomKey.localeCompare(b.randomKey);
+          if (bySeed !== 0) return bySeed;
+          return compareByFilename(a.image, b.image);
+        })
+        .map((item) => item.image);
+      break;
+    }
     case 'newest':
     default:
       sorted = [..._index].sort((a, b) => b.mtime - a.mtime);
       break;
   }
 
-  _sortedBySort[sortBy] = sorted;
+  _sortedBySort.set(cacheKey, sorted);
   return sorted;
 }
 
@@ -604,7 +626,8 @@ function buildSearchCacheKey(
   dateFrom?: string,
   dateTo?: string,
   dirPath?: string,
-  hiddenFolders?: string[]
+  hiddenFolders?: string[],
+  randomSeed?: string
 ): string {
   const normalizedDirs = normalizeDirPaths(dirPath);
   const hidden = (hiddenFolders ?? [])
@@ -616,6 +639,7 @@ function buildSearchCacheKey(
   return JSON.stringify({
     q: query,
     sortBy,
+    randomSeed: sortBy === 'random' ? randomSeed ?? '' : '',
     dateFrom: dateFrom ?? '',
     dateTo: dateTo ?? '',
     dirPaths: normalizedDirs,
@@ -629,9 +653,10 @@ function buildFilteredAndSorted(
   dateFrom?: string,
   dateTo?: string,
   dirPath?: string,
-  hiddenFolders?: string[]
+  hiddenFolders?: string[],
+  randomSeed?: string
 ): ImageFile[] {
-  const source = getSortedSource(sortBy);
+  const source = getSortedSource(sortBy, randomSeed);
   const terms = query
     .split(',')
     .map((token) => token.trim().toLowerCase())
@@ -757,14 +782,15 @@ export function searchIndex(
   dateTo?: string,
   favIds?: Set<string>,
   dirPath?: string,
-  hiddenFolders?: string[]
+  hiddenFolders?: string[],
+  randomSeed?: string
 ): { results: ImageFile[]; total: number; page: number; totalPages: number } {
   ensureIndexLoaded();
 
-  const key = buildSearchCacheKey(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders);
+  const key = buildSearchCacheKey(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
   let filtered = _searchCache.get(key);
   if (!filtered) {
-    filtered = buildFilteredAndSorted(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders);
+    filtered = buildFilteredAndSorted(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
     pushSearchCache(key, filtered);
   }
 

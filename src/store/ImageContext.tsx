@@ -14,17 +14,20 @@ import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
 export type AspectMode = 'original' | 'square' | 'portrait';
-export type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name';
+export type DisplayStyle = 'standard' | 'compact' | 'poster';
+export type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
 export interface ViewSettings {
   viewMode: ViewMode;
   thumbSize: number;       // px, range 40-600
   aspectMode: AspectMode;
+  displayStyle: DisplayStyle;
   columns: number;         // 0 = auto
   sidebarOpen: boolean;
   rightPanelOpen: boolean;
   rightPanelWidth: number; // px
   sortBy: SortBy;
+  randomSeed: string;
   folderSortBy: FolderSortBy;
   modalEdgeRatio: number;
   enhanceQueueOpen: boolean;
@@ -37,11 +40,13 @@ const DEFAULT_VIEW: ViewSettings = {
   viewMode: 'grid',
   thumbSize: 200,
   aspectMode: 'original',
+  displayStyle: 'standard',
   columns: 0,
   sidebarOpen: true,
   rightPanelOpen: true,
   rightPanelWidth: 320,
   sortBy: 'newest',
+  randomSeed: 'default',
   folderSortBy: 'name-asc',
   modalEdgeRatio: 0.28,
   enhanceQueueOpen: true,
@@ -218,6 +223,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const searchMetaRef = useRef<{
     query: string;
     sortBy: SortBy;
+    randomSeed: string;
     dateFrom: string;
     dateTo: string;
     hiddenFolders: string[];
@@ -226,6 +232,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }>({
     query: '',
     sortBy: DEFAULT_VIEW.sortBy,
+    randomSeed: DEFAULT_VIEW.randomSeed,
     dateFrom: '',
     dateTo: '',
     hiddenFolders: [],
@@ -554,6 +561,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     query: string,
     page: number,
     sortBy: SortBy,
+    randomSeed: string,
     dateFrom: string,
     dateTo: string,
     hiddenFolders: string[],
@@ -571,11 +579,14 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     try {
       const fromParam = dateFrom ? `&dateFrom=${encodeURIComponent(dateFrom)}` : '';
       const toParam = dateTo ? `&dateTo=${encodeURIComponent(dateTo)}` : '';
+      const randomSeedParam = sortBy === 'random'
+        ? `&randomSeed=${encodeURIComponent(randomSeed || DEFAULT_VIEW.randomSeed)}`
+        : '';
       const hiddenParam = hiddenFolders.length > 0
         ? `&hiddenFolders=${encodeURIComponent(JSON.stringify(hiddenFolders))}`
         : '';
       const dirParam = currentDirPath ? `&dir=${encodeURIComponent(currentDirPath)}` : '';
-      const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${fromParam}${toParam}${hiddenParam}${dirParam}`;
+      const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${randomSeedParam}${fromParam}${toParam}${hiddenParam}${dirParam}`;
       const res = await fetch(url);
       const data: SearchResponse = await res.json();
 
@@ -585,6 +596,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         generation !== searchGenerationRef.current ||
         meta.query !== query ||
         meta.sortBy !== sortBy ||
+        meta.randomSeed !== randomSeed ||
         meta.dateFrom !== dateFrom ||
         meta.dateTo !== dateTo ||
         meta.hiddenFoldersKey !== buildHiddenFoldersKey(hiddenFolders) ||
@@ -637,6 +649,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const resetSearch = useCallback((
     query: string,
     sortBy: SortBy,
+    randomSeed: string,
     dateFrom: string,
     dateTo: string,
     hiddenFolders: string[],
@@ -645,6 +658,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchMetaRef.current = {
       query,
       sortBy,
+      randomSeed,
       dateFrom,
       dateTo,
       hiddenFolders,
@@ -682,6 +696,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         meta.query,
         page,
         meta.sortBy,
+        meta.randomSeed,
         meta.dateFrom,
         meta.dateTo,
         meta.hiddenFolders,
@@ -696,17 +711,17 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchQueryRef.current = q;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      resetSearch(q, view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-      void doSearchPage(q, 0, view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
+      resetSearch(q, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
+      void doSearchPage(q, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
     }, 150);
-  }, [dirPath, doSearchPage, resetSearch, view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders]);
+  }, [dirPath, doSearchPage, resetSearch, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders]);
 
   useEffect(() => {
     if (phase !== 'viewer') return;
     const query = searchQueryRef.current;
-    resetSearch(query, view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-    void doSearchPage(query, 0, view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-  }, [view.sortBy, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, phase, doSearchPage, resetSearch]);
+    resetSearch(query, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
+    void doSearchPage(query, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
+  }, [view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, phase, doSearchPage, resetSearch]);
 
   useEffect(() => {
     if (phase !== 'viewer' || !dirPath.trim() || totalIndexed <= 0) return;
@@ -855,6 +870,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           meta.query,
           0,
           meta.sortBy,
+          meta.randomSeed,
           meta.dateFrom,
           meta.dateTo,
           meta.hiddenFolders,

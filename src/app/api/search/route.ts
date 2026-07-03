@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { searchIndex } from '@/lib/indexer';
 
-type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name';
+type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +16,7 @@ export async function GET(request: NextRequest) {
   const page = parseInt(request.nextUrl.searchParams.get('page') || '0', 10);
   const size = parseInt(request.nextUrl.searchParams.get('size') || '100', 10);
   const sortByParam = request.nextUrl.searchParams.get('sortBy');
+  const randomSeed = request.nextUrl.searchParams.get('randomSeed') || undefined;
   const dateFrom = request.nextUrl.searchParams.get('dateFrom') || undefined;
   const dateTo = request.nextUrl.searchParams.get('dateTo') || undefined;
   const dirPath = request.nextUrl.searchParams.get('dir') || undefined;
@@ -37,7 +38,8 @@ export async function GET(request: NextRequest) {
     sortByParam === 'oldest' ||
     sortByParam === 'created-newest' ||
     sortByParam === 'created-oldest' ||
-    sortByParam === 'name'
+    sortByParam === 'name' ||
+    sortByParam === 'random'
       ? sortByParam
       : 'newest';
 
@@ -50,7 +52,8 @@ export async function GET(request: NextRequest) {
     dateTo,
     undefined,
     dirPath,
-    hiddenFolders
+    hiddenFolders,
+    randomSeed
   );
 
   return NextResponse.json(result);

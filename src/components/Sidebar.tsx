@@ -12,6 +12,10 @@ function toDateInputValue(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function createRandomSeed() {
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 export default function Sidebar() {
   const {
     view,
@@ -227,6 +231,18 @@ export default function Sidebar() {
     } finally {
       setAddingFolder(false);
     }
+  };
+
+  const applyDisplayStyle = (displayStyle: typeof view.displayStyle) => {
+    if (displayStyle === 'compact') {
+      setView({ displayStyle, viewMode: 'grid', aspectMode: 'square', thumbSize: 140 });
+      return;
+    }
+    if (displayStyle === 'poster') {
+      setView({ displayStyle, viewMode: 'grid', aspectMode: 'portrait', thumbSize: 240 });
+      return;
+    }
+    setView({ displayStyle });
   };
 
   return (
@@ -457,7 +473,7 @@ export default function Sidebar() {
         </div>
 
         <div className="sidebar-pills">
-          {(['newest', 'oldest', 'created-newest', 'created-oldest', 'name'] as const).map((s) => (
+          {(['newest', 'oldest', 'created-newest', 'created-oldest', 'name', 'random'] as const).map((s) => (
             <button key={s} className={`pill ${view.sortBy === s ? 'active' : ''}`} onClick={() => setView({ sortBy: s })}>
               {s === 'newest'
                 ? 'Modified new'
@@ -467,10 +483,17 @@ export default function Sidebar() {
                     ? 'Created new'
                     : s === 'created-oldest'
                       ? 'Created old'
-                      : 'Name'}
+                      : s === 'random'
+                        ? 'Random'
+                        : 'Name'}
             </button>
           ))}
         </div>
+        {view.sortBy === 'random' && (
+          <button className="sidebar-link" style={{ marginTop: '0.55rem' }} onClick={() => setView({ randomSeed: createRandomSeed() })}>
+            Reshuffle
+          </button>
+        )}
       </div>
 
       <div className="sidebar-section">
@@ -489,6 +512,21 @@ export default function Sidebar() {
           <div className="sidebar-pills">
             <button className={`pill ${view.viewMode === 'grid' ? 'active' : ''}`} onClick={() => setView({ viewMode: 'grid' })}>Grid</button>
             <button className={`pill ${view.viewMode === 'list' ? 'active' : ''}`} onClick={() => setView({ viewMode: 'list' })}>List</button>
+          </div>
+        </div>
+
+        <div className="sidebar-row">
+          <span className="sidebar-row-label">Style</span>
+          <div className="sidebar-pills">
+            {(['standard', 'compact', 'poster'] as const).map((style) => (
+              <button
+                key={style}
+                className={`pill ${view.displayStyle === style ? 'active' : ''}`}
+                onClick={() => applyDisplayStyle(style)}
+              >
+                {style === 'standard' ? 'Standard' : style === 'compact' ? 'Compact' : 'Poster'}
+              </button>
+            ))}
           </div>
         </div>
 
