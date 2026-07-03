@@ -195,6 +195,7 @@ export default function ImageModal() {
   const pendingSingleClick = useRef<number | null>(null);
   const previousSelectedIndexRef = useRef<number | null>(null);
   const favoriteFeedbackTimer = useRef<number | null>(null);
+  const enhancedDisplayChoiceRef = useRef<Record<string, boolean>>({});
 
   useEffect(() => {
     const previousSelectedIndex = previousSelectedIndexRef.current;
@@ -335,9 +336,10 @@ export default function ImageModal() {
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
   const favLevel = img ? (favorites[img.id] ?? 0) : 0;
   const isFav = favLevel > 0;
-  const succeededEnhancementJobs = enhancementJobs.filter((job) => job.status === 'succeeded' && job.outputPath);
-  const activeEnhancementJob = enhancementJobs.find((job) => job.status === 'running' || job.status === 'queued') ?? null;
-  const failedEnhancementJob = enhancementJobs.find((job) => job.status === 'failed' && job.errorMessage) ?? null;
+  const currentEnhancementJobs = img ? enhancementJobs.filter((job) => job.sourceId === img.id) : [];
+  const succeededEnhancementJobs = currentEnhancementJobs.filter((job) => job.status === 'succeeded' && job.outputPath);
+  const activeEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'running' || job.status === 'queued') ?? null;
+  const failedEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'failed' && job.errorMessage) ?? null;
   const visibleEnhanceError = enhanceError || failedEnhancementJob?.errorMessage || '';
   const selectedEnhancedJob = succeededEnhancementJobs.find((job) => job.id === selectedEnhancedJobId) ?? succeededEnhancementJobs[0] ?? null;
   const enhancedSrc = selectedEnhancedJob
@@ -376,11 +378,13 @@ export default function ImageModal() {
         const autoShowJob = pendingAutoShowJobId
           ? succeeded.find((job) => job.id === pendingAutoShowJobId)
           : null;
+        const hasSavedDisplayChoice = Object.prototype.hasOwnProperty.call(enhancedDisplayChoiceRef.current, img.id);
         setEnhancementJobs(jobs);
         if (jobs.some((job) => job.status === 'queued' || job.status === 'running' || job.status === 'succeeded')) {
           setEnhanceError('');
         }
         if (autoShowJob) {
+          enhancedDisplayChoiceRef.current[img.id] = true;
           setSelectedEnhancedJobId(autoShowJob.id);
           setShowEnhanced(true);
           setPendingAutoShowJobId('');
@@ -390,8 +394,14 @@ export default function ImageModal() {
               ? current
               : succeeded[0]?.id ?? ''
           ));
+          if (succeeded.length > 0) {
+            setShowEnhanced(hasSavedDisplayChoice ? enhancedDisplayChoiceRef.current[img.id] : true);
+          }
         }
-        if (succeeded.length === 0) setShowEnhanced(false);
+        if (succeeded.length === 0) {
+          delete enhancedDisplayChoiceRef.current[img.id];
+          setShowEnhanced(false);
+        }
       } catch {
         if (!cancelled) {
           setEnhancementJobs([]);
@@ -558,9 +568,10 @@ export default function ImageModal() {
     const ok = window.confirm('Delete only the selected enhanced output? The original source image will not be touched.');
     if (!ok) return;
     await deleteEnhancementOutput(selectedEnhancedJob.id);
+    if (img) delete enhancedDisplayChoiceRef.current[img.id];
     setSelectedEnhancedJobId('');
     setShowEnhanced(false);
-  }, [selectedEnhancedJob]);
+  }, [img, selectedEnhancedJob]);
 
   const handleCancelEnhance = useCallback(async () => {
     if (!activeEnhancementJob) return;
@@ -570,6 +581,15 @@ export default function ImageModal() {
       setEnhanceError(error instanceof Error ? error.message : String(error));
     }
   }, [activeEnhancementJob]);
+
+  const toggleEnhancedView = useCallback(() => {
+    if (!img || !hasEnhancedOutput) return;
+    setShowEnhanced((current) => {
+      const next = !current;
+      enhancedDisplayChoiceRef.current[img.id] = next;
+      return next;
+    });
+  }, [hasEnhancedOutput, img]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (
@@ -605,7 +625,7 @@ export default function ImageModal() {
     }
     else if (key.toLowerCase() === 'e' && hasEnhancedOutput) {
       e.preventDefault();
-      setShowEnhanced((value) => !value);
+      toggleEnhancedView();
     }
     else if (isShortcutKey(key, keyBindings.enhanceImage) && img && !isEnhancing && !enhancementInProgress) {
       e.preventDefault();
@@ -616,7 +636,7 @@ export default function ImageModal() {
       setSidebarCollapsed((prev) => !prev);
     }
     else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, confirmBeforeDelete, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, showConfirmDelete]);
+  }, [close, confirmBeforeDelete, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, showConfirmDelete, toggleEnhancedView]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -894,6 +914,7 @@ export default function ImageModal() {
                   value={selectedEnhancedJob?.id ?? ''}
                   onChange={(event) => {
                     setSelectedEnhancedJobId(event.target.value);
+                    if (img) enhancedDisplayChoiceRef.current[img.id] = true;
                     setShowEnhanced(true);
                   }}
                   onClick={(event) => event.stopPropagation()}
@@ -911,7 +932,7 @@ export default function ImageModal() {
                 className={`modal-icon-btn ${showEnhanced ? 'fav-active' : ''}`}
                 onClick={(event) => {
                   event.stopPropagation();
-                  if (hasEnhancedOutput) setShowEnhanced((value) => !value);
+                  toggleEnhancedView();
                 }}
                 title={hasEnhancedOutput ? `Toggle original/enhanced (E): ${formatEnhancementDetails(selectedEnhancedJob)}` : 'Toggle original/enhanced (E)'}
                 disabled={!hasEnhancedOutput}
