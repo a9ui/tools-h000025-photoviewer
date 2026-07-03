@@ -814,6 +814,7 @@ a { color: inherit; text-decoration: none; }
   cursor: pointer;
   border-bottom: 1px solid rgba(255,255,255,0.03);
   transition: background var(--transition-fast);
+  contain: layout paint style;
 }
 .list-item:hover { background: rgba(255,255,255,0.03); }
 .list-item.is-selected {
@@ -1155,6 +1156,7 @@ a { color: inherit; text-decoration: none; }
 .virtual-canvas {
   position: relative;
   width: 100%;
+  contain: layout style;
 }
 
 .virtual-grid-item {
@@ -1258,6 +1260,7 @@ a { color: inherit; text-decoration: none; }
   aspect-ratio: 2/3;
   cursor: pointer;
   transition: transform 0.12s ease, box-shadow 0.12s ease;
+  contain: layout paint style;
 }
 .image-card:hover {
   transform: translateY(-2px);

@@ -55,6 +55,9 @@ const DEFAULT_VIEW: ViewSettings = {
   hiddenFolders: [],
 };
 
+const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
+const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
+
 // ── Context shape ──
 function normalizeFavorites(value: unknown): Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -80,6 +83,14 @@ function mergeFavorites(
     merged[id] = Math.max(merged[id] ?? 0, level);
   }
   return merged;
+}
+
+function writeJsonLocalStorage(key: string, value: unknown) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    // ignore storage quota or private-mode failures
+  }
 }
 
 interface Ctx {
@@ -212,12 +223,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [view, setViewState] = useState<ViewSettings>(DEFAULT_VIEW);
   const [perfEnabled, setPerfEnabledState] = useState(false);
   const [perfStats, setPerfStats] = useState({ searchCount: 0, lastSearchMs: 0, avgSearchMs: 0 });
-  const [searchScrollMemory, setSearchScrollMemory] = useState<Record<string, number>>({});
   const [seenImageIds, setSeenImageIds] = useState<Record<string, true>>({});
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
   const [favoritesHydrated, setFavoritesHydrated] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const scrollMemoryRef = useRef<Record<string, number>>({});
+  const scrollMemoryFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const seenImageIdsRef = useRef<Record<string, true>>({});
+  const seenImagesFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const searchQueryRef = useRef('');
   const favoritesRef = useRef<Record<string, number>>({});
   const searchMetaRef = useRef<{
@@ -325,7 +339,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (memory) {
         const parsed = JSON.parse(memory);
         if (parsed && typeof parsed === 'object') {
-          setSearchScrollMemory(parsed as Record<string, number>);
+          scrollMemoryRef.current = parsed as Record<string, number>;
         }
       }
     } catch { /* ignore */ }
@@ -338,6 +352,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           for (const [id, value] of Object.entries(parsed)) {
             if (typeof id === 'string' && value) normalized[id] = true;
           }
+          seenImageIdsRef.current = normalized;
           setSeenImageIds(normalized);
         }
       }
@@ -430,12 +445,6 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [showFavOnlyState, showUnfavOnlyState]);
 
   useEffect(() => {
-    try {
-      localStorage.setItem('pvu_scroll_memory', JSON.stringify(searchScrollMemory));
-    } catch { /* ignore */ }
-  }, [searchScrollMemory]);
-
-  useEffect(() => {
     searchResultsRef.current = searchResults;
   }, [searchResults]);
 
@@ -443,11 +452,16 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchTotalRef.current = searchTotal;
   }, [searchTotal]);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem('pvu_seen_images', JSON.stringify(seenImageIds));
-    } catch { /* ignore */ }
-  }, [seenImageIds]);
+  useEffect(() => () => {
+    if (scrollMemoryFlushRef.current) {
+      clearTimeout(scrollMemoryFlushRef.current);
+    }
+    if (seenImagesFlushRef.current) {
+      clearTimeout(seenImagesFlushRef.current);
+    }
+    writeJsonLocalStorage('pvu_scroll_memory', scrollMemoryRef.current);
+    writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
+  }, []);
 
   // ── Load key bindings from server ──
   useEffect(() => {
@@ -906,28 +920,43 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setSearchScrollPosition = useCallback((key: string, value: number) => {
-    setSearchScrollMemory((prev) => {
-      const next = { ...prev, [key]: value };
-      const keys = Object.keys(next);
-      if (keys.length <= 80) return next;
+    const next = { ...scrollMemoryRef.current, [key]: value };
+    const keys = Object.keys(next);
+    if (keys.length > 80) {
       // lightweight cap: keep latest 80 keys
-      for (let i = 0; i < keys.length - 80; i++) {
+      for (let i = 0; i < keys.length - 80; i += 1) {
         delete next[keys[i]];
       }
-      return next;
-    });
+    }
+    scrollMemoryRef.current = next;
+    if (scrollMemoryFlushRef.current) {
+      clearTimeout(scrollMemoryFlushRef.current);
+    }
+    scrollMemoryFlushRef.current = setTimeout(() => {
+      scrollMemoryFlushRef.current = null;
+      writeJsonLocalStorage('pvu_scroll_memory', scrollMemoryRef.current);
+    }, SCROLL_MEMORY_FLUSH_DELAY_MS);
   }, []);
 
   const getSearchScrollPosition = useCallback((key: string) => {
-    const value = searchScrollMemory[key];
+    const value = scrollMemoryRef.current[key];
     return typeof value === 'number' ? value : null;
-  }, [searchScrollMemory]);
+  }, []);
 
   const setActivePreviewId = useCallback((id: string | null) => {
     setActivePreviewIdState(id);
   }, []);
 
   const markImageSeen = useCallback((id: string) => {
+    if (seenImageIdsRef.current[id]) return;
+    seenImageIdsRef.current = { ...seenImageIdsRef.current, [id]: true };
+    if (seenImagesFlushRef.current) {
+      clearTimeout(seenImagesFlushRef.current);
+    }
+    seenImagesFlushRef.current = setTimeout(() => {
+      seenImagesFlushRef.current = null;
+      writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
+    }, SEEN_IMAGES_FLUSH_DELAY_MS);
     setSeenImageIds((prev) => {
       if (prev[id]) return prev;
       return { ...prev, [id]: true };
