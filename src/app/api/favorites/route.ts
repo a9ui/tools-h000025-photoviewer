@@ -4,6 +4,7 @@ import path from 'path';
 import { mergeWithLegacyFavorites } from '@/lib/legacyPhotoviewer';
 
 const FAVORITES_PATH = path.join(process.cwd(), '.cache', 'favorites.json');
+const MAX_FAVORITE_LEVEL = 5;
 
 function normalizeFavorites(value: unknown): Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -11,7 +12,7 @@ function normalizeFavorites(value: unknown): Record<string, number> {
   for (const [id, levelValue] of Object.entries(value)) {
     if (!id) continue;
     const level = typeof levelValue === 'number'
-      ? Math.max(0, Math.min(3, Math.trunc(levelValue)))
+      ? Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)))
       : levelValue
         ? 1
         : 0;

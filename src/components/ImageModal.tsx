@@ -5,6 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
 import { removeImageSlot } from '../lib/imageListState';
+import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import CachedImage from './CachedImage';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
 
@@ -424,7 +425,7 @@ export default function ImageModal() {
 
   const increaseFavorite = useCallback(() => {
     if (!img) return;
-    const nextLevel = favLevel >= 3 ? 0 : favLevel + 1;
+    const nextLevel = Math.min(5, favLevel + 1);
     cycleFavoriteLevel(img.id);
     if (chromeHidden) showFavoriteFeedback(nextLevel);
   }, [chromeHidden, cycleFavoriteLevel, favLevel, img, showFavoriteFeedback]);
@@ -822,6 +823,8 @@ export default function ImageModal() {
     .join(', ')
     || (raw.match(/\nSteps:[\s\S]*$/) ? raw.match(/\nSteps:([\s\S]*$)/)?.[1] || '' : '');
   const promptTags = splitPromptTags(prompt);
+  const pngMetadataRows = buildPngMetadataRows(img.metadata);
+  const pngMetadataCopyText = formatPngMetadataRowsForCopy(pngMetadataRows);
   const addPromptTagToSearch = (tag: string) => {
     const currentTags = parseSearchTags(searchQuery);
     const currentKeys = new Set(currentTags.map((item) => item.toLowerCase()));
@@ -1061,6 +1064,33 @@ export default function ImageModal() {
                   <code className="meta-code">{settingsRaw || 'No settings metadata.'}</code>
                 </div>
               )}
+
+              <div className="meta-section png-metadata-section">
+                <div className="meta-header">
+                  <span className="meta-label">PNG Info</span>
+                  <button
+                    className="copy-btn"
+                    onClick={() => copyToClipboard(pngMetadataCopyText)}
+                    disabled={pngMetadataRows.length === 0}
+                  >
+                    {copied ? 'Copied' : 'Copy'}
+                  </button>
+                </div>
+                {pngMetadataRows.length > 0 ? (
+                  <table className="png-metadata-table">
+                    <tbody>
+                      {pngMetadataRows.map((row, index) => (
+                        <tr key={`${row.label}-${index}`}>
+                          <th scope="row">{row.label}</th>
+                          <td>{row.value}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                ) : (
+                  <p className="meta-text">No PNG metadata.</p>
+                )}
+              </div>
             </div>
 
             <div className="sidebar-footer">

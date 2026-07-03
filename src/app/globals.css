@@ -2035,6 +2035,16 @@ a { color: inherit; text-decoration: none; }
   pointer-events: none;
 }
 
+.modal-body.chrome-hidden .modal-edge-zone {
+  opacity: 0;
+  pointer-events: none;
+  background: transparent;
+}
+
+.modal-body.chrome-hidden .modal-edge-zone span {
+  display: none;
+}
+
 .modal-favorite-feedback {
   position: absolute;
   right: 18px;
@@ -2182,6 +2192,40 @@ a { color: inherit; text-decoration: none; }
   background: rgba(0,0,0,0.25);
   padding: 0.75rem;
   border-radius: var(--radius-sm);
+}
+
+.png-metadata-section {
+  border-top: 1px solid var(--glass-border);
+  padding-top: 1rem;
+}
+
+.png-metadata-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  line-height: 1.35;
+  table-layout: fixed;
+}
+
+.png-metadata-table th,
+.png-metadata-table td {
+  vertical-align: top;
+  padding: 0.45rem 0.5rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.png-metadata-table th {
+  width: 34%;
+  color: var(--accent-light);
+  font-weight: 700;
+  text-align: left;
+  word-break: break-word;
+}
+
+.png-metadata-table td {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .copy-btn {

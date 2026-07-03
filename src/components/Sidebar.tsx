@@ -5,6 +5,8 @@ import { useImageStore } from '../store/ImageContext';
 import { getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 
+const FAVORITE_FILTER_LEVELS = [1, 2, 3, 4, 5] as const;
+
 function toDateInputValue(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, '0');
@@ -308,11 +310,11 @@ export default function Sidebar() {
 
         {showFavOnly && (
           <div className="sidebar-pills" style={{ marginTop: '0.55rem' }}>
-            {[1, 2, 3].map((level) => (
+            {FAVORITE_FILTER_LEVELS.map((level) => (
               <button
                 key={level}
                 className={`pill ${favoriteFilterLevel === level ? 'active' : ''}`}
-                onClick={() => setFavoriteFilterLevel(level as 1 | 2 | 3)}
+                onClick={() => setFavoriteFilterLevel(level)}
               >
                 Lv {level}+
               </button>

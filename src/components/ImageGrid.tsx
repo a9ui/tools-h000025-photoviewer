@@ -287,6 +287,7 @@ export default function ImageGrid() {
 
   useEffect(() => {
     if (!isClientFiltered || modalImageIds.length === 0) return;
+    if (showFavOnly) return;
     const currentId = selectedIndex !== null ? searchResults[selectedIndex]?.id ?? null : null;
     const nextState = reconcileModalOrderAfterFilterChange(
       currentId,
@@ -314,6 +315,7 @@ export default function ImageGrid() {
     selectedIndex,
     setModalImageIds,
     setSelectedIndex,
+    showFavOnly,
   ]);
 
   const handleThumbWheel = (event: React.WheelEvent<HTMLDivElement>) => {

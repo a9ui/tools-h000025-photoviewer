@@ -6,6 +6,7 @@ import { DEFAULT_KEY_BINDINGS } from './types';
 
 const LEGACY_PROJECT_DIR = path.resolve(process.cwd(), '..', 'H000003_Photoviewer');
 const LEGACY_CACHE_DIR = path.join(LEGACY_PROJECT_DIR, '.cache');
+const MAX_FAVORITE_LEVEL = 5;
 
 function legacyCacheExists() {
   return fs.existsSync(LEGACY_CACHE_DIR);
@@ -25,7 +26,7 @@ function normalizeFavorites(value: unknown): Record<string, number> {
   for (const [id, levelValue] of Object.entries(value)) {
     if (!id) continue;
     const level = typeof levelValue === 'number'
-      ? Math.max(0, Math.min(3, Math.trunc(levelValue)))
+      ? Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)))
       : levelValue
         ? 1
         : 0;

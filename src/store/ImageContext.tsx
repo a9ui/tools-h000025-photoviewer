@@ -57,6 +57,8 @@ const DEFAULT_VIEW: ViewSettings = {
 
 const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
 const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
+const MAX_FAVORITE_LEVEL = 5;
+type FavoriteFilterLevel = 1 | 2 | 3 | 4 | 5;
 
 // ── Context shape ──
 function normalizeFavorites(value: unknown): Record<string, number> {
@@ -65,7 +67,7 @@ function normalizeFavorites(value: unknown): Record<string, number> {
   for (const [id, levelValue] of Object.entries(value)) {
     if (!id) continue;
     const level = typeof levelValue === 'number'
-      ? Math.max(0, Math.min(3, Math.trunc(levelValue)))
+      ? Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)))
       : levelValue
         ? 1
         : 0;
@@ -121,8 +123,8 @@ interface Ctx {
   setShowFavOnly: (v: boolean) => void;
   showUnfavOnly: boolean;
   setShowUnfavOnly: (v: boolean) => void;
-  favoriteFilterLevel: 1 | 2 | 3;
-  setFavoriteFilterLevel: (v: 1 | 2 | 3) => void;
+  favoriteFilterLevel: FavoriteFilterLevel;
+  setFavoriteFilterLevel: (v: FavoriteFilterLevel) => void;
   showEnhancedOnly: boolean;
   setShowEnhancedOnly: (v: boolean) => void;
   enhancedSourceIds: Record<string, true>;
@@ -201,7 +203,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<Record<string, number>>({});
   const [showFavOnlyState, setShowFavOnlyState] = useState(false);
   const [showUnfavOnlyState, setShowUnfavOnlyState] = useState(false);
-  const [favoriteFilterLevel, setFavoriteFilterLevel] = useState<1 | 2 | 3>(1);
+  const [favoriteFilterLevel, setFavoriteFilterLevel] = useState<FavoriteFilterLevel>(1);
   const [showEnhancedOnlyState, setShowEnhancedOnlyState] = useState(false);
   const [enhancedSourceIds, setEnhancedSourceIds] = useState<Record<string, true>>({});
   const [enhanceJobsActive, setEnhanceJobsActive] = useState(false);
@@ -507,7 +509,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     setFavorites((prev) => {
       const next = { ...prev };
       const current = next[id] ?? 0;
-      const upcoming = Math.min(3, current + 1);
+      const upcoming = Math.min(MAX_FAVORITE_LEVEL, current + 1);
       next[id] = upcoming;
       return next;
     });
