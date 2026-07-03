@@ -503,12 +503,24 @@ function compareByFilename(a: ImageFile, b: ImageFile) {
 }
 
 function getRandomSortKey(imageId: string, seed: string) {
-  return crypto
-    .createHash('sha1')
-    .update(seed)
-    .update('\0')
-    .update(imageId.toLowerCase())
-    .digest('hex');
+  let hash = 2166136261;
+  const value = `${seed}\0${imageId.toLowerCase()}`;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function rememberSortedSource(cacheKey: string, sorted: ImageFile[]) {
+  if (cacheKey.startsWith('random:')) {
+    for (const key of _sortedBySort.keys()) {
+      if (key.startsWith('random:') && key !== cacheKey) {
+        _sortedBySort.delete(key);
+      }
+    }
+  }
+  _sortedBySort.set(cacheKey, sorted);
 }
 
 function getSortedSource(sortBy: SortBy, randomSeed = '') {
@@ -547,7 +559,7 @@ function getSortedSource(sortBy: SortBy, randomSeed = '') {
       sorted = _index
         .map((image) => ({ image, randomKey: getRandomSortKey(image.id, seed) }))
         .sort((a, b) => {
-          const bySeed = a.randomKey.localeCompare(b.randomKey);
+          const bySeed = a.randomKey - b.randomKey;
           if (bySeed !== 0) return bySeed;
           return compareByFilename(a.image, b.image);
         })
@@ -560,7 +572,7 @@ function getSortedSource(sortBy: SortBy, randomSeed = '') {
       break;
   }
 
-  _sortedBySort.set(cacheKey, sorted);
+  rememberSortedSource(cacheKey, sorted);
   return sorted;
 }
 

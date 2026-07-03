@@ -1,4 +1,4 @@
-﻿# Issue #8 Tools Bootstrap Failure Sharing
+# Issue #8 Tools Bootstrap Failure Sharing
 
 ## Result
 
