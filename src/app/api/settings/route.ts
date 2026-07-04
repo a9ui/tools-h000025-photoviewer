@@ -3,11 +3,10 @@ import fs from 'fs';
 import path from 'path';
 import type { AppSettings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
-import { loadLegacySettings } from '@/lib/legacyPhotoviewer';
 
 export const dynamic = 'force-dynamic';
 
-const SETTINGS_PATH = path.join(process.cwd(), '.cache', 'settings.json');
+const SETTINGS_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'settings.json');
 
 function loadSettings(): AppSettings {
   try {
@@ -19,13 +18,6 @@ function loadSettings(): AppSettings {
       };
     }
   } catch { /* use defaults */ }
-  const legacy = loadLegacySettings();
-  if (legacy) {
-    return {
-      keyBindings: { ...DEFAULT_KEY_BINDINGS, ...(legacy.keyBindings || {}) },
-      confirmBeforeDelete: legacy.confirmBeforeDelete ?? true,
-    };
-  }
   return { keyBindings: DEFAULT_KEY_BINDINGS, confirmBeforeDelete: true };
 }
 

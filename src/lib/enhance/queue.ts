@@ -42,7 +42,7 @@ async function runQueue() {
     const job = await store.claimNextQueuedJob(workerInstanceId);
     if (!job) return;
 
-    const adapter = getEnhancementAdapter(job.adapterId);
+    const adapter = await getEnhancementAdapter(job.adapterId);
     if (!adapter) {
       await store.finishRunningJob(job.id, job.runId, {
         status: 'failed',

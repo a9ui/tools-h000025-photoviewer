@@ -1,5 +1,8 @@
 param(
-  [switch]$SkipBuild
+  [switch]$SkipBuild,
+  [switch]$SkipAudit,
+  [switch]$SkipLint,
+  [switch]$Full
 )
 
 $ErrorActionPreference = "Stop"
@@ -114,14 +117,31 @@ try {
   )
 
   Invoke-Pnpm test:unit
+  if (-not $SkipLint) {
+    Invoke-Pnpm lint
+  }
+  if (-not $SkipAudit) {
+    Invoke-Pnpm audit --audit-level moderate
+  }
   Invoke-Pnpm typecheck
   if (-not $SkipBuild) {
     Invoke-Pnpm build
   }
+  if ($Full) {
+    Invoke-Pnpm test:e2e
+  }
 
   [pscustomobject]@{
     ok = $true
-    checks = @("required-files", "pnpm test:unit", "pnpm typecheck", $(if ($SkipBuild) { "build skipped" } else { "pnpm build" }))
+    checks = @(
+      "required-files",
+      "pnpm test:unit",
+      $(if ($SkipLint) { "lint skipped" } else { "pnpm lint" }),
+      $(if ($SkipAudit) { "audit skipped" } else { "pnpm audit --audit-level moderate" }),
+      "pnpm typecheck",
+      $(if ($SkipBuild) { "build skipped" } else { "pnpm build" }),
+      $(if ($Full) { "pnpm test:e2e" } else { "e2e skipped; pass -Full to run" })
+    )
   } | ConvertTo-Json -Depth 5
 } finally {
   Pop-Location

@@ -2,9 +2,9 @@ import fs from 'fs';
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { getIndex } from '@/lib/indexer';
-import { getEnhancementAdapter } from '@/lib/enhance/adapters';
-import { getComfyUiConfigErrorMessage, getComfyUiConfigStatus } from '@/lib/enhance/adapters/comfyUiAdapter';
-import { getNcnnVulkanAvailability } from '@/lib/enhance/adapters/ncnnVulkanAdapter';
+import { isKnownEnhancementAdapter } from '@/lib/enhance/adapters';
+import { getComfyUiConfigErrorMessage, getComfyUiConfigStatus } from '@/lib/enhance/adapters/comfyUiConfig';
+import { getNcnnVulkanAvailability } from '@/lib/enhance/adapters/ncnnConfig';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
 import { startEnhancementQueue } from '@/lib/enhance/queue';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from '@/lib/enhance/types';
@@ -157,7 +157,7 @@ export async function POST(request: NextRequest) {
   if (body.adapterId !== undefined && typeof body.adapterId !== 'string') {
     return NextResponse.json({ error: 'adapterId must be a string' }, { status: 400 });
   }
-  if (body.adapterId && !getEnhancementAdapter(body.adapterId)) {
+  if (body.adapterId && !isKnownEnhancementAdapter(body.adapterId)) {
     return NextResponse.json({ error: `Unknown enhancement adapter: ${body.adapterId}` }, { status: 400 });
   }
   if (body.adapterId === 'comfyui') {

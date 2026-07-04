@@ -67,29 +67,9 @@ function ViewerApp() {
 
   useEffect(() => {
     migrateLegacyPhotoviewerState();
-    let localRecentDirs: string[] = [];
-    let localLastDirSet = '';
-    try {
-      const raw = localStorage.getItem('pvu_recent_dirs');
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed)) {
-          localRecentDirs = parsed
-            .filter((v): v is string => typeof v === 'string')
-            .map((v) => formatDirSet(parseDirSet(v)))
-            .filter(Boolean)
-            .slice(0, 8);
-          setRecentDirs(localRecentDirs);
-        }
-      }
-      const last = localStorage.getItem('pvu_last_dir_set');
-      if (last) {
-        localLastDirSet = formatDirSet(parseDirSet(last));
-        setLastDirSet(localLastDirSet);
-      }
-    } catch {
-      // ignore broken localStorage entry
-    }
+    const { recentDirs: localRecentDirs, lastDirSet: localLastDirSet } = readStoredFolderMemory();
+    if (localRecentDirs.length > 0) setRecentDirs(localRecentDirs);
+    if (localLastDirSet) setLastDirSet(localLastDirSet);
 
     let serverLegacyAlreadyImported = false;
     try {
@@ -290,7 +270,7 @@ function ViewerApp() {
   if (phase === 'landing' || phase === 'scanning') {
     return (
       <div className="landing">
-        <h1 className="landing-title">Photoviewer Upscale</h1>
+        <h1 className="landing-title">PhotoViewer</h1>
         <p className="landing-subtitle">Index and search Stable Diffusion PNG metadata locally</p>
 
         <div className="folder-set-panel">
@@ -432,7 +412,7 @@ function ViewerApp() {
             </svg>
           </button>
           <span className="viewer-logo" onClick={() => setPhase('landing')} title="Back to folder selection">
-            Photoviewer Upscale
+            PhotoViewer
           </span>
           <button
             className="icon-btn sidebar-toggle-btn"
@@ -507,6 +487,27 @@ function ViewerApp() {
       )}
     </>
   );
+}
+
+function readStoredFolderMemory(): { recentDirs: string[]; lastDirSet: string } {
+  if (typeof window === 'undefined') return { recentDirs: [], lastDirSet: '' };
+  try {
+    const raw = localStorage.getItem('pvu_recent_dirs');
+    const recentDirs = raw
+      ? JSON.parse(raw)
+        .filter((v: unknown): v is string => typeof v === 'string')
+        .map((v: string) => formatDirSet(parseDirSet(v)))
+        .filter(Boolean)
+        .slice(0, 8)
+      : [];
+    const last = localStorage.getItem('pvu_last_dir_set');
+    return {
+      recentDirs,
+      lastDirSet: last ? formatDirSet(parseDirSet(last)) : '',
+    };
+  } catch {
+    return { recentDirs: [], lastDirSet: '' };
+  }
 }
 
 export default function App() {

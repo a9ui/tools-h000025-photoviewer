@@ -4,8 +4,8 @@ import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
 
-export const THUMB_DIR = path.join(process.cwd(), '.cache', 'thumbs');
-export const DISPLAY_DIR = path.join(process.cwd(), '.cache', 'display');
+export const THUMB_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'thumbs');
+export const DISPLAY_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'display');
 const THUMB_WIDTH = 300;
 const DISPLAY_MAX_SIZE = 2200;
 const DEFAULT_THUMB_CONCURRENCY = Math.max(
@@ -82,13 +82,13 @@ export function ensureDisplayDir() {
 export async function getThumbnailPath(resolved: string) {
   const stat = await fs.promises.stat(resolved);
   const hash = Buffer.from(`${resolved}|${stat.mtimeMs}`).toString('base64url');
-  return path.join(THUMB_DIR, `${hash}.webp`);
+  return path.join(/*turbopackIgnore: true*/ THUMB_DIR, `${hash}.webp`);
 }
 
 export async function getDisplayPath(resolved: string) {
   const stat = await fs.promises.stat(resolved);
   const hash = Buffer.from(`${resolved}|${stat.mtimeMs}|display:${DISPLAY_MAX_SIZE}`).toString('base64url');
-  return path.join(DISPLAY_DIR, `${hash}.webp`);
+  return path.join(/*turbopackIgnore: true*/ DISPLAY_DIR, `${hash}.webp`);
 }
 
 async function isUsableCachedImage(filePath: string) {
@@ -201,7 +201,7 @@ export async function ensureThumbnail(resolved: string, priority: number) {
     return { thumbPath, created: true };
   }
 
-  if (fs.existsSync(thumbPath) && await isUsableCachedImage(thumbPath)) {
+  if (fs.existsSync(/*turbopackIgnore: true*/ thumbPath) && await isUsableCachedImage(thumbPath)) {
     return { thumbPath, created: false };
   }
   await removeBrokenCacheFile(thumbPath);
@@ -224,7 +224,7 @@ export async function ensureThumbnail(resolved: string, priority: number) {
       await writeCacheAtomically(thumbPath, async (tmpPath) => {
         await sharp(resolved, { sequentialRead: true, failOn: 'none' })
           .resize(THUMB_WIDTH, undefined, { withoutEnlargement: true })
-          .webp({ quality: 72, effort: 3 })
+          .webp({ quality: 72, effort: 2 })
           .toFile(tmpPath);
       });
     },
@@ -256,7 +256,7 @@ export async function ensureDisplayImage(resolved: string, priority: number) {
     return { displayPath, created: true };
   }
 
-  if (fs.existsSync(displayPath) && await isUsableCachedImage(displayPath)) {
+  if (fs.existsSync(/*turbopackIgnore: true*/ displayPath) && await isUsableCachedImage(displayPath)) {
     return { displayPath, created: false };
   }
   await removeBrokenCacheFile(displayPath);
@@ -279,7 +279,7 @@ export async function ensureDisplayImage(resolved: string, priority: number) {
       await writeCacheAtomically(displayPath, async (tmpPath) => {
         await sharp(resolved, { sequentialRead: true, failOn: 'none' })
           .resize(DISPLAY_MAX_SIZE, DISPLAY_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 86, effort: 3 })
+          .webp({ quality: 86, effort: 2 })
           .toFile(tmpPath);
       });
     },

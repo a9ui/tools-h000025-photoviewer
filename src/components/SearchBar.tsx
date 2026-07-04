@@ -32,7 +32,7 @@ export default function SearchBar() {
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastSentQueryRef = useRef(searchQuery);
 
   const composedQuery = [...committedTags, inputToken.trim()].filter(Boolean).join(', ');

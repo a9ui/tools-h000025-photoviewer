@@ -4,17 +4,22 @@ import crypto from 'crypto';
 import type { AppSettings } from './types';
 import { DEFAULT_KEY_BINDINGS } from './types';
 
-const LEGACY_PROJECT_DIR = path.resolve(process.cwd(), '..', 'H000003_Photoviewer');
-const LEGACY_CACHE_DIR = path.join(LEGACY_PROJECT_DIR, '.cache');
+const LEGACY_PROJECT_DIR = process.env.PV_LEGACY_PHOTOVIEWER_DIR
+  ? path.resolve(process.env.PV_LEGACY_PHOTOVIEWER_DIR)
+  : '';
+const LEGACY_CACHE_DIR = LEGACY_PROJECT_DIR
+  ? path.join(/*turbopackIgnore: true*/ LEGACY_PROJECT_DIR, '.cache')
+  : '';
 const MAX_FAVORITE_LEVEL = 5;
 
 function legacyCacheExists() {
-  return fs.existsSync(LEGACY_CACHE_DIR);
+  if (!LEGACY_CACHE_DIR) return false;
+  return fs.existsSync(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR);
 }
 
 function readJsonFile<T>(filePath: string): T | null {
   try {
-    return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as T;
+    return JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ filePath, 'utf-8')) as T;
   } catch {
     return null;
   }
@@ -37,7 +42,7 @@ function normalizeFavorites(value: unknown): Record<string, number> {
 
 export function mergeWithLegacyFavorites(current: Record<string, number>): Record<string, number> {
   if (!legacyCacheExists()) return current;
-  const legacy = normalizeFavorites(readJsonFile(path.join(LEGACY_CACHE_DIR, 'favorites.json')));
+  const legacy = normalizeFavorites(readJsonFile(path.join(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR, 'favorites.json')));
   const merged = { ...legacy };
   for (const [id, level] of Object.entries(current)) {
     merged[id] = Math.max(merged[id] ?? 0, level);
@@ -47,7 +52,7 @@ export function mergeWithLegacyFavorites(current: Record<string, number>): Recor
 
 export function loadLegacySettings(): AppSettings | null {
   if (!legacyCacheExists()) return null;
-  const parsed = readJsonFile<Partial<AppSettings>>(path.join(LEGACY_CACHE_DIR, 'settings.json'));
+  const parsed = readJsonFile<Partial<AppSettings>>(path.join(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR, 'settings.json'));
   if (!parsed) return null;
   return {
     keyBindings: { ...DEFAULT_KEY_BINDINGS, ...(parsed.keyBindings || {}) },
@@ -57,8 +62,8 @@ export function loadLegacySettings(): AppSettings | null {
 
 export function legacyCacheFilePath(fileName: string): string | null {
   if (!legacyCacheExists()) return null;
-  const resolved = path.join(LEGACY_CACHE_DIR, path.basename(fileName));
-  return fs.existsSync(resolved) ? resolved : null;
+  const resolved = path.join(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR, path.basename(fileName));
+  return fs.existsSync(/*turbopackIgnore: true*/ resolved) ? resolved : null;
 }
 
 export function cacheHashForDir(dirPath: string) {
@@ -76,7 +81,7 @@ function decodeJsonStringLiteral(value: string): string | null {
 function readDirPathFromIndexCache(filePath: string): string | null {
   let fd: number | null = null;
   try {
-    fd = fs.openSync(filePath, 'r');
+    fd = fs.openSync(/*turbopackIgnore: true*/ filePath, 'r');
     const buffer = Buffer.alloc(64 * 1024);
     const bytesRead = fs.readSync(fd, buffer, 0, buffer.length, 0);
     const prefix = buffer.subarray(0, bytesRead).toString('utf-8');
@@ -96,7 +101,7 @@ export function getLegacyRecentDirSets(limit = 12): string[] {
   if (!legacyCacheExists()) return [];
   let files: fs.Dirent[] = [];
   try {
-    files = fs.readdirSync(LEGACY_CACHE_DIR, { withFileTypes: true });
+    files = fs.readdirSync(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR, { withFileTypes: true });
   } catch {
     return [];
   }
@@ -104,9 +109,9 @@ export function getLegacyRecentDirSets(limit = 12): string[] {
   const candidates = files
     .filter((entry) => entry.isFile() && entry.name.startsWith('index_') && entry.name.endsWith('.json'))
     .map((entry) => {
-      const filePath = path.join(LEGACY_CACHE_DIR, entry.name);
+      const filePath = path.join(/*turbopackIgnore: true*/ LEGACY_CACHE_DIR, entry.name);
       try {
-        return { filePath, mtimeMs: fs.statSync(filePath).mtimeMs };
+        return { filePath, mtimeMs: fs.statSync(/*turbopackIgnore: true*/ filePath).mtimeMs };
       } catch {
         return null;
       }

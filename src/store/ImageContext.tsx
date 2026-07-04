@@ -57,6 +57,8 @@ const DEFAULT_VIEW: ViewSettings = {
 
 const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
 const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
+const AUTO_THUMB_WARM_DELAY_MS = 4200;
+const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
 type FavoriteFilterLevel = 1 | 2 | 3 | 4 | 5;
 
@@ -229,7 +231,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
   const [favoritesHydrated, setFavoritesHydrated] = useState(false);
 
-  const debounceRef = useRef<ReturnType<typeof setTimeout>>();
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollMemoryRef = useRef<Record<string, number>>({});
   const scrollMemoryFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seenImageIdsRef = useRef<Record<string, true>>({});
@@ -740,12 +742,12 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, phase, doSearchPage, resetSearch]);
 
   useEffect(() => {
-    if (phase !== 'viewer' || !dirPath.trim() || totalIndexed <= 0) return;
-    if (!searchResults.some(Boolean)) return;
+    if (phase !== 'viewer' || !dirPath.trim() || totalIndexed <= 0 || searchTotal <= 0) return;
     const key = `${dirPath}\u0001${totalIndexed}`;
     if (warmedThumbDirRef.current === key) return;
     const timer = window.setTimeout(() => {
       if (warmedThumbDirRef.current === key) return;
+      if (document.visibilityState !== 'visible') return;
       warmedThumbDirRef.current = key;
       void fetch('/api/thumbs/warm', {
         method: 'POST',
@@ -753,14 +755,14 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({
           dir: dirPath,
           priority: 'background',
-          limit: Math.min(totalIndexed, 20000),
+          limit: Math.min(totalIndexed, AUTO_THUMB_WARM_LIMIT),
         }),
       }).catch(() => {
         // Best-effort cache fill; visible thumbnail requests can still generate files.
       });
-    }, 2200);
+    }, AUTO_THUMB_WARM_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [dirPath, phase, searchResults, totalIndexed]);
+  }, [dirPath, phase, searchTotal, totalIndexed]);
 
   // Re-apply favorites flag when favorites change
   useEffect(() => {

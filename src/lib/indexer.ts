@@ -6,10 +6,9 @@ import { extractSDMetadata } from './pngParser';
 import type { CacheData, ImageFile, SDMetadata } from './types';
 import { IMAGE_GLOB_EXTENSIONS } from './imageFormats';
 import { basenameFromPath, parseDirSet } from './pathSet';
-import { legacyCacheFilePath } from './legacyPhotoviewer';
 import { shouldReportScanProgress } from './scanProgress';
 
-const CACHE_DIR = path.join(process.cwd(), '.cache');
+const CACHE_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache');
 const CACHE_VERSION = 1;
 const FOLDER_SIGNATURE_CACHE_VERSION = 2;
 const MAX_TAG_RESULTS = 2000;
@@ -49,12 +48,12 @@ function ensureDir(dir: string) {
 
 function cacheFilePath(dirPath: string): string {
   const hash = crypto.createHash('md5').update(dirPath.toLowerCase()).digest('hex');
-  return path.join(CACHE_DIR, `index_${hash}.json`);
+  return path.join(/*turbopackIgnore: true*/ CACHE_DIR, `index_${hash}.json`);
 }
 
 function folderSignatureFilePath(dirPath: string): string {
   const hash = crypto.createHash('md5').update(dirPath.toLowerCase()).digest('hex');
-  return path.join(CACHE_DIR, `folders_${hash}.json`);
+  return path.join(/*turbopackIgnore: true*/ CACHE_DIR, `folders_${hash}.json`);
 }
 
 const cacheByDir = new Map<string, CacheData>();
@@ -77,10 +76,9 @@ function loadFolderSignatures(dirPath: string): Record<string, string> {
   if (memorySignatures) return memorySignatures;
 
   const p = folderSignatureFilePath(dirPath);
-  const sourcePath = fs.existsSync(p) ? p : legacyCacheFilePath(path.basename(p));
-  if (sourcePath) {
+  if (fs.existsSync(/*turbopackIgnore: true*/ p)) {
     try {
-      const data = JSON.parse(fs.readFileSync(sourcePath, 'utf-8')) as {
+      const data = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ p, 'utf-8')) as {
         version?: number;
         folders?: Record<string, string | number>;
       };
@@ -102,7 +100,7 @@ function loadFolderSignatures(dirPath: string): Record<string, string> {
 function saveFolderSignatures(dirPath: string, folders: Record<string, string>) {
   ensureDir(CACHE_DIR);
   const p = folderSignatureFilePath(dirPath);
-  fs.writeFileSync(p, JSON.stringify({
+  fs.writeFileSync(/*turbopackIgnore: true*/ p, JSON.stringify({
     version: FOLDER_SIGNATURE_CACHE_VERSION,
     dirPath,
     updatedAt: new Date().toISOString(),
@@ -177,10 +175,9 @@ function loadCache(dirPath: string): CacheData {
   if (memoryCache) return memoryCache;
 
   const p = cacheFilePath(dirPath);
-  const sourcePath = fs.existsSync(p) ? p : legacyCacheFilePath(path.basename(p));
-  if (sourcePath) {
+  if (fs.existsSync(/*turbopackIgnore: true*/ p)) {
     try {
-      const data = JSON.parse(fs.readFileSync(sourcePath, 'utf-8')) as CacheData;
+      const data = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ p, 'utf-8')) as CacheData;
       if (data.version === CACHE_VERSION) {
         cacheByDir.set(dirPath, data);
         return data;
@@ -197,7 +194,7 @@ function loadCache(dirPath: string): CacheData {
 function saveCache(cache: CacheData) {
   ensureDir(CACHE_DIR);
   const p = cacheFilePath(cache.dirPath);
-  fs.writeFileSync(p, JSON.stringify(cache), 'utf-8');
+  fs.writeFileSync(/*turbopackIgnore: true*/ p, JSON.stringify(cache), 'utf-8');
   cacheByDir.set(cache.dirPath, cache);
 }
 
@@ -750,23 +747,14 @@ function ensureIndexLoaded() {
   ensureDir(CACHE_DIR);
   const seen = new Map<string, ImageFile>();
   try {
-    const currentFiles = fs.readdirSync(CACHE_DIR).filter((f) => f.startsWith('index_'));
+    const currentFiles = fs.readdirSync(/*turbopackIgnore: true*/ CACHE_DIR).filter((f) => f.startsWith('index_'));
     const allFiles = new Map<string, string>();
     for (const fileName of currentFiles) {
-      allFiles.set(fileName, path.join(CACHE_DIR, fileName));
-    }
-    const legacyDir = legacyCacheFilePath('favorites.json');
-    const legacyBase = legacyDir ? path.dirname(legacyDir) : null;
-    if (legacyBase) {
-      for (const fileName of fs.readdirSync(legacyBase).filter((f) => f.startsWith('index_'))) {
-        if (!allFiles.has(fileName)) {
-          allFiles.set(fileName, path.join(legacyBase, fileName));
-        }
-      }
+      allFiles.set(fileName, path.join(/*turbopackIgnore: true*/ CACHE_DIR, fileName));
     }
     for (const fp of allFiles.values()) {
       try {
-        const data = JSON.parse(fs.readFileSync(fp, 'utf-8')) as CacheData;
+        const data = JSON.parse(fs.readFileSync(/*turbopackIgnore: true*/ fp, 'utf-8')) as CacheData;
         if (data.version === CACHE_VERSION) {
           const images = buildImageFiles(data);
           for (const image of images) {
@@ -908,7 +896,7 @@ export function removeFromIndex(absPath: string) {
     if (cache.files[normalised]) {
       delete cache.files[normalised];
       cache.lastScan = new Date().toISOString();
-      void fs.promises.writeFile(cacheFilePath(cache.dirPath), JSON.stringify(cache), 'utf-8').catch(() => {
+      void fs.promises.writeFile(/*turbopackIgnore: true*/ cacheFilePath(cache.dirPath), JSON.stringify(cache), 'utf-8').catch(() => {
         // A later refresh can rebuild the disk cache if this background write fails.
       });
       return;
@@ -922,19 +910,19 @@ async function removeFromDiskCaches(normalisedPath: string) {
   ensureDir(CACHE_DIR);
   let cacheFiles: string[] = [];
   try {
-    cacheFiles = (await fs.promises.readdir(CACHE_DIR)).filter((f) => f.startsWith('index_'));
+    cacheFiles = (await fs.promises.readdir(/*turbopackIgnore: true*/ CACHE_DIR)).filter((f) => f.startsWith('index_'));
   } catch {
     return;
   }
 
   for (const cf of cacheFiles) {
-    const fp = path.join(CACHE_DIR, cf);
+    const fp = path.join(/*turbopackIgnore: true*/ CACHE_DIR, cf);
     try {
-      const raw = await fs.promises.readFile(fp, 'utf-8');
+      const raw = await fs.promises.readFile(/*turbopackIgnore: true*/ fp, 'utf-8');
       const data = JSON.parse(raw) as CacheData;
       if (data.files[normalisedPath]) {
         delete data.files[normalisedPath];
-        await fs.promises.writeFile(fp, JSON.stringify(data), 'utf-8');
+        await fs.promises.writeFile(/*turbopackIgnore: true*/ fp, JSON.stringify(data), 'utf-8');
         break;
       }
     } catch {

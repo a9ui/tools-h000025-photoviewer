@@ -3,8 +3,8 @@ import type { ReactNode } from 'react';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: 'Photoviewer Upscale',
-  description: 'AI-powered Image Viewer'
+  title: 'PhotoViewer',
+  description: 'Local-first image viewer'
 };
 
 export default function RootLayout({ children }: { children: ReactNode }) {

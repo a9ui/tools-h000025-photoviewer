@@ -2,7 +2,7 @@ import crypto from 'crypto';
 import path from 'path';
 import type { EnhancementPreset, SourceSignature } from './types';
 
-const DEFAULT_ENHANCE_ROOT = path.join(process.cwd(), '.cache', 'enhance');
+const DEFAULT_ENHANCE_ROOT = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'enhance');
 
 export function getEnhanceRoot(root = DEFAULT_ENHANCE_ROOT) {
   return root;

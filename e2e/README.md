@@ -7,4 +7,4 @@ Playwright-based end-to-end specs live here. The default configuration (`playwri
 - `pnpm test:e2e` &mdash; run the full Playwright suite once.
 - `pnpm exec playwright codegen http://localhost:3000` &mdash; record new scenarios.
 
-The sample `home.spec.ts` demonstrates asserting the landing page copy. Feel free to add more specs and tailor devices or base URLs via environment variables.
+`home.spec.ts` covers the PhotoViewer landing workflow and last folder set restoration. Add narrower specs for viewer interactions when a stable fixture folder is available.
