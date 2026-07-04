@@ -6,7 +6,7 @@ import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 import type { EnhancementJob, EnhancementPreset } from './types';
 import fs from 'fs';
 
-let running = false;
+let queuePromise: Promise<void> | null = null;
 let recoveredInterruptedJobs = false;
 const workerInstanceId = `enhance-worker-${process.pid}-${Date.now()}`;
 
@@ -19,16 +19,20 @@ function presetForJob(job: EnhancementJob): EnhancementPreset {
 }
 
 export function isEnhancementQueueRunning() {
-  return running;
+  return queuePromise !== null;
 }
 
 export function startEnhancementQueue() {
-  if (running) return;
-  running = true;
+  if (queuePromise) return;
   recordEnhancementWorkerStart();
-  void runQueue().finally(() => {
-    running = false;
+  queuePromise = runQueue().finally(() => {
+    queuePromise = null;
   });
+}
+
+export function resetEnhancementQueueForTests() {
+  queuePromise = null;
+  recoveredInterruptedJobs = false;
 }
 
 async function runQueue() {

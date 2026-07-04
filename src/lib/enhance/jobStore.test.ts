@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { EnhancementJobStore, setEnhancementJobStoreForTests } from './jobStore';
 import { getEnhancementOutputPath, hashPreset } from './outputPath';
-import { isEnhancementQueueRunning, startEnhancementQueue } from './queue';
+import { isEnhancementQueueRunning, resetEnhancementQueueForTests, startEnhancementQueue } from './queue';
 import { getEnhancementIsolationMetrics, resetEnhancementIsolationMetricsForTests } from './isolationMetrics';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 
@@ -24,6 +24,7 @@ async function waitFor(
 describe('enhancement job store', () => {
   beforeEach(() => {
     resetEnhancementIsolationMetricsForTests();
+    resetEnhancementQueueForTests();
   });
 
   it('persists jobs with pvu-safe durable JSON state', async () => {
