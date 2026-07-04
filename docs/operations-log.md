@@ -81,3 +81,7 @@ Skill candidate:
 - Next 16 local dev needs `allowedDevOrigins: ['127.0.0.1']` for Playwright's
   127.0.0.1 base URL; without it the landing page can render but client effects
   such as last-folder restoration do not hydrate correctly in E2E.
+- pnpm 11 no longer reads `package.json#pnpm`; keep project pnpm settings in
+  `pnpm-workspace.yaml`. Use `allowBuilds` instead of deprecated
+  `ignoredBuiltDependencies`, and respect pnpm minimum-release-age policy by
+  pinning too-new tooling releases to the newest policy-allowed version.
