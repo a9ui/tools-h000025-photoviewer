@@ -3,10 +3,10 @@
   "private": true,
   "version": "0.1.0",
   "description": "Local-first PhotoViewer focused on extreme runtime lightness without removing existing user-facing functions",
-  "packageManager": "pnpm@9.15.9",
+  "packageManager": "pnpm@11.7.0",
   "engines": {
-    "node": ">=18.18.0",
-    "pnpm": ">=9.0.0"
+    "node": ">=20.9.0",
+    "pnpm": ">=11.0.0"
   },
   "scripts": {
     "dev": "next dev",
@@ -49,14 +49,9 @@
     "jsdom": "^29.1.1",
     "postcss": "^8.5.16",
     "prettier": "^3.9.4",
-    "turbo": "^2.10.3",
+    "turbo": "2.10.2",
     "typescript": "^5.9.3",
     "vite": "^8.1.3",
     "vitest": "^4.1.9"
-  },
-  "pnpm": {
-    "overrides": {
-      "postcss": "8.5.16"
-    }
   }
 }

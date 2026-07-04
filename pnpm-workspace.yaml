@@ -1,7 +1,11 @@
 packages:
   - .
 
-ignoredBuiltDependencies:
-  - esbuild
-  - sharp
-  - unrs-resolver
+overrides:
+  electron-to-chromium: 1.5.385
+  postcss: 8.5.16
+
+allowBuilds:
+  esbuild: true
+  sharp: true
+  unrs-resolver: true
