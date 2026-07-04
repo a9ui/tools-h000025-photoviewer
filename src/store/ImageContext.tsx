@@ -57,6 +57,8 @@ const DEFAULT_VIEW: ViewSettings = {
 
 const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
 const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
+const FAVORITES_FLUSH_DELAY_MS = 300;
+const VIEW_SETTINGS_FLUSH_DELAY_MS = 300;
 const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
@@ -236,6 +238,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const scrollMemoryFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const seenImageIdsRef = useRef<Record<string, true>>({});
   const seenImagesFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const favoritesFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const viewSettingsFlushRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const pendingViewSettingsRef = useRef<ViewSettings | null>(null);
   const searchQueryRef = useRef('');
   const favoritesRef = useRef<Record<string, number>>({});
   const searchMetaRef = useRef<{
@@ -268,6 +273,21 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     (folders: string[]) => folders.slice().sort().join('\u0001'),
     []
   );
+  const flushViewSettings = useCallback(() => {
+    const snapshot = pendingViewSettingsRef.current;
+    pendingViewSettingsRef.current = null;
+    if (snapshot) writeJsonLocalStorage('pvu_view', snapshot);
+  }, []);
+  const scheduleViewSettingsPersist = useCallback((next: ViewSettings) => {
+    pendingViewSettingsRef.current = next;
+    if (viewSettingsFlushRef.current) {
+      clearTimeout(viewSettingsFlushRef.current);
+    }
+    viewSettingsFlushRef.current = setTimeout(() => {
+      viewSettingsFlushRef.current = null;
+      flushViewSettings();
+    }, VIEW_SETTINGS_FLUSH_DELAY_MS);
+  }, [flushViewSettings]);
 
   // ── Load favorites + view settings from localStorage ──
   useEffect(() => {
@@ -366,23 +386,26 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   // ── Persist favorites ──
   useEffect(() => {
     if (!favoritesHydrated) return;
-    try {
-      const previous = normalizeFavorites(JSON.parse(localStorage.getItem('pvu_favorites') || '{}'));
-      if (Object.keys(previous).length > 0) {
-        localStorage.setItem('pvu_favorites_backup', JSON.stringify(previous));
-      }
-      const serialized = JSON.stringify(favorites);
-      localStorage.setItem('pvu_favorites', serialized);
-      if (Object.keys(favorites).length > 0) {
-        localStorage.setItem('pvu_favorites_backup', serialized);
-      }
-    } catch { /* ignore */ }
     favoritesRef.current = favorites;
-    fetch('/api/favorites', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ favorites }),
-    }).catch(() => {});
+    if (favoritesFlushRef.current) {
+      clearTimeout(favoritesFlushRef.current);
+    }
+    favoritesFlushRef.current = setTimeout(() => {
+      favoritesFlushRef.current = null;
+      const snapshot = favoritesRef.current;
+      const serialized = JSON.stringify(snapshot);
+      try {
+        localStorage.setItem('pvu_favorites', serialized);
+        if (Object.keys(snapshot).length > 0) {
+          localStorage.setItem('pvu_favorites_backup', serialized);
+        }
+      } catch { /* ignore */ }
+      fetch('/api/favorites', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ favorites: snapshot }),
+      }).catch(() => {});
+    }, FAVORITES_FLUSH_DELAY_MS);
   }, [favorites, favoritesHydrated]);
 
   useEffect(() => {
@@ -457,6 +480,23 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [searchTotal]);
 
   useEffect(() => () => {
+    if (favoritesFlushRef.current) {
+      clearTimeout(favoritesFlushRef.current);
+      favoritesFlushRef.current = null;
+      const snapshot = favoritesRef.current;
+      const serialized = JSON.stringify(snapshot);
+      try {
+        localStorage.setItem('pvu_favorites', serialized);
+        if (Object.keys(snapshot).length > 0) {
+          localStorage.setItem('pvu_favorites_backup', serialized);
+        }
+      } catch { /* ignore */ }
+    }
+    if (viewSettingsFlushRef.current) {
+      clearTimeout(viewSettingsFlushRef.current);
+      viewSettingsFlushRef.current = null;
+      flushViewSettings();
+    }
     if (scrollMemoryFlushRef.current) {
       clearTimeout(scrollMemoryFlushRef.current);
     }
@@ -465,7 +505,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
     writeJsonLocalStorage('pvu_scroll_memory', scrollMemoryRef.current);
     writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
-  }, []);
+  }, [flushViewSettings]);
 
   // ── Load key bindings from server ──
   useEffect(() => {
@@ -801,7 +841,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     setViewState((prev) => {
       if (prev.hiddenFolders.length === 0 && !prev.dateFrom && !prev.dateTo) return prev;
       const next = { ...prev, hiddenFolders: [] as string[], dateFrom: '', dateTo: '' };
-      try { localStorage.setItem('pvu_view', JSON.stringify(next)); } catch { /* ignore */ }
+      scheduleViewSettingsPersist(next);
       return next;
     });
     setPhase('scanning');
@@ -845,7 +885,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       alert('Scan error: connection lost before the scan completed.');
       setPhase('landing');
     };
-  }, [dirPath]);
+  }, [dirPath, scheduleViewSettingsPersist]);
 
   // ── Delete ──
   const deleteImage = useCallback(async (id: string): Promise<boolean> => {
@@ -914,10 +954,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const setView = useCallback((partial: Partial<ViewSettings>) => {
     setViewState(prev => {
       const next = { ...prev, ...partial };
-      try { localStorage.setItem('pvu_view', JSON.stringify(next)); } catch { /* */ }
+      scheduleViewSettingsPersist(next);
       return next;
     });
-  }, []);
+  }, [scheduleViewSettingsPersist]);
 
   const setPerfEnabled = useCallback((v: boolean) => {
     setPerfEnabledState(v);

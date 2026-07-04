@@ -465,7 +465,7 @@ export async function scanDirectory(
 function buildImageFiles(cache: CacheData): ImageFile[] {
   return Object.entries(cache.files).map(([absPath, entry]) => {
     const encodedPath = encodeURIComponent(absPath);
-    const versionParam = encodeURIComponent(String(Math.trunc(entry.mtime)));
+    const versionParam = encodeURIComponent(String(entry.mtime));
     return {
       id: absPath,
       filename: path.basename(absPath),
@@ -794,16 +794,17 @@ export function searchIndex(
     pushSearchCache(key, filtered);
   }
 
-  const pageSize = Math.max(1, size);
+  const pageSize = Number.isFinite(size) ? Math.max(1, Math.trunc(size)) : 100;
+  const safePage = Number.isFinite(page) ? Math.max(0, Math.trunc(page)) : 0;
   const total = filtered.length;
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
-  const start = page * pageSize;
+  const start = safePage * pageSize;
   const pageResults = filtered.slice(start, start + pageSize);
   const results = favIds
     ? pageResults.map((img) => ({ ...img, isFavorite: favIds.has(img.id) }))
     : pageResults;
 
-  return { results, total, page, totalPages };
+  return { results, total, page: safePage, totalPages };
 }
 
 function cleanTag(raw: string): string {

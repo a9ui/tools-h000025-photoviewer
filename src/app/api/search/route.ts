@@ -5,6 +5,17 @@ type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name'
 
 export const dynamic = 'force-dynamic';
 
+function parseNonNegativeInt(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value || '', 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
+}
+
+function parsePageSize(value: string | null, fallback: number) {
+  const parsed = Number.parseInt(value || '', 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(1, Math.min(200, parsed));
+}
+
 /**
  * GET /api/search?q=QUERY&page=0&size=100
  *
@@ -13,8 +24,8 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(request: NextRequest) {
   const q = request.nextUrl.searchParams.get('q') || '';
-  const page = parseInt(request.nextUrl.searchParams.get('page') || '0', 10);
-  const size = parseInt(request.nextUrl.searchParams.get('size') || '100', 10);
+  const page = parseNonNegativeInt(request.nextUrl.searchParams.get('page'), 0);
+  const size = parsePageSize(request.nextUrl.searchParams.get('size'), 100);
   const sortByParam = request.nextUrl.searchParams.get('sortBy');
   const randomSeed = request.nextUrl.searchParams.get('randomSeed') || undefined;
   const dateFrom = request.nextUrl.searchParams.get('dateFrom') || undefined;
@@ -46,7 +57,7 @@ export async function GET(request: NextRequest) {
   const result = searchIndex(
     q,
     page,
-    Math.min(size, 200),
+    size,
     sortBy,
     dateFrom,
     dateTo,

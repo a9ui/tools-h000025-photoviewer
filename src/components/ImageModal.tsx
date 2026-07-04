@@ -368,6 +368,14 @@ export default function ImageModal() {
     }
 
     let cancelled = false;
+    let pollTimeoutId: number | null = null;
+    const schedulePoll = () => {
+      if (cancelled || pollTimeoutId !== null) return;
+      pollTimeoutId = window.setTimeout(() => {
+        pollTimeoutId = null;
+        void loadJobs();
+      }, 1000);
+    };
     const loadJobs = async () => {
       try {
         const res = await fetch(`/api/enhance/jobs?sourceId=${encodeURIComponent(img.id)}`, { cache: 'no-store' });
@@ -402,6 +410,9 @@ export default function ImageModal() {
           delete enhancedDisplayChoiceRef.current[img.id];
           setShowEnhanced(false);
         }
+        if (pendingAutoShowJobId || jobs.some((job) => job.status === 'queued' || job.status === 'running')) {
+          schedulePoll();
+        }
       } catch {
         if (!cancelled) {
           setEnhancementJobs([]);
@@ -413,11 +424,12 @@ export default function ImageModal() {
 
     void loadJobs();
     const onChanged = () => void loadJobs();
-    const interval = window.setInterval(() => void loadJobs(), 1000);
     window.addEventListener('pvu-enhance-jobs-changed', onChanged);
     return () => {
       cancelled = true;
-      window.clearInterval(interval);
+      if (pollTimeoutId !== null) {
+        window.clearTimeout(pollTimeoutId);
+      }
       window.removeEventListener('pvu-enhance-jobs-changed', onChanged);
     };
   }, [img, pendingAutoShowJobId]);

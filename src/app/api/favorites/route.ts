@@ -31,7 +31,7 @@ async function readFavorites(): Promise<Record<string, number>> {
 
 async function writeFavorites(favorites: Record<string, number>) {
   await fs.mkdir(path.dirname(FAVORITES_PATH), { recursive: true });
-  await fs.writeFile(FAVORITES_PATH, JSON.stringify(favorites, null, 2), 'utf8');
+  await fs.writeFile(FAVORITES_PATH, JSON.stringify(favorites), 'utf8');
 }
 
 export async function GET() {

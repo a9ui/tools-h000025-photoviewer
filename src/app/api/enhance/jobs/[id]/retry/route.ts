@@ -23,6 +23,15 @@ export async function POST(_request: Request, { params }: { params: Promise<{ id
   } catch {
     return NextResponse.json({ error: 'Source image no longer exists' }, { status: 404 });
   }
+  if (stat.size !== original.sourceSignature.size || stat.mtimeMs !== original.sourceSignature.mtimeMs) {
+    return NextResponse.json(
+      {
+        error: 'Source image changed since the original job. Create a new enhancement job so current size and backend guards are checked.',
+        code: 'SOURCE_CHANGED_RECREATE_JOB',
+      },
+      { status: 409 }
+    );
+  }
 
   const job = await store.createJob({
     sourceId: original.sourceId,
