@@ -279,4 +279,22 @@ describe('scanDirectory', () => {
     expect([...first].sort()).toEqual(['alpha.png', 'beta.png', 'delta.png', 'epsilon.png', 'gamma.png', 'zeta.png']);
     expect([...reshuffled].sort()).toEqual(['alpha.png', 'beta.png', 'delta.png', 'epsilon.png', 'gamma.png', 'zeta.png']);
   });
+
+  it('clamps invalid search pagination inputs', () => {
+    setIndex([
+      makeIndexedImage('alpha.png', 1),
+      makeIndexedImage('beta.png', 2),
+      makeIndexedImage('gamma.png', 3),
+    ]);
+
+    const invalid = searchIndex('', Number.NaN, Number.NaN);
+    expect(invalid.page).toBe(0);
+    expect(invalid.totalPages).toBe(1);
+    expect(invalid.results.map((image) => image.filename)).toEqual(['gamma.png', 'beta.png', 'alpha.png']);
+
+    const negative = searchIndex('', -10, -2);
+    expect(negative.page).toBe(0);
+    expect(negative.results).toHaveLength(1);
+    expect(negative.results[0].filename).toBe('gamma.png');
+  });
 });

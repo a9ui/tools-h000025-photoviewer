@@ -85,3 +85,17 @@ Skill candidate:
   `pnpm-workspace.yaml`. Use `allowBuilds` instead of deprecated
   `ignoredBuiltDependencies`, and respect pnpm minimum-release-age policy by
   pinning too-new tooling releases to the newest policy-allowed version.
+- Thumbnail cache optimization must preserve existing `.cache/thumbs`,
+  `.cache/display`, `.cache/enhance`, and index/settings/favorites files.
+  Runtime lightness means faster cache hits and better scheduling, not deleting
+  cache assets that make future browsing faster.
+- Favorite persistence should avoid synchronous read/backup/stringify/write work
+  on every click. Debounce browser/server writes and store compact JSON on disk
+  so large favorite maps do not stall normal browsing.
+- Versioned image URLs may use the existing cache without source stat work, but
+  cache misses must not write current bytes under stale `v` keys. If the source
+  mtime changed, generate under the current key and avoid immutable caching for
+  the stale URL.
+- Modal and search background work must stay local to the user's current view:
+  modal thumbnail warmup is bounded around the selected image, unchanged search
+  text is not resent, and invalid search pagination is clamped.

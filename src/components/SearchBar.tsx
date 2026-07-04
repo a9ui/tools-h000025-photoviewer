@@ -58,14 +58,16 @@ export default function SearchBar() {
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
+    if (composedQuery === searchQuery || composedQuery === lastSentQueryRef.current) return;
     debounceRef.current = setTimeout(() => {
+      if (composedQuery === lastSentQueryRef.current) return;
       lastSentQueryRef.current = composedQuery;
       setSearchQuery(composedQuery);
     }, 200);
     return () => {
       if (debounceRef.current) clearTimeout(debounceRef.current);
     };
-  }, [composedQuery, setSearchQuery]);
+  }, [composedQuery, searchQuery, setSearchQuery]);
 
   useEffect(() => {
     if (!inputToken.trim() || tags.length === 0) {

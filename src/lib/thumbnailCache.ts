@@ -8,6 +8,8 @@ export const THUMB_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.ca
 export const DISPLAY_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'display');
 const THUMB_WIDTH = 300;
 const DISPLAY_MAX_SIZE = 2200;
+const RIFF_HEADER = Buffer.from('RIFF');
+const WEBP_HEADER = Buffer.from('WEBP');
 const DEFAULT_THUMB_CONCURRENCY = Math.max(
   4,
   Math.min(12, typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length)
@@ -45,6 +47,18 @@ interface ThumbTask {
   promise: Promise<void>;
 }
 
+type ThumbnailResult = {
+  thumbPath: string;
+  created: boolean;
+  versionMatched?: boolean;
+};
+
+type DisplayImageResult = {
+  displayPath: string;
+  created: boolean;
+  versionMatched?: boolean;
+};
+
 sharp.concurrency(MAX_THUMB_CONCURRENCY);
 sharp.cache({ files: 100, memory: 256 });
 
@@ -54,6 +68,7 @@ let warmupGeneration = 0;
 
 const thumbQueue: ThumbTask[] = [];
 const pendingThumbs = new Map<string, ThumbTask>();
+const WEBP_HEADER_BYTES = 16;
 const usableCacheMemo = new Map<string, { size: number; mtimeMs: number; usable: boolean }>();
 const warmupState: WarmupState = {
   running: false,
@@ -79,31 +94,73 @@ export function ensureDisplayDir() {
   }
 }
 
-export async function getThumbnailPath(resolved: string) {
+function getCacheVersionKey(resolved: string, cacheVersion: string) {
+  return `${resolved}|${cacheVersion}`;
+}
+
+function getDisplayCacheVersionKey(resolved: string, cacheVersion: string) {
+  return `${getCacheVersionKey(resolved, cacheVersion)}|display:${DISPLAY_MAX_SIZE}`;
+}
+
+export async function getThumbnailPath(resolved: string, cacheVersion?: string) {
+  if (cacheVersion) {
+    const hash = Buffer.from(getCacheVersionKey(resolved, cacheVersion)).toString('base64url');
+    return path.join(/*turbopackIgnore: true*/ THUMB_DIR, `${hash}.webp`);
+  }
   const stat = await fs.promises.stat(resolved);
-  const hash = Buffer.from(`${resolved}|${stat.mtimeMs}`).toString('base64url');
+  const hash = Buffer.from(getCacheVersionKey(resolved, String(stat.mtimeMs))).toString('base64url');
   return path.join(/*turbopackIgnore: true*/ THUMB_DIR, `${hash}.webp`);
 }
 
-export async function getDisplayPath(resolved: string) {
+export async function getDisplayPath(resolved: string, cacheVersion?: string) {
+  if (cacheVersion) {
+    const hash = Buffer.from(getDisplayCacheVersionKey(resolved, cacheVersion)).toString('base64url');
+    return path.join(/*turbopackIgnore: true*/ DISPLAY_DIR, `${hash}.webp`);
+  }
   const stat = await fs.promises.stat(resolved);
-  const hash = Buffer.from(`${resolved}|${stat.mtimeMs}|display:${DISPLAY_MAX_SIZE}`).toString('base64url');
+  const hash = Buffer.from(getDisplayCacheVersionKey(resolved, String(stat.mtimeMs))).toString('base64url');
   return path.join(/*turbopackIgnore: true*/ DISPLAY_DIR, `${hash}.webp`);
+}
+
+async function hasWebpHeader(filePath: string) {
+  const stat = await fs.promises.stat(filePath);
+  if (stat.size <= WEBP_HEADER_BYTES) return false;
+  const handle = await fs.promises.open(filePath, 'r');
+  try {
+    const header = Buffer.allocUnsafe(WEBP_HEADER_BYTES);
+    const { bytesRead } = await handle.read(header, 0, WEBP_HEADER_BYTES, 0);
+    const declaredSize = bytesRead >= 8 ? header.readUInt32LE(4) : -1;
+    const chunkType = bytesRead >= 16 ? header.subarray(12, 16).toString('ascii') : '';
+    return (
+      bytesRead === WEBP_HEADER_BYTES &&
+      header.subarray(0, 4).equals(RIFF_HEADER) &&
+      header.subarray(8, 12).equals(WEBP_HEADER) &&
+      declaredSize + 8 === stat.size &&
+      (chunkType === 'VP8 ' || chunkType === 'VP8L' || chunkType === 'VP8X')
+    );
+  } finally {
+    await handle.close();
+  }
 }
 
 async function isUsableCachedImage(filePath: string) {
   try {
     const stat = await fs.promises.stat(filePath);
-    if (stat.size <= 0) return false;
+    if (stat.size <= WEBP_HEADER_BYTES) return false;
     const memo = usableCacheMemo.get(filePath);
     if (memo && memo.size === stat.size && memo.mtimeMs === stat.mtimeMs) return memo.usable;
-    await sharp(filePath, { failOn: 'none' }).metadata();
-    usableCacheMemo.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, usable: true });
-    return true;
+    const usable = await hasWebpHeader(filePath);
+    usableCacheMemo.set(filePath, { size: stat.size, mtimeMs: stat.mtimeMs, usable });
+    return usable;
   } catch {
     usableCacheMemo.delete(filePath);
     return false;
   }
+}
+
+async function getCurrentCacheVersion(resolved: string) {
+  const stat = await fs.promises.stat(resolved);
+  return String(stat.mtimeMs);
 }
 
 async function removeBrokenCacheFile(filePath: string) {
@@ -188,9 +245,13 @@ function runNextThumbJob() {
   }
 }
 
-export async function ensureThumbnail(resolved: string, priority: number) {
+export async function ensureThumbnail(
+  resolved: string,
+  priority: number,
+  cacheVersion?: string
+): Promise<ThumbnailResult> {
   ensureThumbDir();
-  const thumbPath = await getThumbnailPath(resolved);
+  const thumbPath = await getThumbnailPath(resolved, cacheVersion);
 
   const pending = pendingThumbs.get(thumbPath);
   if (pending) {
@@ -202,8 +263,31 @@ export async function ensureThumbnail(resolved: string, priority: number) {
   }
 
   if (fs.existsSync(/*turbopackIgnore: true*/ thumbPath) && await isUsableCachedImage(thumbPath)) {
-    return { thumbPath, created: false };
+    return { thumbPath, created: false, versionMatched: true };
   }
+
+  if (cacheVersion) {
+    const currentVersion = await getCurrentCacheVersion(resolved);
+    if (currentVersion !== cacheVersion) {
+      const currentThumbPath = await getThumbnailPath(resolved, currentVersion);
+      const currentPending = pendingThumbs.get(currentThumbPath);
+      if (currentPending) {
+        if (!currentPending.started && priority < currentPending.priority) {
+          currentPending.priority = priority;
+        }
+        await currentPending.promise;
+        return { thumbPath: currentThumbPath, created: true, versionMatched: false };
+      }
+      if (fs.existsSync(/*turbopackIgnore: true*/ currentThumbPath) && await isUsableCachedImage(currentThumbPath)) {
+        return { thumbPath: currentThumbPath, created: false, versionMatched: false };
+      }
+      return ensureThumbnail(resolved, priority, currentVersion).then((result) => ({
+        ...result,
+        versionMatched: false,
+      }));
+    }
+  }
+
   await removeBrokenCacheFile(thumbPath);
 
   let resolveTask!: () => void;
@@ -240,12 +324,16 @@ export async function ensureThumbnail(resolved: string, priority: number) {
     pendingThumbs.delete(thumbPath);
   }
 
-  return { thumbPath, created: true };
+  return { thumbPath, created: true, versionMatched: true };
 }
 
-export async function ensureDisplayImage(resolved: string, priority: number) {
+export async function ensureDisplayImage(
+  resolved: string,
+  priority: number,
+  cacheVersion?: string
+): Promise<DisplayImageResult> {
   ensureDisplayDir();
-  const displayPath = await getDisplayPath(resolved);
+  const displayPath = await getDisplayPath(resolved, cacheVersion);
 
   const pending = pendingThumbs.get(displayPath);
   if (pending) {
@@ -257,8 +345,31 @@ export async function ensureDisplayImage(resolved: string, priority: number) {
   }
 
   if (fs.existsSync(/*turbopackIgnore: true*/ displayPath) && await isUsableCachedImage(displayPath)) {
-    return { displayPath, created: false };
+    return { displayPath, created: false, versionMatched: true };
   }
+
+  if (cacheVersion) {
+    const currentVersion = await getCurrentCacheVersion(resolved);
+    if (currentVersion !== cacheVersion) {
+      const currentDisplayPath = await getDisplayPath(resolved, currentVersion);
+      const currentPending = pendingThumbs.get(currentDisplayPath);
+      if (currentPending) {
+        if (!currentPending.started && priority < currentPending.priority) {
+          currentPending.priority = priority;
+        }
+        await currentPending.promise;
+        return { displayPath: currentDisplayPath, created: true, versionMatched: false };
+      }
+      if (fs.existsSync(/*turbopackIgnore: true*/ currentDisplayPath) && await isUsableCachedImage(currentDisplayPath)) {
+        return { displayPath: currentDisplayPath, created: false, versionMatched: false };
+      }
+      return ensureDisplayImage(resolved, priority, currentVersion).then((result) => ({
+        ...result,
+        versionMatched: false,
+      }));
+    }
+  }
+
   await removeBrokenCacheFile(displayPath);
 
   let resolveTask!: () => void;
@@ -295,7 +406,7 @@ export async function ensureDisplayImage(resolved: string, priority: number) {
     pendingThumbs.delete(displayPath);
   }
 
-  return { displayPath, created: true };
+  return { displayPath, created: true, versionMatched: true };
 }
 
 export function enqueueThumbnails(paths: string[], priority: number) {

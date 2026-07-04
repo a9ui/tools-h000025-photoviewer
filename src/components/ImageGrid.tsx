@@ -24,7 +24,7 @@ const COMPACT_ACTIONS_MAX_WIDTH = 150;
 const MODAL_WARMUP_DELAY_MS = 1400;
 const MODAL_WARMUP_INTERVAL_MS = 2200;
 const MODAL_WARMUP_THUMB_BUDGET = 18;
-const MODAL_WARMUP_SEARCH_PAGES = 1;
+const MODAL_WARMUP_SEARCH_RADIUS = 120;
 const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
 const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
@@ -698,24 +698,40 @@ export default function ImageGrid() {
     }
 
     const warmModalBackground = () => {
-      const firstMissing = searchResults.findIndex((image) => image === null);
-      if (firstMissing >= 0) {
-        ensureSearchRange(
-          firstMissing,
-          Math.min(searchTotal - 1, firstMissing + SEARCH_PAGE_SIZE * MODAL_WARMUP_SEARCH_PAGES - 1)
-        );
-      }
+      if (document.visibilityState !== 'visible') return;
 
       const totalSlots = searchResults.length;
       if (totalSlots <= 0) return;
-      let cursor = modalWarmCursorRef.current % totalSlots;
+      const windowStart = Math.max(0, selectedIndex - MODAL_WARMUP_SEARCH_RADIUS);
+      const windowEnd = Math.min(searchTotal - 1, selectedIndex + MODAL_WARMUP_SEARCH_RADIUS);
+      let hasMissingNearby = false;
+      for (let index = windowStart; index <= windowEnd; index += 1) {
+        if (searchResults[index] === null) {
+          hasMissingNearby = true;
+          break;
+        }
+      }
+      if (hasMissingNearby) {
+        ensureSearchRange(windowStart, windowEnd);
+      }
+
+      const offsets: number[] = [0];
+      for (let distance = 1; distance <= MODAL_WARMUP_THUMB_BUDGET; distance += 1) {
+        offsets.push(distance, -distance);
+      }
+      const cursor = modalWarmCursorRef.current % Math.max(1, offsets.length);
       let inspected = 0;
       let queued = 0;
       const budget = MODAL_WARMUP_THUMB_BUDGET;
       const warmPaths: string[] = [];
 
-      while (inspected < totalSlots && queued < budget) {
-        const index = (cursor + inspected) % totalSlots;
+      while (inspected < offsets.length && queued < budget) {
+        const offset = offsets[(cursor + inspected) % offsets.length];
+        const index = selectedIndex + offset;
+        if (index < 0 || index >= totalSlots) {
+          inspected++;
+          continue;
+        }
         const image = searchResults[index];
         if (image && !preloadRef.current.has(image.id)) {
           preloadRef.current.add(image.id);
@@ -730,7 +746,7 @@ export default function ImageGrid() {
         priority: 'nearby',
       });
 
-      modalWarmCursorRef.current = (cursor + inspected) % totalSlots;
+      modalWarmCursorRef.current = (cursor + inspected) % offsets.length;
       if (preloadRef.current.size > 800) {
         const trimmed = Array.from(preloadRef.current).slice(-600);
         preloadRef.current = new Set(trimmed);

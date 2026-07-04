@@ -34,6 +34,28 @@ function parseThumbPriority(request: NextRequest, warmOnly: boolean): number {
   return warmOnly ? 2 : 1;
 }
 
+function parseCacheVersion(request: NextRequest) {
+  const value = request.nextUrl.searchParams.get('v');
+  if (!value || value.length > 32) return undefined;
+  return /^\d+(?:\.\d+)?$/.test(value) ? value : undefined;
+}
+
+function getVersionedCacheControl(hasVersion: boolean, versionMatched = true) {
+  if (!hasVersion) return 'public, max-age=86400';
+  return versionMatched ? 'public, max-age=31536000, immutable' : 'public, max-age=0, must-revalidate';
+}
+
+function getFallbackCacheControl(resolved: string, cacheVersion: string | undefined, hasVersion: boolean) {
+  if (!cacheVersion) return hasVersion ? 'public, max-age=31536000, immutable' : 'public, max-age=3600';
+  try {
+    return String(fs.statSync(resolved).mtimeMs) === cacheVersion
+      ? 'public, max-age=31536000, immutable'
+      : 'public, max-age=0, must-revalidate';
+  } catch {
+    return 'public, max-age=0, must-revalidate';
+  }
+}
+
 /**
  * GET /api/image?path=ABSOLUTE_PATH&thumb=true|false
  *
@@ -47,7 +69,8 @@ export async function GET(request: NextRequest) {
   const display = request.nextUrl.searchParams.get('display') === 'true';
   const warmOnly = thumb && request.nextUrl.searchParams.get('warm') === 'true';
   const priority = parseThumbPriority(request, warmOnly);
-  const hasVersion = request.nextUrl.searchParams.has('v');
+  const cacheVersion = parseCacheVersion(request);
+  const hasVersion = Boolean(cacheVersion);
 
   if (!filePath) {
     return new Response('Missing path', { status: 400 });
@@ -65,24 +88,24 @@ export async function GET(request: NextRequest) {
 
   if (display) {
     try {
-      const { displayPath } = await ensureDisplayImage(resolved, priority);
+      const { displayPath, versionMatched = true } = await ensureDisplayImage(resolved, priority, cacheVersion);
       return getFileResponse(
         displayPath,
         'image/webp',
-        hasVersion ? 'public, max-age=31536000, immutable' : 'public, max-age=86400'
+        getVersionedCacheControl(hasVersion, versionMatched)
       );
     } catch {
       return getFileResponse(
         resolved,
         getImageContentType(resolved),
-        hasVersion ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'
+        getFallbackCacheControl(resolved, cacheVersion, hasVersion)
       );
     }
   }
 
   if (thumb) {
     try {
-      const { thumbPath } = await ensureThumbnail(resolved, priority);
+      const { thumbPath, versionMatched = true } = await ensureThumbnail(resolved, priority, cacheVersion);
 
       if (warmOnly) {
         return new Response(null, {
@@ -94,7 +117,7 @@ export async function GET(request: NextRequest) {
       return getFileResponse(
         thumbPath,
         'image/webp',
-        hasVersion ? 'public, max-age=31536000, immutable' : 'public, max-age=86400'
+        getVersionedCacheControl(hasVersion, versionMatched)
       );
     } catch {
       if (warmOnly) {
@@ -103,13 +126,13 @@ export async function GET(request: NextRequest) {
           headers: { 'Cache-Control': 'no-store' },
         });
       }
-      return getFileResponse(resolved, getImageContentType(resolved), 'public, max-age=3600');
+      return getFileResponse(resolved, getImageContentType(resolved), getFallbackCacheControl(resolved, cacheVersion, hasVersion));
     }
   }
 
   return getFileResponse(
     resolved,
     getImageContentType(resolved),
-    hasVersion ? 'public, max-age=31536000, immutable' : 'public, max-age=3600'
+    getFallbackCacheControl(resolved, cacheVersion, hasVersion)
   );
 }

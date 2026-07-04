@@ -57,6 +57,12 @@ export async function POST(request: NextRequest) {
     : BACKGROUND_WARMUP_LIMIT;
 
   if (directPaths.length > 0) {
+    if (dirs.length === 0) {
+      return NextResponse.json(
+        { ok: false, error: 'dir is required when warming explicit thumbnail paths' },
+        { status: 400 }
+      );
+    }
     const paths = directPaths.filter((imagePath) => isInsideAnyDir(imagePath, dirs));
     return NextResponse.json({
       ok: true,
