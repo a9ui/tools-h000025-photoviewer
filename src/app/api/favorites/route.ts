@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
-import { mergeWithLegacyFavorites } from '@/lib/legacyPhotoviewer';
 
-const FAVORITES_PATH = path.join(process.cwd(), '.cache', 'favorites.json');
+const FAVORITES_PATH = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'favorites.json');
 const MAX_FAVORITE_LEVEL = 5;
 
 function normalizeFavorites(value: unknown): Record<string, number> {
@@ -36,12 +35,7 @@ async function writeFavorites(favorites: Record<string, number>) {
 }
 
 export async function GET() {
-  const current = await readFavorites();
-  const favorites = mergeWithLegacyFavorites(current);
-  if (JSON.stringify(favorites) !== JSON.stringify(current)) {
-    await writeFavorites(favorites);
-  }
-  return NextResponse.json({ favorites });
+  return NextResponse.json({ favorites: await readFavorites() });
 }
 
 export async function PUT(req: Request) {

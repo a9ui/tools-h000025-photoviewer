@@ -62,3 +62,22 @@ Skill candidate:
   junctions, repair installs, verify GitHub/SQLite/Cursor/ChatGPT readiness,
   create a private repository, seed milestones/issues, and record service
   checks.
+
+## 2026-07-04 Performance Turbo Pass
+
+- Updated the runtime/test stack to Next 16, React 19, Sharp 0.35, Vitest 4,
+  and current compatible frontend tooling. ESLint 9 and TypeScript 5 stay pinned
+  because ESLint 10 / TypeScript 6 are newer but not yet a safe peer fit here.
+- Next 16 / Turbopack initially traced `.cache` and external enhancer tool paths;
+  runtime cache and enhancer adapters now use tracing excludes, Turbopack ignore
+  markers, and lazy adapter loading. Build completes without Turbopack trace
+  warnings after the change.
+- Thumbnail and search cache policy now prioritizes visible and modal work:
+  background search prefetch is one page past the viewport, automatic thumbnail
+  warmup is delayed and capped, and direct visible/modal warmup stays prioritized.
+- `next lint` was replaced with an ESLint 9 flat config because Next 16 removed
+  the old lint command path. `verify-project.ps1 -Full` now runs unit tests,
+  lint, audit, typecheck, build, and E2E sequentially.
+- Next 16 local dev needs `allowedDevOrigins: ['127.0.0.1']` for Playwright's
+  127.0.0.1 base URL; without it the landing page can render but client effects
+  such as last-folder restoration do not hydrate correctly in E2E.

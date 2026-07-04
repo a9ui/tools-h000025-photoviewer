@@ -25,8 +25,8 @@ const MODAL_WARMUP_DELAY_MS = 1400;
 const MODAL_WARMUP_INTERVAL_MS = 2200;
 const MODAL_WARMUP_THUMB_BUDGET = 18;
 const MODAL_WARMUP_SEARCH_PAGES = 1;
-const BACKGROUND_SEARCH_PAGE_DELAY_MS = 90;
-const BACKGROUND_SEARCH_PAGES = 2;
+const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
+const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
 
 function withThumbPriorityParams(fileUrl: string, priority: ThumbnailWarmupPriority = 'visible') {
@@ -561,15 +561,21 @@ export default function ImageGrid() {
     if (isClientFiltered) return;
     if (searchTotal <= 0) return;
     if (loadedSearchCount >= searchTotal) return;
+    if (virtualRange.end < virtualRange.start) return;
 
-    const firstMissing = searchResults.findIndex((image) => image === null);
-    if (firstMissing < 0) return;
+    const prefetchStart = Math.min(searchTotal - 1, Math.max(0, virtualRange.end + 1));
+    const prefetchEnd = Math.min(searchTotal - 1, prefetchStart + SEARCH_PAGE_SIZE * BACKGROUND_SEARCH_PAGES - 1);
+    let hasMissingAhead = false;
+    for (let i = prefetchStart; i <= prefetchEnd; i += 1) {
+      if (searchResults[i] === null) {
+        hasMissingAhead = true;
+        break;
+      }
+    }
+    if (!hasMissingAhead) return;
 
     const timeoutId = window.setTimeout(() => {
-      ensureSearchRange(
-        firstMissing,
-        Math.min(searchTotal - 1, firstMissing + SEARCH_PAGE_SIZE * BACKGROUND_SEARCH_PAGES - 1)
-      );
+      ensureSearchRange(prefetchStart, prefetchEnd);
     }, isSearching ? BACKGROUND_SEARCH_PAGE_DELAY_MS * 2 : BACKGROUND_SEARCH_PAGE_DELAY_MS);
 
     return () => window.clearTimeout(timeoutId);
@@ -580,6 +586,8 @@ export default function ImageGrid() {
     searchResults,
     searchTotal,
     isClientFiltered,
+    virtualRange.end,
+    virtualRange.start,
   ]);
 
   useEffect(() => {

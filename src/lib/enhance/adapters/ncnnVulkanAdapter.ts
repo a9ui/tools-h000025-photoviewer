@@ -1,26 +1,15 @@
-import { spawn, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import type { EnhancementAdapter } from '../types';
-
-const NCNN_ROOT = process.env.PVU_REALESRGAN_NCNN_ROOT || 'C:\\AI\\RealESRGAN-ncnn-vulkan';
-const NCNN_EXE = process.env.PVU_REALESRGAN_NCNN_EXE || path.join(NCNN_ROOT, 'realesrgan-ncnn-vulkan.exe');
-const NCNN_MODEL_DIR = process.env.PVU_REALESRGAN_NCNN_MODEL_DIR || path.join(NCNN_ROOT, 'models');
-
-const activeNcnnProcesses = new Map<string, { runId?: string; pid: number }>();
-let shutdownCleanupRegistered = false;
-
-const REQUIRED_MODEL_FILES = [
-  'realesr-animevideov3-x2.param',
-  'realesr-animevideov3-x2.bin',
-  'realesr-animevideov3-x3.param',
-  'realesr-animevideov3-x3.bin',
-  'realesr-animevideov3-x4.param',
-  'realesr-animevideov3-x4.bin',
-  'realesrgan-x4plus.param',
-  'realesrgan-x4plus.bin',
-];
+import {
+  registerNcnnVulkanShutdownCleanup,
+  terminateNcnnVulkanProcess,
+  trackNcnnVulkanProcess,
+  untrackNcnnVulkanProcess,
+} from './ncnnProcessRegistry';
+import { getNcnnVulkanAvailability, NCNN_EXE, NCNN_MODEL_DIR, NCNN_ROOT } from './ncnnConfig';
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -48,55 +37,6 @@ function modelNameFor(modelFamily: string | undefined, nativeScale: number) {
 
 function outputExtension(format: 'png' | 'webp' | 'jpg') {
   return format === 'jpg' ? 'jpg' : format;
-}
-
-export function getNcnnVulkanAvailability() {
-  const requiredPaths = [
-    NCNN_EXE,
-    NCNN_MODEL_DIR,
-    ...REQUIRED_MODEL_FILES.map((file) => path.join(NCNN_MODEL_DIR, file)),
-  ];
-  const missing = requiredPaths.filter((filePath) => !fs.existsSync(filePath));
-  return {
-    available: missing.length === 0,
-    exePath: NCNN_EXE,
-    modelDir: NCNN_MODEL_DIR,
-    missing,
-  };
-}
-
-function killSpawnedProcessTree(pid: number | undefined) {
-  if (!pid) return;
-  if (process.platform === 'win32') {
-    spawnSync('taskkill.exe', ['/pid', String(pid), '/t', '/f'], {
-      stdio: 'ignore',
-      windowsHide: true,
-    });
-    return;
-  }
-  try {
-    process.kill(pid, 'SIGTERM');
-  } catch {
-    // Process already exited.
-  }
-}
-
-export function requestNcnnVulkanCancel(jobId: string, runId?: string) {
-  const active = activeNcnnProcesses.get(jobId);
-  if (!active) return false;
-  if (runId && active.runId && active.runId !== runId) return false;
-  killSpawnedProcessTree(active.pid);
-  return true;
-}
-
-function registerShutdownCleanup() {
-  if (shutdownCleanupRegistered) return;
-  shutdownCleanupRegistered = true;
-  process.once('exit', () => {
-    for (const active of activeNcnnProcesses.values()) {
-      killSpawnedProcessTree(active.pid);
-    }
-  });
 }
 
 function warningLevelFor(modelName: string, workMP?: number, finalMP?: number) {
@@ -132,8 +72,8 @@ async function runNcnn(
   onProcessStart?: (pid: number) => void
 ) {
   return await new Promise<void>((resolve, reject) => {
-    const child = spawn(NCNN_EXE, args, {
-      cwd,
+    const child = spawn(/*turbopackIgnore: true*/ NCNN_EXE, args, {
+      cwd: /*turbopackIgnore: true*/ cwd,
       shell: false,
       windowsHide: true,
       stdio: ['ignore', 'pipe', 'pipe'],
@@ -142,14 +82,14 @@ async function runNcnn(
     let stderr = '';
     let settled = false;
     if (child.pid) {
-      activeNcnnProcesses.set(jobId, { runId, pid: child.pid });
+      trackNcnnVulkanProcess(jobId, runId, child.pid);
       onProcessStart?.(child.pid);
     }
 
     const cancelTimer = setInterval(() => {
       void isCancelRequested().then((cancelRequested) => {
         if (!cancelRequested || settled) return;
-        killSpawnedProcessTree(child.pid);
+        terminateNcnnVulkanProcess(child.pid);
       }).catch(() => {});
     }, 500);
 
@@ -171,13 +111,13 @@ async function runNcnn(
     });
     child.on('error', (error) => {
       settled = true;
-      activeNcnnProcesses.delete(jobId);
+      untrackNcnnVulkanProcess(jobId);
       clearInterval(cancelTimer);
       reject(error);
     });
     child.on('exit', (code, signal) => {
       settled = true;
-      activeNcnnProcesses.delete(jobId);
+      untrackNcnnVulkanProcess(jobId);
       clearInterval(cancelTimer);
       if (signal) {
         reject(new Error('Real-ESRGAN ncnn-vulkan job canceled.'));
@@ -263,8 +203,8 @@ export const ncnnVulkanAdapter: EnhancementAdapter = {
   id: 'realesrgan-ncnn',
   label: 'Real-ESRGAN fast GPU',
   async run(job, context) {
-    registerShutdownCleanup();
-    if (!fs.existsSync(NCNN_EXE)) {
+    registerNcnnVulkanShutdownCleanup();
+    if (!fs.existsSync(/*turbopackIgnore: true*/ NCNN_EXE)) {
       throw new Error(`Real-ESRGAN ncnn-vulkan executable not found: ${NCNN_EXE}`);
     }
     if (context.preset.scale > 4) {

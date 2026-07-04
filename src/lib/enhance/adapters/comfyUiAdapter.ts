@@ -2,6 +2,14 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import type { EnhancementAdapter } from '../types';
+import {
+  COMFY_ANIME_MODEL,
+  COMFY_GENERAL_MODEL,
+  getComfyUiConfigErrorMessage,
+  getComfyUiConfigStatus,
+  getWorkflowPath,
+} from './comfyUiConfig';
+import { comfyFetch } from './comfyUiClient';
 
 type ComfyWorkflowNode = {
   class_type?: string;
@@ -25,12 +33,6 @@ type OutputWriteDiagnostics = {
   notes?: string[];
 };
 
-const COMFY_ROOT = process.env.PVU_COMFY_ROOT || 'C:\\AI\\ComfyUI';
-const COMFY_UPSCALE_MODEL_DIR = process.env.PVU_COMFY_UPSCALE_MODEL_DIR || path.join(COMFY_ROOT, 'models', 'upscale_models');
-const COMFY_ANIME_MODEL = process.env.PVU_COMFY_ANIME_MODEL || 'RealESRGAN_x4plus_anime_6B.pth';
-const COMFY_GENERAL_MODEL = process.env.PVU_COMFY_GENERAL_MODEL || 'RealESRGAN_x4plus.pth';
-const REQUIRED_COMFY_UPSCALE_MODELS = [COMFY_ANIME_MODEL, COMFY_GENERAL_MODEL];
-
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -42,37 +44,6 @@ function elapsedMs(started: number) {
 function megapixels(width?: number, height?: number) {
   if (!width || !height) return undefined;
   return Math.round((width * height / 1_000_000) * 100) / 100;
-}
-
-function getComfyBaseUrl() {
-  return (process.env.PVU_COMFY_URL || 'http://127.0.0.1:8188').replace(/\/+$/, '');
-}
-
-function getWorkflowPath() {
-  return process.env.PVU_COMFY_WORKFLOW_PATH || path.join(process.cwd(), 'config', 'comfy-upscale-workflow.json');
-}
-
-export function getComfyUiConfigStatus() {
-  const workflowPath = getWorkflowPath();
-  const missingModels = REQUIRED_COMFY_UPSCALE_MODELS.filter((modelName) => (
-    !fs.existsSync(path.join(COMFY_UPSCALE_MODEL_DIR, modelName))
-  ));
-  return {
-    baseUrl: getComfyBaseUrl(),
-    workflowPath,
-    workflowConfigured: fs.existsSync(workflowPath),
-    upscaleModelDir: COMFY_UPSCALE_MODEL_DIR,
-    requiredModels: REQUIRED_COMFY_UPSCALE_MODELS,
-    missingModels,
-    modelsConfigured: missingModels.length === 0,
-  };
-}
-
-export function getComfyUiConfigErrorMessage(status = getComfyUiConfigStatus()) {
-  if (!status.modelsConfigured) {
-    return `ComfyUI upscale model(s) missing in ${status.upscaleModelDir}: ${status.missingModels.join(', ')}.`;
-  }
-  return `ComfyUI workflow not configured. Export an API-format workflow to ${status.workflowPath} or set PVU_COMFY_WORKFLOW_PATH.`;
 }
 
 async function readWorkflow(): Promise<ComfyWorkflow> {
@@ -156,38 +127,6 @@ export const comfyUiAdapterTestHooks = {
   patchUpscaleModel,
   patchSaveImagePrefix,
 };
-
-async function comfyFetch(pathname: string, init?: RequestInit) {
-  const res = await fetch(`${getComfyBaseUrl()}${pathname}`, init);
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`ComfyUI ${pathname} failed: HTTP ${res.status}${text ? ` ${text.slice(0, 500)}` : ''}`);
-  }
-  return res;
-}
-
-async function getQueue() {
-  const res = await comfyFetch('/queue');
-  return await res.json() as unknown;
-}
-
-function queueJsonContainsPromptId(queue: unknown, promptId: string) {
-  return JSON.stringify(queue).includes(promptId);
-}
-
-export async function requestComfyUiInterrupt(promptId?: string) {
-  if (promptId) {
-    const queue = await getQueue();
-    if (!queueJsonContainsPromptId(queue, promptId)) {
-      throw new Error(`ComfyUI prompt ${promptId} is not the active or queued job; refusing global interrupt.`);
-    }
-  }
-  const res = await fetch(`${getComfyBaseUrl()}/interrupt`, { method: 'POST' });
-  if (!res.ok) {
-    const text = await res.text().catch(() => '');
-    throw new Error(`ComfyUI interrupt failed: HTTP ${res.status}${text ? ` ${text.slice(0, 500)}` : ''}`);
-  }
-}
 
 async function uploadImage(sourcePath: string, jobId: string) {
   const bytes = await fs.promises.readFile(sourcePath);

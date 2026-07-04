@@ -1,8 +1,15 @@
 import { defineConfig } from 'vitest/config';
-import tsconfigPaths from 'vite-tsconfig-paths';
 
 export default defineConfig({
-  plugins: [tsconfigPaths()],
+  resolve: {
+    tsconfigPaths: true,
+  },
+  oxc: {
+    jsx: {
+      runtime: 'automatic',
+      importSource: 'react',
+    },
+  },
   test: {
     globals: true,
     environment: 'jsdom',

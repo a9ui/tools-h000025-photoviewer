@@ -25,8 +25,8 @@ function createResponse(body = 'image') {
 }
 
 describe('client image cache', () => {
-  let createObjectUrl: ReturnType<typeof vi.fn<[], string>>;
-  let revokeObjectUrl: ReturnType<typeof vi.fn<[string], void>>;
+  let createObjectUrl: ReturnType<typeof vi.fn>;
+  let revokeObjectUrl: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     clearClientImageCacheForTests();

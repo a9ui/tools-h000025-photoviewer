@@ -6,6 +6,9 @@ import { enqueueThumbnails, getThumbnailWarmupState, startThumbnailWarmup } from
 
 export const dynamic = 'force-dynamic';
 
+const DIRECT_WARMUP_LIMIT = 500;
+const BACKGROUND_WARMUP_LIMIT = 5000;
+
 function normalizeDirPaths(value: unknown) {
   if (typeof value !== 'string' || !value.trim()) return [];
   const paths: string[] = [];
@@ -50,14 +53,14 @@ export async function POST(request: NextRequest) {
         : 2;
   const limitValue = Number((body as { limit?: unknown }).limit);
   const limit = Number.isFinite(limitValue) && limitValue > 0
-    ? Math.min(Math.trunc(limitValue), 200000)
-    : 200000;
+    ? Math.min(Math.trunc(limitValue), BACKGROUND_WARMUP_LIMIT)
+    : BACKGROUND_WARMUP_LIMIT;
 
   if (directPaths.length > 0) {
     const paths = directPaths.filter((imagePath) => isInsideAnyDir(imagePath, dirs));
     return NextResponse.json({
       ok: true,
-      warmup: enqueueThumbnails(paths.slice(0, Math.min(limit, 500)), priority),
+      warmup: enqueueThumbnails(paths.slice(0, Math.min(limit, DIRECT_WARMUP_LIMIT)), priority),
     });
   }
 

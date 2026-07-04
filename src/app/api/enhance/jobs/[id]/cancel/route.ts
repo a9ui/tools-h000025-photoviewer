@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { requestComfyUiInterrupt } from '@/lib/enhance/adapters/comfyUiAdapter';
-import { requestNcnnVulkanCancel } from '@/lib/enhance/adapters/ncnnVulkanAdapter';
+import { requestComfyUiInterrupt } from '@/lib/enhance/adapters/comfyUiClient';
+import { requestNcnnVulkanCancel } from '@/lib/enhance/adapters/ncnnProcessRegistry';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
 
 export const dynamic = 'force-dynamic';
