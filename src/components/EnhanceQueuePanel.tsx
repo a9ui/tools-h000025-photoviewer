@@ -1,9 +1,18 @@
 'use client';
 
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import {
+  DEFAULT_ENHANCEMENT_SETTINGS,
+  ENHANCEMENT_PRESETS,
+  type EnhancementDiagnostics,
+  type EnhancementPreset,
+  type EnhancementRequestSettings,
+} from '@/lib/enhance/types';
 import { useImageStore } from '../store/ImageContext';
 
 type EnhancementJobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'canceled' | 'deleted';
+
+type EnhancementSettings = EnhancementRequestSettings;
 
 interface EnhancementJob {
   id: string;
@@ -20,171 +29,6 @@ interface EnhancementJob {
   updatedAt: string;
   diagnostics?: EnhancementDiagnostics;
 }
-
-interface EnhancementDiagnostics {
-  backend?: 'sharp-test' | 'realesrgan-ncnn' | 'comfyui';
-  modelName?: string;
-  warningLevel?: 'none' | 'slow' | 'confirm' | 'blocked';
-  sourceWidth?: number;
-  sourceHeight?: number;
-  sourceMP?: number;
-  requestedScale?: number;
-  nativeScale?: number;
-  workWidth?: number;
-  workHeight?: number;
-  workMP?: number;
-  targetWidth?: number;
-  targetHeight?: number;
-  targetMP?: number;
-  outputWidth?: number;
-  outputHeight?: number;
-  outputMP?: number;
-  uploadMs?: number;
-  comfyWaitMs?: number;
-  processorMs?: number;
-  ncnnMs?: number;
-  downloadMs?: number;
-  postprocessMs?: number;
-  totalMs?: number;
-  notes?: string[];
-}
-
-interface EnhancementPreset {
-  id: string;
-  label: string;
-  modelFamily: 'anime' | 'photo' | 'general';
-  modelName: string;
-  scale: number;
-  outputFormat: 'png' | 'webp' | 'jpg';
-  denoise: number;
-  sharpen: number;
-  detail: number;
-  smoothness: number;
-  colorBrightness: number;
-  colorContrast: number;
-  colorSaturation: number;
-}
-
-interface EnhancementSettings {
-  presetId: string;
-  adapterId: string;
-  scale: number;
-  denoise: number;
-  sharpen: number;
-  detail: number;
-  smoothness: number;
-  colorBrightness: number;
-  colorContrast: number;
-  colorSaturation: number;
-  outputFormat: 'png' | 'webp' | 'jpg';
-}
-
-export const BUILTIN_ENHANCEMENT_PRESETS: EnhancementPreset[] = [
-  {
-    id: 'anime-sharp-x2',
-    label: 'Anime clean x2',
-    modelFamily: 'anime',
-    modelName: 'Anime/illustration preset; ComfyUI uses RealESRGAN_x4plus_anime_6B',
-    scale: 2,
-    outputFormat: 'webp',
-    denoise: 18,
-    sharpen: 55,
-    detail: 45,
-    smoothness: 18,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-  {
-    id: 'anime-detail-x4',
-    label: 'Anime crisp detail x4',
-    modelFamily: 'anime',
-    modelName: 'Anime detail preset; ComfyUI uses RealESRGAN_x4plus_anime_6B',
-    scale: 4,
-    outputFormat: 'webp',
-    denoise: 8,
-    sharpen: 82,
-    detail: 82,
-    smoothness: 10,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-  {
-    id: 'photo-natural-x2',
-    label: 'Photo natural x2',
-    modelFamily: 'photo',
-    modelName: 'Photo/realistic preset; ComfyUI uses RealESRGAN_x4plus',
-    scale: 2,
-    outputFormat: 'jpg',
-    denoise: 10,
-    sharpen: 28,
-    detail: 28,
-    smoothness: 24,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-  {
-    id: 'photo-detail-x4',
-    label: 'Photo texture detail x4',
-    modelFamily: 'photo',
-    modelName: 'Photo texture preset; ComfyUI uses RealESRGAN_x4plus',
-    scale: 4,
-    outputFormat: 'webp',
-    denoise: 6,
-    sharpen: 54,
-    detail: 70,
-    smoothness: 14,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-  {
-    id: 'general-balanced-x4',
-    label: 'General balanced x4',
-    modelFamily: 'general',
-    modelName: 'General preset; ComfyUI uses RealESRGAN_x4plus',
-    scale: 4,
-    outputFormat: 'webp',
-    denoise: 14,
-    sharpen: 38,
-    detail: 48,
-    smoothness: 18,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-  {
-    id: 'general-max-x6',
-    label: 'General export x6',
-    modelFamily: 'general',
-    modelName: 'General strong detail preset; ComfyUI uses RealESRGAN_x4plus',
-    scale: 6,
-    outputFormat: 'webp',
-    denoise: 8,
-    sharpen: 68,
-    detail: 76,
-    smoothness: 12,
-    colorBrightness: 0,
-    colorContrast: 0,
-    colorSaturation: 0,
-  },
-];
-
-export const DEFAULT_ENHANCEMENT_SETTINGS: EnhancementSettings = {
-  presetId: BUILTIN_ENHANCEMENT_PRESETS[0].id,
-  adapterId: 'realesrgan-ncnn',
-  scale: BUILTIN_ENHANCEMENT_PRESETS[0].scale,
-  denoise: BUILTIN_ENHANCEMENT_PRESETS[0].denoise,
-  sharpen: BUILTIN_ENHANCEMENT_PRESETS[0].sharpen,
-  detail: BUILTIN_ENHANCEMENT_PRESETS[0].detail,
-  smoothness: BUILTIN_ENHANCEMENT_PRESETS[0].smoothness,
-  colorBrightness: 0,
-  colorContrast: 0,
-  colorSaturation: 0,
-  outputFormat: BUILTIN_ENHANCEMENT_PRESETS[0].outputFormat,
-};
 
 export function getEnhancementSettings(): EnhancementSettings {
   try {
@@ -308,7 +152,7 @@ export function EnhanceSettingsControls() {
   }, []);
 
   const applyPreset = (presetId: string) => {
-    const preset = BUILTIN_ENHANCEMENT_PRESETS.find((candidate) => candidate.id === presetId) ?? BUILTIN_ENHANCEMENT_PRESETS[0];
+    const preset = ENHANCEMENT_PRESETS.find((candidate) => candidate.id === presetId) ?? ENHANCEMENT_PRESETS[0];
     const next = {
       presetId: preset.id,
       adapterId: settings.adapterId,
@@ -333,7 +177,7 @@ export function EnhanceSettingsControls() {
     saveEnhancementSettings(next);
   };
 
-  const selectedPreset = BUILTIN_ENHANCEMENT_PRESETS.find((preset) => preset.id === settings.presetId) ?? BUILTIN_ENHANCEMENT_PRESETS[0];
+  const selectedPreset = ENHANCEMENT_PRESETS.find((preset) => preset.id === settings.presetId) ?? ENHANCEMENT_PRESETS[0];
   const scaleOptions = settings.adapterId === 'realesrgan-ncnn' ? [1.5, 2, 3, 4] : [1.5, 2, 3, 4, 6, 8];
 
   return (
@@ -349,7 +193,7 @@ export function EnhanceSettingsControls() {
       <label>
         <span>Model</span>
         <select value={settings.presetId} onChange={(event) => applyPreset(event.target.value)}>
-          {BUILTIN_ENHANCEMENT_PRESETS.map((preset) => (
+          {ENHANCEMENT_PRESETS.map((preset) => (
             <option key={preset.id} value={preset.id}>{preset.label}</option>
           ))}
         </select>
