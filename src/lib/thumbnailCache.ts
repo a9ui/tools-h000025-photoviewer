@@ -169,8 +169,9 @@ async function removeBrokenCacheFile(filePath: string) {
 }
 
 function getTempCachePath(finalPath: string) {
+  const dir = path.dirname(finalPath);
   const suffix = crypto.randomBytes(6).toString('hex');
-  return `${finalPath}.${process.pid}.${Date.now()}.${suffix}.tmp`;
+  return path.join(dir, `tmp-${process.pid}-${Date.now()}-${suffix}.tmp`);
 }
 
 function wait(ms: number) {
