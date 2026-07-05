@@ -116,6 +116,14 @@ try {
     "workflow.md"
   )
 
+  $opsAgmsg = Read-ProjectFile "docs\ops\agmsg-lanes.md.example"
+  Test-TextContains "docs/ops/agmsg-lanes.md.example" $opsAgmsg @(
+    "Reply mechanics are lane-specific",
+    "Grok live calls are opt-in",
+    "agmsg-roundtrip-smoke.ps1",
+    "-Lane cursor,claude"
+  )
+
   Invoke-Pnpm test:unit
   if (-not $SkipLint) {
     Invoke-Pnpm lint

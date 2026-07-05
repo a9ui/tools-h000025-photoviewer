@@ -16,14 +16,21 @@ Workspace rule source:
   Agmsg.
 - Use `required_reply=answer` only when a human or lane session is expected to
   consume the inbox during the milestone.
+- Reply mechanics are lane-specific. CursorAgent runs the explicit
+  `agmsg-send.ps1` reply command in its prompt; `claude-ui-consult.ps1` and
+  `grok-consult.ps1` post short replies after saving report artifacts.
+- Grok live calls are opt-in. If Grok is rate-limited or the user has not
+  explicitly allowed a live Grok call, keep Grok pointer-only and use
+  Cursor/Claude-only smoke coverage.
 
 ## Smoke
 
 From the Tools root:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-console.ps1 -NoConsume
+powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-console.ps1 -Project .\Projects\<Project> -NoConsume
 powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-trace.ps1 -CorrelationId <id>
+powershell -ExecutionPolicy Bypass -File .\System\scripts\agmsg-roundtrip-smoke.ps1 -Project .\Projects\<Project> -Lane cursor,claude
 ```
 
 Record the result in the project issue or milestone report.
