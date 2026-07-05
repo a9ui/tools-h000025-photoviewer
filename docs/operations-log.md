@@ -99,3 +99,19 @@ Skill candidate:
 - Modal and search background work must stay local to the user's current view:
   modal thumbnail warmup is bounded around the selected image, unchanged search
   text is not resent, and invalid search pagination is clamped.
+
+## 2026-07-05 Rough Audit Follow-up
+
+- `powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1` failed
+  in this long Cursor worktree path because thumbnail/display cache temp files
+  used `"<finalPath>.<pid>.<timestamp>.<rand>.tmp"` and crossed Windows path
+  length limits (`ENOENT` while writing `sharp().toFile(tmpPath)`).
+- The failure reproduced in `src/lib/thumbnailCache.test.ts` with stale-version,
+  fake-webp, and display-concurrency cases; all three wrote temp files longer
+  than the working environment allowed.
+- `src/lib/thumbnailCache.ts` now creates temp files in the same cache
+  directory using a short basename (`tmp-<pid>-<timestamp>-<rand>.tmp`) so
+  atomic rename behavior is preserved without expanding path length.
+- After this change, `corepack pnpm exec vitest run src/lib/thumbnailCache.test.ts`
+  and `powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1`
+  both passed in the same worktree.
