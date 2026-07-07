@@ -9,6 +9,12 @@ internal sealed record NativeStateSummary(
     bool SettingsFound
 );
 
+internal sealed record NativeAlbumRecord(
+    string Id,
+    string Name,
+    int ImageCount
+);
+
 internal static class NativeStateBridge
 {
     public static string ResolveProjectRoot()
@@ -28,7 +34,7 @@ internal static class NativeStateBridge
     public static NativeStateSummary ReadSummary(string projectRoot)
     {
         var favorites = LoadFavorites(projectRoot);
-        var albumCount = CountAlbums(projectRoot);
+        var albumCount = LoadAlbums(projectRoot).Count;
         var settingsFound = File.Exists(Path.Combine(projectRoot, ".cache", "settings.json"));
         return new NativeStateSummary(projectRoot, favorites.Count, albumCount, settingsFound);
     }
@@ -78,27 +84,78 @@ internal static class NativeStateBridge
         return favorites;
     }
 
-    private static int CountAlbums(string projectRoot)
+    public static List<NativeAlbumRecord> LoadAlbums(string projectRoot)
     {
         var path = Path.Combine(projectRoot, ".cache", "albums.json");
+        var records = new List<NativeAlbumRecord>();
         if (!File.Exists(path))
         {
-            return 0;
+            return records;
         }
 
         try
         {
             using var stream = File.OpenRead(path);
             using var doc = JsonDocument.Parse(stream);
-            return doc.RootElement.TryGetProperty("albums", out var albums) &&
-                albums.ValueKind == JsonValueKind.Array
-                    ? albums.GetArrayLength()
-                    : 0;
+            if (!doc.RootElement.TryGetProperty("albums", out var albums) ||
+                albums.ValueKind != JsonValueKind.Array)
+            {
+                return records;
+            }
+
+            var index = 0;
+            foreach (var album in albums.EnumerateArray())
+            {
+                index++;
+                if (album.ValueKind != JsonValueKind.Object)
+                {
+                    continue;
+                }
+
+                var id = ReadString(album, "id") ?? ReadString(album, "slug") ?? $"album-{index}";
+                var name = ReadString(album, "name") ?? ReadString(album, "title") ?? id;
+                var imageCount = ReadArrayLength(album, "images") ?? ReadArrayLength(album, "paths") ?? 0;
+                records.Add(new NativeAlbumRecord(id, name, imageCount));
+            }
         }
         catch
         {
-            return 0;
+            return [];
         }
+
+        return records;
+    }
+
+    public static string? LoadSettingsJson(string projectRoot)
+    {
+        var path = Path.Combine(projectRoot, ".cache", "settings.json");
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return File.ReadAllText(path);
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static string? ReadString(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
+
+    private static int? ReadArrayLength(JsonElement element, string name)
+    {
+        return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
+            ? value.GetArrayLength()
+            : null;
     }
 
     private static IEnumerable<string> EnumerateRootCandidates()
