@@ -110,3 +110,22 @@ M4 headless parity and cache checks:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessImport -BrowserStateExport .\.cache\native\browser-localstorage-export.json
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessCacheCompat -Folder "C:\path\to\images"
 ```
+
+## M5 Notes
+
+M5 adds a repeatable ignored fixture generator for release-candidate checks.
+It writes deterministic files under `.cache/native-fixture`, `.cache/native`,
+`.cache/thumbs`, and `.cache/display`. It creates `.cache/favorites.json`,
+`.cache/albums.json`, `.cache/settings.json`, and the default browser
+localStorage export only when those files are absent; existing user state files
+are left in place.
+
+Prepare the fixture:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
+```
+
+The generated fixture is intended for the existing M4 headless import, scan,
+performance, and cache compatibility commands. It is not a browser export
+helper and does not read Chrome profile storage.

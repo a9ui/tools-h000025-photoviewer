@@ -63,6 +63,11 @@ internal static class Program
             return NativeHeadlessRunner.RunCacheCompatibility(args[1]);
         }
 
+        if (args.Length >= 1 && args[0] == "--prepare-fixture")
+        {
+            return NativeFixtureBuilder.Prepare();
+        }
+
         ApplicationConfiguration.Initialize();
         Application.Run(new MainForm(args.FirstOrDefault()));
         return 0;
