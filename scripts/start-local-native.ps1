@@ -6,6 +6,7 @@ param(
   [switch]$HeadlessSearch,
   [switch]$HeadlessPerf,
   [switch]$HeadlessCacheCompat,
+  [switch]$HeadlessUiSmoke,
   [switch]$PrepareFixture,
   [string]$Search = "",
   [string]$BrowserStateExport = "",
@@ -86,6 +87,18 @@ if ($PrepareFixture) {
   $arguments += "--"
   $arguments += "--headless-cache-compat"
   $arguments += $Folder
+} elseif ($HeadlessUiSmoke) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessUiSmoke requires -Folder."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-ui-smoke"
+  $arguments += $Folder
+  if ($Search.Trim().Length -gt 0) {
+    $arguments += "--search"
+    $arguments += $Search
+  }
 } elseif ($FavoritePath.Trim().Length -gt 0) {
   $arguments += "--"
   $arguments += "--headless-favorite"

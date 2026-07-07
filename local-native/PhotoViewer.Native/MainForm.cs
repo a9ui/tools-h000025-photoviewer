@@ -72,12 +72,62 @@ internal sealed class MainForm : Form
         _folderWatcher.ChangesDetected += OnFolderChangesDetected;
     }
 
+    public static Task<int> RunUiSmokeAsync(string folder, string searchQuery)
+    {
+        if (!Directory.Exists(folder))
+        {
+            Console.Error.WriteLine($"native-ui-smoke error=folder-not-found folder=\"{Quote(folder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var resolvedFolder = Path.GetFullPath(folder);
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunUiSmokeScenarioAsync(resolvedFolder, searchQuery);
+                Console.WriteLine(
+                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-ui-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
         {
-            _scanCancellation?.Cancel();
+            try
+            {
+                _scanCancellation?.Cancel();
+            }
+            catch (ObjectDisposedException)
+            {
+                // The automated UI smoke can close the form after scan cleanup.
+            }
+
             _scanCancellation?.Dispose();
+            _scanCancellation = null;
             _folderWatcher.Dispose();
             _cacheScheduler.Dispose();
             _previewRing.Dispose();
@@ -307,6 +357,99 @@ internal sealed class MainForm : Form
         root.Controls.Add(_statusLabel, 0, 3);
         Controls.Add(root);
         UpdateSelectionActions();
+    }
+
+    private async Task<NativeUiSmokeReport> RunUiSmokeScenarioAsync(string folder, string searchQuery)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+
+        _folderText.Text = folder;
+        ImportState();
+        var albums = _store.CountAlbums();
+        var albumImages = _store.CountAlbumImages();
+        var browserStateKeys = _store.CountBrowserStateKeys();
+        var settingsImported = _store.GetSetting("browser_settings_found", "0") == "1";
+
+        await ScanCurrentFolderAsync();
+        Require(_allImages.Count > 0, "scan produced no images");
+        Require(_visibleImages.Count > 0, "scan produced no visible images");
+        var scannedImages = _allImages.Count;
+        var initialVisible = _visibleImages.Count;
+        var navigationButtons = _nextButton.Enabled;
+
+        await LoadSelectedPreviewAsync();
+        var previewLoaded = _preview.Image is not null && _previewLabel.Text.Contains(".png", StringComparison.OrdinalIgnoreCase);
+        Require(previewLoaded, "preview did not load fixture image");
+
+        SelectOffset(1);
+        await LoadSelectedPreviewAsync();
+        var selectedAfterButtonNavigation = GetSelectedIndex();
+        var keyboardMessage = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
+        var keyboardHandled = ProcessCmdKey(ref keyboardMessage, Keys.Left);
+        await LoadSelectedPreviewAsync();
+        var keyboardNavigation = keyboardHandled && selectedAfterButtonNavigation == 1 && GetSelectedIndex() == 0;
+        Require(keyboardNavigation, "keyboard previous navigation failed");
+
+        var favoriteBefore = (int)_favoriteLevel.Value;
+        keyboardMessage = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
+        var favoriteHandled = ProcessCmdKey(ref keyboardMessage, Keys.Control | Keys.Down);
+        var favoriteAfter = (int)_favoriteLevel.Value;
+        var keyboardFavorite = favoriteHandled && favoriteBefore > favoriteAfter;
+        Require(keyboardFavorite, "keyboard favorite shortcut failed");
+
+        keyboardMessage = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
+        var gridHandled = ProcessCmdKey(ref keyboardMessage, Keys.Control | Keys.G);
+        var gridToggle = gridHandled && _list.View == View.LargeIcon;
+        Require(gridToggle, "keyboard grid toggle failed");
+        ApplyViewMode("details");
+
+        _favoritesOnly.Checked = false;
+        _searchText.Text = searchQuery;
+        ApplyFilter();
+        var searchMatches = _visibleImages.Count;
+        Require(searchMatches > 0, "search produced no fixture matches");
+
+        _favoritesOnly.Checked = true;
+        ApplyFilter();
+        var favoriteMatches = _visibleImages.Count;
+        Require(favoriteMatches > 0, "favorites filter produced no matches");
+
+        _favoritesOnly.Checked = false;
+        _searchText.Text = "__native_ui_no_results__";
+        ApplyFilter();
+        var noResultsState = _visibleImages.Count == 0 && _statusLabel.Text.Contains("Showing 0", StringComparison.OrdinalIgnoreCase);
+        Require(noResultsState, "no-results state failed");
+
+        _folderText.Text = Path.Combine(folder, "__missing__");
+        await ScanCurrentFolderAsync();
+        var folderErrorState = _statusLabel.Text.Contains("Folder not found", StringComparison.OrdinalIgnoreCase);
+        Require(folderErrorState, "missing-folder error state failed");
+
+        _folderText.Text = folder;
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        ApplyFilter();
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during native UI smoke");
+        return new NativeUiSmokeReport(
+            Folder: folder,
+            ScannedImages: scannedImages,
+            InitialVisible: initialVisible,
+            PreviewLoaded: previewLoaded,
+            NavigationButtons: navigationButtons,
+            KeyboardNavigation: keyboardNavigation,
+            KeyboardFavorite: keyboardFavorite,
+            GridToggle: gridToggle,
+            SearchMatches: searchMatches,
+            FavoriteMatches: favoriteMatches,
+            NoResultsState: noResultsState,
+            FolderErrorState: folderErrorState,
+            Albums: albums,
+            AlbumImages: albumImages,
+            BrowserStateKeys: browserStateKeys,
+            SettingsImported: settingsImported,
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
     private void ApplyStateSummary(NativeImportReport? report = null)
@@ -870,6 +1013,31 @@ internal sealed class MainForm : Form
         }).ToList();
     }
 
+    private string EnhancementStateFingerprint()
+    {
+        var path = Path.Combine(_projectRoot, ".cache", "enhance", "jobs.json");
+        if (!File.Exists(path))
+        {
+            return "missing";
+        }
+
+        var info = new FileInfo(path);
+        return $"{info.Length}:{info.LastWriteTimeUtc.Ticks}";
+    }
+
+    private static void Require(bool condition, string message)
+    {
+        if (!condition)
+        {
+            throw new InvalidOperationException(message);
+        }
+    }
+
+    private static string Quote(string value)
+    {
+        return value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+    }
+
     private static string FormatBytes(long bytes)
     {
         string[] units = ["B", "KB", "MB", "GB", "TB"];
@@ -883,4 +1051,23 @@ internal sealed class MainForm : Form
 
         return $"{value:n1} {units[unit]}";
     }
+
+    private sealed record NativeUiSmokeReport(
+        string Folder,
+        int ScannedImages,
+        int InitialVisible,
+        bool PreviewLoaded,
+        bool NavigationButtons,
+        bool KeyboardNavigation,
+        bool KeyboardFavorite,
+        bool GridToggle,
+        int SearchMatches,
+        int FavoriteMatches,
+        bool NoResultsState,
+        bool FolderErrorState,
+        int Albums,
+        int AlbumImages,
+        int BrowserStateKeys,
+        bool SettingsImported,
+        bool EnhancementStateUnchanged);
 }
