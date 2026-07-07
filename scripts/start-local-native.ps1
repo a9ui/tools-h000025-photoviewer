@@ -8,6 +8,7 @@ param(
   [switch]$HeadlessCacheCompat,
   [switch]$HeadlessUiSmoke,
   [switch]$HeadlessFolderSetSmoke,
+  [switch]$HeadlessLargeScrollSmoke,
   [switch]$PrepareFixture,
   [string]$Search = "",
   [string[]]$FolderSet = @(),
@@ -122,6 +123,14 @@ if ($PrepareFixture) {
     $arguments += "--search"
     $arguments += $Search
   }
+} elseif ($HeadlessLargeScrollSmoke) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessLargeScrollSmoke requires -Folder."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-large-scroll-smoke"
+  $arguments += $Folder
 } elseif ($FavoritePath.Trim().Length -gt 0) {
   $arguments += "--"
   $arguments += "--headless-favorite"
