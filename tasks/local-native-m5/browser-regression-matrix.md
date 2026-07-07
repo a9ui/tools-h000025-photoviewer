@@ -245,6 +245,52 @@ M9 smoke result additions:
 | Persistence keys | DEFERRED | M9 persists native-only preview splitter distance and expands detail keybinding metadata in SQLite settings. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M9 UI smoke exercises the detail modal/settings/right-preview layout at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M10 Native Selection Filters And Folder Parity Slice
+
+M10 adds a small native selection/filter/folder slice. It still does not claim
+full native parity.
+
+M10 smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+M10 smoke result additions:
+
+- scannedImages: 4
+- folderBuckets: 2
+- folderShowSelected: true
+- folderHideSelected: true
+- folderClearSelection: true
+- multiSelection: true
+- backgroundClear: true
+- favoriteFilterCounts: true
+- favoriteLevelFilter: true
+- unratedFilter: true
+- clearSearch: true
+
+| Area | M10 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | DEFERRED | M10 fixture now includes a nested folder and UI smoke verifies two native folder buckets. | Multi-root folder-set scan/search/watch behavior, remove-folder behavior, open recent folder set, and manual refresh. | `codex_pm` / `cursor_impl` | Native headless/UI test that scans at least two roots, persists/removes a root, refreshes roots, and proves watcher/search behavior without browser runtime. |
+| Legacy browser state | DEFERRED | Existing explicit export import remains covered; no malformed-export UI added in M10. | Malformed export UX and user-facing recovery text. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | M10 adds and smoke-verifies a native search clear button while existing query/no-results/favorites search remains covered. | Tag entry, multi-token semantics beyond existing FTS tokenization evidence, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query semantics, and any accepted chip-equivalent behavior. |
+| Sidebar quick search and filters | DEFERRED | M10 adds favorite filter choices with count labels for all/favorites/unrated/levels 1-5; UI smoke verifies count label, favorite-level filter, and unrated filter. | Enhanced-only, date presets, manual date range, and richer count labels beyond favorite state. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for enhanced/date buckets or explicit product decision to defer those filters. |
+| Folder visibility | DEFERRED | M10 nested fixture and UI smoke verify folder show all, hide all, show selected, hide selected, clear selected, and two bucket counts. | Multi-root bucket sets and folder range selection remain unimplemented. | `cursor_impl` | Native UI smoke with multi-root fixture and range selection, or explicit product decision to defer range selection. |
+| Sorting and display | DEFERRED | Existing M8/M9 sort/reshuffle/thumbnail controls remain covered after M10 fixture expansion. | Date sections, scroll memory, seen/unseen state, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering every sort mode, display variant, persisted thumbnail size, and scroll/seen behavior. |
+| Virtual gallery | DEFERRED | M10 multi-selection runs on the existing virtual list/grid; headless perf covers the four-image fixture. | Date sections, scroll memory, seen/unseen state, drag/open parity, placeholder behavior, large-fixture virtualized scroll state, and native thumbnail warmup UI. | `codex_pm` | Native UI/manual sweep plus headless perf evidence for a large fixture and virtualized scroll state. |
+| Selection and preview tabs | DEFERRED | M10 enables native ListView multi-selection, selected-count reporting, and background selection clear; UI smoke verifies all three. | Preview tabs, pin/unpin, close/restore closed tab, hover/quick preview, and richer multi-selection actions. | `cursor_impl` | Native UI smoke for accepted preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Selected-count label now covers multi-selection; existing splitter/detail evidence remains covered. | Bulk favorite/open/recycle confirmation and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving bulk actions on disposable files, or explicit product decision to defer bulk actions. |
+| Modal navigation | DEFERRED | Existing M9 detail-modal navigation remains covered after M10 selection/filter changes. | Edge/click/swipe equivalents, loading-slot UI, and broader manual modal polish. | `cursor_impl` | Native detail-modal UI smoke/manual sweep covering edge/click equivalents, loading state, and any remaining browser modal affordances. |
+| Modal image controls | DEFERRED | Existing M9 detail-modal controls remain covered after M10 selection/filter changes. | Immersive chrome hide/show, richer feedback, and any browser-specific modal controls not yet mapped. | `cursor_impl` | Native detail-modal UI smoke/manual sweep for chrome hide/show, feedback states, and any remaining mapped controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite metadata remains covered. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M10 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | M10 persists the native favorite filter key in SQLite settings; read-only keybinding recorder decision remains unchanged. | Editable keybinding recorder, confirm-before-delete UI, edge/navigation settings, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable recorder, or a durable product decision keeping the recorder read-only. |
+| Enhancement isolation | DEFERRED | M10 UI smoke again verifies ordinary native browsing/search/preview/detail/filter smoke did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M10. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M10 persists native-only `favorite_filter`; prior native settings persistence remains covered. | Full parity for pinned previews, filters beyond favorite key, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M10 UI smoke exercises the denser toolbar and folder action row at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:

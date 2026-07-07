@@ -12,7 +12,9 @@ internal sealed class MainForm : Form
     private readonly Button _cancelButton = new();
     private readonly Button _importButton = new();
     private readonly TextBox _searchText = new();
+    private readonly Button _clearSearchButton = new();
     private readonly CheckBox _favoritesOnly = new();
+    private readonly ComboBox _favoriteFilter = new();
     private readonly ComboBox _viewMode = new();
     private readonly ComboBox _sortMode = new();
     private readonly Button _reshuffleButton = new();
@@ -23,6 +25,9 @@ internal sealed class MainForm : Form
     private readonly Button _showAllFoldersButton = new();
     private readonly Button _hideAllFoldersButton = new();
     private readonly Button _invertFoldersButton = new();
+    private readonly Button _showSelectedFoldersButton = new();
+    private readonly Button _hideSelectedFoldersButton = new();
+    private readonly Button _clearFolderSelectionButton = new();
     private readonly Label _folderBucketLabel = new();
     private readonly Button _previousButton = new();
     private readonly Button _nextButton = new();
@@ -54,6 +59,7 @@ internal sealed class MainForm : Form
     private long _previewVersion;
     private bool _updatingFavoriteControl;
     private bool _updatingFolderBuckets;
+    private bool _updatingFavoriteFilter;
     private bool _updatingThumbnailSize;
     private int _randomSortSeed = Environment.TickCount;
 
@@ -83,6 +89,7 @@ internal sealed class MainForm : Form
 
         _searchText.Text = _store.GetSetting("search_text", "");
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
+        RefreshFavoriteFilterOptions(_store.GetSetting("favorite_filter", "all"));
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
@@ -118,8 +125,7 @@ internal sealed class MainForm : Form
             try
             {
                 var report = await form.RunUiSmokeScenarioAsync(resolvedFolder, searchQuery);
-                Console.WriteLine(
-                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} folderBuckets={report.FolderBuckets} folderHideAll={report.FolderHideAll.ToString().ToLowerInvariant()} sortName={report.SortName.ToString().ToLowerInvariant()} randomReshuffle={report.RandomReshuffle.ToString().ToLowerInvariant()} thumbnailSize={report.ThumbnailSize.ToString().ToLowerInvariant()} previewToggle={report.PreviewToggle.ToString().ToLowerInvariant()} detailsToggle={report.DetailsToggle.ToString().ToLowerInvariant()} previewSplitter={report.PreviewSplitter.ToString().ToLowerInvariant()} selectedCount={report.SelectedCount.ToString().ToLowerInvariant()} detailModal={report.DetailModal.ToString().ToLowerInvariant()} detailNavigation={report.DetailNavigation.ToString().ToLowerInvariant()} detailZoom={report.DetailZoom.ToString().ToLowerInvariant()} detailReset={report.DetailReset.ToString().ToLowerInvariant()} detailPan={report.DetailPan.ToString().ToLowerInvariant()} detailFlip={report.DetailFlip.ToString().ToLowerInvariant()} detailFavorite={report.DetailFavorite.ToString().ToLowerInvariant()} detailOpenExternal={report.DetailOpenExternal.ToString().ToLowerInvariant()} settingsReadOnly={report.SettingsReadOnly.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
+                Console.WriteLine(FormatUiSmokeReport(report));
                 exitCode = 0;
             }
             catch (Exception ex)
@@ -178,18 +184,20 @@ internal sealed class MainForm : Form
         var toolbar = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 9,
+            ColumnCount = 11,
             Padding = new Padding(8, 6, 8, 4),
         };
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 74));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 190));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 118));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 10));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 320));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
 
         _folderText.Dock = DockStyle.Fill;
         _folderText.PlaceholderText = "Image folder path";
@@ -219,10 +227,27 @@ internal sealed class MainForm : Form
             SaveViewState();
         };
 
+        _clearSearchButton.Text = "Clear";
+        _clearSearchButton.Dock = DockStyle.Fill;
+        _clearSearchButton.Click += (_, _) => ClearSearchFilter();
+
         _favoritesOnly.Text = "Favorites";
         _favoritesOnly.Dock = DockStyle.Fill;
         _favoritesOnly.CheckedChanged += (_, _) =>
         {
+            ApplyFilter();
+            SaveViewState();
+        };
+
+        _favoriteFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+        _favoriteFilter.Dock = DockStyle.Fill;
+        _favoriteFilter.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingFavoriteFilter)
+            {
+                return;
+            }
+
             ApplyFilter();
             SaveViewState();
         };
@@ -237,8 +262,10 @@ internal sealed class MainForm : Form
         toolbar.Controls.Add(_cancelButton, 3, 0);
         toolbar.Controls.Add(_importButton, 4, 0);
         toolbar.Controls.Add(_searchText, 5, 0);
-        toolbar.Controls.Add(_favoritesOnly, 6, 0);
-        toolbar.Controls.Add(_stateLabel, 8, 0);
+        toolbar.Controls.Add(_clearSearchButton, 6, 0);
+        toolbar.Controls.Add(_favoritesOnly, 7, 0);
+        toolbar.Controls.Add(_favoriteFilter, 8, 0);
+        toolbar.Controls.Add(_stateLabel, 10, 0);
 
         var actions = new FlowLayoutPanel
         {
@@ -407,7 +434,7 @@ internal sealed class MainForm : Form
         _list.FullRowSelect = true;
         _list.HideSelection = false;
         _list.VirtualMode = true;
-        _list.MultiSelect = false;
+        _list.MultiSelect = true;
         _gridImages.ColorDepth = ColorDepth.Depth32Bit;
         _list.SmallImageList = _gridImages;
         _list.LargeImageList = _gridImages;
@@ -428,6 +455,13 @@ internal sealed class MainForm : Form
             args.Item = CreateListItem(_visibleImages[args.ItemIndex]);
         };
         _list.SelectedIndexChanged += async (_, _) => await LoadSelectedPreviewAsync();
+        _list.MouseDown += (_, args) =>
+        {
+            if (_list.GetItemAt(args.X, args.Y) is null)
+            {
+                ClearImageSelection();
+            }
+        };
         _list.DoubleClick += (_, _) => OpenSelectedFile();
 
         var browserPanel = new TableLayoutPanel
@@ -457,6 +491,7 @@ internal sealed class MainForm : Form
 
         _folderBuckets.Dock = DockStyle.Fill;
         _folderBuckets.CheckOnClick = true;
+        _folderBuckets.SelectedIndexChanged += (_, _) => UpdateFolderBucketButtons();
         _folderBuckets.ItemCheck += (_, _) =>
         {
             if (_updatingFolderBuckets || IsDisposed)
@@ -490,9 +525,24 @@ internal sealed class MainForm : Form
         _invertFoldersButton.Width = 64;
         _invertFoldersButton.Click += (_, _) => InvertFolderBuckets();
 
+        _showSelectedFoldersButton.Text = "Show Sel";
+        _showSelectedFoldersButton.Width = 76;
+        _showSelectedFoldersButton.Click += (_, _) => SetSelectedFolderBuckets(visible: true);
+
+        _hideSelectedFoldersButton.Text = "Hide Sel";
+        _hideSelectedFoldersButton.Width = 74;
+        _hideSelectedFoldersButton.Click += (_, _) => SetSelectedFolderBuckets(visible: false);
+
+        _clearFolderSelectionButton.Text = "Clear Sel";
+        _clearFolderSelectionButton.Width = 76;
+        _clearFolderSelectionButton.Click += (_, _) => ClearFolderBucketSelection();
+
         folderActions.Controls.Add(_showAllFoldersButton);
         folderActions.Controls.Add(_hideAllFoldersButton);
         folderActions.Controls.Add(_invertFoldersButton);
+        folderActions.Controls.Add(_showSelectedFoldersButton);
+        folderActions.Controls.Add(_hideSelectedFoldersButton);
+        folderActions.Controls.Add(_clearFolderSelectionButton);
 
         folderPanel.Controls.Add(_folderBucketLabel, 0, 0);
         folderPanel.Controls.Add(_folderBuckets, 0, 1);
@@ -552,6 +602,10 @@ internal sealed class MainForm : Form
         var beforeEnhancementState = EnhancementStateFingerprint();
 
         _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
         ImportState();
         var albums = _store.CountAlbums();
         var albumImages = _store.CountAlbumImages();
@@ -565,11 +619,24 @@ internal sealed class MainForm : Form
         var initialVisible = _visibleImages.Count;
         var folderBuckets = _folderBuckets.Items.Count;
         Require(folderBuckets > 0, "folder buckets were not built");
+        Require(folderBuckets >= 2, "folder buckets did not include nested fixture folders");
         SetAllFolderBuckets(visible: false);
         var folderHideAll = _visibleImages.Count == 0;
         Require(folderHideAll, "folder hide-all did not filter visible images");
         SetAllFolderBuckets(visible: true);
         Require(_visibleImages.Count == initialVisible, "folder show-all did not restore visible images");
+        _folderBuckets.ClearSelected();
+        _folderBuckets.SelectedIndex = 0;
+        Application.DoEvents();
+        SetSelectedFolderBuckets(visible: false);
+        var folderHideSelected = _visibleImages.Count > 0 && _visibleImages.Count < initialVisible;
+        Require(folderHideSelected, $"folder hide-selected did not filter a selected bucket selected={_folderBuckets.SelectedIndex} checked={_folderBuckets.CheckedItems.Count}/{_folderBuckets.Items.Count} visible={_visibleImages.Count}/{initialVisible}");
+        SetSelectedFolderBuckets(visible: true);
+        var folderShowSelected = _visibleImages.Count == initialVisible;
+        Require(folderShowSelected, "folder show-selected did not restore a selected bucket");
+        ClearFolderBucketSelection();
+        var folderClearSelection = _folderBuckets.SelectedIndices.Count == 0;
+        Require(folderClearSelection, "folder clear-selection did not clear selected buckets");
 
         ApplySortMode("Name");
         ApplyFilter();
@@ -613,6 +680,17 @@ internal sealed class MainForm : Form
 
         var selectedCount = _selectionLabel.Text.Contains("Selected 1", StringComparison.OrdinalIgnoreCase);
         Require(selectedCount, "selected count label failed");
+        _list.SelectedIndices.Clear();
+        _list.SelectedIndices.Add(0);
+        _list.SelectedIndices.Add(1);
+        UpdateSelectionActions();
+        var multiSelection = _list.SelectedIndices.Count == 2 && _selectionLabel.Text.Contains("Selected 2", StringComparison.OrdinalIgnoreCase);
+        Require(multiSelection, "multi-selection count failed");
+        ClearImageSelection();
+        var backgroundClear = _list.SelectedIndices.Count == 0 && _selectionLabel.Text.Contains("Selected 0", StringComparison.OrdinalIgnoreCase);
+        Require(backgroundClear, "background clear selection failed");
+        _list.SelectedIndices.Add(0);
+        await LoadSelectedPreviewAsync();
 
         var detailReport = RunDetailModalSmoke();
         Require(detailReport.ModalOpened, "detail modal did not load image");
@@ -653,17 +731,39 @@ internal sealed class MainForm : Form
         ApplyViewMode("details");
 
         _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
         _searchText.Text = searchQuery;
         ApplyFilter();
         var searchMatches = _visibleImages.Count;
         Require(searchMatches > 0, "search produced no fixture matches");
+        _clearSearchButton.PerformClick();
+        var clearSearch = _searchText.Text.Length == 0 && _visibleImages.Count == initialVisible;
+        Require(clearSearch, "clear search control failed");
 
+        _searchText.Text = searchQuery;
+        ApplyFilter();
         _favoritesOnly.Checked = true;
         ApplyFilter();
         var favoriteMatches = _visibleImages.Count;
         Require(favoriteMatches > 0, "favorites filter produced no matches");
 
         _favoritesOnly.Checked = false;
+        _searchText.Text = "";
+        var smokeFavoriteLevel = _allImages.Where(static item => item.FavoriteLevel > 0).Select(static item => item.FavoriteLevel).DefaultIfEmpty(0).Max();
+        Require(smokeFavoriteLevel > 0, "fixture has no favorite level for filter smoke");
+        SelectFavoriteFilter(smokeFavoriteLevel.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        ApplyFilter();
+        var favoriteLevelFilter = _visibleImages.Count > 0 && _visibleImages.All(item => item.FavoriteLevel == smokeFavoriteLevel);
+        Require(favoriteLevelFilter, "favorite level filter failed");
+        SelectFavoriteFilter("unrated");
+        ApplyFilter();
+        var unratedFilter = _visibleImages.Count > 0 && _visibleImages.All(static item => item.FavoriteLevel == 0);
+        Require(unratedFilter, "unrated filter failed");
+        var favoriteFilterCounts = _favoriteFilter.Items
+            .Cast<FavoriteFilterOption>()
+            .Any(item => string.Equals(item.Key, smokeFavoriteLevel.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase) && item.Label.Contains("(1)", StringComparison.Ordinal));
+        Require(favoriteFilterCounts, "favorite filter count label failed");
+        SelectFavoriteFilter("all");
         _searchText.Text = "__native_ui_no_results__";
         ApplyFilter();
         var noResultsState = _visibleImages.Count == 0 && _statusLabel.Text.Contains("Showing 0", StringComparison.OrdinalIgnoreCase);
@@ -699,6 +799,15 @@ internal sealed class MainForm : Form
             DetailsToggle: detailsToggle,
             PreviewSplitter: previewSplitter,
             SelectedCount: selectedCount,
+            MultiSelection: multiSelection,
+            BackgroundClear: backgroundClear,
+            FavoriteFilterCounts: favoriteFilterCounts,
+            FavoriteLevelFilter: favoriteLevelFilter,
+            UnratedFilter: unratedFilter,
+            ClearSearch: clearSearch,
+            FolderShowSelected: folderShowSelected,
+            FolderHideSelected: folderHideSelected,
+            FolderClearSelection: folderClearSelection,
             DetailModal: detailReport.ModalOpened,
             DetailNavigation: detailReport.Navigation,
             DetailZoom: detailReport.Zoom,
@@ -855,7 +964,11 @@ internal sealed class MainForm : Form
         var query = _searchText.Text.Trim();
         if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder) && _allImages.Count > 0)
         {
-            _visibleImages = ApplySort(ApplyFolderBucketFilter(_store.SearchImagesIndexed(_currentFolder, query, _favoritesOnly.Checked, limit: 100_000))).ToList();
+            _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
+                _currentFolder,
+                query,
+                ShouldPrefilterFavoritesForIndexedSearch(),
+                limit: 100_000)))).ToList();
             _list.VirtualListSize = _visibleImages.Count;
             _list.Invalidate();
             if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
@@ -869,10 +982,7 @@ internal sealed class MainForm : Form
         }
 
         IEnumerable<NativeImageRecord> source = _allImages;
-        if (_favoritesOnly.Checked)
-        {
-            source = source.Where(static item => item.FavoriteLevel > 0);
-        }
+        source = ApplyFavoriteFilter(source);
 
         if (query.Length > 0)
         {
@@ -892,6 +1002,93 @@ internal sealed class MainForm : Form
 
         UpdateSelectionActions();
         SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images.");
+    }
+
+    private bool ShouldPrefilterFavoritesForIndexedSearch()
+    {
+        var key = CurrentFavoriteFilterKey();
+        return _favoritesOnly.Checked || string.Equals(key, "favorites", StringComparison.OrdinalIgnoreCase) || IsFavoriteLevelKey(key);
+    }
+
+    private IEnumerable<NativeImageRecord> ApplyFavoriteFilter(IEnumerable<NativeImageRecord> images)
+    {
+        var key = CurrentFavoriteFilterKey();
+        if (_favoritesOnly.Checked || string.Equals(key, "favorites", StringComparison.OrdinalIgnoreCase))
+        {
+            images = images.Where(static item => item.FavoriteLevel > 0);
+        }
+
+        if (string.Equals(key, "unrated", StringComparison.OrdinalIgnoreCase))
+        {
+            return images.Where(static item => item.FavoriteLevel == 0);
+        }
+
+        return int.TryParse(key, out var level) && level is >= 1 and <= 5
+            ? images.Where(item => item.FavoriteLevel == level)
+            : images;
+    }
+
+    private string CurrentFavoriteFilterKey()
+    {
+        return _favoriteFilter.SelectedItem is FavoriteFilterOption option ? option.Key : "all";
+    }
+
+    private void SelectFavoriteFilter(string key)
+    {
+        var match = _favoriteFilter.Items
+            .Cast<FavoriteFilterOption>()
+            .FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+        {
+            _favoriteFilter.SelectedItem = match;
+        }
+    }
+
+    private void RefreshFavoriteFilterOptions(string? preferredKey = null)
+    {
+        var selectedKey = preferredKey ?? CurrentFavoriteFilterKey();
+        var levelCounts = Enumerable.Range(1, 5)
+            .ToDictionary(level => level, level => _allImages.Count(item => item.FavoriteLevel == level));
+        var options = new List<FavoriteFilterOption>
+        {
+            new("all", $"All ({_allImages.Count:n0})"),
+            new("favorites", $"Favorites ({_allImages.Count(static item => item.FavoriteLevel > 0):n0})"),
+            new("unrated", $"Unrated ({_allImages.Count(static item => item.FavoriteLevel == 0):n0})"),
+        };
+        options.AddRange(Enumerable.Range(1, 5).Select(level => new FavoriteFilterOption(level.ToString(System.Globalization.CultureInfo.InvariantCulture), $"Level {level} ({levelCounts[level]:n0})")));
+
+        _updatingFavoriteFilter = true;
+        try
+        {
+            _favoriteFilter.Items.Clear();
+            foreach (var option in options)
+            {
+                _favoriteFilter.Items.Add(option);
+            }
+
+            _favoriteFilter.SelectedItem = options.FirstOrDefault(item => string.Equals(item.Key, selectedKey, StringComparison.OrdinalIgnoreCase)) ?? options[0];
+        }
+        finally
+        {
+            _updatingFavoriteFilter = false;
+        }
+    }
+
+    private void ClearSearchFilter()
+    {
+        if (_searchText.Text.Length == 0)
+        {
+            ApplyFilter();
+            return;
+        }
+
+        _searchText.Clear();
+        SaveViewState();
+    }
+
+    private static bool IsFavoriteLevelKey(string key)
+    {
+        return int.TryParse(key, out var level) && level is >= 1 and <= 5;
     }
 
     private static ListViewItem CreateListItem(NativeImageRecord image)
@@ -1103,6 +1300,7 @@ internal sealed class MainForm : Form
         _favorites = _store.LoadFavorites();
         var updated = current with { FavoriteLevel = clamped };
         ReplaceImage(current.AbsolutePath, updated);
+        RefreshFavoriteFilterOptions();
         ApplyFilter();
         SelectImage(updated.AbsolutePath);
         SetStatus($"Favorite level {clamped}: {updated.Filename}");
@@ -1110,10 +1308,23 @@ internal sealed class MainForm : Form
 
     private void ClearPreview(string message)
     {
+        Interlocked.Increment(ref _previewVersion);
         var previous = _preview.Image;
         _preview.Image = null;
         previous?.Dispose();
         _previewLabel.Text = message;
+    }
+
+    private void ClearImageSelection()
+    {
+        if (_list.SelectedIndices.Count == 0)
+        {
+            return;
+        }
+
+        _list.SelectedIndices.Clear();
+        ClearPreview("Select an image.");
+        UpdateSelectionActions();
     }
 
     private void SetStatus(string message)
@@ -1230,15 +1441,16 @@ internal sealed class MainForm : Form
     {
         var index = GetSelectedIndex();
         var selected = index >= 0 ? _visibleImages[index] : null;
+        var selectedCount = _list.SelectedIndices.Count;
         _previousButton.Enabled = index > 0;
         _nextButton.Enabled = index >= 0 && index < _visibleImages.Count - 1;
         _detailButton.Enabled = selected is not null;
         _openFileButton.Enabled = selected is not null;
         _openFolderButton.Enabled = selected is not null;
         _deleteButton.Enabled = selected is not null;
-        _favoriteLevel.Enabled = selected is not null;
-        _selectionLabel.Text = index >= 0
-            ? $"Selected 1 / {_visibleImages.Count:n0}"
+        _favoriteLevel.Enabled = selected is not null && selectedCount == 1;
+        _selectionLabel.Text = selectedCount > 0
+            ? $"Selected {selectedCount:n0} / {_visibleImages.Count:n0}"
             : $"Selected 0 / {_visibleImages.Count:n0}";
         _updatingFavoriteControl = true;
         _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
@@ -1275,7 +1487,11 @@ internal sealed class MainForm : Form
 
     private void SaveViewState()
     {
-        _store.SaveViewState(_list.View == View.LargeIcon ? "grid" : "details", _searchText.Text.Trim(), _favoritesOnly.Checked);
+        _store.SaveViewState(
+            _list.View == View.LargeIcon ? "grid" : "details",
+            _searchText.Text.Trim(),
+            _favoritesOnly.Checked,
+            CurrentFavoriteFilterKey());
     }
 
     private void ApplySortMode(string mode)
@@ -1352,6 +1568,7 @@ internal sealed class MainForm : Form
 
     private void BuildFolderBuckets()
     {
+        RefreshFavoriteFilterOptions();
         var hidden = new HashSet<string>(
             _store.GetSetting("hidden_folder_buckets", "")
                 .Split(['\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
@@ -1434,6 +1651,42 @@ internal sealed class MainForm : Form
         ApplyFilter();
     }
 
+    private void SetSelectedFolderBuckets(bool visible)
+    {
+        var selectedIndices = _folderBuckets.SelectedIndices.Cast<int>().ToArray();
+        if (selectedIndices.Length == 0 && _folderBuckets.SelectedIndex >= 0)
+        {
+            selectedIndices = [_folderBuckets.SelectedIndex];
+        }
+
+        if (selectedIndices.Length == 0)
+        {
+            return;
+        }
+
+        _updatingFolderBuckets = true;
+        try
+        {
+            foreach (var index in selectedIndices)
+            {
+                _folderBuckets.SetItemChecked(index, visible);
+            }
+        }
+        finally
+        {
+            _updatingFolderBuckets = false;
+        }
+
+        SaveFolderBucketState();
+        ApplyFilter();
+    }
+
+    private void ClearFolderBucketSelection()
+    {
+        _folderBuckets.ClearSelected();
+        UpdateFolderBucketButtons();
+    }
+
     private void SaveFolderBucketState()
     {
         var hidden = _folderBuckets.Items
@@ -1447,9 +1700,13 @@ internal sealed class MainForm : Form
     private void UpdateFolderBucketButtons()
     {
         var hasBuckets = _folderBuckets.Items.Count > 0;
+        var hasSelectedBuckets = _folderBuckets.SelectedIndices.Count > 0 || _folderBuckets.SelectedIndex >= 0;
         _showAllFoldersButton.Enabled = hasBuckets;
         _hideAllFoldersButton.Enabled = hasBuckets;
         _invertFoldersButton.Enabled = hasBuckets;
+        _showSelectedFoldersButton.Enabled = hasSelectedBuckets;
+        _hideSelectedFoldersButton.Enabled = hasSelectedBuckets;
+        _clearFolderSelectionButton.Enabled = hasSelectedBuckets;
     }
 
     private string FormatFolderBucketLabel(string folder)
@@ -1693,6 +1950,67 @@ internal sealed class MainForm : Form
     private static string Quote(string value)
     {
         return value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
+    }
+
+    private static string FormatUiSmokeReport(NativeUiSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-ui-smoke complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"scannedImages={report.ScannedImages}",
+            $"initialVisible={report.InitialVisible}",
+            $"previewLoaded={BoolText(report.PreviewLoaded)}",
+            $"navigationButtons={BoolText(report.NavigationButtons)}",
+            $"keyboardNavigation={BoolText(report.KeyboardNavigation)}",
+            $"keyboardFavorite={BoolText(report.KeyboardFavorite)}",
+            $"gridToggle={BoolText(report.GridToggle)}",
+            $"folderBuckets={report.FolderBuckets}",
+            $"folderHideAll={BoolText(report.FolderHideAll)}",
+            $"folderShowSelected={BoolText(report.FolderShowSelected)}",
+            $"folderHideSelected={BoolText(report.FolderHideSelected)}",
+            $"folderClearSelection={BoolText(report.FolderClearSelection)}",
+            $"sortName={BoolText(report.SortName)}",
+            $"randomReshuffle={BoolText(report.RandomReshuffle)}",
+            $"thumbnailSize={BoolText(report.ThumbnailSize)}",
+            $"previewToggle={BoolText(report.PreviewToggle)}",
+            $"detailsToggle={BoolText(report.DetailsToggle)}",
+            $"previewSplitter={BoolText(report.PreviewSplitter)}",
+            $"selectedCount={BoolText(report.SelectedCount)}",
+            $"multiSelection={BoolText(report.MultiSelection)}",
+            $"backgroundClear={BoolText(report.BackgroundClear)}",
+            $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
+            $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
+            $"unratedFilter={BoolText(report.UnratedFilter)}",
+            $"clearSearch={BoolText(report.ClearSearch)}",
+            $"detailModal={BoolText(report.DetailModal)}",
+            $"detailNavigation={BoolText(report.DetailNavigation)}",
+            $"detailZoom={BoolText(report.DetailZoom)}",
+            $"detailReset={BoolText(report.DetailReset)}",
+            $"detailPan={BoolText(report.DetailPan)}",
+            $"detailFlip={BoolText(report.DetailFlip)}",
+            $"detailFavorite={BoolText(report.DetailFavorite)}",
+            $"detailOpenExternal={BoolText(report.DetailOpenExternal)}",
+            $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
+            $"searchMatches={report.SearchMatches}",
+            $"favoriteMatches={report.FavoriteMatches}",
+            $"noResultsState={BoolText(report.NoResultsState)}",
+            $"folderErrorState={BoolText(report.FolderErrorState)}",
+            $"albums={report.Albums}",
+            $"albumImages={report.AlbumImages}",
+            $"browserStateKeys={report.BrowserStateKeys}",
+            $"settingsImported={BoolText(report.SettingsImported)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
+    private static string BoolText(bool value)
+    {
+        return value.ToString().ToLowerInvariant();
     }
 
     private static string FormatBytes(long bytes)
@@ -2164,6 +2482,14 @@ internal sealed class MainForm : Form
         }
     }
 
+    private sealed record FavoriteFilterOption(string Key, string Label)
+    {
+        public override string ToString()
+        {
+            return Label;
+        }
+    }
+
     private sealed record NativeUiSmokeReport(
         string Folder,
         int ScannedImages,
@@ -2182,6 +2508,15 @@ internal sealed class MainForm : Form
         bool DetailsToggle,
         bool PreviewSplitter,
         bool SelectedCount,
+        bool MultiSelection,
+        bool BackgroundClear,
+        bool FavoriteFilterCounts,
+        bool FavoriteLevelFilter,
+        bool UnratedFilter,
+        bool ClearSearch,
+        bool FolderShowSelected,
+        bool FolderHideSelected,
+        bool FolderClearSelection,
         bool DetailModal,
         bool DetailNavigation,
         bool DetailZoom,

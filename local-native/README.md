@@ -179,3 +179,23 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 
 This is still a parity slice, not a full native parity claim. Remaining rows
 stay deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M10 Notes
+
+M10 adds a small native selection/filter/folder parity slice. The browser app
+remains untouched. Native browsing now supports ListView multi-selection,
+background selection clear, a search clear button, favorite filter choices with
+counts for all/favorites/unrated/levels 1-5, and selected folder-bucket
+show/hide/clear controls. The repeatable fixture now includes one nested
+folder image so folder bucket controls have native acceptance evidence.
+
+The native UI smoke verifies the M10 controls with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+This is still a parity slice, not a full native parity claim. Multi-root
+folder sets, folder range selection, preview tabs, bulk destructive actions,
+and explicit enhancement UI remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.
