@@ -337,6 +337,52 @@ M11 folder-set smoke result additions:
 | Persistence keys | DEFERRED | M11 persists native-only `recent_folder_set` and keeps backward `recent_folder`; fixture explicit export includes two `pvu_recent_dirs`. | Full parity for pinned previews, filters beyond favorite key, scroll/seen state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M11 UI smoke exercises the added folder-set action buttons at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M12 Native Folder Decision And Gallery State Slice
+
+M12 resolves the deferred folder range-selection product decision and implements
+a small native gallery-state restore slice. It still does not claim full native
+parity.
+
+M12 decision:
+
+- Folder range selection is `DEFERRED` for this slice.
+- The current folder bucket UI uses WinForms `CheckedListBox`.
+- `CheckedListBox` rejects `SelectionMode.MultiExtended` with
+  `ArgumentException: Multi-selection is not supported on CheckedListBox`.
+- A future range-selection implementation needs a product/UI decision for a
+  replacement or custom-wrapped folder bucket control.
+
+M12 smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+M12 smoke result additions:
+
+- galleryStateRestore: true
+
+| Area | M12 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | VERIFIED | Existing M11 folder-set smoke remains the acceptance evidence for scan/search/watch/remove/open-recent/manual-refresh behavior. | None for the M11 folder-set scope. Future folder acquisition polish can be handled outside this verified row. | `codex_pm` | Keep `-HeadlessFolderSetSmoke` plus normal native UI smoke in future regressions. |
+| Legacy browser state | DEFERRED | Existing explicit browser export import remains covered; no malformed-export UI added in M12. | Malformed export UX and user-facing recovery text. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | M12 UI smoke preserves existing clear/no-results/indexed-search coverage while restoring gallery selection after filter refresh. | Tag entry, multi-token semantics beyond existing FTS tokenization evidence, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query semantics, and any accepted chip-equivalent behavior. |
+| Sidebar quick search and filters | DEFERRED | Existing M10 favorite/unrated/level filter evidence remains covered after M12. | Enhanced-only, date presets, manual date range, and richer count labels beyond favorite state. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for enhanced/date buckets or explicit product decision to defer those filters. |
+| Folder visibility | DEFERRED | M12 records the folder range decision evidence: current `CheckedListBox` cannot enable native multi-extended range selection. Existing show/hide selected controls remain covered. | Folder range selection remains deferred pending a replacement/custom folder bucket control and UI semantics. | `codex_pm` / `claude_ui` / `cursor_impl` | Decide the custom control and keyboard/mouse semantics; if adopted, add native UI smoke proving range selection on multi-root folder buckets. |
+| Sorting and display | DEFERRED | Existing M8/M9/M10 sort/reshuffle/thumbnail controls remain covered after M12. | Date sections, full scroll memory, seen/unseen state, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering every sort mode, display variant, persisted thumbnail size, and scroll/seen behavior. |
+| Virtual gallery | DEFERRED | M12 persists `last_selected_image` and `last_visible_index`, restores the saved selection after filter refresh, and calls `EnsureVisible`; UI smoke reports `galleryStateRestore=true`. | Date sections, seen/unseen state, drag/open parity, placeholder behavior, large-fixture virtualized scroll proof, and native thumbnail warmup UI. | `codex_pm` | Native UI/manual sweep plus headless perf evidence for a large fixture and virtualized scroll state beyond selection-backed restore. |
+| Selection and preview tabs | DEFERRED | Existing M10 multi-selection, selected-count reporting, and background clear evidence remains covered after M12; restored gallery selection reuses the current visible order. | Preview tabs, pin/unpin, close/restore closed tab, hover/quick preview, and richer multi-selection actions. | `cursor_impl` | Native UI smoke for accepted preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Existing selected-count/splitter/detail evidence remains covered after M12. | Bulk favorite/open/recycle confirmation and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving bulk actions on disposable files, or explicit product decision to defer bulk actions. |
+| Modal navigation | DEFERRED | Existing M9 detail-modal navigation remains covered after M12 gallery-state changes. | Edge/click/swipe equivalents, loading-slot UI, and broader manual modal polish. | `cursor_impl` | Native detail-modal UI smoke/manual sweep covering edge/click equivalents, loading state, and any remaining browser modal affordances. |
+| Modal image controls | DEFERRED | Existing M9 detail-modal controls remain covered after M12 gallery-state changes. | Immersive chrome hide/show, richer feedback, and any browser-specific modal controls not yet mapped. | `cursor_impl` | Native detail-modal UI smoke/manual sweep for chrome hide/show, feedback states, and any remaining mapped controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite metadata remains covered. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M12 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | M12 persists native-only gallery state keys; read-only keybinding recorder decision remains unchanged. | Editable keybinding recorder, confirm-before-delete UI, edge/navigation settings, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable recorder, or a durable product decision keeping the recorder read-only. |
+| Enhancement isolation | DEFERRED | M12 UI smoke again verifies ordinary native browsing/search/preview/detail/filter smoke did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M12. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M12 persists native-only `last_selected_image` and `last_visible_index`; prior native settings persistence remains covered. | Full parity for pinned previews, filters beyond favorite/gallery state, scroll/seen state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M12 does not change layout; existing UI smoke still exercises desktop layout. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:

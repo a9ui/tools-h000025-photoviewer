@@ -680,6 +680,17 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
+    public void SaveGalleryState(string absolutePath, int visibleIndex)
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var now = DateTime.UtcNow;
+        UpsertSetting(connection, transaction, "last_selected_image", Path.GetFullPath(absolutePath), now);
+        UpsertSetting(connection, transaction, "last_visible_index", visibleIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), now);
+        transaction.Commit();
+    }
+
     public void SetFavoriteLevel(string absolutePath, int level)
     {
         Initialize();

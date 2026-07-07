@@ -67,6 +67,8 @@ internal sealed class MainForm : Form
     private bool _updatingFolderBuckets;
     private bool _updatingFavoriteFilter;
     private bool _updatingThumbnailSize;
+    private string _lastSavedSelectedPath = "";
+    private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
 
     public MainForm(string? initialFolder)
@@ -747,6 +749,7 @@ internal sealed class MainForm : Form
         var previewSplitter = VerifyPreviewSplitterPersistence();
         Require(previewSplitter, "preview splitter persistence failed");
 
+        SelectImage(_visibleImages[0].AbsolutePath);
         var navigationButtons = _nextButton.Enabled;
 
         await LoadSelectedPreviewAsync();
@@ -755,6 +758,19 @@ internal sealed class MainForm : Form
 
         var selectedCount = _selectionLabel.Text.Contains("Selected 1", StringComparison.OrdinalIgnoreCase);
         Require(selectedCount, "selected count label failed");
+
+        var galleryStateTargetIndex = Math.Min(2, _visibleImages.Count - 1);
+        var galleryStateTarget = _visibleImages[galleryStateTargetIndex];
+        SelectImage(galleryStateTarget.AbsolutePath);
+        ClearImageSelection();
+        ApplyFilter();
+        var galleryStateRestore = string.Equals(GetSelectedImage()?.AbsolutePath, galleryStateTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_store.GetSetting("last_selected_image", ""), galleryStateTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_store.GetSetting("last_visible_index", ""), galleryStateTargetIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase);
+        Require(galleryStateRestore, "gallery state selection restore failed");
+        SelectImage(_visibleImages[0].AbsolutePath);
+        await LoadSelectedPreviewAsync();
+
         _list.SelectedIndices.Clear();
         _list.SelectedIndices.Add(0);
         _list.SelectedIndices.Add(1);
@@ -874,6 +890,7 @@ internal sealed class MainForm : Form
             DetailsToggle: detailsToggle,
             PreviewSplitter: previewSplitter,
             SelectedCount: selectedCount,
+            GalleryStateRestore: galleryStateRestore,
             MultiSelection: multiSelection,
             BackgroundClear: backgroundClear,
             FavoriteFilterCounts: favoriteFilterCounts,
@@ -1261,6 +1278,7 @@ internal sealed class MainForm : Form
 
     private void ApplyFilter()
     {
+        var preferredSelectionPath = GetSelectedImage()?.AbsolutePath;
         var query = _searchText.Text.Trim();
         if (_currentRoots.Count > 0 && _currentRoots.All(Directory.Exists) && _allImages.Count > 0)
         {
@@ -1271,11 +1289,7 @@ internal sealed class MainForm : Form
                 limit: 100_000)))).ToList();
             _list.VirtualListSize = _visibleImages.Count;
             _list.Invalidate();
-            if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
-            {
-                _list.SelectedIndices.Add(0);
-            }
-
+            RestoreGalleryStateSelection(preferredSelectionPath);
             UpdateSelectionActions();
             SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images (indexed search).");
             return;
@@ -1295,11 +1309,7 @@ internal sealed class MainForm : Form
         _visibleImages = ApplySort(ApplyFolderBucketFilter(source)).ToList();
         _list.VirtualListSize = _visibleImages.Count;
         _list.Invalidate();
-        if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
-        {
-            _list.SelectedIndices.Add(0);
-        }
-
+        RestoreGalleryStateSelection(preferredSelectionPath);
         UpdateSelectionActions();
         SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images.");
     }
@@ -1759,6 +1769,56 @@ internal sealed class MainForm : Form
         _updatingFavoriteControl = true;
         _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
         _updatingFavoriteControl = false;
+        SaveGalleryStateIfChanged(selected, index);
+    }
+
+    private void SaveGalleryStateIfChanged(NativeImageRecord? selected, int visibleIndex)
+    {
+        if (selected is null || visibleIndex < 0)
+        {
+            return;
+        }
+
+        if (string.Equals(_lastSavedSelectedPath, selected.AbsolutePath, StringComparison.OrdinalIgnoreCase) &&
+            _lastSavedVisibleIndex == visibleIndex)
+        {
+            return;
+        }
+
+        _store.SaveGalleryState(selected.AbsolutePath, visibleIndex);
+        _lastSavedSelectedPath = selected.AbsolutePath;
+        _lastSavedVisibleIndex = visibleIndex;
+    }
+
+    private void RestoreGalleryStateSelection(string? preferredPath)
+    {
+        _list.SelectedIndices.Clear();
+        if (_visibleImages.Count == 0)
+        {
+            ClearPreview("Select an image.");
+            return;
+        }
+
+        var index = FindVisibleImageIndex(preferredPath);
+        if (index < 0)
+        {
+            index = FindVisibleImageIndex(_store.GetSetting("last_selected_image", ""));
+        }
+
+        if (index < 0)
+        {
+            index = Math.Clamp(ParseSettingInt("last_visible_index", 0), 0, _visibleImages.Count - 1);
+        }
+
+        _list.SelectedIndices.Add(index);
+        _list.EnsureVisible(index);
+    }
+
+    private int FindVisibleImageIndex(string? absolutePath)
+    {
+        return string.IsNullOrWhiteSpace(absolutePath)
+            ? -1
+            : _visibleImages.FindIndex(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
     }
 
     private void ReplaceImage(string absolutePath, NativeImageRecord updated)
@@ -2278,6 +2338,7 @@ internal sealed class MainForm : Form
             $"detailsToggle={BoolText(report.DetailsToggle)}",
             $"previewSplitter={BoolText(report.PreviewSplitter)}",
             $"selectedCount={BoolText(report.SelectedCount)}",
+            $"galleryStateRestore={BoolText(report.GalleryStateRestore)}",
             $"multiSelection={BoolText(report.MultiSelection)}",
             $"backgroundClear={BoolText(report.BackgroundClear)}",
             $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
@@ -2833,6 +2894,7 @@ internal sealed class MainForm : Form
         bool DetailsToggle,
         bool PreviewSplitter,
         bool SelectedCount,
+        bool GalleryStateRestore,
         bool MultiSelection,
         bool BackgroundClear,
         bool FavoriteFilterCounts,
