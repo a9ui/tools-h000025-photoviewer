@@ -8,5 +8,7 @@ internal sealed record NativeImageRecord(
     long SizeBytes,
     DateTime CreatedAtUtc,
     DateTime ModifiedAtUtc,
-    int FavoriteLevel
+    int FavoriteLevel,
+    int? Width = null,
+    int? Height = null
 );

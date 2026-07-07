@@ -2,7 +2,7 @@ namespace PhotoViewer.Native;
 
 internal static class NativeImageScanner
 {
-    private static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    internal static readonly HashSet<string> SupportedExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png",
         ".jpg",
@@ -54,6 +54,7 @@ internal static class NativeImageScanner
 
                 var absolutePath = info.FullName;
                 favorites.TryGetValue(absolutePath, out var favoriteLevel);
+                var dimensions = NativeImageHeaderReader.ReadDimensions(absolutePath);
 
                 records.Add(new NativeImageRecord(
                     Id: absolutePath,
@@ -63,7 +64,9 @@ internal static class NativeImageScanner
                     SizeBytes: info.Length,
                     CreatedAtUtc: info.CreationTimeUtc,
                     ModifiedAtUtc: info.LastWriteTimeUtc,
-                    FavoriteLevel: favoriteLevel
+                    FavoriteLevel: favoriteLevel,
+                    Width: dimensions.Found ? dimensions.Width : null,
+                    Height: dimensions.Found ? dimensions.Height : null
                 ));
 
                 count++;

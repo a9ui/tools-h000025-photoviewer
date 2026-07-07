@@ -42,13 +42,22 @@ internal sealed class NativeImageStore
               modified_at_utc TEXT NOT NULL,
               favorite_level INTEGER NOT NULL DEFAULT 0,
               scan_root TEXT NOT NULL,
-              indexed_at_utc TEXT NOT NULL
+              indexed_at_utc TEXT NOT NULL,
+              width INTEGER,
+              height INTEGER
             );
 
             CREATE INDEX IF NOT EXISTS idx_images_scan_root ON images(scan_root);
             CREATE INDEX IF NOT EXISTS idx_images_modified ON images(modified_at_utc DESC);
             CREATE INDEX IF NOT EXISTS idx_images_favorite ON images(favorite_level DESC);
             CREATE INDEX IF NOT EXISTS idx_images_filename ON images(filename COLLATE NOCASE);
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS image_search_fts USING fts5(
+              image_id UNINDEXED,
+              scan_root UNINDEXED,
+              search_text,
+              tokenize = 'unicode61 remove_diacritics 0'
+            );
 
             CREATE TABLE IF NOT EXISTS scan_roots (
               root_path TEXT PRIMARY KEY,
@@ -90,6 +99,8 @@ internal sealed class NativeImageStore
             );
             """;
         command.ExecuteNonQuery();
+        EnsureColumn(connection, "images", "width", "INTEGER");
+        EnsureColumn(connection, "images", "height", "INTEGER");
     }
 
     public NativeImportReport ImportProjectState()
@@ -243,74 +254,67 @@ internal sealed class NativeImageStore
         }
 
         UpsertSetting(connection, transaction, "recent_folder", resolvedRoot, finishedAt);
+        ExecuteNonQuery(connection, transaction, "DELETE FROM images WHERE scan_root = $root", ("$root", resolvedRoot));
+        ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE scan_root = $root", ("$root", resolvedRoot));
 
-        using var upsert = connection.CreateCommand();
-        upsert.Transaction = transaction;
-        upsert.CommandText = """
-            INSERT INTO images(
-              id,
-              absolute_path,
-              filename,
-              folder,
-              extension,
-              size_bytes,
-              created_at_utc,
-              modified_at_utc,
-              favorite_level,
-              scan_root,
-              indexed_at_utc
-            )
-            VALUES (
-              $id,
-              $path,
-              $filename,
-              $folder,
-              $extension,
-              $size,
-              $created,
-              $modified,
-              $favorite,
-              $root,
-              $indexed
-            )
-            ON CONFLICT(id) DO UPDATE SET
-              absolute_path = excluded.absolute_path,
-              filename = excluded.filename,
-              folder = excluded.folder,
-              extension = excluded.extension,
-              size_bytes = excluded.size_bytes,
-              created_at_utc = excluded.created_at_utc,
-              modified_at_utc = excluded.modified_at_utc,
-              favorite_level = excluded.favorite_level,
-              scan_root = excluded.scan_root,
-              indexed_at_utc = excluded.indexed_at_utc
-            """;
-        var id = upsert.Parameters.Add("$id", SqliteType.Text);
-        var path = upsert.Parameters.Add("$path", SqliteType.Text);
-        var filename = upsert.Parameters.Add("$filename", SqliteType.Text);
-        var folder = upsert.Parameters.Add("$folder", SqliteType.Text);
-        var extension = upsert.Parameters.Add("$extension", SqliteType.Text);
-        var size = upsert.Parameters.Add("$size", SqliteType.Integer);
-        var created = upsert.Parameters.Add("$created", SqliteType.Text);
-        var modified = upsert.Parameters.Add("$modified", SqliteType.Text);
-        var favorite = upsert.Parameters.Add("$favorite", SqliteType.Integer);
-        var scanRoot = upsert.Parameters.Add("$root", SqliteType.Text);
-        var indexed = upsert.Parameters.Add("$indexed", SqliteType.Text);
+        UpsertImages(connection, transaction, images, resolvedRoot, indexedAt);
+        transaction.Commit();
+    }
 
-        foreach (var image in images)
+    public void ApplyIncrementalScan(string root, NativeIncrementalScanResult result, TimeSpan elapsed, bool fullRescan)
+    {
+        Initialize();
+        var resolvedRoot = Path.GetFullPath(root);
+        var startedAt = DateTime.UtcNow - elapsed;
+        var finishedAt = DateTime.UtcNow;
+        var indexedAt = finishedAt.ToString("O");
+        var totalCount = result.ScannedCount;
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using (var rootCommand = connection.CreateCommand())
         {
-            id.Value = image.Id;
-            path.Value = image.AbsolutePath;
-            filename.Value = image.Filename;
-            folder.Value = image.Folder;
-            extension.Value = Path.GetExtension(image.AbsolutePath).ToLowerInvariant();
-            size.Value = image.SizeBytes;
-            created.Value = image.CreatedAtUtc.ToString("O");
-            modified.Value = image.ModifiedAtUtc.ToString("O");
-            favorite.Value = image.FavoriteLevel;
-            scanRoot.Value = resolvedRoot;
-            indexed.Value = indexedAt;
-            upsert.ExecuteNonQuery();
+            rootCommand.Transaction = transaction;
+            rootCommand.CommandText = """
+                INSERT INTO scan_roots(root_path, last_scan_started_utc, last_scan_finished_utc, image_count, elapsed_ms)
+                VALUES ($root, $started, $finished, $count, $elapsed)
+                ON CONFLICT(root_path) DO UPDATE SET
+                  last_scan_started_utc = excluded.last_scan_started_utc,
+                  last_scan_finished_utc = excluded.last_scan_finished_utc,
+                  image_count = excluded.image_count,
+                  elapsed_ms = excluded.elapsed_ms
+                """;
+            rootCommand.Parameters.AddWithValue("$root", resolvedRoot);
+            rootCommand.Parameters.AddWithValue("$started", startedAt.ToString("O"));
+            rootCommand.Parameters.AddWithValue("$finished", finishedAt.ToString("O"));
+            rootCommand.Parameters.AddWithValue("$count", totalCount);
+            rootCommand.Parameters.AddWithValue("$elapsed", (long)elapsed.TotalMilliseconds);
+            rootCommand.ExecuteNonQuery();
+        }
+
+        UpsertSetting(connection, transaction, "recent_folder", resolvedRoot, finishedAt);
+
+        if (fullRescan)
+        {
+            ExecuteNonQuery(connection, transaction, "DELETE FROM images WHERE scan_root = $root", ("$root", resolvedRoot));
+            ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE scan_root = $root", ("$root", resolvedRoot));
+            UpsertImages(connection, transaction, result.AddedOrUpdated, resolvedRoot, indexedAt);
+        }
+        else
+        {
+            foreach (var removed in result.RemovedPaths)
+            {
+                ExecuteNonQuery(connection, transaction, "DELETE FROM images WHERE id = $id OR absolute_path = $path", ("$id", removed), ("$path", removed));
+                ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE image_id = $id", ("$id", removed));
+            }
+
+            if (result.AddedOrUpdated.Count > 0)
+            {
+                UpsertImages(connection, transaction, result.AddedOrUpdated, resolvedRoot, indexedAt);
+            }
+
+            EnsureSearchIndexForRoot(connection, transaction, resolvedRoot);
         }
 
         transaction.Commit();
@@ -322,7 +326,7 @@ internal sealed class NativeImageStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level
+            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
             FROM images
             WHERE scan_root = $root
             ORDER BY modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
@@ -333,16 +337,89 @@ internal sealed class NativeImageStore
         var images = new List<NativeImageRecord>();
         while (reader.Read())
         {
-            images.Add(new NativeImageRecord(
-                Id: reader.GetString(0),
-                AbsolutePath: reader.GetString(1),
-                Filename: reader.GetString(2),
-                Folder: reader.GetString(3),
-                SizeBytes: reader.GetInt64(4),
-                CreatedAtUtc: DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
-                ModifiedAtUtc: DateTime.Parse(reader.GetString(6), null, System.Globalization.DateTimeStyles.RoundtripKind),
-                FavoriteLevel: reader.GetInt32(7)
-            ));
+            images.Add(ReadImage(reader));
+        }
+
+        return images;
+    }
+
+    public List<NativeImageRecord> SearchImagesIndexed(string root, string query, bool favoritesOnly, int limit = 200)
+    {
+        return SearchImagesIndexed(root, query, favoritesOnly, limit, out _);
+    }
+
+    public List<NativeImageRecord> SearchImagesIndexed(string root, string query, bool favoritesOnly, int limit, out bool usedIndex)
+    {
+        Initialize();
+        var resolvedRoot = Path.GetFullPath(root);
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        usedIndex = true;
+
+        if (string.IsNullOrWhiteSpace(query))
+        {
+            command.CommandText = """
+                SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
+                FROM images
+                WHERE scan_root = $root
+                  AND ($favoritesOnly = 0 OR favorite_level > 0)
+                ORDER BY favorite_level DESC, modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
+                LIMIT $limit
+                """;
+            command.Parameters.AddWithValue("$root", resolvedRoot);
+            command.Parameters.AddWithValue("$favoritesOnly", favoritesOnly ? 1 : 0);
+            command.Parameters.AddWithValue("$limit", limit);
+        }
+        else
+        {
+            try
+            {
+                command.CommandText = """
+                    SELECT i.id, i.absolute_path, i.filename, i.folder, i.size_bytes, i.created_at_utc, i.modified_at_utc, i.favorite_level, i.width, i.height
+                    FROM image_search_fts fts
+                    JOIN images i ON i.id = fts.image_id
+                    WHERE fts.scan_root = $root
+                      AND image_search_fts MATCH $match
+                      AND ($favoritesOnly = 0 OR i.favorite_level > 0)
+                    ORDER BY i.favorite_level DESC, i.modified_at_utc DESC, i.absolute_path COLLATE NOCASE ASC
+                    LIMIT $limit
+                    """;
+                command.Parameters.AddWithValue("$root", resolvedRoot);
+                command.Parameters.AddWithValue("$match", BuildFtsQuery(query));
+                command.Parameters.AddWithValue("$favoritesOnly", favoritesOnly ? 1 : 0);
+                command.Parameters.AddWithValue("$limit", limit);
+
+                using var ftsReader = command.ExecuteReader();
+                var ftsImages = new List<NativeImageRecord>();
+                while (ftsReader.Read())
+                {
+                    ftsImages.Add(ReadImage(ftsReader));
+                }
+
+                if (ftsImages.Count == 0)
+                {
+                    var likeImages = SearchImagesLike(connection, resolvedRoot, query, favoritesOnly, limit);
+                    if (likeImages.Count > 0)
+                    {
+                        usedIndex = false;
+                        return likeImages;
+                    }
+                }
+
+                return ftsImages;
+            }
+            catch (SqliteException)
+            {
+                usedIndex = false;
+                return SearchImagesLike(connection, resolvedRoot, query, favoritesOnly, limit);
+            }
+        }
+
+        using var reader = command.ExecuteReader();
+        var images = new List<NativeImageRecord>();
+        while (reader.Read())
+        {
+            images.Add(ReadImage(reader));
         }
 
         return images;
@@ -350,11 +427,27 @@ internal sealed class NativeImageStore
 
     public List<NativeImageRecord> SearchImagesForRoot(string root, string query, bool favoritesOnly, int limit = 200)
     {
-        Initialize();
-        using var connection = OpenConnection();
+        return SearchImagesIndexed(root, query, favoritesOnly, limit);
+    }
+
+    private static string BuildFtsQuery(string query)
+    {
+        var tokens = query
+            .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Select(static token => $"\"{token.Replace("\"", "\"\"")}\"*");
+        return string.Join(' ', tokens);
+    }
+
+    private static List<NativeImageRecord> SearchImagesLike(
+        SqliteConnection connection,
+        string resolvedRoot,
+        string query,
+        bool favoritesOnly,
+        int limit)
+    {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level
+            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
             FROM images
             WHERE scan_root = $root
               AND ($favoritesOnly = 0 OR favorite_level > 0)
@@ -367,7 +460,7 @@ internal sealed class NativeImageStore
             ORDER BY favorite_level DESC, modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
             LIMIT $limit
             """;
-        command.Parameters.AddWithValue("$root", Path.GetFullPath(root));
+        command.Parameters.AddWithValue("$root", resolvedRoot);
         command.Parameters.AddWithValue("$favoritesOnly", favoritesOnly ? 1 : 0);
         command.Parameters.AddWithValue("$query", query);
         command.Parameters.AddWithValue("$like", $"%{query}%");
@@ -564,8 +657,212 @@ internal sealed class NativeImageStore
             SizeBytes: reader.GetInt64(4),
             CreatedAtUtc: DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
             ModifiedAtUtc: DateTime.Parse(reader.GetString(6), null, System.Globalization.DateTimeStyles.RoundtripKind),
-            FavoriteLevel: reader.GetInt32(7)
+            FavoriteLevel: reader.GetInt32(7),
+            Width: reader.IsDBNull(8) ? null : reader.GetInt32(8),
+            Height: reader.IsDBNull(9) ? null : reader.GetInt32(9)
         );
+    }
+
+    private static void UpsertImages(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<NativeImageRecord> images,
+        string resolvedRoot,
+        string indexedAt)
+    {
+        using var upsert = connection.CreateCommand();
+        upsert.Transaction = transaction;
+        upsert.CommandText = """
+            INSERT INTO images(
+              id,
+              absolute_path,
+              filename,
+              folder,
+              extension,
+              size_bytes,
+              created_at_utc,
+              modified_at_utc,
+              favorite_level,
+              scan_root,
+              indexed_at_utc,
+              width,
+              height
+            )
+            VALUES (
+              $id,
+              $path,
+              $filename,
+              $folder,
+              $extension,
+              $size,
+              $created,
+              $modified,
+              $favorite,
+              $root,
+              $indexed,
+              $width,
+              $height
+            )
+            ON CONFLICT(id) DO UPDATE SET
+              absolute_path = excluded.absolute_path,
+              filename = excluded.filename,
+              folder = excluded.folder,
+              extension = excluded.extension,
+              size_bytes = excluded.size_bytes,
+              created_at_utc = excluded.created_at_utc,
+              modified_at_utc = excluded.modified_at_utc,
+              favorite_level = excluded.favorite_level,
+              scan_root = excluded.scan_root,
+              indexed_at_utc = excluded.indexed_at_utc,
+              width = excluded.width,
+              height = excluded.height
+            """;
+        var id = upsert.Parameters.Add("$id", SqliteType.Text);
+        var path = upsert.Parameters.Add("$path", SqliteType.Text);
+        var filename = upsert.Parameters.Add("$filename", SqliteType.Text);
+        var folder = upsert.Parameters.Add("$folder", SqliteType.Text);
+        var extension = upsert.Parameters.Add("$extension", SqliteType.Text);
+        var size = upsert.Parameters.Add("$size", SqliteType.Integer);
+        var created = upsert.Parameters.Add("$created", SqliteType.Text);
+        var modified = upsert.Parameters.Add("$modified", SqliteType.Text);
+        var favorite = upsert.Parameters.Add("$favorite", SqliteType.Integer);
+        var scanRoot = upsert.Parameters.Add("$root", SqliteType.Text);
+        var indexed = upsert.Parameters.Add("$indexed", SqliteType.Text);
+        var width = upsert.Parameters.Add("$width", SqliteType.Integer);
+        var height = upsert.Parameters.Add("$height", SqliteType.Integer);
+
+        using var ftsDelete = connection.CreateCommand();
+        ftsDelete.Transaction = transaction;
+        ftsDelete.CommandText = "DELETE FROM image_search_fts WHERE image_id = $id";
+
+        using var fts = connection.CreateCommand();
+        fts.Transaction = transaction;
+        fts.CommandText = """
+            INSERT INTO image_search_fts(image_id, scan_root, search_text)
+            VALUES ($id, $root, $text)
+            """;
+
+        foreach (var image in images)
+        {
+            id.Value = image.Id;
+            path.Value = image.AbsolutePath;
+            filename.Value = image.Filename;
+            folder.Value = image.Folder;
+            extension.Value = Path.GetExtension(image.AbsolutePath).ToLowerInvariant();
+            size.Value = image.SizeBytes;
+            created.Value = image.CreatedAtUtc.ToString("O");
+            modified.Value = image.ModifiedAtUtc.ToString("O");
+            favorite.Value = image.FavoriteLevel;
+            scanRoot.Value = resolvedRoot;
+            indexed.Value = indexedAt;
+            width.Value = image.Width.HasValue ? image.Width.Value : DBNull.Value;
+            height.Value = image.Height.HasValue ? image.Height.Value : DBNull.Value;
+            upsert.ExecuteNonQuery();
+
+            ftsDelete.Parameters.Clear();
+            ftsDelete.Parameters.AddWithValue("$id", image.Id);
+            ftsDelete.ExecuteNonQuery();
+
+            fts.Parameters.Clear();
+            fts.Parameters.AddWithValue("$id", image.Id);
+            fts.Parameters.AddWithValue("$root", resolvedRoot);
+            fts.Parameters.AddWithValue("$text", BuildSearchText(image));
+            fts.ExecuteNonQuery();
+        }
+    }
+
+    private static string BuildSearchText(NativeImageRecord image)
+    {
+        return $"{image.Filename} {image.Folder} {image.AbsolutePath}";
+    }
+
+    private static void EnsureSearchIndexForRoot(SqliteConnection connection, SqliteTransaction transaction, string resolvedRoot)
+    {
+        using (var countImages = connection.CreateCommand())
+        {
+            countImages.Transaction = transaction;
+            countImages.CommandText = "SELECT COUNT(*) FROM images WHERE scan_root = $root";
+            countImages.Parameters.AddWithValue("$root", resolvedRoot);
+
+            using var countSearch = connection.CreateCommand();
+            countSearch.Transaction = transaction;
+            countSearch.CommandText = "SELECT COUNT(*) FROM image_search_fts WHERE scan_root = $root";
+            countSearch.Parameters.AddWithValue("$root", resolvedRoot);
+
+            var imageCount = Convert.ToInt32(countImages.ExecuteScalar());
+            var searchCount = Convert.ToInt32(countSearch.ExecuteScalar());
+            if (imageCount == searchCount)
+            {
+                return;
+            }
+        }
+
+        var rows = new List<(string Id, string SearchText)>();
+        using (var select = connection.CreateCommand())
+        {
+            select.Transaction = transaction;
+            select.CommandText = """
+                SELECT id, filename, folder, absolute_path
+                FROM images
+                WHERE scan_root = $root
+                """;
+            select.Parameters.AddWithValue("$root", resolvedRoot);
+            using var reader = select.ExecuteReader();
+            while (reader.Read())
+            {
+                rows.Add((
+                    reader.GetString(0),
+                    $"{reader.GetString(1)} {reader.GetString(2)} {reader.GetString(3)}"));
+            }
+        }
+
+        ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE scan_root = $root", ("$root", resolvedRoot));
+
+        using var insert = connection.CreateCommand();
+        insert.Transaction = transaction;
+        insert.CommandText = """
+            INSERT INTO image_search_fts(image_id, scan_root, search_text)
+            VALUES ($id, $root, $text)
+            """;
+        foreach (var row in rows)
+        {
+            insert.Parameters.Clear();
+            insert.Parameters.AddWithValue("$id", row.Id);
+            insert.Parameters.AddWithValue("$root", resolvedRoot);
+            insert.Parameters.AddWithValue("$text", row.SearchText);
+            insert.ExecuteNonQuery();
+        }
+    }
+
+    private static void EnsureColumn(SqliteConnection connection, string table, string column, string type)
+    {
+        using var command = connection.CreateCommand();
+        command.CommandText = $"PRAGMA table_info({table})";
+        using var reader = command.ExecuteReader();
+        while (reader.Read())
+        {
+            if (string.Equals(reader.GetString(1), column, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alter = connection.CreateCommand();
+        alter.CommandText = $"ALTER TABLE {table} ADD COLUMN {column} {type}";
+        alter.ExecuteNonQuery();
+    }
+
+    private static void ExecuteNonQuery(SqliteConnection connection, SqliteTransaction transaction, string sql, params (string Name, object Value)[] parameters)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = sql;
+        foreach (var (name, value) in parameters)
+        {
+            command.Parameters.AddWithValue(name, value);
+        }
+
+        command.ExecuteNonQuery();
     }
 
     private static string? GetSetting(SqliteConnection connection, SqliteTransaction? transaction, string key)

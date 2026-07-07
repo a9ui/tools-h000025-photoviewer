@@ -30,9 +30,13 @@ internal sealed class MainForm : Form
 
     private readonly string _projectRoot;
     private readonly NativeImageStore _store;
+    private readonly NativePreviewRingBuffer _previewRing = new(capacity: 5);
+    private readonly NativeCacheScheduler _cacheScheduler = new();
+    private readonly NativeFolderWatcher _folderWatcher = new();
     private Dictionary<string, int> _favorites;
     private List<NativeImageRecord> _allImages = [];
     private List<NativeImageRecord> _visibleImages = [];
+    private string _currentFolder = "";
     private CancellationTokenSource? _scanCancellation;
     private long _previewVersion;
     private bool _updatingFavoriteControl;
@@ -65,6 +69,7 @@ internal sealed class MainForm : Form
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplyStateSummary(report);
+        _folderWatcher.ChangesDetected += OnFolderChangesDetected;
     }
 
     protected override void Dispose(bool disposing)
@@ -73,6 +78,9 @@ internal sealed class MainForm : Form
         {
             _scanCancellation?.Cancel();
             _scanCancellation?.Dispose();
+            _folderWatcher.Dispose();
+            _cacheScheduler.Dispose();
+            _previewRing.Dispose();
             _preview.Image?.Dispose();
         }
 
@@ -247,7 +255,8 @@ internal sealed class MainForm : Form
         _list.LargeImageList = _gridImages;
         _list.Columns.Add("Name", 300);
         _list.Columns.Add("Fav", 48);
-        _list.Columns.Add("Folder", 300);
+        _list.Columns.Add("Dims", 88);
+        _list.Columns.Add("Folder", 260);
         _list.Columns.Add("Modified", 150);
         _list.Columns.Add("Size", 86);
         _list.RetrieveVirtualItem += (_, args) =>
@@ -341,15 +350,14 @@ internal sealed class MainForm : Form
             return;
         }
 
+        _currentFolder = folder;
         _scanCancellation?.Cancel();
         _scanCancellation?.Dispose();
         _scanCancellation = new CancellationTokenSource();
         _scanButton.Enabled = false;
         _cancelButton.Enabled = true;
         _importButton.Enabled = false;
-        _allImages = [];
-        _visibleImages = [];
-        _list.VirtualListSize = 0;
+        _previewRing.Clear();
         ClearPreview("Scanning...");
 
         var stopwatch = Stopwatch.StartNew();
@@ -361,13 +369,30 @@ internal sealed class MainForm : Form
         try
         {
             _favorites = _store.LoadFavorites();
-            var scanned = await NativeImageScanner.ScanAsync(folder, _favorites, progress, _scanCancellation.Token);
-            stopwatch.Stop();
-            _store.SaveScanResult(folder, scanned, stopwatch.Elapsed);
-            _allImages = _store.LoadImagesForRoot(folder);
-            ApplyFilter();
-            ApplyStateSummary();
-            SetStatus($"Scan complete: {_allImages.Count:n0} images in {stopwatch.Elapsed.TotalSeconds:n1}s. Saved to {_store.DatabasePath}");
+            var existing = _store.LoadImagesForRoot(folder).ToDictionary(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase);
+            if (existing.Count > 0)
+            {
+                var incremental = await NativeIncrementalScanner.ScanAsync(folder, existing, _favorites, progress, _scanCancellation.Token);
+                stopwatch.Stop();
+                _store.ApplyIncrementalScan(folder, incremental, stopwatch.Elapsed, fullRescan: false);
+                _allImages = _store.LoadImagesForRoot(folder);
+                ApplyFilter();
+                ApplyStateSummary();
+                SetStatus(
+                    $"Incremental scan: {_allImages.Count:n0} images, {incremental.AddedOrUpdated.Count:n0} changed, {incremental.RemovedPaths.Count:n0} removed, {incremental.UnchangedCount:n0} unchanged in {stopwatch.Elapsed.TotalSeconds:n1}s.");
+            }
+            else
+            {
+                var scanned = await NativeImageScanner.ScanAsync(folder, _favorites, progress, _scanCancellation.Token);
+                stopwatch.Stop();
+                _store.SaveScanResult(folder, scanned, stopwatch.Elapsed);
+                _allImages = _store.LoadImagesForRoot(folder);
+                ApplyFilter();
+                ApplyStateSummary();
+                SetStatus($"Scan complete: {_allImages.Count:n0} images in {stopwatch.Elapsed.TotalSeconds:n1}s. Saved to {_store.DatabasePath}");
+            }
+
+            _folderWatcher.Watch(folder);
         }
         catch (OperationCanceledException)
         {
@@ -385,9 +410,51 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task RunIncrementalRescanAsync(string folder)
+    {
+        if (!string.Equals(_currentFolder, folder, StringComparison.OrdinalIgnoreCase) || !_scanButton.Enabled)
+        {
+            return;
+        }
+
+        _folderText.Text = folder;
+        await ScanCurrentFolderAsync();
+    }
+
+    private void OnFolderChangesDetected(object? sender, string folder)
+    {
+        if (IsDisposed)
+        {
+            return;
+        }
+
+        if (InvokeRequired)
+        {
+            BeginInvoke(() => _ = RunIncrementalRescanAsync(folder));
+            return;
+        }
+
+        _ = RunIncrementalRescanAsync(folder);
+    }
+
     private void ApplyFilter()
     {
         var query = _searchText.Text.Trim();
+        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder) && _allImages.Count > 0)
+        {
+            _visibleImages = _store.SearchImagesIndexed(_currentFolder, query, _favoritesOnly.Checked, limit: 100_000);
+            _list.VirtualListSize = _visibleImages.Count;
+            _list.Invalidate();
+            if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
+            {
+                _list.SelectedIndices.Add(0);
+            }
+
+            UpdateSelectionActions();
+            SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images (indexed search).");
+            return;
+        }
+
         IEnumerable<NativeImageRecord> source = _allImages;
         if (_favoritesOnly.Checked)
         {
@@ -422,6 +489,7 @@ internal sealed class MainForm : Form
             ImageIndex = 0,
         };
         item.SubItems.Add(favorite);
+        item.SubItems.Add(FormatDimensions(image));
         item.SubItems.Add(image.Folder);
         item.SubItems.Add(image.ModifiedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
         item.SubItems.Add(FormatBytes(image.SizeBytes));
@@ -444,11 +512,28 @@ internal sealed class MainForm : Form
 
         var image = _visibleImages[index];
         var version = Interlocked.Increment(ref _previewVersion);
-        _previewLabel.Text = $"Loading {image.Filename}";
+        var dimensionHint = FormatDimensions(image);
+        _previewLabel.Text = dimensionHint.Length > 0
+            ? $"Loading {image.Filename} ({dimensionHint})"
+            : $"Loading {image.Filename}";
 
         try
         {
-            var loaded = await Task.Run(() => LoadImageCopy(image.AbsolutePath));
+            Image loaded;
+            if (_previewRing.TryGet(image.AbsolutePath, out var cached) && cached is not null)
+            {
+                loaded = new Bitmap(cached);
+            }
+            else
+            {
+                var decoded = await _cacheScheduler.ScheduleAsync(
+                    NativeCacheJobKind.PreviewDecode,
+                    image.AbsolutePath,
+                    _ => LoadImageCopy(image.AbsolutePath));
+                _previewRing.Store(image.AbsolutePath, decoded);
+                loaded = new Bitmap(decoded);
+            }
+
             if (version != Interlocked.Read(ref _previewVersion))
             {
                 loaded.Dispose();
@@ -458,9 +543,10 @@ internal sealed class MainForm : Form
             var previous = _preview.Image;
             _preview.Image = loaded;
             previous?.Dispose();
-            _previewLabel.Text = $"{image.Filename}  {FormatBytes(image.SizeBytes)}  fav {image.FavoriteLevel}";
+
+            _previewLabel.Text = $"{image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensionHint}  fav {image.FavoriteLevel}";
             UpdateSelectionActions();
-            _ = Task.Run(() => WarmNeighborMetadata(index));
+            WarmNeighborPreviews(index);
         }
         catch (Exception ex)
         {
@@ -717,8 +803,9 @@ internal sealed class MainForm : Form
             MessageBoxIcon.Information);
     }
 
-    private void WarmNeighborMetadata(int index)
+    private void WarmNeighborPreviews(int index)
     {
+        var neighbors = new List<string>();
         foreach (var neighbor in new[] { index - 1, index + 1 })
         {
             if (neighbor < 0 || neighbor >= _visibleImages.Count)
@@ -726,15 +813,33 @@ internal sealed class MainForm : Form
                 continue;
             }
 
-            try
+            var path = _visibleImages[neighbor].AbsolutePath;
+            if (_previewRing.TryGet(path, out _))
             {
-                _ = new FileInfo(_visibleImages[neighbor].AbsolutePath).Length;
+                continue;
             }
-            catch
-            {
-                // Metadata warmup is best-effort only.
-            }
+
+            neighbors.Add(path);
         }
+
+        foreach (var path in neighbors)
+        {
+            _ = _cacheScheduler.ScheduleAsync(
+                NativeCacheJobKind.NeighborDecode,
+                path,
+                ct =>
+                {
+                    if (!_previewRing.TryGet(path, out _))
+                    {
+                        _previewRing.Store(path, LoadImageCopy(path));
+                    }
+                });
+        }
+    }
+
+    private static string FormatDimensions(NativeImageRecord image)
+    {
+        return image.Width is > 0 && image.Height is > 0 ? $"{image.Width}x{image.Height}" : "";
     }
 
     private static Bitmap CreateGridPlaceholder()

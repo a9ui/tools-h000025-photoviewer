@@ -1,12 +1,15 @@
 param(
   [string]$Folder = "",
   [switch]$HeadlessScan,
+  [switch]$HeadlessIncrementalScan,
   [switch]$HeadlessImport,
   [switch]$HeadlessSearch,
+  [switch]$HeadlessPerf,
   [string]$Search = "",
   [switch]$FavoritesOnly,
   [string]$FavoritePath = "",
-  [int]$FavoriteLevel = 0
+  [int]$FavoriteLevel = 0,
+  [int]$PerfIterations = 40
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +30,15 @@ if ($HeadlessScan) {
   $arguments += "--"
   $arguments += "--headless-scan"
   $arguments += $Folder
+} elseif ($HeadlessIncrementalScan) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessIncrementalScan requires -Folder."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-scan"
+  $arguments += $Folder
+  $arguments += "--incremental"
 } elseif ($HeadlessImport) {
   $arguments += "--"
   $arguments += "--headless-import"
@@ -41,6 +53,20 @@ if ($HeadlessScan) {
   $arguments += $Search
   if ($FavoritesOnly) {
     $arguments += "--favorites-only"
+  }
+} elseif ($HeadlessPerf) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessPerf requires -Folder."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-perf"
+  $arguments += $Folder
+  $arguments += "--iterations"
+  $arguments += $PerfIterations.ToString()
+  if ($Search.Trim().Length -gt 0) {
+    $arguments += "--search"
+    $arguments += $Search
   }
 } elseif ($FavoritePath.Trim().Length -gt 0) {
   $arguments += "--"

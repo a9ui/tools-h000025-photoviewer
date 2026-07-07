@@ -60,6 +60,18 @@ favorite-only filter, default key-binding JSON, and browser settings import
 markers. Favorite level mutation writes to SQLite immediately. Delete removes
 the image/favorite rows only after the Windows Recycle Bin operation succeeds.
 
+## M3 Native Store
+
+M3 extends the same SQLite database with:
+
+- `images.width` and `images.height` for header-first dimensions
+- `image_search_fts` FTS5 table for indexed filename/folder/path search, with
+  LIKE fallback for substring compatibility
+
+Incremental scan compares size/mtime against existing rows, removes deleted
+paths, and only upserts changed files. Full scans still replace the root slice
+when no prior rows exist.
+
 ## Compatibility Rules
 
 - Absolute path remains the primary image id until a stronger file identity
