@@ -3,72 +3,96 @@ namespace PhotoViewer.Native;
 internal sealed class NativeFolderWatcher : IDisposable
 {
     private readonly object _gate = new();
-    private FileSystemWatcher? _watcher;
-    private CancellationTokenSource? _debounce;
-    private string? _root;
+    private readonly Dictionary<string, FileSystemWatcher> _watchers = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, CancellationTokenSource> _debounces = new(StringComparer.OrdinalIgnoreCase);
 
     public event EventHandler<string>? ChangesDetected;
 
+    public int WatchedRootCount
+    {
+        get
+        {
+            lock (_gate)
+            {
+                return _watchers.Count;
+            }
+        }
+    }
+
     public void Watch(string root)
     {
-        var resolvedRoot = Path.GetFullPath(root);
+        Watch([root]);
+    }
+
+    public void Watch(IEnumerable<string> roots)
+    {
+        var resolvedRoots = NativeFolderSet.NormalizeDistinct(roots)
+            .Where(Directory.Exists)
+            .ToList();
         lock (_gate)
         {
-            if (string.Equals(_root, resolvedRoot, StringComparison.OrdinalIgnoreCase) && _watcher is not null)
+            if (SameRootsLocked(resolvedRoots))
             {
                 return;
             }
 
-            StopWatcherLocked();
-            _root = resolvedRoot;
-            _watcher = new FileSystemWatcher(resolvedRoot)
+            StopWatchersLocked();
+            foreach (var resolvedRoot in resolvedRoots)
             {
-                IncludeSubdirectories = true,
-                NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
-                EnableRaisingEvents = true,
-            };
-            _watcher.Created += OnChanged;
-            _watcher.Changed += OnChanged;
-            _watcher.Deleted += OnChanged;
-            _watcher.Renamed += OnRenamed;
+                var watcher = new FileSystemWatcher(resolvedRoot)
+                {
+                    IncludeSubdirectories = true,
+                    NotifyFilter = NotifyFilters.FileName | NotifyFilters.DirectoryName | NotifyFilters.LastWrite | NotifyFilters.Size,
+                    EnableRaisingEvents = true,
+                };
+                watcher.Created += (_, args) => OnChanged(resolvedRoot, args);
+                watcher.Changed += (_, args) => OnChanged(resolvedRoot, args);
+                watcher.Deleted += (_, args) => OnChanged(resolvedRoot, args);
+                watcher.Renamed += (_, args) => OnRenamed(resolvedRoot, args);
+                _watchers[resolvedRoot] = watcher;
+            }
         }
     }
 
-    private void OnChanged(object sender, FileSystemEventArgs args)
+    private void OnChanged(string root, FileSystemEventArgs args)
     {
         if (!IsSupportedPath(args.FullPath))
         {
             return;
         }
 
-        ScheduleNotify();
+        ScheduleNotify(root);
     }
 
-    private void OnRenamed(object sender, RenamedEventArgs args)
+    private void OnRenamed(string root, RenamedEventArgs args)
     {
         if (!IsSupportedPath(args.FullPath) && !IsSupportedPath(args.OldFullPath))
         {
             return;
         }
 
-        ScheduleNotify();
+        ScheduleNotify(root);
     }
 
-    private void ScheduleNotify()
+    private void ScheduleNotify(string root)
     {
         lock (_gate)
         {
-            _debounce?.Cancel();
-            _debounce?.Dispose();
-            _debounce = new CancellationTokenSource();
-            var token = _debounce.Token;
-            var root = _root;
+            if (_debounces.Remove(root, out var previous))
+            {
+                previous.Cancel();
+                previous.Dispose();
+            }
+
+            var debounce = new CancellationTokenSource();
+            _debounces[root] = debounce;
+            var token = debounce.Token;
             _ = Task.Run(async () =>
             {
                 try
                 {
                     await Task.Delay(350, token).ConfigureAwait(false);
-                    if (!token.IsCancellationRequested && root is not null)
+                    if (!token.IsCancellationRequested)
                     {
                         ChangesDetected?.Invoke(this, root);
                     }
@@ -95,26 +119,30 @@ internal sealed class NativeFolderWatcher : IDisposable
     {
         lock (_gate)
         {
-            StopWatcherLocked();
+            StopWatchersLocked();
         }
     }
 
-    private void StopWatcherLocked()
+    private bool SameRootsLocked(IReadOnlyCollection<string> roots)
     {
-        if (_watcher is not null)
+        return roots.Count == _watchers.Count && roots.All(root => _watchers.ContainsKey(root));
+    }
+
+    private void StopWatchersLocked()
+    {
+        foreach (var watcher in _watchers.Values)
         {
-            _watcher.EnableRaisingEvents = false;
-            _watcher.Created -= OnChanged;
-            _watcher.Changed -= OnChanged;
-            _watcher.Deleted -= OnChanged;
-            _watcher.Renamed -= OnRenamed;
-            _watcher.Dispose();
-            _watcher = null;
+            watcher.EnableRaisingEvents = false;
+            watcher.Dispose();
         }
 
-        _debounce?.Cancel();
-        _debounce?.Dispose();
-        _debounce = null;
-        _root = null;
+        _watchers.Clear();
+        foreach (var debounce in _debounces.Values)
+        {
+            debounce.Cancel();
+            debounce.Dispose();
+        }
+
+        _debounces.Clear();
     }
 }

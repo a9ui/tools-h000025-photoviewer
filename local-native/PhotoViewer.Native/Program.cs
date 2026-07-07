@@ -78,6 +78,25 @@ internal static class Program
             return await MainForm.RunUiSmokeAsync(args[1], searchQuery);
         }
 
+        if (args.Length >= 3 && args[0] == "--headless-folder-set-smoke")
+        {
+            var searchQuery = "fixture";
+            var roots = new List<string>();
+            for (var i = 1; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--search", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    searchQuery = args[++i];
+                    continue;
+                }
+
+                roots.Add(args[i]);
+            }
+
+            ApplicationConfiguration.Initialize();
+            return await MainForm.RunFolderSetSmokeAsync(roots, searchQuery);
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using System.Drawing.Imaging;
 using Microsoft.VisualBasic.FileIO;
 
 namespace PhotoViewer.Native;
@@ -37,6 +38,10 @@ internal sealed class MainForm : Form
     private readonly Button _openFolderButton = new();
     private readonly Button _deleteButton = new();
     private readonly Button _settingsButton = new();
+    private readonly Button _addFolderButton = new();
+    private readonly Button _removeFolderButton = new();
+    private readonly Button _recentSetButton = new();
+    private readonly Button _refreshButton = new();
     private readonly Label _stateLabel = new();
     private readonly Label _statusLabel = new();
     private readonly ListView _list = new();
@@ -55,6 +60,7 @@ internal sealed class MainForm : Form
     private List<NativeImageRecord> _allImages = [];
     private List<NativeImageRecord> _visibleImages = [];
     private string _currentFolder = "";
+    private List<string> _currentRoots = [];
     private CancellationTokenSource? _scanCancellation;
     private long _previewVersion;
     private bool _updatingFavoriteControl;
@@ -143,6 +149,55 @@ internal sealed class MainForm : Form
         return Task.FromResult(exitCode);
     }
 
+    public static Task<int> RunFolderSetSmokeAsync(IReadOnlyList<string> folders, string searchQuery)
+    {
+        var roots = NativeFolderSet.NormalizeDistinct(folders);
+        if (roots.Count < 2)
+        {
+            Console.Error.WriteLine("native-folder-set-smoke error=needs-at-least-two-roots");
+            return Task.FromResult(2);
+        }
+
+        foreach (var root in roots)
+        {
+            if (!Directory.Exists(root))
+            {
+                Console.Error.WriteLine($"native-folder-set-smoke error=folder-not-found folder=\"{Quote(root)}\"");
+                return Task.FromResult(2);
+            }
+        }
+
+        var exitCode = 2;
+        using var form = new MainForm(NativeFolderSet.FormatForDisplay(roots))
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunFolderSetSmokeScenarioAsync(roots, searchQuery);
+                Console.WriteLine(FormatFolderSetSmokeReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-folder-set-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -200,7 +255,7 @@ internal sealed class MainForm : Form
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
 
         _folderText.Dock = DockStyle.Fill;
-        _folderText.PlaceholderText = "Image folder path";
+        _folderText.PlaceholderText = "Image folder path(s); separate with ;";
 
         _browseButton.Text = "Browse";
         _browseButton.Dock = DockStyle.Fill;
@@ -284,6 +339,22 @@ internal sealed class MainForm : Form
             SaveViewState();
         };
 
+        _addFolderButton.Text = "Add Folder";
+        _addFolderButton.Width = 92;
+        _addFolderButton.Click += (_, _) => AddFolderToSet();
+
+        _removeFolderButton.Text = "Remove Folder";
+        _removeFolderButton.Width = 112;
+        _removeFolderButton.Click += (_, _) => RemoveSelectedFolderFromSet();
+
+        _recentSetButton.Text = "Recent Set";
+        _recentSetButton.Width = 92;
+        _recentSetButton.Click += async (_, _) => await OpenRecentFolderSetAsync();
+
+        _refreshButton.Text = "Refresh";
+        _refreshButton.Width = 76;
+        _refreshButton.Click += async (_, _) => await RefreshCurrentFolderSetAsync();
+
         _previousButton.Text = "Previous";
         _previousButton.Width = 82;
         _previousButton.Click += (_, _) => SelectOffset(-1);
@@ -332,6 +403,10 @@ internal sealed class MainForm : Form
         _settingsButton.Click += (_, _) => ShowNativeSettings();
 
         actions.Controls.Add(_viewMode);
+        actions.Controls.Add(_addFolderButton);
+        actions.Controls.Add(_removeFolderButton);
+        actions.Controls.Add(_recentSetButton);
+        actions.Controls.Add(_refreshButton);
         actions.Controls.Add(_previousButton);
         actions.Controls.Add(_nextButton);
         actions.Controls.Add(_detailButton);
@@ -828,6 +903,104 @@ internal sealed class MainForm : Form
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
+    private async Task<NativeFolderSetSmokeReport> RunFolderSetSmokeScenarioAsync(IReadOnlyList<string> roots, string searchQuery)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+        var normalizedRoots = NativeFolderSet.NormalizeDistinct(roots);
+        _folderText.Text = NativeFolderSet.FormatForDisplay(normalizedRoots);
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
+
+        await ScanCurrentFolderAsync();
+        Require(_currentRoots.Count >= 2, "folder set did not retain multiple roots");
+        Require(_allImages.Count > 0, "folder set scan produced no images");
+        var initialRootCount = _currentRoots.Count;
+        var initialImages = _allImages.Count;
+        var folderBuckets = _folderBuckets.Items.Count;
+        Require(folderBuckets >= initialRootCount, "folder set did not build per-root folder buckets");
+        var persistedRoots = _store.LoadRecentFolderSet();
+        var recentSetPersisted = initialRootCount == persistedRoots.Count &&
+            _currentRoots.All(root => persistedRoots.Contains(root, StringComparer.OrdinalIgnoreCase));
+        Require(recentSetPersisted, "folder set was not persisted as recent set");
+
+        _searchText.Text = searchQuery;
+        ApplyFilter();
+        var searchMatches = _visibleImages.Count;
+        Require(searchMatches > 0, "folder set search produced no matches");
+
+        var watcherRoots = _folderWatcher.WatchedRootCount == initialRootCount;
+        Require(watcherRoots, "folder watcher did not track all roots");
+
+        var rootToRemove = _currentRoots[0];
+        RemoveFolderRoot(rootToRemove);
+        var removeFolder = _currentRoots.Count == initialRootCount - 1 &&
+            _allImages.All(image => !NativeFolderSet.IsPathUnderRoot(image.AbsolutePath, rootToRemove));
+        Require(removeFolder, "remove-folder did not remove the selected root from the active set");
+
+        _folderText.Text = "";
+        _currentRoots = [];
+        _currentFolder = "";
+        _allImages = [];
+        _visibleImages = [];
+        _list.VirtualListSize = 0;
+        await OpenRecentFolderSetAsync();
+        var openRecentSet = _currentRoots.Count == initialRootCount - 1 &&
+            _allImages.Count > 0 &&
+            _currentRoots.All(root => !string.Equals(root, rootToRemove, StringComparison.OrdinalIgnoreCase));
+        Require(openRecentSet, "open recent folder set did not restore the persisted set");
+
+        var refreshRoot = _currentRoots[^1];
+        var probePath = Path.Combine(refreshRoot, "m11-folder-set-refresh-probe.png");
+        var beforeRefreshCount = _allImages.Count;
+        try
+        {
+            WriteSmokeProbePng(probePath, Color.MediumPurple);
+            await RefreshCurrentFolderSetAsync();
+            var manualRefreshAdded = _allImages.Count == beforeRefreshCount + 1 &&
+                _allImages.Any(image => string.Equals(image.AbsolutePath, Path.GetFullPath(probePath), StringComparison.OrdinalIgnoreCase));
+            Require(manualRefreshAdded, "manual refresh did not add the probe image");
+
+            File.Delete(probePath);
+            await RefreshCurrentFolderSetAsync();
+            var manualRefreshRemoved = _allImages.Count == beforeRefreshCount &&
+                _allImages.All(image => !string.Equals(image.AbsolutePath, Path.GetFullPath(probePath), StringComparison.OrdinalIgnoreCase));
+            Require(manualRefreshRemoved, "manual refresh did not remove the deleted probe image");
+
+            var afterEnhancementState = EnhancementStateFingerprint();
+            Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during folder-set smoke");
+            return new NativeFolderSetSmokeReport(
+                Roots: initialRootCount,
+                RemovedRoots: 1,
+                FolderBuckets: folderBuckets,
+                ImagesBeforeRemove: initialImages,
+                ImagesAfterRemove: _allImages.Count,
+                SearchMatches: searchMatches,
+                RecentSetPersisted: recentSetPersisted,
+                RemoveFolder: removeFolder,
+                OpenRecentSet: openRecentSet,
+                ManualRefreshAdded: manualRefreshAdded,
+                ManualRefreshRemoved: manualRefreshRemoved,
+                WatcherRoots: watcherRoots,
+                EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+        }
+        finally
+        {
+            try
+            {
+                if (File.Exists(probePath))
+                {
+                    File.Delete(probePath);
+                }
+            }
+            catch
+            {
+                // Smoke cleanup is best-effort inside the ignored fixture tree.
+            }
+        }
+    }
+
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
@@ -851,26 +1024,144 @@ internal sealed class MainForm : Form
         {
             Description = "Select an image folder",
             UseDescriptionForTitle = true,
-            SelectedPath = Directory.Exists(_folderText.Text) ? _folderText.Text : _projectRoot,
+            SelectedPath = Directory.Exists(NativeFolderSet.Parse(_folderText.Text).FirstOrDefault() ?? "") ? NativeFolderSet.Parse(_folderText.Text)[0] : _projectRoot,
         };
 
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
             _folderText.Text = dialog.SelectedPath;
-            _store.SaveSetting("recent_folder", dialog.SelectedPath);
+            _store.SaveRecentFolderSet([dialog.SelectedPath]);
         }
+    }
+
+    private void AddFolderToSet()
+    {
+        using var dialog = new FolderBrowserDialog
+        {
+            Description = "Add an image folder to the current folder set",
+            UseDescriptionForTitle = true,
+            SelectedPath = Directory.Exists(_projectRoot) ? _projectRoot : Environment.GetFolderPath(Environment.SpecialFolder.MyPictures),
+        };
+
+        if (dialog.ShowDialog(this) != DialogResult.OK)
+        {
+            return;
+        }
+
+        var roots = CurrentFolderSetRoots();
+        roots.Add(dialog.SelectedPath);
+        roots = NativeFolderSet.NormalizeDistinct(roots);
+        _folderText.Text = NativeFolderSet.FormatForDisplay(roots);
+        _store.SaveRecentFolderSet(roots);
+        SetStatus($"Added folder to set: {dialog.SelectedPath}");
+    }
+
+    private void RemoveSelectedFolderFromSet()
+    {
+        var roots = CurrentFolderSetRoots();
+        if (roots.Count == 0)
+        {
+            SetStatus("No folder set to remove from.");
+            return;
+        }
+
+        var selected = GetSelectedImage();
+        var rootToRemove = selected is not null
+            ? NativeFolderSet.FindRootForPath(selected.AbsolutePath, roots)
+            : roots[^1];
+        if (string.IsNullOrWhiteSpace(rootToRemove))
+        {
+            SetStatus("Could not resolve selected image root.");
+            return;
+        }
+
+        RemoveFolderRoot(rootToRemove);
+    }
+
+    private void RemoveFolderRoot(string rootToRemove)
+    {
+        var roots = CurrentFolderSetRoots()
+            .Where(root => !string.Equals(root, rootToRemove, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+        _currentRoots = roots;
+        _currentFolder = roots.FirstOrDefault() ?? "";
+        _folderText.Text = NativeFolderSet.FormatForDisplay(roots);
+        if (roots.Count > 0)
+        {
+            _store.SaveRecentFolderSet(roots);
+            _allImages = _store.LoadImagesForRoots(roots);
+            _folderWatcher.Watch(roots);
+        }
+        else
+        {
+            _allImages = [];
+            _folderWatcher.Watch([]);
+        }
+
+        BuildFolderBuckets();
+        ApplyFilter();
+        ApplyStateSummary();
+        SetStatus(roots.Count > 0
+            ? $"Removed folder from set: {rootToRemove}"
+            : $"Removed final folder from set: {rootToRemove}");
+    }
+
+    private async Task OpenRecentFolderSetAsync()
+    {
+        var roots = _store.LoadRecentFolderSet().Where(Directory.Exists).ToList();
+        if (roots.Count == 0)
+        {
+            SetStatus("No recent folder set found.");
+            return;
+        }
+
+        _folderText.Text = NativeFolderSet.FormatForDisplay(roots);
+        await ScanCurrentFolderAsync();
+    }
+
+    private async Task RefreshCurrentFolderSetAsync()
+    {
+        var roots = CurrentFolderSetRoots();
+        if (roots.Count == 0)
+        {
+            SetStatus("No folder set to refresh.");
+            return;
+        }
+
+        _folderText.Text = NativeFolderSet.FormatForDisplay(roots);
+        await ScanCurrentFolderAsync(forceFullRefresh: false);
+    }
+
+    private List<string> CurrentFolderSetRoots()
+    {
+        return _currentRoots.Count > 0
+            ? NativeFolderSet.NormalizeDistinct(_currentRoots)
+            : NativeFolderSet.Parse(_folderText.Text);
     }
 
     private async Task ScanCurrentFolderAsync()
     {
-        var folder = _folderText.Text.Trim();
-        if (!Directory.Exists(folder))
+        await ScanCurrentFolderAsync(forceFullRefresh: false);
+    }
+
+    private async Task ScanCurrentFolderAsync(bool forceFullRefresh)
+    {
+        var roots = NativeFolderSet.Parse(_folderText.Text);
+        if (roots.Count == 0)
         {
-            SetStatus("Folder not found.");
+            SetStatus("No folder set selected.");
             return;
         }
 
-        _currentFolder = folder;
+        var missing = roots.FirstOrDefault(root => !Directory.Exists(root));
+        if (!string.IsNullOrWhiteSpace(missing))
+        {
+            SetStatus($"Folder not found: {missing}");
+            return;
+        }
+
+        _currentRoots = roots;
+        _currentFolder = roots[0];
         _scanCancellation?.Cancel();
         _scanCancellation?.Dispose();
         _scanCancellation = new CancellationTokenSource();
@@ -889,32 +1180,41 @@ internal sealed class MainForm : Form
         try
         {
             _favorites = _store.LoadFavorites();
-            var existing = _store.LoadImagesForRoot(folder).ToDictionary(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase);
-            if (existing.Count > 0)
+            var totalChanged = 0;
+            var totalRemoved = 0;
+            var totalUnchanged = 0;
+            foreach (var root in roots)
             {
-                var incremental = await NativeIncrementalScanner.ScanAsync(folder, existing, _favorites, progress, _scanCancellation.Token);
-                stopwatch.Stop();
-                _store.ApplyIncrementalScan(folder, incremental, stopwatch.Elapsed, fullRescan: false);
-                _allImages = _store.LoadImagesForRoot(folder);
-                BuildFolderBuckets();
-                ApplyFilter();
-                ApplyStateSummary();
-                SetStatus(
-                    $"Incremental scan: {_allImages.Count:n0} images, {incremental.AddedOrUpdated.Count:n0} changed, {incremental.RemovedPaths.Count:n0} removed, {incremental.UnchangedCount:n0} unchanged in {stopwatch.Elapsed.TotalSeconds:n1}s.");
-            }
-            else
-            {
-                var scanned = await NativeImageScanner.ScanAsync(folder, _favorites, progress, _scanCancellation.Token);
-                stopwatch.Stop();
-                _store.SaveScanResult(folder, scanned, stopwatch.Elapsed);
-                _allImages = _store.LoadImagesForRoot(folder);
-                BuildFolderBuckets();
-                ApplyFilter();
-                ApplyStateSummary();
-                SetStatus($"Scan complete: {_allImages.Count:n0} images in {stopwatch.Elapsed.TotalSeconds:n1}s. Saved to {_store.DatabasePath}");
+                var existing = forceFullRefresh
+                    ? new Dictionary<string, NativeImageRecord>(StringComparer.OrdinalIgnoreCase)
+                    : _store.LoadImagesForRoot(root).ToDictionary(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase);
+                if (existing.Count > 0)
+                {
+                    var incremental = await NativeIncrementalScanner.ScanAsync(root, existing, _favorites, progress, _scanCancellation.Token);
+                    _store.ApplyIncrementalScan(root, incremental, stopwatch.Elapsed, fullRescan: false);
+                    totalChanged += incremental.AddedOrUpdated.Count;
+                    totalRemoved += incremental.RemovedPaths.Count;
+                    totalUnchanged += incremental.UnchangedCount;
+                }
+                else
+                {
+                    var scanned = await NativeImageScanner.ScanAsync(root, _favorites, progress, _scanCancellation.Token);
+                    _store.SaveScanResult(root, scanned, stopwatch.Elapsed);
+                    totalChanged += scanned.Count;
+                }
             }
 
-            _folderWatcher.Watch(folder);
+            stopwatch.Stop();
+            _store.SaveRecentFolderSet(roots);
+            _allImages = _store.LoadImagesForRoots(roots);
+            BuildFolderBuckets();
+            ApplyFilter();
+            ApplyStateSummary();
+            _folderWatcher.Watch(roots);
+            SetStatus(
+                roots.Count == 1
+                    ? $"Scan complete: {_allImages.Count:n0} images, {totalChanged:n0} changed, {totalRemoved:n0} removed, {totalUnchanged:n0} unchanged in {stopwatch.Elapsed.TotalSeconds:n1}s. Saved to {_store.DatabasePath}"
+                    : $"Folder set scan: {roots.Count:n0} roots, {_allImages.Count:n0} images, {totalChanged:n0} changed, {totalRemoved:n0} removed, {totalUnchanged:n0} unchanged in {stopwatch.Elapsed.TotalSeconds:n1}s.");
         }
         catch (OperationCanceledException)
         {
@@ -934,13 +1234,13 @@ internal sealed class MainForm : Form
 
     private async Task RunIncrementalRescanAsync(string folder)
     {
-        if (!string.Equals(_currentFolder, folder, StringComparison.OrdinalIgnoreCase) || !_scanButton.Enabled)
+        if (!_currentRoots.Contains(folder, StringComparer.OrdinalIgnoreCase) || !_scanButton.Enabled)
         {
             return;
         }
 
-        _folderText.Text = folder;
-        await ScanCurrentFolderAsync();
+        _folderText.Text = NativeFolderSet.FormatForDisplay(_currentRoots);
+        await ScanCurrentFolderAsync(forceFullRefresh: false);
     }
 
     private void OnFolderChangesDetected(object? sender, string folder)
@@ -962,10 +1262,10 @@ internal sealed class MainForm : Form
     private void ApplyFilter()
     {
         var query = _searchText.Text.Trim();
-        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder) && _allImages.Count > 0)
+        if (_currentRoots.Count > 0 && _currentRoots.All(Directory.Exists) && _allImages.Count > 0)
         {
             _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
-                _currentFolder,
+                _currentRoots,
                 query,
                 ShouldPrefilterFavoritesForIndexedSearch(),
                 limit: 100_000)))).ToList();
@@ -1448,6 +1748,10 @@ internal sealed class MainForm : Form
         _openFileButton.Enabled = selected is not null;
         _openFolderButton.Enabled = selected is not null;
         _deleteButton.Enabled = selected is not null;
+        _removeFolderButton.Enabled = CurrentFolderSetRoots().Count > 0;
+        _refreshButton.Enabled = CurrentFolderSetRoots().Count > 0;
+        _recentSetButton.Enabled = true;
+        _addFolderButton.Enabled = true;
         _favoriteLevel.Enabled = selected is not null && selectedCount == 1;
         _selectionLabel.Text = selectedCount > 0
             ? $"Selected {selectedCount:n0} / {_visibleImages.Count:n0}"
@@ -1711,25 +2015,9 @@ internal sealed class MainForm : Form
 
     private string FormatFolderBucketLabel(string folder)
     {
-        if (!string.IsNullOrWhiteSpace(_currentFolder))
+        if (_currentRoots.Count > 0)
         {
-            try
-            {
-                var relative = Path.GetRelativePath(_currentFolder, folder);
-                if (relative == ".")
-                {
-                    return ".";
-                }
-
-                if (!relative.StartsWith("..", StringComparison.Ordinal))
-                {
-                    return relative;
-                }
-            }
-            catch
-            {
-                // Fall back to the full folder path when relative formatting fails.
-            }
+            return NativeFolderSet.FormatFolderLabel(folder, _currentRoots);
         }
 
         return folder;
@@ -1919,6 +2207,18 @@ internal sealed class MainForm : Form
         return new Bitmap(source);
     }
 
+    private static void WriteSmokeProbePng(string path, Color color)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        using var bitmap = new Bitmap(18, 18);
+        using (var graphics = Graphics.FromImage(bitmap))
+        {
+            graphics.Clear(color);
+        }
+
+        bitmap.Save(path, ImageFormat.Png);
+    }
+
     private List<NativeImageRecord> ReapplyFavorites(IEnumerable<NativeImageRecord> images)
     {
         return images.Select(image => image with
@@ -2001,6 +2301,31 @@ internal sealed class MainForm : Form
             $"albumImages={report.AlbumImages}",
             $"browserStateKeys={report.BrowserStateKeys}",
             $"settingsImported={BoolText(report.SettingsImported)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
+    private static string FormatFolderSetSmokeReport(NativeFolderSetSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-folder-set-smoke complete",
+            "runtime=winforms",
+            $"roots={report.Roots}",
+            $"removedRoots={report.RemovedRoots}",
+            $"folderBuckets={report.FolderBuckets}",
+            $"imagesBeforeRemove={report.ImagesBeforeRemove}",
+            $"imagesAfterRemove={report.ImagesAfterRemove}",
+            $"searchMatches={report.SearchMatches}",
+            $"recentSetPersisted={BoolText(report.RecentSetPersisted)}",
+            $"removeFolder={BoolText(report.RemoveFolder)}",
+            $"openRecentSet={BoolText(report.OpenRecentSet)}",
+            $"manualRefreshAdded={BoolText(report.ManualRefreshAdded)}",
+            $"manualRefreshRemoved={BoolText(report.ManualRefreshRemoved)}",
+            $"watcherRoots={BoolText(report.WatcherRoots)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -2534,5 +2859,20 @@ internal sealed class MainForm : Form
         int AlbumImages,
         int BrowserStateKeys,
         bool SettingsImported,
+        bool EnhancementStateUnchanged);
+
+    private sealed record NativeFolderSetSmokeReport(
+        int Roots,
+        int RemovedRoots,
+        int FolderBuckets,
+        int ImagesBeforeRemove,
+        int ImagesAfterRemove,
+        int SearchMatches,
+        bool RecentSetPersisted,
+        bool RemoveFolder,
+        bool OpenRecentSet,
+        bool ManualRefreshAdded,
+        bool ManualRefreshRemoved,
+        bool WatcherRoots,
         bool EnhancementStateUnchanged);
 }

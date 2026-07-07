@@ -199,3 +199,23 @@ This is still a parity slice, not a full native parity claim. Multi-root
 folder sets, folder range selection, preview tabs, bulk destructive actions,
 and explicit enhancement UI remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M11 Notes
+
+M11 adds native multi-root folder-set behavior without touching the browser app.
+The native UI can scan a semicolon-separated folder set, search across roots,
+watch all active roots, remove a root from the active set, reopen the persisted
+recent folder set, and manually refresh the current set. The repeatable fixture
+now also creates `.cache/native-fixture-extra` so acceptance can cover at least
+two roots.
+
+The new folder-set smoke verifies the M11 path with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessFolderSetSmoke -FolderSet .\.cache\native-fixture,.\.cache\native-fixture-extra -Search fixture
+```
+
+This remains a parity slice, not full native parity. Folder range selection is
+explicitly deferred for a later product/UI decision; preview tabs, bulk
+destructive actions, date/seen/scroll parity, and explicit enhancement UI also
+remain deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
