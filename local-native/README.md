@@ -219,3 +219,22 @@ This remains a parity slice, not full native parity. Folder range selection is
 explicitly deferred for a later product/UI decision; preview tabs, bulk
 destructive actions, date/seen/scroll parity, and explicit enhancement UI also
 remain deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M12 Notes
+
+M12 resolves the deferred folder range-selection decision and adds a small
+native gallery-state restore slice. Folder range selection stays deferred:
+WinForms `CheckedListBox` rejects `SelectionMode.MultiExtended`, so safe range
+behavior needs a future product/UI decision for replacing or custom-wrapping the
+folder bucket control.
+
+Native gallery state now persists `last_selected_image` and
+`last_visible_index` in SQLite settings. After scan or filter refresh, the UI
+restores the saved image when it is still visible, falls back to the saved
+visible index, and calls `EnsureVisible` for the restored item. The native UI
+smoke verifies this with `galleryStateRestore=true`.
+
+This remains a parity slice, not full native parity. Date sections, seen/unseen
+state, large-fixture virtualized scroll proof, preview tabs, bulk destructive
+actions, explicit enhancement UI, and folder range selection remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.
