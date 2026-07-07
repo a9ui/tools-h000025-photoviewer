@@ -1036,6 +1036,6 @@ internal sealed class NativeImageStore
     }
 
     private const string DefaultKeyBindingsJson = """
-        {"next":"Right","previous":"Left","favoriteUp":"Ctrl+Up","favoriteDown":"Ctrl+Down","delete":"Delete","openFile":"Enter","openFolder":"Ctrl+Enter","toggleView":"Ctrl+G"}
+        {"next":"Right","previous":"Left","favoriteUp":"Ctrl+Up","favoriteDown":"Ctrl+Down","delete":"Delete","openFile":"Enter","openFolder":"Ctrl+Enter","toggleView":"Ctrl+G","togglePreview":"Ctrl+P","toggleDetails":"Ctrl+D","reshuffleSort":"Ctrl+R"}
         """;
 }

@@ -14,6 +14,16 @@ internal sealed class MainForm : Form
     private readonly TextBox _searchText = new();
     private readonly CheckBox _favoritesOnly = new();
     private readonly ComboBox _viewMode = new();
+    private readonly ComboBox _sortMode = new();
+    private readonly Button _reshuffleButton = new();
+    private readonly NumericUpDown _thumbnailSize = new();
+    private readonly CheckBox _previewVisible = new();
+    private readonly CheckBox _detailsVisible = new();
+    private readonly CheckedListBox _folderBuckets = new();
+    private readonly Button _showAllFoldersButton = new();
+    private readonly Button _hideAllFoldersButton = new();
+    private readonly Button _invertFoldersButton = new();
+    private readonly Label _folderBucketLabel = new();
     private readonly Button _previousButton = new();
     private readonly Button _nextButton = new();
     private readonly NumericUpDown _favoriteLevel = new();
@@ -27,6 +37,7 @@ internal sealed class MainForm : Form
     private readonly PictureBox _preview = new();
     private readonly Label _previewLabel = new();
     private readonly ImageList _gridImages = new();
+    private SplitContainer? _mainSplit;
 
     private readonly string _projectRoot;
     private readonly NativeImageStore _store;
@@ -40,6 +51,9 @@ internal sealed class MainForm : Form
     private CancellationTokenSource? _scanCancellation;
     private long _previewVersion;
     private bool _updatingFavoriteControl;
+    private bool _updatingFolderBuckets;
+    private bool _updatingThumbnailSize;
+    private int _randomSortSeed = Environment.TickCount;
 
     public MainForm(string? initialFolder)
     {
@@ -68,6 +82,12 @@ internal sealed class MainForm : Form
         _searchText.Text = _store.GetSetting("search_text", "");
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
+        ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
+        ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
+        _previewVisible.Checked = _store.GetSetting("preview_visible", "1") == "1";
+        _detailsVisible.Checked = _store.GetSetting("preview_details_visible", "1") == "1";
+        ApplyPreviewVisibility();
+        ApplyDetailsVisibility();
         ApplyStateSummary(report);
         _folderWatcher.ChangesDetected += OnFolderChangesDetected;
     }
@@ -95,7 +115,7 @@ internal sealed class MainForm : Form
             {
                 var report = await form.RunUiSmokeScenarioAsync(resolvedFolder, searchQuery);
                 Console.WriteLine(
-                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
+                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} folderBuckets={report.FolderBuckets} folderHideAll={report.FolderHideAll.ToString().ToLowerInvariant()} sortName={report.SortName.ToString().ToLowerInvariant()} randomReshuffle={report.RandomReshuffle.ToString().ToLowerInvariant()} thumbnailSize={report.ThumbnailSize.ToString().ToLowerInvariant()} previewToggle={report.PreviewToggle.ToString().ToLowerInvariant()} detailsToggle={report.DetailsToggle.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
                 exitCode = 0;
             }
             catch (Exception ex)
@@ -143,9 +163,10 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 4,
+            RowCount = 5,
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
@@ -285,12 +306,91 @@ internal sealed class MainForm : Form
         actions.Controls.Add(_deleteButton);
         actions.Controls.Add(_settingsButton);
 
+        var displayControls = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(8, 4, 8, 2),
+        };
+
+        var sortLabel = new Label
+        {
+            Text = "Sort",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(0, 6, 0, 0),
+        };
+
+        _sortMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _sortMode.Width = 108;
+        _sortMode.Items.AddRange(["Modified", "Created", "Name", "Folder", "Size", "Favorite", "Random"]);
+        _sortMode.SelectedIndexChanged += (_, _) =>
+        {
+            SaveSortState();
+            ApplyFilter();
+        };
+
+        _reshuffleButton.Text = "Reshuffle";
+        _reshuffleButton.Width = 82;
+        _reshuffleButton.Click += (_, _) => ReshuffleSort();
+
+        var thumbLabel = new Label
+        {
+            Text = "Thumb",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 6, 0, 0),
+        };
+
+        _thumbnailSize.Minimum = 64;
+        _thumbnailSize.Maximum = 192;
+        _thumbnailSize.Increment = 16;
+        _thumbnailSize.Width = 58;
+        _thumbnailSize.ValueChanged += (_, _) =>
+        {
+            if (_updatingThumbnailSize)
+            {
+                return;
+            }
+
+            ApplyThumbnailSize((int)_thumbnailSize.Value);
+            _store.SaveSetting("thumbnail_size", ((int)_thumbnailSize.Value).ToString(System.Globalization.CultureInfo.InvariantCulture));
+        };
+
+        _previewVisible.Text = "Preview";
+        _previewVisible.Width = 78;
+        _previewVisible.Checked = true;
+        _previewVisible.CheckedChanged += (_, _) =>
+        {
+            ApplyPreviewVisibility();
+            _store.SaveSetting("preview_visible", _previewVisible.Checked ? "1" : "0");
+        };
+
+        _detailsVisible.Text = "Details";
+        _detailsVisible.Width = 72;
+        _detailsVisible.Checked = true;
+        _detailsVisible.CheckedChanged += (_, _) =>
+        {
+            ApplyDetailsVisibility();
+            _store.SaveSetting("preview_details_visible", _detailsVisible.Checked ? "1" : "0");
+        };
+
+        displayControls.Controls.Add(sortLabel);
+        displayControls.Controls.Add(_sortMode);
+        displayControls.Controls.Add(_reshuffleButton);
+        displayControls.Controls.Add(thumbLabel);
+        displayControls.Controls.Add(_thumbnailSize);
+        displayControls.Controls.Add(_previewVisible);
+        displayControls.Controls.Add(_detailsVisible);
+
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
             Orientation = Orientation.Vertical,
             SplitterDistance = 760,
         };
+        _mainSplit = split;
 
         _list.Dock = DockStyle.Fill;
         _list.View = View.Details;
@@ -298,9 +398,7 @@ internal sealed class MainForm : Form
         _list.HideSelection = false;
         _list.VirtualMode = true;
         _list.MultiSelect = false;
-        _gridImages.ImageSize = new Size(96, 96);
         _gridImages.ColorDepth = ColorDepth.Depth32Bit;
-        _gridImages.Images.Add(CreateGridPlaceholder());
         _list.SmallImageList = _gridImages;
         _list.LargeImageList = _gridImages;
         _list.Columns.Add("Name", 300);
@@ -321,7 +419,77 @@ internal sealed class MainForm : Form
         };
         _list.SelectedIndexChanged += async (_, _) => await LoadSelectedPreviewAsync();
         _list.DoubleClick += (_, _) => OpenSelectedFile();
-        split.Panel1.Controls.Add(_list);
+
+        var browserPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 2,
+        };
+        browserPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 148));
+        browserPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var folderPanel = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 1,
+            RowCount = 3,
+            Padding = new Padding(8, 4, 8, 2),
+        };
+        folderPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        folderPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        folderPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+
+        _folderBucketLabel.Dock = DockStyle.Fill;
+        _folderBucketLabel.Text = "Folders";
+        _folderBucketLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _folderBucketLabel.AutoEllipsis = true;
+
+        _folderBuckets.Dock = DockStyle.Fill;
+        _folderBuckets.CheckOnClick = true;
+        _folderBuckets.ItemCheck += (_, _) =>
+        {
+            if (_updatingFolderBuckets || IsDisposed)
+            {
+                return;
+            }
+
+            BeginInvoke(() =>
+            {
+                SaveFolderBucketState();
+                ApplyFilter();
+            });
+        };
+
+        var folderActions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+        };
+
+        _showAllFoldersButton.Text = "All";
+        _showAllFoldersButton.Width = 54;
+        _showAllFoldersButton.Click += (_, _) => SetAllFolderBuckets(visible: true);
+
+        _hideAllFoldersButton.Text = "None";
+        _hideAllFoldersButton.Width = 58;
+        _hideAllFoldersButton.Click += (_, _) => SetAllFolderBuckets(visible: false);
+
+        _invertFoldersButton.Text = "Invert";
+        _invertFoldersButton.Width = 64;
+        _invertFoldersButton.Click += (_, _) => InvertFolderBuckets();
+
+        folderActions.Controls.Add(_showAllFoldersButton);
+        folderActions.Controls.Add(_hideAllFoldersButton);
+        folderActions.Controls.Add(_invertFoldersButton);
+
+        folderPanel.Controls.Add(_folderBucketLabel, 0, 0);
+        folderPanel.Controls.Add(_folderBuckets, 0, 1);
+        folderPanel.Controls.Add(folderActions, 0, 2);
+        browserPanel.Controls.Add(folderPanel, 0, 0);
+        browserPanel.Controls.Add(_list, 0, 1);
+        split.Panel1.Controls.Add(browserPanel);
 
         var previewPanel = new TableLayoutPanel
         {
@@ -353,9 +521,11 @@ internal sealed class MainForm : Form
 
         root.Controls.Add(toolbar, 0, 0);
         root.Controls.Add(actions, 0, 1);
-        root.Controls.Add(split, 0, 2);
-        root.Controls.Add(_statusLabel, 0, 3);
+        root.Controls.Add(displayControls, 0, 2);
+        root.Controls.Add(split, 0, 3);
+        root.Controls.Add(_statusLabel, 0, 4);
         Controls.Add(root);
+        ApplyThumbnailSize(96);
         UpdateSelectionActions();
     }
 
@@ -375,6 +545,45 @@ internal sealed class MainForm : Form
         Require(_visibleImages.Count > 0, "scan produced no visible images");
         var scannedImages = _allImages.Count;
         var initialVisible = _visibleImages.Count;
+        var folderBuckets = _folderBuckets.Items.Count;
+        Require(folderBuckets > 0, "folder buckets were not built");
+        SetAllFolderBuckets(visible: false);
+        var folderHideAll = _visibleImages.Count == 0;
+        Require(folderHideAll, "folder hide-all did not filter visible images");
+        SetAllFolderBuckets(visible: true);
+        Require(_visibleImages.Count == initialVisible, "folder show-all did not restore visible images");
+
+        ApplySortMode("Name");
+        ApplyFilter();
+        var sortName = _visibleImages.SequenceEqual(
+            _visibleImages.OrderBy(static item => item.Filename, StringComparer.OrdinalIgnoreCase).ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase));
+        Require(sortName, "name sort failed");
+
+        ApplySortMode("Random");
+        var beforeReshuffle = _visibleImages.Select(static item => item.AbsolutePath).ToArray();
+        ReshuffleSort();
+        var afterReshuffle = _visibleImages.Select(static item => item.AbsolutePath).ToArray();
+        var randomReshuffle = beforeReshuffle.Length == afterReshuffle.Length && _sortMode.SelectedItem?.ToString() == "Random";
+        Require(randomReshuffle, "random reshuffle failed");
+        ApplySortMode("Modified");
+        ApplyFilter();
+
+        var oldThumbnailSize = _gridImages.ImageSize.Width;
+        _thumbnailSize.Value = Math.Min(_thumbnailSize.Maximum, oldThumbnailSize + 16);
+        var thumbnailSize = _gridImages.ImageSize.Width == (int)_thumbnailSize.Value;
+        Require(thumbnailSize, "thumbnail size control failed");
+        _thumbnailSize.Value = oldThumbnailSize;
+
+        _previewVisible.Checked = false;
+        var previewToggle = _mainSplit?.Panel2Collapsed == true;
+        Require(previewToggle, "preview visibility toggle failed");
+        _previewVisible.Checked = true;
+
+        _detailsVisible.Checked = false;
+        var detailsToggle = !_previewLabel.Visible;
+        Require(detailsToggle, "preview details toggle failed");
+        _detailsVisible.Checked = true;
+
         var navigationButtons = _nextButton.Enabled;
 
         await LoadSelectedPreviewAsync();
@@ -441,6 +650,13 @@ internal sealed class MainForm : Form
             KeyboardNavigation: keyboardNavigation,
             KeyboardFavorite: keyboardFavorite,
             GridToggle: gridToggle,
+            FolderBuckets: folderBuckets,
+            FolderHideAll: folderHideAll,
+            SortName: sortName,
+            RandomReshuffle: randomReshuffle,
+            ThumbnailSize: thumbnailSize,
+            PreviewToggle: previewToggle,
+            DetailsToggle: detailsToggle,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
             NoResultsState: noResultsState,
@@ -463,6 +679,7 @@ internal sealed class MainForm : Form
         var report = _store.ImportProjectState();
         _favorites = _store.LoadFavorites();
         _allImages = ReapplyFavorites(_allImages);
+        BuildFolderBuckets();
         ApplyFilter();
         ApplyStateSummary(report);
         SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.");
@@ -519,6 +736,7 @@ internal sealed class MainForm : Form
                 stopwatch.Stop();
                 _store.ApplyIncrementalScan(folder, incremental, stopwatch.Elapsed, fullRescan: false);
                 _allImages = _store.LoadImagesForRoot(folder);
+                BuildFolderBuckets();
                 ApplyFilter();
                 ApplyStateSummary();
                 SetStatus(
@@ -530,6 +748,7 @@ internal sealed class MainForm : Form
                 stopwatch.Stop();
                 _store.SaveScanResult(folder, scanned, stopwatch.Elapsed);
                 _allImages = _store.LoadImagesForRoot(folder);
+                BuildFolderBuckets();
                 ApplyFilter();
                 ApplyStateSummary();
                 SetStatus($"Scan complete: {_allImages.Count:n0} images in {stopwatch.Elapsed.TotalSeconds:n1}s. Saved to {_store.DatabasePath}");
@@ -585,7 +804,7 @@ internal sealed class MainForm : Form
         var query = _searchText.Text.Trim();
         if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder) && _allImages.Count > 0)
         {
-            _visibleImages = _store.SearchImagesIndexed(_currentFolder, query, _favoritesOnly.Checked, limit: 100_000);
+            _visibleImages = ApplySort(ApplyFolderBucketFilter(_store.SearchImagesIndexed(_currentFolder, query, _favoritesOnly.Checked, limit: 100_000))).ToList();
             _list.VirtualListSize = _visibleImages.Count;
             _list.Invalidate();
             if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
@@ -612,7 +831,7 @@ internal sealed class MainForm : Form
                 item.AbsolutePath.Contains(query, StringComparison.OrdinalIgnoreCase));
         }
 
-        _visibleImages = source.ToList();
+        _visibleImages = ApplySort(ApplyFolderBucketFilter(source)).ToList();
         _list.VirtualListSize = _visibleImages.Count;
         _list.Invalidate();
         if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
@@ -822,6 +1041,15 @@ internal sealed class MainForm : Form
                 ApplyViewMode(_list.View == View.Details ? "grid" : "details");
                 SaveViewState();
                 return true;
+            case Keys.Control | Keys.P:
+                _previewVisible.Checked = !_previewVisible.Checked;
+                return true;
+            case Keys.Control | Keys.D:
+                _detailsVisible.Checked = !_detailsVisible.Checked;
+                return true;
+            case Keys.Control | Keys.R:
+                ReshuffleSort();
+                return true;
         }
 
         return base.ProcessCmdKey(ref msg, keyData);
@@ -934,6 +1162,246 @@ internal sealed class MainForm : Form
         _store.SaveViewState(_list.View == View.LargeIcon ? "grid" : "details", _searchText.Text.Trim(), _favoritesOnly.Checked);
     }
 
+    private void ApplySortMode(string mode)
+    {
+        var normalized = _sortMode.Items.Cast<object>()
+            .Select(static item => item.ToString() ?? "")
+            .FirstOrDefault(item => string.Equals(item, mode, StringComparison.OrdinalIgnoreCase));
+        _sortMode.SelectedItem = string.IsNullOrWhiteSpace(normalized) ? "Modified" : normalized;
+    }
+
+    private void SaveSortState()
+    {
+        _store.SaveSetting("sort_mode", _sortMode.SelectedItem?.ToString() ?? "Modified");
+        _reshuffleButton.Enabled = string.Equals(_sortMode.SelectedItem?.ToString(), "Random", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private IEnumerable<NativeImageRecord> ApplySort(IEnumerable<NativeImageRecord> images)
+    {
+        var mode = _sortMode.SelectedItem?.ToString() ?? "Modified";
+        return mode switch
+        {
+            "Created" => images
+                .OrderByDescending(static item => item.CreatedAtUtc)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            "Name" => images
+                .OrderBy(static item => item.Filename, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            "Folder" => images
+                .OrderBy(static item => item.Folder, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static item => item.Filename, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            "Size" => images
+                .OrderByDescending(static item => item.SizeBytes)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            "Favorite" => images
+                .OrderByDescending(static item => item.FavoriteLevel)
+                .ThenByDescending(static item => item.ModifiedAtUtc)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            "Random" => images
+                .OrderBy(item => StableRandomKey(item.AbsolutePath, _randomSortSeed))
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+            _ => images
+                .OrderByDescending(static item => item.ModifiedAtUtc)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase),
+        };
+    }
+
+    private void ReshuffleSort()
+    {
+        _randomSortSeed++;
+        if (!string.Equals(_sortMode.SelectedItem?.ToString(), "Random", StringComparison.OrdinalIgnoreCase))
+        {
+            ApplySortMode("Random");
+        }
+
+        SaveSortState();
+        ApplyFilter();
+    }
+
+    private static int StableRandomKey(string value, int seed)
+    {
+        unchecked
+        {
+            var hash = 2166136261u ^ (uint)seed;
+            foreach (var ch in value)
+            {
+                hash ^= char.ToUpperInvariant(ch);
+                hash *= 16777619u;
+            }
+
+            return (int)hash;
+        }
+    }
+
+    private void BuildFolderBuckets()
+    {
+        var hidden = new HashSet<string>(
+            _store.GetSetting("hidden_folder_buckets", "")
+                .Split(['\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            StringComparer.OrdinalIgnoreCase);
+        var buckets = _allImages
+            .GroupBy(static item => item.Folder, StringComparer.OrdinalIgnoreCase)
+            .Select(group => new FolderBucket(group.Key, FormatFolderBucketLabel(group.Key), group.Count()))
+            .OrderBy(static item => item.Label, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _updatingFolderBuckets = true;
+        try
+        {
+            _folderBuckets.Items.Clear();
+            foreach (var bucket in buckets)
+            {
+                _folderBuckets.Items.Add(bucket, !hidden.Contains(bucket.Folder));
+            }
+        }
+        finally
+        {
+            _updatingFolderBuckets = false;
+        }
+
+        _folderBucketLabel.Text = $"Folders ({buckets.Count:n0})";
+        UpdateFolderBucketButtons();
+    }
+
+    private IEnumerable<NativeImageRecord> ApplyFolderBucketFilter(IEnumerable<NativeImageRecord> images)
+    {
+        if (_folderBuckets.Items.Count == 0 || _folderBuckets.CheckedItems.Count == _folderBuckets.Items.Count)
+        {
+            return images;
+        }
+
+        var visibleFolders = _folderBuckets.CheckedItems
+            .Cast<FolderBucket>()
+            .Select(static item => item.Folder)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        return visibleFolders.Count == 0
+            ? []
+            : images.Where(item => visibleFolders.Contains(item.Folder));
+    }
+
+    private void SetAllFolderBuckets(bool visible)
+    {
+        _updatingFolderBuckets = true;
+        try
+        {
+            for (var i = 0; i < _folderBuckets.Items.Count; i++)
+            {
+                _folderBuckets.SetItemChecked(i, visible);
+            }
+        }
+        finally
+        {
+            _updatingFolderBuckets = false;
+        }
+
+        SaveFolderBucketState();
+        ApplyFilter();
+    }
+
+    private void InvertFolderBuckets()
+    {
+        _updatingFolderBuckets = true;
+        try
+        {
+            for (var i = 0; i < _folderBuckets.Items.Count; i++)
+            {
+                _folderBuckets.SetItemChecked(i, !_folderBuckets.GetItemChecked(i));
+            }
+        }
+        finally
+        {
+            _updatingFolderBuckets = false;
+        }
+
+        SaveFolderBucketState();
+        ApplyFilter();
+    }
+
+    private void SaveFolderBucketState()
+    {
+        var hidden = _folderBuckets.Items
+            .Cast<FolderBucket>()
+            .Where((_, index) => !_folderBuckets.GetItemChecked(index))
+            .Select(static item => item.Folder);
+        _store.SaveSetting("hidden_folder_buckets", string.Join('\n', hidden));
+        UpdateFolderBucketButtons();
+    }
+
+    private void UpdateFolderBucketButtons()
+    {
+        var hasBuckets = _folderBuckets.Items.Count > 0;
+        _showAllFoldersButton.Enabled = hasBuckets;
+        _hideAllFoldersButton.Enabled = hasBuckets;
+        _invertFoldersButton.Enabled = hasBuckets;
+    }
+
+    private string FormatFolderBucketLabel(string folder)
+    {
+        if (!string.IsNullOrWhiteSpace(_currentFolder))
+        {
+            try
+            {
+                var relative = Path.GetRelativePath(_currentFolder, folder);
+                if (relative == ".")
+                {
+                    return ".";
+                }
+
+                if (!relative.StartsWith("..", StringComparison.Ordinal))
+                {
+                    return relative;
+                }
+            }
+            catch
+            {
+                // Fall back to the full folder path when relative formatting fails.
+            }
+        }
+
+        return folder;
+    }
+
+    private void ApplyThumbnailSize(int size)
+    {
+        var clamped = Math.Clamp(size, 64, 192);
+        _updatingThumbnailSize = true;
+        try
+        {
+            if ((int)_thumbnailSize.Value != clamped)
+            {
+                _thumbnailSize.Value = clamped;
+            }
+        }
+        finally
+        {
+            _updatingThumbnailSize = false;
+        }
+
+        if (_gridImages.ImageSize.Width == clamped && _gridImages.Images.Count > 0)
+        {
+            return;
+        }
+
+        _gridImages.Images.Clear();
+        _gridImages.ImageSize = new Size(clamped, clamped);
+        _gridImages.Images.Add(CreateGridPlaceholder(clamped));
+        _list.Invalidate();
+    }
+
+    private void ApplyPreviewVisibility()
+    {
+        if (_mainSplit is not null)
+        {
+            _mainSplit.Panel2Collapsed = !_previewVisible.Checked;
+        }
+    }
+
+    private void ApplyDetailsVisibility()
+    {
+        _previewLabel.Visible = _detailsVisible.Checked;
+    }
+
     private void ShowNativeSettings()
     {
         var bindings = _store.GetSetting("keybindings_json", "{}");
@@ -985,13 +1453,14 @@ internal sealed class MainForm : Form
         return image.Width is > 0 && image.Height is > 0 ? $"{image.Width}x{image.Height}" : "";
     }
 
-    private static Bitmap CreateGridPlaceholder()
+    private static Bitmap CreateGridPlaceholder(int size)
     {
-        var bitmap = new Bitmap(96, 96);
+        var bitmap = new Bitmap(size, size);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(Color.FromArgb(38, 38, 38));
         using var border = new Pen(Color.FromArgb(80, 80, 80));
-        graphics.DrawRectangle(border, 8, 8, 80, 80);
+        var inset = Math.Max(8, size / 12);
+        graphics.DrawRectangle(border, inset, inset, size - (inset * 2), size - (inset * 2));
         return bitmap;
     }
 
@@ -1052,6 +1521,21 @@ internal sealed class MainForm : Form
         return $"{value:n1} {units[unit]}";
     }
 
+    private int ParseSettingInt(string key, int defaultValue)
+    {
+        return int.TryParse(_store.GetSetting(key, defaultValue.ToString(System.Globalization.CultureInfo.InvariantCulture)), out var value)
+            ? value
+            : defaultValue;
+    }
+
+    private sealed record FolderBucket(string Folder, string Label, int Count)
+    {
+        public override string ToString()
+        {
+            return $"{Label} ({Count:n0})";
+        }
+    }
+
     private sealed record NativeUiSmokeReport(
         string Folder,
         int ScannedImages,
@@ -1061,6 +1545,13 @@ internal sealed class MainForm : Form
         bool KeyboardNavigation,
         bool KeyboardFavorite,
         bool GridToggle,
+        int FolderBuckets,
+        bool FolderHideAll,
+        bool SortName,
+        bool RandomReshuffle,
+        bool ThumbnailSize,
+        bool PreviewToggle,
+        bool DetailsToggle,
         int SearchMatches,
         int FavoriteMatches,
         bool NoResultsState,
