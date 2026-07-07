@@ -6,6 +6,16 @@ Is the H000025 local-native stack ready to become the release-candidate review
 surface, with browser app behavior preserved and a safe merge/close path
 identified?
 
+## Canonical Product Intent
+
+`docs/local-native/native-intent-source.md` records the canonical source thread
+for this lane: `019f3c2e-577f-7421-a499-145ece67eb30`.
+
+The stack should be judged as a path toward a fast native local PhotoViewer, not
+as a local server or browser-packaged version of the same app. Browser E2E and
+browser smoke evidence are baseline-preservation evidence only. Native
+acceptance requires native build/headless/UI/performance evidence.
+
 ## Scope
 
 In scope:
@@ -31,13 +41,19 @@ Out of scope:
 
 ## Browser Baseline Gate
 
-The browser app remains the product baseline. M5 changed no `src/**` files,
-but the existing browser E2E suite is narrow: it currently covers only landing
-page folder workflow and restoring the last folder set. That is not enough to
-declare the full browser app regression-checked.
+The browser app remains the product baseline, not the implementation target.
+The local-native release candidate must be a fast native local app that does
+not depend on Node, a browser runtime, a webview wrapper, or a local HTTP
+server for normal use.
+
+M5 changed no `src/**` files, but the existing browser E2E suite is narrow: it
+currently covers only landing page folder workflow and restoring the last folder
+set. That is not enough to declare the full browser app regression-checked, and
+browser checks alone cannot prove native parity.
 
 The required browser sweep is now captured in
-`tasks/local-native-m5/browser-regression-matrix.md`. M6 must complete or
+`tasks/local-native-m5/browser-regression-matrix.md`, which now acts as the
+browser-feature baseline and native-parity matrix. M6 must complete or
 explicitly classify every row before merging the local-native stack.
 
 ## Current PR Stack
@@ -111,8 +127,8 @@ Covered:
 Not covered:
 
 - direct Chrome profile localStorage reads; intentionally out of scope
-- full feature-by-feature browser regression sweep; required by
-  `browser-regression-matrix.md` before stack merge
+- full feature-by-feature native parity sweep against the browser baseline;
+  required by `browser-regression-matrix.md` before stack merge
 - automatic native reuse of browser thumbnail/display assets; M4 only measures
   compatibility
 - browser export helper in `src/**`; deferred unless explicitly approved
@@ -136,7 +152,7 @@ ordered stack merge with one verify gate at each step:
    merge.
 6. Retarget and merge PR #66 last, after its fixture/review docs and CI
    pass against the integrated stack.
-7. Do not mark the stack merge-ready until the browser regression matrix is
+7. Do not mark the stack merge-ready until the native parity matrix is
    completed or each remaining row has an explicit blocked/deferred decision.
 
 Merge commits are the lowest-friction path for this stack because the
@@ -175,8 +191,9 @@ escalate at M5 startup.
   a clean worktree, not production-user state migration.
 - Browser export helper remains deferred; adding one would touch `src/**` and
   needs explicit approval and focused verification.
-- Browser regression remains the main product-risk gap. Existing automated
-  E2E proves only landing-level smoke, not the full feature set.
+- Native parity remains the main product-risk gap. Existing browser E2E proves
+  only landing-level smoke, and the one-off browser smoke is baseline evidence
+  only, not native acceptance.
 - Cache compatibility is still measurement-only. Native runtime reuse should
   remain off until compatibility, invalidation, and fallback behavior are
   reviewed separately.

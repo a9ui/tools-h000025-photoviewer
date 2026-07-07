@@ -2,6 +2,9 @@
 
 Date: 2026-07-08
 
+Product-intent source: `docs/local-native/native-intent-source.md`, based on
+Codex thread `019f3c2e-577f-7421-a499-145ece67eb30`.
+
 ## Commands
 
 ```powershell
@@ -106,6 +109,11 @@ M5 also ran a one-off Playwright smoke against a temporary local dev server at
 `http://localhost:3001` using the deterministic fixture folder
 `.cache/native-fixture`.
 
+This was browser-baseline evidence only. It does not count as native acceptance
+and does not change the product direction: the local-native target must remain
+a fast native local app with no Node, browser runtime, webview wrapper, or
+local HTTP server dependency for normal use.
+
 Observed browser smoke results:
 
 - landing page rendered `PhotoViewer`, `Add folder`, and `Open folder set`
@@ -132,16 +140,16 @@ Server log evidence during the smoke included successful calls to:
 - `/api/settings`
 - `/api/enhance/jobs`
 
-## Browser Regression Coverage
+## Browser Feature Baseline And Native Parity Coverage
 
 The existing browser E2E coverage is only a smoke check for the landing folder
 workflow and last-folder restoration. It does not prove the full browser
-feature set one by one.
+feature set one by one, and browser checks alone do not prove native parity.
 
 M5 therefore added
 `tasks/local-native-m5/browser-regression-matrix.md` as a blocking M6 merge
-gate. M6 must verify or explicitly classify every browser feature row before
-the local-native stack is marked merge-ready.
+gate. M6 must verify or explicitly classify every browser-feature/native-parity
+row before the local-native stack is marked merge-ready.
 
 ## GitHub Stack Check
 

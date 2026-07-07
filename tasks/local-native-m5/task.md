@@ -5,6 +5,14 @@
 Turn the stacked local-native lane into a release-candidate review surface
 without changing the browser app.
 
+## Canonical Intent
+
+Use `docs/local-native/native-intent-source.md` as the product-intent source
+for this lane. The goal is not a browser wrapper or localhost-packaged copy.
+The goal is to preserve browser PhotoViewer features while moving normal use to
+a fast native local app with no Node, Next.js, browser runtime, React/DOM, or
+HTTP image/API dependency.
+
 ## GitHub Route
 
 - Milestone: #10 `Local Native M5 - Release Candidate Readiness`
@@ -33,15 +41,15 @@ Linear is intentionally not used.
   are not overwritten when present.
 - The release-candidate review packet is
   `tasks/local-native-m5/release-candidate-review.md`.
-- Browser regression coverage is tracked in
+- Browser feature baseline and native parity coverage is tracked in
   `tasks/local-native-m5/browser-regression-matrix.md`.
 
 ## Safe Merge Decision
 
 Do not merge upper stacked PRs while their base remains another feature branch.
-Also do not merge the stack until the browser regression matrix has no blank
-rows and every blocked/deferred row has an explicit merge decision. The safe
-order is:
+Also do not merge the stack until the native parity matrix has no blank rows
+and every blocked/deferred row has an explicit merge decision. The safe order
+is:
 
 1. Keep PRs #43, #48, #55, #61, and M5 PR #66 draft until M5 verification and
    review are complete.
@@ -83,7 +91,7 @@ git diff --name-only -- src
 ## Next Goal Candidate
 
 M6 should focus on stack merge execution after review: confirm no late Agmsg
-advice changes the decision, complete the browser feature-by-feature regression
-matrix, mark draft PRs ready only when appropriate, retarget/rebase in order,
-rerun CI at each step, merge or close the stack, and record the final native
-parity decision.
+advice changes the decision, complete the browser-feature/native-parity matrix,
+mark draft PRs ready only when appropriate, retarget/rebase in order, rerun CI
+at each step, merge or close the stack, and record the final native parity
+decision.

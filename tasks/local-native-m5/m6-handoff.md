@@ -10,6 +10,13 @@ checking late advice, retargeting/rebasing stacked PRs safely, rerunning CI,
 merging or closing PRs in order, and recording the final native parity
 decision without changing the browser app.
 
+The canonical product intent is in Codex thread
+`019f3c2e-577f-7421-a499-145ece67eb30` and summarized in
+`docs/local-native/native-intent-source.md`. Treat it as source of truth:
+normal native use must not depend on Node, Next.js, Chrome/browser runtime,
+React/DOM, webview wrapping, or localhost HTTP APIs. Browser behavior is the
+feature baseline to reproduce, not the runtime to ship.
+
 ## Source Packet To Read First
 
 Read these files in full before planning or editing:
@@ -25,6 +32,7 @@ Read these files in full before planning or editing:
 - `docs/local-native/m3-verification.md`
 - `docs/local-native/m4-verification.md`
 - `docs/local-native/m5-verification.md`
+- `docs/local-native/native-intent-source.md`
 - `tasks/local-native-m1/task.md`
 - `tasks/local-native-m2/task.md`
 - `tasks/local-native-m3/handoff.md`
@@ -52,9 +60,10 @@ SQLite jobs summary, Agmsg trace for the M5 closeout correlation id, and local
   `codex/h25-local-native-m4`.
 - M5 GitHub issues are #62-#65 under milestone #10.
 - M5 added `-PrepareFixture` and release-candidate review docs.
-- M5 added `browser-regression-matrix.md` because existing browser E2E covers
-  only the landing/folder-memory smoke and does not prove the whole browser
-  feature set.
+- M5 added `browser-regression-matrix.md` as a browser-feature baseline and
+  native-parity gate. Existing browser E2E covers only the
+  landing/folder-memory smoke, and browser checks alone do not prove native
+  parity.
 - M5 changed no `src/**` files.
 - H33 remains untouched.
 - Linear remains unused.
@@ -72,6 +81,9 @@ lower merge.
 Do not call the stack merge-ready until
 `tasks/local-native-m5/browser-regression-matrix.md` is complete. Every row must
 be marked verified, blocked, or deferred with evidence and a merge decision.
+Verified rows must say whether the proof is native acceptance or only browser
+baseline evidence. Browser, Node, webview, localhost, or Next.js dev-server
+paths do not satisfy native parity by themselves.
 
 ## Verification Minimum
 
@@ -99,7 +111,7 @@ record the browser regression matrix evidence before the first merge.
 M6 completion requires:
 
 - late M5 Agmsg advice checked and classified,
-- browser feature-by-feature regression matrix completed or explicitly
+- browser-feature/native-parity matrix completed or explicitly
   classified row by row,
 - PR stack retargeted, merged, or explicitly closed in the documented order,
 - local native build and headless fixture checks,
