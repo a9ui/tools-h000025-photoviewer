@@ -156,6 +156,48 @@ M7 smoke result:
 | Persistence keys | DEFERRED | Explicit export imports 5 `pvu_*` keys and UI smoke verifies browserStateKeys 5. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. |
 | Native responsive/layout parity | DEFERRED | UI smoke creates and exercises the WinForms layout at the native desktop size. | Screenshot/manual layout sweep for overlap, text fit, and polish. |
 
+## M8 Native Deferred Parity Implementation Slice
+
+M8 first slice implements a small set of high-value deferred controls and keeps
+the remaining rows explicit. It still does not claim full native parity.
+
+M8 smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+M8 smoke result additions:
+
+- folderBuckets: 1
+- folderHideAll: true
+- sortName: true
+- randomReshuffle: true
+- thumbnailSize: true
+- previewToggle: true
+- detailsToggle: true
+
+| Area | M8 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | DEFERRED | No new landing/multi-root implementation in M8. Existing single-folder scan remains covered by M7/M8 UI smoke. | Multi-root sets, remove-folder behavior, open recent folder set, and manual refresh. | `codex_pm` | Native UI/headless test that pastes or imports a multi-root set and proves remove/open-recent/manual refresh behavior without browser runtime. |
+| Legacy browser state | DEFERRED | Existing explicit export import remains covered; no malformed-export UI added in M8. | Malformed export UX and user-facing recovery text. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | Existing query/no-results/favorites search remains covered after M8 controls. | Tag entry, multi-token semantics, clear button, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query, clear action, and no-results copy. |
+| Sidebar quick search and filters | DEFERRED | No new favorite-level/date/enhanced filter chips in M8. | Unrated, favorite level chips 1-5, enhanced-only, date presets, manual date range, and richer count labels. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for each filter bucket and count labels. |
+| Folder visibility | DEFERRED | Folder bucket list, all/none/invert controls, hidden-folder persistence setting, and hide-all smoke evidence. | Multi-root bucket sets, range selection, show/hide selected only, clear selected, and richer bucket counts across nested folders. | `cursor_impl` | Native UI smoke with nested/multi-root fixture and explicit show/hide selected acceptance. |
+| Sorting and display | DEFERRED | Sort modes for modified, created, name, folder, size, favorite, random; random reshuffle; thumbnail-size control; smoke covers name/random/thumbnail paths. | Date sections, scroll memory, seen/unseen state, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering every sort mode, display variant, persisted thumbnail size, and scroll/seen behavior. |
+| Virtual gallery | DEFERRED | M8 controls run on the existing virtual list/grid. | Date sections, scroll memory, seen/unseen state, drag/open parity, placeholder behavior, and native thumbnail warmup UI. | `codex_pm` | Native UI/manual sweep plus headless perf evidence for large fixture and virtualized scroll state. |
+| Selection and preview tabs | DEFERRED | Preview detail toggle and preview visibility toggle added; single-selection path remains covered. | Ctrl/Shift multi-selection, background clear behavior, preview tabs, pin/unpin, close/restore closed tab, hover/quick preview. | `cursor_impl` | Native UI smoke for multi-selection and preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Preview panel show/hide and detail show/hide controls added and smoke-verified. | Resize persistence, selected count, bulk favorite/open/recycle confirmation, and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving persisted split size, selected count, and bulk actions on disposable files. |
+| Modal navigation | DEFERRED | No separate detail modal added in M8; main-view previous/current/next remains covered. | Separate detail modal parity, filtered subset wrap behavior, edge/click/swipe equivalents, and loading-slot UI. | `cursor_impl` | Native detail-modal UI smoke with ordered filtered subset and wrap/edge behavior. |
+| Modal image controls | DEFERRED | No native zoom/reset/pan/flip/immersive controls added in M8. | Zoom, reset, pan, horizontal flip, chrome hide/show, favorite +/- inside modal, feedback, and open external. | `cursor_impl` | Native detail-modal UI smoke for zoom/pan/flip/reset/open/favorite controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite preview label remains; no prompt metadata added in M8. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M8 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | Keybinding metadata now includes `Ctrl+P`, `Ctrl+D`, and `Ctrl+R`; existing settings dialog exposes keybinding JSON. | Non-blocking settings UI automation, confirm-before-delete UI, edge/navigation settings, keybinding recorder, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable settings/keybinding recorder or explicit read-only decision. |
+| Enhancement isolation | DEFERRED | M8 UI smoke again verifies ordinary native browsing/search/preview did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M8. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M8 persists native-only sort mode, preview visibility, detail visibility, thumbnail size, and hidden folder buckets in SQLite settings. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M8 UI smoke exercises the denser toolbar/folder/preview layout at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:

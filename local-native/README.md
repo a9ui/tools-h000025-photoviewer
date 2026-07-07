@@ -145,3 +145,14 @@ HTTP server check.
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
 ```
+
+## M8 Notes
+
+M8 first slice adds native folder visibility buckets, sort/display controls,
+preview panel toggles, detail toggles, thumbnail-size control, and keybinding
+metadata for the new preview/details/reshuffle shortcuts. The native UI smoke
+now verifies those controls in addition to the M7 scan, navigation, search,
+favorite, missing-folder, import, and enhancement-isolation checks.
+
+This is still a parity slice, not a full native parity claim. Remaining rows
+stay deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
