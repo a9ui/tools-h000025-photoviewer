@@ -17,6 +17,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 sqlite3 .\.cache\native\photoviewer-native.sqlite "select 'images', count(*) from images union all select 'favorites', count(*) from favorites union all select 'albums', count(*) from albums union all select 'album_images', count(*) from album_images union all select 'browser_state', count(*) from browser_state union all select 'cache_checks', count(*) from cache_compatibility union all select 'settings', count(*) from native_settings union all select 'import_runs', count(*) from import_runs;"
 corepack pnpm typecheck
 corepack pnpm test:unit
+corepack pnpm test:e2e
+powershell -ExecutionPolicy Bypass -File .\System\scripts\verify-project.ps1 -Full
 git diff --name-only -- src
 ```
 
@@ -84,7 +86,30 @@ git diff --name-only -- src
   - `import_runs`: 7
 - `corepack pnpm typecheck` passed.
 - `corepack pnpm test:unit` passed: 16 files, 94 tests.
+- `corepack pnpm test:e2e` passed: 2 Chromium tests.
+- `powershell -ExecutionPolicy Bypass -File .\System\scripts\verify-project.ps1 -Full`
+  passed:
+  - required files
+  - `pnpm test:unit`
+  - `pnpm lint`
+  - `pnpm audit --audit-level moderate`
+  - `pnpm typecheck`
+  - `pnpm build`
+  - `pnpm test:e2e`
+- `pnpm lint` reported 0 errors and 2 existing warnings for `<img>` usage in
+  `src/components/CachedImage.tsx`.
 - `git diff --name-only -- src` returned no files.
+
+## Browser Regression Coverage
+
+The existing browser E2E coverage is only a smoke check for the landing folder
+workflow and last-folder restoration. It does not prove the full browser
+feature set one by one.
+
+M5 therefore added
+`tasks/local-native-m5/browser-regression-matrix.md` as a blocking M6 merge
+gate. M6 must verify or explicitly classify every browser feature row before
+the local-native stack is marked merge-ready.
 
 ## GitHub Stack Check
 

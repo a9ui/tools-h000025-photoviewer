@@ -29,6 +29,17 @@ Out of scope:
   albums, settings, or native SQLite state.
 - browser profile or Chrome localStorage scraping.
 
+## Browser Baseline Gate
+
+The browser app remains the product baseline. M5 changed no `src/**` files,
+but the existing browser E2E suite is narrow: it currently covers only landing
+page folder workflow and restoring the last folder set. That is not enough to
+declare the full browser app regression-checked.
+
+The required browser sweep is now captured in
+`tasks/local-native-m5/browser-regression-matrix.md`. M6 must complete or
+explicitly classify every row before merging the local-native stack.
+
 ## Current PR Stack
 
 | PR | State | Base | Head | Head SHA | Latest verify |
@@ -37,7 +48,7 @@ Out of scope:
 | #48 `Build local native browser workflow drop-in` | draft/open, CLEAN | `codex/h25-local-native-m1` | `codex/h25-local-native-m2` | `d2428db45a4f2dd2f0723b2889181e5f8fa08ea1` | success, run `28869670313` |
 | #55 `Build local native M3 performance acceleration` | draft/open, CLEAN | `codex/h25-local-native-m2` | `codex/h25-local-native-m3` | `43caeef1e94a816a55f28c1b5990eef30bda94e9` | success, run `28872084793` |
 | #61 `Build local native M4 parity and cache reuse` | draft/open, CLEAN | `codex/h25-local-native-m3` | `codex/h25-local-native-m4` | `69cb93c1f9d90024e03f328674ce63aaf01f7e6f` | success, run `28881130949` |
-| #66 `Prepare local native M5 release candidate readiness` | draft/open, verify live | `codex/h25-local-native-m4` | `codex/h25-local-native-m5` | verify live | verify live |
+| #66 `Prepare local native M5 release candidate readiness` | draft/open | `codex/h25-local-native-m4` | `codex/h25-local-native-m5` | verify live | initial success, run `28882218377`; re-check latest before closeout |
 
 PR diffs were checked with `gh pr diff <n> --name-only`; PRs #43, #48, #55,
 #61, and #66 include no `src/**`.
@@ -69,6 +80,17 @@ The fixture generation result in this worktree:
 The fixture command does not overwrite existing browser state files when they
 already exist.
 
+Full project verification also passed locally:
+
+- `powershell -ExecutionPolicy Bypass -File .\System\scripts\verify-project.ps1 -Full`
+- checks: required files, `pnpm test:unit`, `pnpm lint`,
+  `pnpm audit --audit-level moderate`, `pnpm typecheck`, `pnpm build`,
+  `pnpm test:e2e`
+- unit result: 16 files, 94 tests passed
+- browser E2E result: 2 tests passed
+- lint result: 0 errors, 2 existing `<img>` warnings in
+  `src/components/CachedImage.tsx`
+
 ## Parity Coverage
 
 Covered:
@@ -89,6 +111,8 @@ Covered:
 Not covered:
 
 - direct Chrome profile localStorage reads; intentionally out of scope
+- full feature-by-feature browser regression sweep; required by
+  `browser-regression-matrix.md` before stack merge
 - automatic native reuse of browser thumbnail/display assets; M4 only measures
   compatibility
 - browser export helper in `src/**`; deferred unless explicitly approved
@@ -112,6 +136,8 @@ ordered stack merge with one verify gate at each step:
    merge.
 6. Retarget and merge PR #66 last, after its fixture/review docs and CI
    pass against the integrated stack.
+7. Do not mark the stack merge-ready until the browser regression matrix is
+   completed or each remaining row has an explicit blocked/deferred decision.
 
 Merge commits are the lowest-friction path for this stack because the
 repository allows merge commits and the upper branches already contain lower
@@ -125,8 +151,7 @@ diff.
 - M3 issues #49, #50, #52, #53, and #54 are closed.
 - M4 issues #56, #57, #59, and #60 are closed.
 - M1 issues #37-#42 were still open at M5 startup despite M1 verification
-  passing; M5 should close them with a verification comment and then close
-  milestone #6.
+  passing; M5 closed them with verification comments and closed milestone #6.
 - M5 issues are #62-#65 under milestone #10.
 
 ## Advice Checkpoint
@@ -150,6 +175,8 @@ escalate at M5 startup.
   a clean worktree, not production-user state migration.
 - Browser export helper remains deferred; adding one would touch `src/**` and
   needs explicit approval and focused verification.
+- Browser regression remains the main product-risk gap. Existing automated
+  E2E proves only landing-level smoke, not the full feature set.
 - Cache compatibility is still measurement-only. Native runtime reuse should
   remain off until compatibility, invalidation, and fallback behavior are
   reviewed separately.

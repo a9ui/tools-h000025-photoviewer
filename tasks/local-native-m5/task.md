@@ -33,11 +33,15 @@ Linear is intentionally not used.
   are not overwritten when present.
 - The release-candidate review packet is
   `tasks/local-native-m5/release-candidate-review.md`.
+- Browser regression coverage is tracked in
+  `tasks/local-native-m5/browser-regression-matrix.md`.
 
 ## Safe Merge Decision
 
 Do not merge upper stacked PRs while their base remains another feature branch.
-The safe order is:
+Also do not merge the stack until the browser regression matrix has no blank
+rows and every blocked/deferred row has an explicit merge decision. The safe
+order is:
 
 1. Keep PRs #43, #48, #55, #61, and M5 PR #66 draft until M5 verification and
    review are complete.
@@ -71,12 +75,15 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessCacheCompat -Folder .\.cache\native-fixture
 corepack pnpm typecheck
 corepack pnpm test:unit
+corepack pnpm test:e2e
+powershell -ExecutionPolicy Bypass -File .\System\scripts\verify-project.ps1 -Full
 git diff --name-only -- src
 ```
 
 ## Next Goal Candidate
 
 M6 should focus on stack merge execution after review: confirm no late Agmsg
-advice changes the decision, mark draft PRs ready only when appropriate,
-retarget/rebase in order, rerun CI at each step, merge or close the stack, and
-record the final native parity decision.
+advice changes the decision, complete the browser feature-by-feature regression
+matrix, mark draft PRs ready only when appropriate, retarget/rebase in order,
+rerun CI at each step, merge or close the stack, and record the final native
+parity decision.

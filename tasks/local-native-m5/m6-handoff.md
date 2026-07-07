@@ -34,6 +34,7 @@ Read these files in full before planning or editing:
 - `tasks/local-native-m4/m5-handoff.md`
 - `tasks/local-native-m5/task.md`
 - `tasks/local-native-m5/release-candidate-review.md`
+- `tasks/local-native-m5/browser-regression-matrix.md`
 - this file
 
 Then inspect GitHub PRs #43, #48, #55, #61, #66, GitHub Actions,
@@ -51,6 +52,9 @@ SQLite jobs summary, Agmsg trace for the M5 closeout correlation id, and local
   `codex/h25-local-native-m4`.
 - M5 GitHub issues are #62-#65 under milestone #10.
 - M5 added `-PrepareFixture` and release-candidate review docs.
+- M5 added `browser-regression-matrix.md` because existing browser E2E covers
+  only the landing/folder-memory smoke and does not prove the whole browser
+  feature set.
 - M5 changed no `src/**` files.
 - H33 remains untouched.
 - Linear remains unused.
@@ -65,6 +69,10 @@ Because squash merges can duplicate lower-stack commits in upper PR diffs, use
 merge commits for this stack or rebase/update each upper branch after every
 lower merge.
 
+Do not call the stack merge-ready until
+`tasks/local-native-m5/browser-regression-matrix.md` is complete. Every row must
+be marked verified, blocked, or deferred with evidence and a merge decision.
+
 ## Verification Minimum
 
 At minimum before calling M6 complete:
@@ -78,16 +86,21 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessCacheCompat -Folder .\.cache\native-fixture
 corepack pnpm typecheck
 corepack pnpm test:unit
+corepack pnpm test:e2e
+powershell -ExecutionPolicy Bypass -File .\System\scripts\verify-project.ps1 -Full
 git diff --name-only -- src
 ```
 
-Also verify each retargeted PR's GitHub Actions result before merging it.
+Also verify each retargeted PR's GitHub Actions result before merging it and
+record the browser regression matrix evidence before the first merge.
 
 ## Closeout Rule For M6
 
 M6 completion requires:
 
 - late M5 Agmsg advice checked and classified,
+- browser feature-by-feature regression matrix completed or explicitly
+  classified row by row,
 - PR stack retargeted, merged, or explicitly closed in the documented order,
 - local native build and headless fixture checks,
 - pnpm typecheck and unit tests,
