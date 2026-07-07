@@ -115,10 +115,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 
 M5 adds a repeatable ignored fixture generator for release-candidate checks.
 It writes deterministic files under `.cache/native-fixture`, `.cache/native`,
-`.cache/thumbs`, and `.cache/display`. It creates `.cache/favorites.json`,
-`.cache/albums.json`, `.cache/settings.json`, and the default browser
-localStorage export only when those files are absent; existing user state files
-are left in place.
+`.cache/native-fixture-large`, `.cache/thumbs`, and `.cache/display`. It
+creates `.cache/favorites.json`, `.cache/albums.json`, `.cache/settings.json`,
+and the default browser localStorage export only when those files are absent;
+existing user state files are left in place.
 
 Prepare the fixture:
 
@@ -237,4 +237,28 @@ smoke verifies this with `galleryStateRestore=true`.
 This remains a parity slice, not full native parity. Date sections, seen/unseen
 state, large-fixture virtualized scroll proof, preview tabs, bulk destructive
 actions, explicit enhancement UI, and folder range selection remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M13 Notes
+
+M13 adds evidence for the existing native virtual gallery behavior on a larger
+fixture. It does not redesign the UI, add a new visual concept, touch the
+browser app, or rename the product. The native lane remains a local-software
+port of the existing PhotoViewer workflows.
+
+`-PrepareFixture` now also writes `.cache/native-fixture-large` with 240
+deterministic images. The new large-scroll smoke selects item 180 in the
+virtualized WinForms list, persists `last_selected_image` and
+`last_visible_index`, clears selection, reapplies the current filter, restores
+the same selected item, and verifies that `EnsureVisible` leaves the restored
+item in view.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large
+```
+
+This remains a parity slice, not full native parity. Date sections, seen/unseen
+state, drag/open parity, placeholder behavior, native thumbnail warmup UI,
+preview tabs, bulk destructive actions, explicit enhancement UI, and folder
+range selection remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.

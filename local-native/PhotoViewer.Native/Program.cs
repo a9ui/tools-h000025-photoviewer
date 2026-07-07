@@ -97,6 +97,12 @@ internal static class Program
             return await MainForm.RunFolderSetSmokeAsync(roots, searchQuery);
         }
 
+        if (args.Length >= 2 && args[0] == "--headless-large-scroll-smoke")
+        {
+            ApplicationConfiguration.Initialize();
+            return await MainForm.RunLargeScrollSmokeAsync(args[1]);
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();

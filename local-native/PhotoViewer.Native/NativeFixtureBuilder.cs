@@ -6,6 +6,7 @@ namespace PhotoViewer.Native;
 
 internal static class NativeFixtureBuilder
 {
+    private const int LargeScrollFixtureCount = 240;
     private static readonly DateTime FixtureTimestampUtc = new(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -19,16 +20,19 @@ internal static class NativeFixtureBuilder
         var cacheRoot = Path.Combine(projectRoot, ".cache");
         var fixtureRoot = Path.Combine(cacheRoot, "native-fixture");
         var fixtureExtraRoot = Path.Combine(cacheRoot, "native-fixture-extra");
+        var largeScrollRoot = Path.Combine(cacheRoot, "native-fixture-large");
         var nativeRoot = Path.Combine(cacheRoot, "native");
 
         Directory.CreateDirectory(fixtureRoot);
         Directory.CreateDirectory(fixtureExtraRoot);
+        Directory.CreateDirectory(largeScrollRoot);
         Directory.CreateDirectory(nativeRoot);
         Directory.CreateDirectory(Path.Combine(cacheRoot, "thumbs"));
         Directory.CreateDirectory(Path.Combine(cacheRoot, "display"));
 
         var images = WriteFixtureImages(fixtureRoot);
         var extraImages = WriteFolderSetFixtureImages(fixtureExtraRoot);
+        var largeScrollImages = WriteLargeScrollFixtureImages(largeScrollRoot, LargeScrollFixtureCount);
         var created = new List<string>();
         var skipped = new List<string>();
 
@@ -98,7 +102,7 @@ internal static class NativeFixtureBuilder
         WriteFixtureCache(projectRoot, images);
 
         Console.WriteLine(
-            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} extraFolder=\"{fixtureExtraRoot}\" extraImages={extraImages.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
+            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} extraFolder=\"{fixtureExtraRoot}\" extraImages={extraImages.Count} largeScrollFolder=\"{largeScrollRoot}\" largeScrollImages={largeScrollImages.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
         return 0;
     }
 
@@ -158,6 +162,34 @@ internal static class NativeFixtureBuilder
         return paths;
     }
 
+    private static List<string> WriteLargeScrollFixtureImages(string fixtureRoot, int count)
+    {
+        var paths = new List<string>(count);
+        for (var index = 0; index < count; index++)
+        {
+            var bucket = $"m13-scroll-bucket-{index / 60:00}";
+            var name = Path.Combine(bucket, $"m13-scroll-{index:000}.png");
+            var path = Path.GetFullPath(Path.Combine(fixtureRoot, name));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using (var bitmap = new Bitmap(24, 24))
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                var color = Color.FromArgb(
+                    255,
+                    32 + (index * 37 % 160),
+                    32 + (index * 53 % 160),
+                    32 + (index * 71 % 160));
+                graphics.Clear(color);
+                bitmap.Save(path, ImageFormat.Png);
+            }
+
+            TrySetStableTimes(path, FixtureTimestampUtc.AddDays(index / 60).AddMinutes(index));
+            paths.Add(path);
+        }
+
+        return paths;
+    }
+
     private static void WriteFixtureCache(string projectRoot, IReadOnlyList<string> imagePaths)
     {
         WriteMinimalWebp(NativeCacheCompatibility.GetThumbnailCachePath(projectRoot, imagePaths[0]));
@@ -205,11 +237,16 @@ internal static class NativeFixtureBuilder
 
     private static void TrySetStableTimes(string path)
     {
+        TrySetStableTimes(path, FixtureTimestampUtc);
+    }
+
+    private static void TrySetStableTimes(string path, DateTime timestampUtc)
+    {
         try
         {
-            File.SetCreationTimeUtc(path, FixtureTimestampUtc);
-            File.SetLastWriteTimeUtc(path, FixtureTimestampUtc);
-            File.SetLastAccessTimeUtc(path, FixtureTimestampUtc);
+            File.SetCreationTimeUtc(path, timestampUtc);
+            File.SetLastWriteTimeUtc(path, timestampUtc);
+            File.SetLastAccessTimeUtc(path, timestampUtc);
         }
         catch
         {

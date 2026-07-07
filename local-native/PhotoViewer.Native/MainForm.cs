@@ -200,6 +200,46 @@ internal sealed class MainForm : Form
         return Task.FromResult(exitCode);
     }
 
+    public static Task<int> RunLargeScrollSmokeAsync(string folder)
+    {
+        if (!Directory.Exists(folder))
+        {
+            Console.Error.WriteLine($"native-large-scroll-smoke error=folder-not-found folder=\"{Quote(folder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var resolvedFolder = Path.GetFullPath(folder);
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunLargeScrollSmokeScenarioAsync(resolvedFolder);
+                Console.WriteLine(FormatLargeScrollSmokeReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-large-scroll-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -749,11 +789,12 @@ internal sealed class MainForm : Form
         var previewSplitter = VerifyPreviewSplitterPersistence();
         Require(previewSplitter, "preview splitter persistence failed");
 
-        SelectImage(_visibleImages[0].AbsolutePath);
+        var previewTarget = _visibleImages[0];
+        SelectImage(previewTarget.AbsolutePath);
         var navigationButtons = _nextButton.Enabled;
 
         await LoadSelectedPreviewAsync();
-        var previewLoaded = _preview.Image is not null && _previewLabel.Text.Contains(".png", StringComparison.OrdinalIgnoreCase);
+        var previewLoaded = await WaitForPreviewAsync(previewTarget.Filename);
         Require(previewLoaded, "preview did not load fixture image");
 
         var selectedCount = _selectionLabel.Text.Contains("Selected 1", StringComparison.OrdinalIgnoreCase);
@@ -917,6 +958,70 @@ internal sealed class MainForm : Form
             AlbumImages: albumImages,
             BrowserStateKeys: browserStateKeys,
             SettingsImported: settingsImported,
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+    }
+
+    private async Task<NativeLargeScrollSmokeReport> RunLargeScrollSmokeScenarioAsync(string folder)
+    {
+        const int minimumLargeFixtureImages = 200;
+        var beforeEnhancementState = EnhancementStateFingerprint();
+
+        _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
+        ApplyViewMode("details");
+        ApplySortMode("Name");
+
+        await ScanCurrentFolderAsync(forceFullRefresh: true);
+        Require(_allImages.Count >= minimumLargeFixtureImages, $"large fixture needs at least {minimumLargeFixtureImages} images");
+        Require(_visibleImages.Count == _allImages.Count, "large fixture filter did not show all images");
+        Require(_list.VirtualMode, "large fixture list is not virtualized");
+        Require(_list.VirtualListSize == _visibleImages.Count, "virtual list size does not match visible images");
+
+        var targetIndex = Math.Clamp(_visibleImages.Count * 3 / 4, 150, _visibleImages.Count - 1);
+        var target = _visibleImages[targetIndex];
+        SelectImage(target.AbsolutePath);
+        Application.DoEvents();
+        var selectedBeforeRestore = GetSelectedIndex() == targetIndex;
+        var visibleBeforeRestore = IsListIndexVisible(targetIndex);
+        var topIndexBeforeRestore = TryGetTopItemIndex();
+        var storedIndex = _store.GetSetting("last_visible_index", "");
+        var storedPath = _store.GetSetting("last_selected_image", "");
+        var statePersisted = string.Equals(storedPath, target.AbsolutePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(storedIndex, targetIndex.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase);
+        Require(selectedBeforeRestore, "large fixture target selection failed");
+        Require(statePersisted, "large fixture gallery state was not persisted");
+
+        ClearImageSelection();
+        ApplyFilter();
+        Application.DoEvents();
+        var restoredIndex = GetSelectedIndex();
+        var restored = restoredIndex == targetIndex
+            && string.Equals(GetSelectedImage()?.AbsolutePath, target.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        var ensureVisible = IsListIndexVisible(restoredIndex);
+        var topIndexAfterRestore = TryGetTopItemIndex();
+        Require(restored, "large fixture gallery state restore failed");
+        Require(ensureVisible, "large fixture restored selection was not visible");
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during native large-scroll smoke");
+
+        return new NativeLargeScrollSmokeReport(
+            Folder: folder,
+            TotalImages: _allImages.Count,
+            InitialVisible: _visibleImages.Count,
+            TargetIndex: targetIndex,
+            RestoredIndex: restoredIndex,
+            TopIndexBeforeRestore: topIndexBeforeRestore,
+            TopIndexAfterRestore: topIndexAfterRestore,
+            VirtualMode: _list.VirtualMode,
+            VirtualListSize: _list.VirtualListSize,
+            StatePersisted: statePersisted,
+            RestoreSelected: restored,
+            EnsureVisible: ensureVisible,
+            VisibleBeforeRestore: visibleBeforeRestore,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
@@ -1477,6 +1582,23 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task<bool> WaitForPreviewAsync(string expectedFilename, int timeoutMs = 2000)
+    {
+        var deadline = Environment.TickCount64 + timeoutMs;
+        while (Environment.TickCount64 <= deadline)
+        {
+            if (_preview.Image is not null && _previewLabel.Text.Contains(expectedFilename, StringComparison.OrdinalIgnoreCase))
+            {
+                return true;
+            }
+
+            await Task.Delay(25);
+            Application.DoEvents();
+        }
+
+        return _preview.Image is not null && _previewLabel.Text.Contains(expectedFilename, StringComparison.OrdinalIgnoreCase);
+    }
+
     private void OpenSelectedFile()
     {
         var image = GetSelectedImage();
@@ -1812,6 +1934,37 @@ internal sealed class MainForm : Form
 
         _list.SelectedIndices.Add(index);
         _list.EnsureVisible(index);
+    }
+
+    private bool IsListIndexVisible(int index)
+    {
+        if (index < 0 || index >= _list.VirtualListSize)
+        {
+            return false;
+        }
+
+        try
+        {
+            var itemRect = _list.GetItemRect(index);
+            var clientRect = _list.ClientRectangle;
+            return itemRect.Bottom > clientRect.Top && itemRect.Top < clientRect.Bottom;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return false;
+        }
+    }
+
+    private int TryGetTopItemIndex()
+    {
+        try
+        {
+            return _list.TopItem?.Index ?? -1;
+        }
+        catch (InvalidOperationException)
+        {
+            return -1;
+        }
     }
 
     private int FindVisibleImageIndex(string? absolutePath)
@@ -2394,6 +2547,32 @@ internal sealed class MainForm : Form
         });
     }
 
+    private static string FormatLargeScrollSmokeReport(NativeLargeScrollSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-large-scroll-smoke complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"totalImages={report.TotalImages}",
+            $"initialVisible={report.InitialVisible}",
+            $"targetIndex={report.TargetIndex}",
+            $"restoredIndex={report.RestoredIndex}",
+            $"topIndexBeforeRestore={report.TopIndexBeforeRestore}",
+            $"topIndexAfterRestore={report.TopIndexAfterRestore}",
+            $"virtualMode={BoolText(report.VirtualMode)}",
+            $"virtualListSize={report.VirtualListSize}",
+            $"statePersisted={BoolText(report.StatePersisted)}",
+            $"restoreSelected={BoolText(report.RestoreSelected)}",
+            $"ensureVisible={BoolText(report.EnsureVisible)}",
+            $"visibleBeforeRestore={BoolText(report.VisibleBeforeRestore)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
     private static string BoolText(bool value)
     {
         return value.ToString().ToLowerInvariant();
@@ -2936,5 +3115,21 @@ internal sealed class MainForm : Form
         bool ManualRefreshAdded,
         bool ManualRefreshRemoved,
         bool WatcherRoots,
+        bool EnhancementStateUnchanged);
+
+    private sealed record NativeLargeScrollSmokeReport(
+        string Folder,
+        int TotalImages,
+        int InitialVisible,
+        int TargetIndex,
+        int RestoredIndex,
+        int TopIndexBeforeRestore,
+        int TopIndexAfterRestore,
+        bool VirtualMode,
+        int VirtualListSize,
+        bool StatePersisted,
+        bool RestoreSelected,
+        bool EnsureVisible,
+        bool VisibleBeforeRestore,
         bool EnhancementStateUnchanged);
 }
