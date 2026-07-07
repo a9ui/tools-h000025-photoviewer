@@ -156,3 +156,26 @@ favorite, missing-folder, import, and enhancement-isolation checks.
 
 This is still a parity slice, not a full native parity claim. Remaining rows
 stay deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M9 Notes
+
+M9 adds a separate native detail modal and right-preview/settings parity slice.
+The browser app remains untouched. Native detail is opened from the main viewer
+with the `Detail` button or `Ctrl+M`; `Open File` and existing external-open
+paths remain available separately.
+
+The detail modal supports previous/next over the current filtered order, zoom
+in/out, reset, mouse/scrollbar pan, horizontal flip, favorite up/down, and an
+open-external command path. The right preview panel records selected count and
+persists splitter distance. Native settings now uses a read-only settings
+dialog that records the M9 decision: editable keybinding recording is deferred,
+but the keybinding metadata includes the new detail controls.
+
+The native UI smoke verifies the M9 controls with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+This is still a parity slice, not a full native parity claim. Remaining rows
+stay deferred in `tasks/local-native-m5/browser-regression-matrix.md`.

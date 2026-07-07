@@ -26,6 +26,7 @@ internal sealed class MainForm : Form
     private readonly Label _folderBucketLabel = new();
     private readonly Button _previousButton = new();
     private readonly Button _nextButton = new();
+    private readonly Button _detailButton = new();
     private readonly NumericUpDown _favoriteLevel = new();
     private readonly Button _openFileButton = new();
     private readonly Button _openFolderButton = new();
@@ -35,6 +36,7 @@ internal sealed class MainForm : Form
     private readonly Label _statusLabel = new();
     private readonly ListView _list = new();
     private readonly PictureBox _preview = new();
+    private readonly Label _selectionLabel = new();
     private readonly Label _previewLabel = new();
     private readonly ImageList _gridImages = new();
     private SplitContainer? _mainSplit;
@@ -88,8 +90,10 @@ internal sealed class MainForm : Form
         _detailsVisible.Checked = _store.GetSetting("preview_details_visible", "1") == "1";
         ApplyPreviewVisibility();
         ApplyDetailsVisibility();
+        ApplyPreviewSplitterDistance(ParseSettingInt("preview_splitter_distance", 760));
         ApplyStateSummary(report);
         _folderWatcher.ChangesDetected += OnFolderChangesDetected;
+        Shown += (_, _) => ApplyPreviewSplitterDistance(ParseSettingInt("preview_splitter_distance", 760));
     }
 
     public static Task<int> RunUiSmokeAsync(string folder, string searchQuery)
@@ -115,7 +119,7 @@ internal sealed class MainForm : Form
             {
                 var report = await form.RunUiSmokeScenarioAsync(resolvedFolder, searchQuery);
                 Console.WriteLine(
-                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} folderBuckets={report.FolderBuckets} folderHideAll={report.FolderHideAll.ToString().ToLowerInvariant()} sortName={report.SortName.ToString().ToLowerInvariant()} randomReshuffle={report.RandomReshuffle.ToString().ToLowerInvariant()} thumbnailSize={report.ThumbnailSize.ToString().ToLowerInvariant()} previewToggle={report.PreviewToggle.ToString().ToLowerInvariant()} detailsToggle={report.DetailsToggle.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
+                    $"native-ui-smoke complete runtime=winforms folder=\"{Quote(report.Folder)}\" scannedImages={report.ScannedImages} initialVisible={report.InitialVisible} previewLoaded={report.PreviewLoaded.ToString().ToLowerInvariant()} navigationButtons={report.NavigationButtons.ToString().ToLowerInvariant()} keyboardNavigation={report.KeyboardNavigation.ToString().ToLowerInvariant()} keyboardFavorite={report.KeyboardFavorite.ToString().ToLowerInvariant()} gridToggle={report.GridToggle.ToString().ToLowerInvariant()} folderBuckets={report.FolderBuckets} folderHideAll={report.FolderHideAll.ToString().ToLowerInvariant()} sortName={report.SortName.ToString().ToLowerInvariant()} randomReshuffle={report.RandomReshuffle.ToString().ToLowerInvariant()} thumbnailSize={report.ThumbnailSize.ToString().ToLowerInvariant()} previewToggle={report.PreviewToggle.ToString().ToLowerInvariant()} detailsToggle={report.DetailsToggle.ToString().ToLowerInvariant()} previewSplitter={report.PreviewSplitter.ToString().ToLowerInvariant()} selectedCount={report.SelectedCount.ToString().ToLowerInvariant()} detailModal={report.DetailModal.ToString().ToLowerInvariant()} detailNavigation={report.DetailNavigation.ToString().ToLowerInvariant()} detailZoom={report.DetailZoom.ToString().ToLowerInvariant()} detailReset={report.DetailReset.ToString().ToLowerInvariant()} detailPan={report.DetailPan.ToString().ToLowerInvariant()} detailFlip={report.DetailFlip.ToString().ToLowerInvariant()} detailFavorite={report.DetailFavorite.ToString().ToLowerInvariant()} detailOpenExternal={report.DetailOpenExternal.ToString().ToLowerInvariant()} settingsReadOnly={report.SettingsReadOnly.ToString().ToLowerInvariant()} searchMatches={report.SearchMatches} favoriteMatches={report.FavoriteMatches} noResultsState={report.NoResultsState.ToString().ToLowerInvariant()} folderErrorState={report.FolderErrorState.ToString().ToLowerInvariant()} albums={report.Albums} albumImages={report.AlbumImages} browserStateKeys={report.BrowserStateKeys} settingsImported={report.SettingsImported.ToString().ToLowerInvariant()} enhancementStateUnchanged={report.EnhancementStateUnchanged.ToString().ToLowerInvariant()} browserRuntime=false localHttpServer=false nodeRuntime=false");
                 exitCode = 0;
             }
             catch (Exception ex)
@@ -261,6 +265,10 @@ internal sealed class MainForm : Form
         _nextButton.Width = 82;
         _nextButton.Click += (_, _) => SelectOffset(1);
 
+        _detailButton.Text = "Detail";
+        _detailButton.Width = 72;
+        _detailButton.Click += (_, _) => ShowDetailModal();
+
         var favoriteLabel = new Label
         {
             Text = "Favorite",
@@ -299,6 +307,7 @@ internal sealed class MainForm : Form
         actions.Controls.Add(_viewMode);
         actions.Controls.Add(_previousButton);
         actions.Controls.Add(_nextButton);
+        actions.Controls.Add(_detailButton);
         actions.Controls.Add(favoriteLabel);
         actions.Controls.Add(_favoriteLevel);
         actions.Controls.Add(_openFileButton);
@@ -390,6 +399,7 @@ internal sealed class MainForm : Form
             Orientation = Orientation.Vertical,
             SplitterDistance = 760,
         };
+        split.SplitterMoved += (_, _) => SavePreviewSplitterDistance();
         _mainSplit = split;
 
         _list.Dock = DockStyle.Fill;
@@ -495,14 +505,21 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 2,
+            RowCount = 3,
         };
         previewPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        previewPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         previewPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
         _preview.Dock = DockStyle.Fill;
         _preview.BackColor = Color.FromArgb(20, 20, 20);
         _preview.SizeMode = PictureBoxSizeMode.Zoom;
+
+        _selectionLabel.Dock = DockStyle.Fill;
+        _selectionLabel.Padding = new Padding(8, 2, 8, 2);
+        _selectionLabel.AutoEllipsis = true;
+        _selectionLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _selectionLabel.Text = "Selected 0 / 0";
 
         _previewLabel.Dock = DockStyle.Fill;
         _previewLabel.Padding = new Padding(8, 4, 8, 4);
@@ -510,7 +527,8 @@ internal sealed class MainForm : Form
         _previewLabel.Text = "Select an image.";
 
         previewPanel.Controls.Add(_preview, 0, 0);
-        previewPanel.Controls.Add(_previewLabel, 0, 1);
+        previewPanel.Controls.Add(_selectionLabel, 0, 1);
+        previewPanel.Controls.Add(_previewLabel, 0, 2);
         split.Panel2.Controls.Add(previewPanel);
 
         _statusLabel.Dock = DockStyle.Fill;
@@ -584,11 +602,33 @@ internal sealed class MainForm : Form
         Require(detailsToggle, "preview details toggle failed");
         _detailsVisible.Checked = true;
 
+        var previewSplitter = VerifyPreviewSplitterPersistence();
+        Require(previewSplitter, "preview splitter persistence failed");
+
         var navigationButtons = _nextButton.Enabled;
 
         await LoadSelectedPreviewAsync();
         var previewLoaded = _preview.Image is not null && _previewLabel.Text.Contains(".png", StringComparison.OrdinalIgnoreCase);
         Require(previewLoaded, "preview did not load fixture image");
+
+        var selectedCount = _selectionLabel.Text.Contains("Selected 1", StringComparison.OrdinalIgnoreCase);
+        Require(selectedCount, "selected count label failed");
+
+        var detailReport = RunDetailModalSmoke();
+        Require(detailReport.ModalOpened, "detail modal did not load image");
+        Require(detailReport.Navigation, "detail modal navigation failed");
+        Require(detailReport.Zoom, "detail modal zoom failed");
+        Require(detailReport.Reset, "detail modal reset failed");
+        Require(detailReport.Pan, "detail modal pan failed");
+        Require(detailReport.Flip, "detail modal flip failed");
+        Require(detailReport.Favorite, "detail modal favorite control failed");
+        Require(detailReport.OpenExternal, "detail modal open-external target failed");
+
+        var settingsSnapshot = BuildNativeSettingsSnapshot();
+        var settingsReadOnly = settingsSnapshot.KeyBindingMode.Contains("read-only", StringComparison.OrdinalIgnoreCase)
+            && settingsSnapshot.KeyBindingsJson.Contains("openDetail", StringComparison.OrdinalIgnoreCase)
+            && settingsSnapshot.KeyBindingsJson.Contains("detailZoomIn", StringComparison.OrdinalIgnoreCase);
+        Require(settingsReadOnly, "settings read-only keybinding decision missing");
 
         SelectOffset(1);
         await LoadSelectedPreviewAsync();
@@ -657,6 +697,17 @@ internal sealed class MainForm : Form
             ThumbnailSize: thumbnailSize,
             PreviewToggle: previewToggle,
             DetailsToggle: detailsToggle,
+            PreviewSplitter: previewSplitter,
+            SelectedCount: selectedCount,
+            DetailModal: detailReport.ModalOpened,
+            DetailNavigation: detailReport.Navigation,
+            DetailZoom: detailReport.Zoom,
+            DetailReset: detailReport.Reset,
+            DetailPan: detailReport.Pan,
+            DetailFlip: detailReport.Flip,
+            DetailFavorite: detailReport.Favorite,
+            DetailOpenExternal: detailReport.OpenExternal,
+            SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
             NoResultsState: noResultsState,
@@ -927,11 +978,56 @@ internal sealed class MainForm : Form
             return;
         }
 
+        OpenExternalPath(image.AbsolutePath);
+    }
+
+    private static void OpenExternalPath(string absolutePath)
+    {
         Process.Start(new ProcessStartInfo
         {
-            FileName = image.AbsolutePath,
+            FileName = absolutePath,
             UseShellExecute = true,
         });
+    }
+
+    private void ShowDetailModal()
+    {
+        var index = GetSelectedIndex();
+        if (index < 0)
+        {
+            return;
+        }
+
+        using var detail = CreateDetailModal(index);
+        detail.ShowDialog(this);
+        UpdateSelectionActions();
+    }
+
+    private DetailModalForm CreateDetailModal(int index)
+    {
+        return new DetailModalForm(
+            _visibleImages,
+            index,
+            OpenExternalPath,
+            SetFavoriteLevelForPath);
+    }
+
+    private DetailSmokeReport RunDetailModalSmoke()
+    {
+        var index = GetSelectedIndex();
+        if (index < 0)
+        {
+            return new DetailSmokeReport(false, false, false, false, false, false, false, false);
+        }
+
+        using var detail = CreateDetailModal(index);
+        detail.Show(this);
+        Application.DoEvents();
+        var report = detail.RunSmoke();
+        detail.Close();
+        Application.DoEvents();
+        UpdateSelectionActions();
+        return report;
     }
 
     private void OpenSelectedFolder()
@@ -990,13 +1086,26 @@ internal sealed class MainForm : Form
         }
 
         var current = _visibleImages[index];
-        _store.SetFavoriteLevel(current.AbsolutePath, level);
+        SetFavoriteLevelForPath(current.AbsolutePath, level);
+    }
+
+    private void SetFavoriteLevelForPath(string absolutePath, int level)
+    {
+        var current = _visibleImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase))
+            ?? _allImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+        if (current is null)
+        {
+            return;
+        }
+
+        var clamped = Math.Clamp(level, 0, 5);
+        _store.SetFavoriteLevel(current.AbsolutePath, clamped);
         _favorites = _store.LoadFavorites();
-        var updated = current with { FavoriteLevel = level };
+        var updated = current with { FavoriteLevel = clamped };
         ReplaceImage(current.AbsolutePath, updated);
         ApplyFilter();
         SelectImage(updated.AbsolutePath);
-        SetStatus($"Favorite level {level}: {updated.Filename}");
+        SetStatus($"Favorite level {clamped}: {updated.Filename}");
     }
 
     private void ClearPreview(string message)
@@ -1040,6 +1149,9 @@ internal sealed class MainForm : Form
             case Keys.Control | Keys.G:
                 ApplyViewMode(_list.View == View.Details ? "grid" : "details");
                 SaveViewState();
+                return true;
+            case Keys.Control | Keys.M:
+                ShowDetailModal();
                 return true;
             case Keys.Control | Keys.P:
                 _previewVisible.Checked = !_previewVisible.Checked;
@@ -1120,10 +1232,14 @@ internal sealed class MainForm : Form
         var selected = index >= 0 ? _visibleImages[index] : null;
         _previousButton.Enabled = index > 0;
         _nextButton.Enabled = index >= 0 && index < _visibleImages.Count - 1;
+        _detailButton.Enabled = selected is not null;
         _openFileButton.Enabled = selected is not null;
         _openFolderButton.Enabled = selected is not null;
         _deleteButton.Enabled = selected is not null;
         _favoriteLevel.Enabled = selected is not null;
+        _selectionLabel.Text = index >= 0
+            ? $"Selected 1 / {_visibleImages.Count:n0}"
+            : $"Selected 0 / {_visibleImages.Count:n0}";
         _updatingFavoriteControl = true;
         _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
         _updatingFavoriteControl = false;
@@ -1402,16 +1518,88 @@ internal sealed class MainForm : Form
         _previewLabel.Visible = _detailsVisible.Checked;
     }
 
+    private void ApplyPreviewSplitterDistance(int distance)
+    {
+        if (_mainSplit is null)
+        {
+            return;
+        }
+
+        try
+        {
+            _mainSplit.SplitterDistance = ClampPreviewSplitterDistance(distance);
+        }
+        catch (InvalidOperationException)
+        {
+            // The splitter can be measured as width 0 before the first layout pass.
+        }
+    }
+
+    private int ClampPreviewSplitterDistance(int distance)
+    {
+        if (_mainSplit is null || _mainSplit.Width <= 0)
+        {
+            return Math.Max(120, distance);
+        }
+
+        var min = Math.Max(120, _mainSplit.Panel1MinSize);
+        var max = Math.Max(min, _mainSplit.Width - Math.Max(160, _mainSplit.Panel2MinSize));
+        return Math.Clamp(distance, min, max);
+    }
+
+    private void SavePreviewSplitterDistance()
+    {
+        if (_mainSplit is null || _mainSplit.Panel2Collapsed)
+        {
+            return;
+        }
+
+        _store.SaveSetting("preview_splitter_distance", _mainSplit.SplitterDistance.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
+    private bool VerifyPreviewSplitterPersistence()
+    {
+        if (_mainSplit is null)
+        {
+            return false;
+        }
+
+        var original = _mainSplit.SplitterDistance;
+        var target = ClampPreviewSplitterDistance(original + 24);
+        if (target == original)
+        {
+            target = ClampPreviewSplitterDistance(original - 24);
+        }
+
+        if (target == original)
+        {
+            SavePreviewSplitterDistance();
+            return _store.GetSetting("preview_splitter_distance", "")
+                .Equals(original.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        }
+
+        ApplyPreviewSplitterDistance(target);
+        SavePreviewSplitterDistance();
+        var persisted = _store.GetSetting("preview_splitter_distance", "")
+            .Equals(target.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        ApplyPreviewSplitterDistance(original);
+        SavePreviewSplitterDistance();
+        return persisted;
+    }
+
     private void ShowNativeSettings()
     {
-        var bindings = _store.GetSetting("keybindings_json", "{}");
-        var browserSettingsFound = _store.GetSetting("browser_settings_found", "0") == "1" ? "yes" : "no";
-        MessageBox.Show(
-            this,
-            $"Native SQLite: {_store.DatabasePath}{Environment.NewLine}Browser settings imported: {browserSettingsFound}{Environment.NewLine}Key bindings: {bindings}",
-            "Native Settings",
-            MessageBoxButtons.OK,
-            MessageBoxIcon.Information);
+        using var dialog = new NativeSettingsDialog(BuildNativeSettingsSnapshot());
+        dialog.ShowDialog(this);
+    }
+
+    private NativeSettingsSnapshot BuildNativeSettingsSnapshot()
+    {
+        return new NativeSettingsSnapshot(
+            DatabasePath: _store.DatabasePath,
+            BrowserSettingsImported: _store.GetSetting("browser_settings_found", "0") == "1",
+            KeyBindingsJson: _store.GetSetting("keybindings_json", "{}"),
+            KeyBindingMode: "read-only in M9; editable keybinding recorder deferred");
     }
 
     private void WarmNeighborPreviews(int index)
@@ -1528,6 +1716,446 @@ internal sealed class MainForm : Form
             : defaultValue;
     }
 
+    private sealed class DetailModalForm : Form
+    {
+        private readonly List<NativeImageRecord> _images;
+        private readonly Action<string> _openExternal;
+        private readonly Action<string, int> _favoriteChanged;
+        private readonly FlowLayoutPanel _toolbar = new();
+        private readonly Panel _imageHost = new();
+        private readonly PictureBox _imageBox = new();
+        private readonly Label _metaLabel = new();
+        private Image? _sourceImage;
+        private int _index;
+        private float _zoom = 1f;
+        private bool _flipped;
+        private bool _dragging;
+        private Point _dragStart;
+        private Point _scrollStart;
+
+        public DetailModalForm(
+            IReadOnlyList<NativeImageRecord> images,
+            int startIndex,
+            Action<string> openExternal,
+            Action<string, int> favoriteChanged)
+        {
+            if (images.Count == 0)
+            {
+                throw new ArgumentException("Detail modal requires at least one image.", nameof(images));
+            }
+
+            _images = images.ToList();
+            _index = Math.Clamp(startIndex, 0, _images.Count - 1);
+            _openExternal = openExternal;
+            _favoriteChanged = favoriteChanged;
+
+            Text = "PhotoViewer Detail";
+            Width = 1040;
+            Height = 760;
+            MinimumSize = new Size(720, 480);
+            KeyPreview = true;
+            StartPosition = FormStartPosition.CenterParent;
+
+            BuildLayout();
+            LoadCurrentImage();
+        }
+
+        public DetailSmokeReport RunSmoke()
+        {
+            var modalOpened = _imageBox.Image is not null && File.Exists(CurrentImage.AbsolutePath);
+            var startIndex = _index;
+            var navigation = true;
+            if (_images.Count > 1)
+            {
+                SelectOffset(1);
+                navigation = _index != startIndex;
+                SelectOffset(-1);
+            }
+
+            var beforeZoom = _zoom;
+            ZoomIn();
+            var zoom = _zoom > beforeZoom;
+            ResetView();
+            var reset = !_flipped && Math.Abs(_zoom - CalculateFitZoom()) < 0.001f;
+            ToggleFlip();
+            var flip = _flipped;
+            ToggleFlip();
+            var pan = TryPanForSmoke();
+
+            var favoriteBefore = CurrentImage.FavoriteLevel;
+            var favoriteTarget = favoriteBefore < 5 ? favoriteBefore + 1 : Math.Max(0, favoriteBefore - 1);
+            SetCurrentFavoriteLevel(favoriteTarget);
+            var favorite = CurrentImage.FavoriteLevel == favoriteTarget;
+            SetCurrentFavoriteLevel(favoriteBefore);
+
+            var openExternal = File.Exists(GetOpenExternalPathForSmoke());
+            return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal);
+        }
+
+        protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+        {
+            switch (keyData)
+            {
+                case Keys.Right:
+                    SelectOffset(1);
+                    return true;
+                case Keys.Left:
+                    SelectOffset(-1);
+                    return true;
+                case Keys.Oemplus:
+                case Keys.Add:
+                    ZoomIn();
+                    return true;
+                case Keys.OemMinus:
+                case Keys.Subtract:
+                    ZoomOut();
+                    return true;
+                case Keys.D0:
+                    ResetView();
+                    return true;
+                case Keys.F:
+                    ToggleFlip();
+                    return true;
+                case Keys.Enter:
+                    _openExternal(CurrentImage.AbsolutePath);
+                    return true;
+                case Keys.Control | Keys.Up:
+                    SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel + 1);
+                    return true;
+                case Keys.Control | Keys.Down:
+                    SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel - 1);
+                    return true;
+                case Keys.Escape:
+                    Close();
+                    return true;
+            }
+
+            return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing)
+            {
+                DisposeLoadedImages();
+            }
+
+            base.Dispose(disposing);
+        }
+
+        private NativeImageRecord CurrentImage => _images[_index];
+
+        private void BuildLayout()
+        {
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 3,
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+
+            _toolbar.Dock = DockStyle.Fill;
+            _toolbar.FlowDirection = FlowDirection.LeftToRight;
+            _toolbar.WrapContents = false;
+            _toolbar.Padding = new Padding(8, 6, 8, 4);
+
+            AddToolbarButton("Previous", 82, () => SelectOffset(-1));
+            AddToolbarButton("Next", 64, () => SelectOffset(1));
+            AddToolbarButton("Zoom +", 72, ZoomIn);
+            AddToolbarButton("Zoom -", 72, ZoomOut);
+            AddToolbarButton("Reset", 64, ResetView);
+            AddToolbarButton("Flip H", 64, ToggleFlip);
+            AddToolbarButton("Open External", 112, () => _openExternal(CurrentImage.AbsolutePath));
+            AddToolbarButton("Fav +", 62, () => SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel + 1));
+            AddToolbarButton("Fav -", 62, () => SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel - 1));
+
+            _imageHost.Dock = DockStyle.Fill;
+            _imageHost.AutoScroll = true;
+            _imageHost.BackColor = Color.FromArgb(16, 16, 16);
+
+            _imageBox.SizeMode = PictureBoxSizeMode.StretchImage;
+            _imageBox.Location = new Point(0, 0);
+            _imageBox.MouseDown += ImageBoxMouseDown;
+            _imageBox.MouseMove += ImageBoxMouseMove;
+            _imageBox.MouseUp += (_, _) => _dragging = false;
+            _imageHost.Controls.Add(_imageBox);
+
+            _metaLabel.Dock = DockStyle.Fill;
+            _metaLabel.Padding = new Padding(8, 4, 8, 4);
+            _metaLabel.AutoEllipsis = true;
+            _metaLabel.TextAlign = ContentAlignment.MiddleLeft;
+
+            root.Controls.Add(_toolbar, 0, 0);
+            root.Controls.Add(_imageHost, 0, 1);
+            root.Controls.Add(_metaLabel, 0, 2);
+            Controls.Add(root);
+        }
+
+        private void AddToolbarButton(string text, int width, Action action)
+        {
+            var button = new Button
+            {
+                Text = text,
+                Width = width,
+                Height = 28,
+            };
+            button.Click += (_, _) => action();
+            _toolbar.Controls.Add(button);
+        }
+
+        private void LoadCurrentImage()
+        {
+            DisposeLoadedImages();
+            var image = CurrentImage;
+            try
+            {
+                _sourceImage = LoadImageCopy(image.AbsolutePath);
+                _flipped = false;
+                _zoom = CalculateFitZoom();
+                ApplyDisplayImage();
+                UpdateMeta();
+            }
+            catch (Exception ex)
+            {
+                _metaLabel.Text = $"Detail load failed: {ex.Message}";
+            }
+        }
+
+        private void DisposeLoadedImages()
+        {
+            var display = _imageBox.Image;
+            _imageBox.Image = null;
+            display?.Dispose();
+            _sourceImage?.Dispose();
+            _sourceImage = null;
+        }
+
+        private void SelectOffset(int offset)
+        {
+            if (_images.Count == 0)
+            {
+                return;
+            }
+
+            _index = (_index + offset + _images.Count) % _images.Count;
+            LoadCurrentImage();
+        }
+
+        private void ZoomIn()
+        {
+            SetZoom(_zoom * 1.25f);
+        }
+
+        private void ZoomOut()
+        {
+            SetZoom(_zoom / 1.25f);
+        }
+
+        private void SetZoom(float zoom)
+        {
+            _zoom = Math.Clamp(zoom, 0.05f, 8f);
+            ApplyDisplayImage();
+            UpdateMeta();
+        }
+
+        private void ResetView()
+        {
+            _flipped = false;
+            _zoom = CalculateFitZoom();
+            ApplyDisplayImage();
+            _imageHost.AutoScrollPosition = Point.Empty;
+            UpdateMeta();
+        }
+
+        private void ToggleFlip()
+        {
+            _flipped = !_flipped;
+            ApplyDisplayImage();
+            UpdateMeta();
+        }
+
+        private void ApplyDisplayImage()
+        {
+            if (_sourceImage is null)
+            {
+                return;
+            }
+
+            var display = new Bitmap(_sourceImage);
+            if (_flipped)
+            {
+                display.RotateFlip(RotateFlipType.RotateNoneFlipX);
+            }
+
+            var old = _imageBox.Image;
+            _imageBox.Image = display;
+            old?.Dispose();
+            _imageBox.Size = new Size(
+                Math.Max(1, (int)Math.Round(display.Width * _zoom)),
+                Math.Max(1, (int)Math.Round(display.Height * _zoom)));
+        }
+
+        private float CalculateFitZoom()
+        {
+            if (_sourceImage is null)
+            {
+                return 1f;
+            }
+
+            var width = Math.Max(1, _imageHost.ClientSize.Width - 8);
+            var height = Math.Max(1, _imageHost.ClientSize.Height - 8);
+            var fit = Math.Min(width / (float)_sourceImage.Width, height / (float)_sourceImage.Height);
+            if (float.IsNaN(fit) || float.IsInfinity(fit) || fit <= 0)
+            {
+                return 1f;
+            }
+
+            return Math.Clamp(Math.Min(1f, fit), 0.05f, 1f);
+        }
+
+        private bool TryPanForSmoke()
+        {
+            if (_imageBox.Image is null)
+            {
+                return false;
+            }
+
+            SetZoom(Math.Max(_zoom, 4f));
+            _imageHost.AutoScrollPosition = new Point(24, 24);
+            return _imageHost.AutoScroll && _imageBox.Image is not null;
+        }
+
+        private string GetOpenExternalPathForSmoke()
+        {
+            return CurrentImage.AbsolutePath;
+        }
+
+        private void SetCurrentFavoriteLevel(int level)
+        {
+            var clamped = Math.Clamp(level, 0, 5);
+            var current = CurrentImage;
+            var updated = current with { FavoriteLevel = clamped };
+            _images[_index] = updated;
+            _favoriteChanged(updated.AbsolutePath, clamped);
+            UpdateMeta();
+        }
+
+        private void UpdateMeta()
+        {
+            var image = CurrentImage;
+            var dimensions = FormatDimensions(image);
+            var zoomText = $"{_zoom * 100f:0}%";
+            var flipText = _flipped ? "flipped" : "normal";
+            _metaLabel.Text = $"{_index + 1:n0}/{_images.Count:n0}  {image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensions}  fav {image.FavoriteLevel}  zoom {zoomText}  {flipText}";
+        }
+
+        private void ImageBoxMouseDown(object? sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            _dragging = true;
+            _dragStart = e.Location;
+            _scrollStart = new Point(_imageHost.HorizontalScroll.Value, _imageHost.VerticalScroll.Value);
+        }
+
+        private void ImageBoxMouseMove(object? sender, MouseEventArgs e)
+        {
+            if (!_dragging)
+            {
+                return;
+            }
+
+            var dx = e.Location.X - _dragStart.X;
+            var dy = e.Location.Y - _dragStart.Y;
+            _imageHost.AutoScrollPosition = new Point(
+                Math.Max(0, _scrollStart.X - dx),
+                Math.Max(0, _scrollStart.Y - dy));
+        }
+    }
+
+    private sealed class NativeSettingsDialog : Form
+    {
+        public NativeSettingsDialog(NativeSettingsSnapshot snapshot)
+        {
+            Text = "Native Settings";
+            Width = 760;
+            Height = 420;
+            MinimumSize = new Size(620, 320);
+            StartPosition = FormStartPosition.CenterParent;
+
+            var root = new TableLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                ColumnCount = 1,
+                RowCount = 2,
+                Padding = new Padding(10),
+            };
+            root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
+
+            var text = new TextBox
+            {
+                Dock = DockStyle.Fill,
+                Multiline = true,
+                ReadOnly = true,
+                ScrollBars = ScrollBars.Vertical,
+                Text = string.Join(Environment.NewLine, new[]
+                {
+                    $"Native SQLite: {snapshot.DatabasePath}",
+                    $"Browser settings imported: {(snapshot.BrowserSettingsImported ? "yes" : "no")}",
+                    $"Keybinding mode: {snapshot.KeyBindingMode}",
+                    "",
+                    "Key bindings:",
+                    snapshot.KeyBindingsJson,
+                }),
+            };
+
+            var ok = new Button
+            {
+                Text = "OK",
+                Width = 92,
+                Height = 28,
+                Anchor = AnchorStyles.Right | AnchorStyles.Top,
+                DialogResult = DialogResult.OK,
+            };
+
+            var actions = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Fill,
+                FlowDirection = FlowDirection.RightToLeft,
+                WrapContents = false,
+            };
+            actions.Controls.Add(ok);
+
+            root.Controls.Add(text, 0, 0);
+            root.Controls.Add(actions, 0, 1);
+            Controls.Add(root);
+            AcceptButton = ok;
+        }
+    }
+
+    private sealed record DetailSmokeReport(
+        bool ModalOpened,
+        bool Navigation,
+        bool Zoom,
+        bool Reset,
+        bool Pan,
+        bool Flip,
+        bool Favorite,
+        bool OpenExternal);
+
+    private sealed record NativeSettingsSnapshot(
+        string DatabasePath,
+        bool BrowserSettingsImported,
+        string KeyBindingsJson,
+        string KeyBindingMode);
+
     private sealed record FolderBucket(string Folder, string Label, int Count)
     {
         public override string ToString()
@@ -1552,6 +2180,17 @@ internal sealed class MainForm : Form
         bool ThumbnailSize,
         bool PreviewToggle,
         bool DetailsToggle,
+        bool PreviewSplitter,
+        bool SelectedCount,
+        bool DetailModal,
+        bool DetailNavigation,
+        bool DetailZoom,
+        bool DetailReset,
+        bool DetailPan,
+        bool DetailFlip,
+        bool DetailFavorite,
+        bool DetailOpenExternal,
+        bool SettingsReadOnly,
         int SearchMatches,
         int FavoriteMatches,
         bool NoResultsState,

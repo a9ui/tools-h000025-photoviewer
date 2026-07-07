@@ -198,6 +198,53 @@ M8 smoke result additions:
 | Persistence keys | DEFERRED | M8 persists native-only sort mode, preview visibility, detail visibility, thumbnail size, and hidden folder buckets in SQLite settings. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M8 UI smoke exercises the denser toolbar/folder/preview layout at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M9 Native Modal And Settings Parity Slice
+
+M9 adds a separate native detail modal, right-preview selected-count/splitter
+state, and a read-only native settings/keybinding decision. It still does not
+claim full native parity.
+
+M9 smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+M9 smoke result additions:
+
+- previewSplitter: true
+- selectedCount: true
+- detailModal: true
+- detailNavigation: true
+- detailZoom: true
+- detailReset: true
+- detailPan: true
+- detailFlip: true
+- detailFavorite: true
+- detailOpenExternal: true
+- settingsReadOnly: true
+
+| Area | M9 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | DEFERRED | No new landing/multi-root implementation in M9. Existing single-folder scan remains covered by M7/M8/M9 UI smoke. | Multi-root sets, remove-folder behavior, open recent folder set, and manual refresh. | `codex_pm` | Native UI/headless test that pastes or imports a multi-root set and proves remove/open-recent/manual refresh behavior without browser runtime. |
+| Legacy browser state | DEFERRED | Existing explicit export import remains covered; no malformed-export UI added in M9. | Malformed export UX and user-facing recovery text. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | Existing query/no-results/favorites search remains covered after M9 controls. | Tag entry, multi-token semantics, clear button, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query, clear action, and no-results copy. |
+| Sidebar quick search and filters | DEFERRED | No new favorite-level/date/enhanced filter chips in M9. | Unrated, favorite level chips 1-5, enhanced-only, date presets, manual date range, and richer count labels. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for each filter bucket and count labels. |
+| Folder visibility | DEFERRED | Existing M8 folder bucket controls remain covered by M9 smoke. | Multi-root bucket sets, range selection, show/hide selected only, clear selected, and richer bucket counts across nested folders. | `cursor_impl` | Native UI smoke with nested/multi-root fixture and explicit show/hide selected acceptance. |
+| Sorting and display | DEFERRED | Existing M8 sort/reshuffle/thumbnail controls remain covered by M9 smoke. | Date sections, scroll memory, seen/unseen state, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering every sort mode, display variant, persisted thumbnail size, and scroll/seen behavior. |
+| Virtual gallery | DEFERRED | M9 detail modal opens from the current visible/filtered order; existing virtual list/grid remains covered. | Date sections, scroll memory, seen/unseen state, drag/open parity, placeholder behavior, and native thumbnail warmup UI. | `codex_pm` | Native UI/manual sweep plus headless perf evidence for large fixture and virtualized scroll state. |
+| Selection and preview tabs | DEFERRED | Right preview selected-count label is smoke-verified; existing single-selection path remains covered. | Ctrl/Shift multi-selection, background clear behavior, preview tabs, pin/unpin, close/restore closed tab, hover/quick preview. | `cursor_impl` | Native UI smoke for multi-selection and preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Selected-count label and persisted splitter distance are smoke-verified. | Bulk favorite/open/recycle confirmation and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving bulk actions on disposable files, or explicit product decision to defer bulk actions. |
+| Modal navigation | DEFERRED | Separate native detail modal is added with previous/next navigation over the current filtered order; M9 smoke verifies modal load and navigation. | Edge/click/swipe equivalents, loading-slot UI, and broader manual modal polish. | `cursor_impl` | Native detail-modal UI smoke/manual sweep covering edge/click equivalents, loading state, and any remaining browser modal affordances. |
+| Modal image controls | DEFERRED | M9 detail modal smoke verifies zoom, reset, pan, horizontal flip, favorite up/down, and open-external target. | Immersive chrome hide/show, richer feedback, and any browser-specific modal controls not yet mapped. | `cursor_impl` | Native detail-modal UI smoke/manual sweep for chrome hide/show, feedback states, and any remaining mapped controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite metadata is shown in the detail modal. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M9 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | M9 replaces the message box with a native settings dialog, expands keybinding metadata for detail controls, and smoke-verifies the explicit read-only keybinding-recorder decision. | Editable keybinding recorder, confirm-before-delete UI, edge/navigation settings, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable recorder, or a durable product decision keeping the recorder read-only. |
+| Enhancement isolation | DEFERRED | M9 UI smoke again verifies ordinary native browsing/search/preview/detail smoke did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M9. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M9 persists native-only preview splitter distance and expands detail keybinding metadata in SQLite settings. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M9 UI smoke exercises the detail modal/settings/right-preview layout at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:
