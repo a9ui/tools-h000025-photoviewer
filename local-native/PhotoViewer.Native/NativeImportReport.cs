@@ -7,6 +7,7 @@ internal sealed record NativeImportReport(
     int AlbumImageCount,
     bool SettingsFound,
     int BrowserStateKeyCount,
+    int SeenImageCount,
     int ImageCount,
     DateTime ImportedAtUtc
 );

@@ -262,3 +262,29 @@ state, drag/open parity, placeholder behavior, native thumbnail warmup UI,
 preview tabs, bulk destructive actions, explicit enhancement UI, and folder
 range selection remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M14 Notes
+
+M14 first slice adds native seen/unseen gallery-state parity without touching
+the browser app. Browser evidence maps from `pvu_seen_images`: the browser
+marks an image seen when it is selected in the grid/list or opened in the
+detail modal, stores the state in localStorage, and renders unseen images with a
+small marker.
+
+Native now imports explicit `pvu_seen_images` browser-state exports into a
+SQLite `seen_images` table, shows unseen rows with a minimal `NEW` prefix in
+the existing list/grid text, and marks the selected preview image as seen in
+native SQLite. The state is read through the same native image queries used by
+scan, search, and UI smoke.
+
+The M14 seen-state smoke verifies browser-export import and native persistence:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke
+```
+
+This remains a parity slice, not full native parity. Date sections/date filter
+controls, folder range selection, drag/open parity, placeholder behavior,
+native thumbnail warmup UI, preview tabs, bulk destructive actions, and
+explicit enhancement UI remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.

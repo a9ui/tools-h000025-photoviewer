@@ -430,6 +430,50 @@ M13 large-scroll smoke result additions:
 | Persistence keys | DEFERRED | M13 verifies native-only `last_selected_image` and `last_visible_index` on a 240-image list. | Full parity for pinned previews, filters beyond favorite/gallery state, seen state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M13 does not change layout; large-scroll smoke exercises the existing desktop WinForms layout. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M14 Native Seen-State Slice
+
+M14 advances only the seen/unseen gallery-state row. It does not redesign the
+UI, add a new visual concept, touch the browser app, use a local server, or
+claim full native parity. Browser evidence is mapped from `pvu_seen_images`,
+grid/list click `markImageSeen`, detail-open `markImageSeen`, and the
+`is-unseen` marker in the existing browser app.
+
+M14 seen smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke
+```
+
+M14 seen smoke result additions:
+
+- importedSeen: true
+- nativeInitiallyUnseen: true
+- nativeSeenPersisted: true
+- importedStillSeen: true
+- seenSmokeImages: 2
+- enhancementStateUnchanged: true
+
+| Area | M14 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | VERIFIED | Existing M11 folder-set smoke remains the acceptance evidence for scan/search/watch/remove/open-recent/manual-refresh behavior. | None for the M11 folder-set scope. Future folder acquisition polish can be handled outside this verified row. | `codex_pm` | Keep `-HeadlessFolderSetSmoke` plus normal native UI smoke in future regressions. |
+| Legacy browser state | DEFERRED | M14 imports explicit browser `pvu_seen_images` from a localStorage export into native SQLite without reading Chrome profile storage. | Malformed export UX and user-facing recovery text remain deferred. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | Existing clear/no-results/indexed-search coverage remains covered after M14. Search result rows now carry native `IsSeen` state. | Tag entry, multi-token semantics beyond existing FTS tokenization evidence, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query semantics, and any accepted chip-equivalent behavior copied from the browser app. |
+| Sidebar quick search and filters | DEFERRED | Existing M10 favorite/unrated/level filter evidence remains covered after M14. | Enhanced-only, date presets, manual date range, and richer count labels beyond favorite state. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for enhanced/date buckets or explicit product decision to defer those filters. |
+| Folder visibility | DEFERRED | M14 does not alter folder bucket behavior. | Folder range selection remains deferred pending a replacement/custom folder bucket control and browser-mapped UI semantics. | `codex_pm` / `claude_ui` / `cursor_impl` | Decide the custom control and keyboard/mouse semantics; if adopted, add native UI smoke proving range selection on multi-root folder buckets. |
+| Sorting and display | DEFERRED | Native list/grid rows now expose unseen state with a minimal `NEW` prefix that maps to the browser `is-unseen` marker. | Date sections/date filter controls, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering date behavior and display variants that map to existing browser PhotoViewer behavior. |
+| Virtual gallery | DEFERRED | M14 adds native `seen_images` persistence and query mapping; `-HeadlessSeenSmoke` proves browser-imported seen state plus native selected-preview seen persistence. | Date sections, drag/open parity, placeholder behavior, and native thumbnail warmup UI. | `codex_pm` / `cursor_impl` | Implement or explicitly defer date semantics; add native UI/headless evidence for any adopted row without using browser/runtime evidence as native acceptance. |
+| Selection and preview tabs | DEFERRED | Native selected-preview images now mark seen in SQLite; existing M10/M13 selection and restore evidence remains covered. | Preview tabs, pin/unpin, close/restore closed tab, hover/quick preview, and richer multi-selection actions. | `cursor_impl` | Native UI smoke for accepted preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Existing direct preview evidence remains covered; selected-preview state now persists seen status. | Bulk favorite/open/recycle confirmation and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving bulk actions on disposable files, or explicit product decision to defer bulk actions. |
+| Modal navigation | DEFERRED | Existing M9 detail-modal navigation remains covered after M14. Selection before detail-open now uses the same native seen state. | Edge/click/swipe equivalents, loading-slot UI, and broader manual modal polish. | `cursor_impl` | Native detail-modal UI smoke/manual sweep covering edge/click equivalents, loading state, and any remaining browser modal affordances. |
+| Modal image controls | DEFERRED | Existing M9 detail-modal controls remain covered after M14. | Immersive chrome hide/show, richer feedback, and any browser-specific modal controls not yet mapped. | `cursor_impl` | Native detail-modal UI smoke/manual sweep for chrome hide/show, feedback states, and any remaining mapped controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite metadata remains covered. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M14 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | M14 state summary includes native seen-image count; no settings UI is added. | Editable keybinding recorder, confirm-before-delete UI, edge/navigation settings, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable recorder, or a durable product decision keeping the recorder read-only. |
+| Enhancement isolation | DEFERRED | M14 seen-state smoke verifies passive import/scan/seen-state actions did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M14. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M14 imports `pvu_seen_images` into native SQLite `seen_images` and persists native selected-preview seen state. | Full parity for pinned previews, filters beyond favorite/gallery state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M14 does not change layout; unseen state is shown through existing list/grid item text. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:

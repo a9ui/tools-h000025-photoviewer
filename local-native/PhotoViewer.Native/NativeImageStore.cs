@@ -1,4 +1,5 @@
 using Microsoft.Data.Sqlite;
+using System.Text.Json;
 
 namespace PhotoViewer.Native;
 
@@ -74,6 +75,15 @@ internal sealed class NativeImageStore
               imported_at_utc TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS seen_images (
+              image_id TEXT PRIMARY KEY,
+              absolute_path TEXT NOT NULL,
+              seen_at_utc TEXT NOT NULL,
+              source TEXT NOT NULL
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_seen_images_path ON seen_images(absolute_path);
+
             CREATE TABLE IF NOT EXISTS albums (
               album_id TEXT PRIMARY KEY,
               name TEXT NOT NULL,
@@ -143,6 +153,7 @@ internal sealed class NativeImageStore
         var summary = NativeStateBridge.ReadSummary(_projectRoot);
         var browserSettingsJson = NativeStateBridge.LoadSettingsJson(_projectRoot);
         var importedAt = DateTime.UtcNow;
+        var importedSeenCount = 0;
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -231,6 +242,8 @@ internal sealed class NativeImageStore
                 insertState.ExecuteNonQuery();
                 UpsertSetting(connection, transaction, $"browser_{record.Key}", record.Value, importedAt);
             }
+
+            importedSeenCount = ImportBrowserSeenImages(connection, transaction, browserState, importedAt);
         }
 
         UpsertSetting(connection, transaction, "browser_settings_found", browserSettingsJson is null ? "0" : "1", importedAt);
@@ -239,6 +252,7 @@ internal sealed class NativeImageStore
             UpsertSetting(connection, transaction, "browser_settings_json", browserSettingsJson, importedAt);
         }
         UpsertSetting(connection, transaction, "browser_state_export_found", string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "0" : "1", importedAt);
+        UpsertSetting(connection, transaction, "browser_seen_image_count", importedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
         if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
         {
             UpsertSetting(connection, transaction, "browser_state_export_path", resolvedBrowserStateExportPath, importedAt);
@@ -287,6 +301,7 @@ internal sealed class NativeImageStore
             AlbumImageCount: summary.AlbumImageCount,
             SettingsFound: summary.SettingsFound,
             BrowserStateKeyCount: browserState.Count,
+            SeenImageCount: CountSeenImages(connection, null),
             ImageCount: CountImages(),
             ImportedAtUtc: importedAt
         );
@@ -413,7 +428,8 @@ internal sealed class NativeImageStore
         using var connection = OpenConnection();
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
+            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                   CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
             FROM images
             WHERE scan_root = $root
             ORDER BY modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
@@ -479,7 +495,8 @@ internal sealed class NativeImageStore
         if (string.IsNullOrWhiteSpace(query))
         {
             command.CommandText = """
-                SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
+                SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                       CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
                 FROM images
                 WHERE scan_root = $root
                   AND ($favoritesOnly = 0 OR favorite_level > 0)
@@ -495,7 +512,8 @@ internal sealed class NativeImageStore
             try
             {
                 command.CommandText = """
-                    SELECT i.id, i.absolute_path, i.filename, i.folder, i.size_bytes, i.created_at_utc, i.modified_at_utc, i.favorite_level, i.width, i.height
+                    SELECT i.id, i.absolute_path, i.filename, i.folder, i.size_bytes, i.created_at_utc, i.modified_at_utc, i.favorite_level, i.width, i.height,
+                           CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = i.id OR seen.absolute_path = i.absolute_path) THEN 1 ELSE 0 END AS is_seen
                     FROM image_search_fts fts
                     JOIN images i ON i.id = fts.image_id
                     WHERE fts.scan_root = $root
@@ -567,7 +585,8 @@ internal sealed class NativeImageStore
     {
         using var command = connection.CreateCommand();
         command.CommandText = """
-            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height
+            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                   CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
             FROM images
             WHERE scan_root = $root
               AND ($favoritesOnly = 0 OR favorite_level > 0)
@@ -691,6 +710,16 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
+    public void MarkImageSeen(string absolutePath, string source = "native")
+    {
+        Initialize();
+        var normalizedPath = Path.GetFullPath(absolutePath);
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        UpsertSeenImage(connection, transaction, normalizedPath, DateTime.UtcNow, source);
+        transaction.Commit();
+    }
+
     public void SetFavoriteLevel(string absolutePath, int level)
     {
         Initialize();
@@ -809,6 +838,13 @@ internal sealed class NativeImageStore
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
+    public int CountSeenImages()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        return CountSeenImages(connection, null);
+    }
+
     public NativeCacheCompatibilityReport CheckCacheCompatibility(string folder)
     {
         Initialize();
@@ -848,6 +884,163 @@ internal sealed class NativeImageStore
         return report;
     }
 
+    private static int ImportBrowserSeenImages(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<NativeBrowserStateRecord> browserState,
+        DateTime importedAt)
+    {
+        var seenRecord = browserState.FirstOrDefault(static item =>
+            string.Equals(item.Key, "pvu_seen_images", StringComparison.Ordinal));
+        if (seenRecord is null || string.IsNullOrWhiteSpace(seenRecord.Value))
+        {
+            return 0;
+        }
+
+        var imported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        IEnumerable<string> seenImageIds;
+        try
+        {
+            seenImageIds = ParseBrowserSeenImageIds(seenRecord.Value).ToList();
+        }
+        catch (JsonException)
+        {
+            return 0;
+        }
+
+        foreach (var imageId in seenImageIds)
+        {
+            if (!imported.Add(imageId))
+            {
+                continue;
+            }
+
+            UpsertSeenImage(connection, transaction, imageId, importedAt, "browser_export");
+        }
+
+        return imported.Count;
+    }
+
+    private static IEnumerable<string> ParseBrowserSeenImageIds(string value)
+    {
+        using var document = JsonDocument.Parse(value);
+        foreach (var imageId in ParseSeenElement(document.RootElement))
+        {
+            yield return imageId;
+        }
+    }
+
+    private static IEnumerable<string> ParseSeenElement(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            var value = element.GetString();
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                yield break;
+            }
+
+            if (value.TrimStart().StartsWith("{", StringComparison.Ordinal) ||
+                value.TrimStart().StartsWith("[", StringComparison.Ordinal))
+            {
+                using var nested = JsonDocument.Parse(value);
+                foreach (var nestedId in ParseSeenElement(nested.RootElement))
+                {
+                    yield return nestedId;
+                }
+
+                yield break;
+            }
+
+            yield return NormalizeImageId(value);
+            yield break;
+        }
+
+        if (element.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in element.EnumerateArray())
+            {
+                foreach (var imageId in ParseSeenElement(item))
+                {
+                    yield return imageId;
+                }
+            }
+
+            yield break;
+        }
+
+        if (element.ValueKind != JsonValueKind.Object)
+        {
+            yield break;
+        }
+
+        foreach (var property in element.EnumerateObject())
+        {
+            if (IsTruthyStorageValue(property.Value))
+            {
+                yield return NormalizeImageId(property.Name);
+            }
+        }
+    }
+
+    private static bool IsTruthyStorageValue(JsonElement value)
+    {
+        return value.ValueKind switch
+        {
+            JsonValueKind.True => true,
+            JsonValueKind.Number => value.TryGetInt32(out var number) && number != 0,
+            JsonValueKind.String => IsTruthyStorageString(value.GetString()),
+            _ => false,
+        };
+    }
+
+    private static bool IsTruthyStorageString(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        return !string.Equals(value, "false", StringComparison.OrdinalIgnoreCase) &&
+               !string.Equals(value, "0", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string NormalizeImageId(string value)
+    {
+        try
+        {
+            return Path.GetFullPath(value);
+        }
+        catch
+        {
+            return value;
+        }
+    }
+
+    private static void UpsertSeenImage(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        string imageId,
+        DateTime seenAt,
+        string source)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO seen_images(image_id, absolute_path, seen_at_utc, source)
+            VALUES ($id, $path, $seenAt, $source)
+            ON CONFLICT(image_id) DO UPDATE SET
+              absolute_path = excluded.absolute_path,
+              seen_at_utc = excluded.seen_at_utc,
+              source = excluded.source
+            """;
+        command.Parameters.AddWithValue("$id", imageId);
+        command.Parameters.AddWithValue("$path", imageId);
+        command.Parameters.AddWithValue("$seenAt", seenAt.ToString("O"));
+        command.Parameters.AddWithValue("$source", source);
+        command.ExecuteNonQuery();
+    }
+
     private SqliteConnection OpenConnection()
     {
         var connection = new SqliteConnection(_connectionString);
@@ -860,6 +1053,14 @@ internal sealed class NativeImageStore
         using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = "SELECT COUNT(*) FROM images";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    private static int CountSeenImages(SqliteConnection connection, SqliteTransaction? transaction)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT COUNT(*) FROM seen_images";
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
@@ -883,7 +1084,8 @@ internal sealed class NativeImageStore
             ModifiedAtUtc: DateTime.Parse(reader.GetString(6), null, System.Globalization.DateTimeStyles.RoundtripKind),
             FavoriteLevel: reader.GetInt32(7),
             Width: reader.IsDBNull(8) ? null : reader.GetInt32(8),
-            Height: reader.IsDBNull(9) ? null : reader.GetInt32(9)
+            Height: reader.IsDBNull(9) ? null : reader.GetInt32(9),
+            IsSeen: !reader.IsDBNull(10) && reader.GetInt32(10) != 0
         );
     }
 

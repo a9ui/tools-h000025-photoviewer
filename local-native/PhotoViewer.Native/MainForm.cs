@@ -1126,7 +1126,7 @@ internal sealed class MainForm : Form
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
-        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
+        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
     }
 
     private void ImportState()
@@ -1137,7 +1137,7 @@ internal sealed class MainForm : Form
         BuildFolderBuckets();
         ApplyFilter();
         ApplyStateSummary(report);
-        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.");
+        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.SeenImageCount:n0} seen images, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.");
     }
 
     private void BrowseFolder()
@@ -1509,7 +1509,9 @@ internal sealed class MainForm : Form
     private static ListViewItem CreateListItem(NativeImageRecord image)
     {
         var favorite = image.FavoriteLevel > 0 ? image.FavoriteLevel.ToString() : "";
-        var item = new ListViewItem(favorite.Length > 0 ? $"★{favorite} {image.Filename}" : image.Filename)
+        var seenPrefix = image.IsSeen ? "" : "NEW ";
+        var favoritePrefix = favorite.Length > 0 ? $"★{favorite} " : "";
+        var item = new ListViewItem($"{seenPrefix}{favoritePrefix}{image.Filename}")
         {
             ImageIndex = 0,
         };
@@ -1874,6 +1876,11 @@ internal sealed class MainForm : Form
         var index = GetSelectedIndex();
         var selected = index >= 0 ? _visibleImages[index] : null;
         var selectedCount = _list.SelectedIndices.Count;
+        if (selected is not null && selectedCount == 1)
+        {
+            selected = MarkImageSeenIfNeeded(selected, index);
+        }
+
         _previousButton.Enabled = index > 0;
         _nextButton.Enabled = index >= 0 && index < _visibleImages.Count - 1;
         _detailButton.Enabled = selected is not null;
@@ -1892,6 +1899,30 @@ internal sealed class MainForm : Form
         _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
         _updatingFavoriteControl = false;
         SaveGalleryStateIfChanged(selected, index);
+    }
+
+    private NativeImageRecord MarkImageSeenIfNeeded(NativeImageRecord selected, int visibleIndex)
+    {
+        if (selected.IsSeen)
+        {
+            return selected;
+        }
+
+        _store.MarkImageSeen(selected.AbsolutePath);
+        var updated = selected with { IsSeen = true };
+        _visibleImages[visibleIndex] = updated;
+        var allIndex = _allImages.FindIndex(item => string.Equals(item.AbsolutePath, updated.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        if (allIndex >= 0)
+        {
+            _allImages[allIndex] = updated;
+        }
+
+        if (visibleIndex >= 0 && visibleIndex < _list.VirtualListSize)
+        {
+            _list.RedrawItems(visibleIndex, visibleIndex, invalidateOnly: false);
+        }
+
+        return updated;
     }
 
     private void SaveGalleryStateIfChanged(NativeImageRecord? selected, int visibleIndex)
