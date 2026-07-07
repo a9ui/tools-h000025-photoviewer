@@ -63,6 +63,21 @@ internal static class Program
             return NativeHeadlessRunner.RunCacheCompatibility(args[1]);
         }
 
+        if (args.Length >= 2 && args[0] == "--headless-ui-smoke")
+        {
+            var searchQuery = "fixture";
+            for (var i = 2; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--search", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    searchQuery = args[++i];
+                }
+            }
+
+            ApplicationConfiguration.Initialize();
+            return await MainForm.RunUiSmokeAsync(args[1], searchQuery);
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();

@@ -129,3 +129,19 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Prepa
 The generated fixture is intended for the existing M4 headless import, scan,
 performance, and cache compatibility commands. It is not a browser export
 helper and does not read Chrome profile storage.
+
+## M7 Notes
+
+M7 adds an automated WinForms UI smoke for native acceptance evidence. It starts
+the native desktop form, scans the fixture folder, loads direct image preview,
+uses previous/next and keyboard navigation, changes favorite level through the
+keyboard shortcut, toggles grid mode, checks search/favorites/no-results,
+checks missing-folder error status, and confirms the enhancement jobs state did
+not change.
+
+It remains a native UI smoke, not browser E2E, not a webview, and not a local
+HTTP server check.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```

@@ -102,6 +102,60 @@ Status values:
 | Persistence keys | DEFERRED | Native partial acceptance | Explicit export import recorded 5 `pvu_*` keys; SQLite `browser_state` and `native_settings` are populated by native import. | Full parity for `pvu_favorites`, pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings is pending. | Merge; M7 owner `codex_pm` to expand export fixture or mark keys intentionally out of scope. |
 | Native responsive/layout parity | DEFERRED | Native code inspection only | `MainForm` sets desktop size `1280x820`, minimum `900x560`, dense WinForms toolbar/action row/split preview layout. | No native screenshot/manual layout sweep was captured in M6; overlap and polish are not accepted. | Merge; M7 owner `claude_ui`/`codex_pm` for Human Surface review if Claude smoke is available. |
 
+## M7 Native UI Parity Sweep
+
+M7 adds a WinForms UI smoke and reruns the native headless fixture checks. This
+section updates the M6 deferred rows with native acceptance evidence where it
+exists. It still does not claim full native parity.
+
+M7 smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+M7 smoke result:
+
+- runtime: `winforms`
+- scannedImages: 3
+- initialVisible: 3
+- previewLoaded: true
+- navigationButtons: true
+- keyboardNavigation: true
+- keyboardFavorite: true
+- gridToggle: true
+- searchMatches: 3
+- favoriteMatches: 1
+- noResultsState: true
+- folderErrorState: true
+- albums: 2
+- albumImages: 3
+- browserStateKeys: 5
+- settingsImported: true
+- enhancementStateUnchanged: true
+- browserRuntime/localHttpServer/nodeRuntime: false/false/false
+
+| Area | M7 status | Native evidence added | Still deferred |
+| --- | --- | --- | --- |
+| Landing and folder set | DEFERRED | WinForms smoke verifies single folder path scan, imported state summary, initial visible images, and missing-folder status. | Multi-root sets, remove-folder behavior, open recent folder set, and manual refresh. |
+| Legacy browser state | DEFERRED | Headless import and UI smoke verify default explicit browser export import: 5 `pvu_*` keys, settings marker, albums 2, albumImages 3. | Malformed export UX and user-facing recovery text. |
+| Search bar | DEFERRED | UI smoke verifies query `fixture` returns 3 matches and no-results status works; headless indexed search passes. | Tag entry, multi-token semantics, clear button, and search chip behavior. |
+| Sidebar quick search and filters | DEFERRED | UI smoke verifies favorites-only filtering returns 1 match after imported favorite state. | Unrated, favorite level chips 1-5, enhanced-only, date presets, manual date range, and richer count labels. |
+| Folder visibility | DEFERRED | None beyond single-folder scan. | Folder buckets/sidebar, show/hide all, invert, multi/range selection, show/hide selected, and clear selection. |
+| Sorting and display | DEFERRED | UI smoke verifies list/grid toggle and `Ctrl+G` keyboard path. | Modified/created/name/random sorting, reshuffle, compact/poster equivalents, aspect controls, thumbnail size controls, and wheel zoom equivalents. |
+| Virtual gallery | DEFERRED | UI smoke verifies virtual list/grid can show 3 fixture images and direct preview; headless perf verifies navigation p95 15.38 ms and cache hit rate 95.0%. | Date sections, scroll memory, seen/unseen state, drag/open parity, placeholder behavior, and native thumbnail warmup UI. |
+| Selection and preview tabs | DEFERRED | UI smoke verifies single selection, previous/next button state, keyboard previous navigation, and preview load. | Ctrl/Shift multi-selection, background clear behavior, preview tabs, pin/unpin, close/restore closed tab, hover/quick preview. |
+| Right preview panel | DEFERRED | UI smoke verifies direct preview and favorite-level keyboard mutation. | Show/hide and resize persistence, details toggle, selected count, bulk favorite/open/recycle confirmation. |
+| Modal navigation | DEFERRED | UI smoke and headless perf verify native main-view previous/current/next navigation and direct preview. | Separate detail modal parity, filtered subset wrap behavior, edge/click/swipe equivalents, and loading-slot UI. |
+| Modal image controls | DEFERRED | None. | Zoom, reset, pan, horizontal flip, chrome hide/show, favorite +/- inside modal, feedback, and open external. |
+| Modal metadata | DEFERRED | UI smoke verifies preview loaded; M6 code path shows filename/size/dimensions/favorite label. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. |
+| Delete flows | DEFERRED | M6 code inspection keeps Recycle Bin path without hard-delete fallback. M7 smoke intentionally avoids destructive Recycle operations. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. |
+| Settings modal | DEFERRED | UI smoke verifies imported settings marker and key-binding data are present in native store. | Non-blocking settings UI automation, confirm-before-delete UI, edge/navigation settings, keybinding recorder, malformed settings fallback, and full browser settings parity. |
+| Enhancement isolation | DEFERRED | UI smoke verifies ordinary native browsing/search/preview did not change `.cache/enhance/jobs.json` state and reports no browser/server/node runtime. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. |
+| Browser APIs and errors | DEFERRED | Headless native routes cover import, scan, incremental scan, indexed search, performance, cache compatibility; UI smoke covers missing-folder status. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. |
+| Persistence keys | DEFERRED | Explicit export imports 5 `pvu_*` keys and UI smoke verifies browserStateKeys 5. | Full parity for pinned previews, filters, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. |
+| Native responsive/layout parity | DEFERRED | UI smoke creates and exercises the WinForms layout at the native desktop size. | Screenshot/manual layout sweep for overlap, text fit, and polish. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:
