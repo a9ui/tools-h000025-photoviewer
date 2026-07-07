@@ -100,6 +100,38 @@ git diff --name-only -- src
   `src/components/CachedImage.tsx`.
 - `git diff --name-only -- src` returned no files.
 
+## Browser Smoke
+
+M5 also ran a one-off Playwright smoke against a temporary local dev server at
+`http://localhost:3001` using the deterministic fixture folder
+`.cache/native-fixture`.
+
+Observed browser smoke results:
+
+- landing page rendered `PhotoViewer`, `Add folder`, and `Open folder set`
+- pasted fixture path was added and removable
+- folder scan completed through the browser API path
+- viewer showed 3 indexed images and 3 image elements
+- sidebar/filter text was present, including favorites, unrated, enhanced,
+  date, folder visibility, sort, and display sections
+- search for `fixture` returned fixture results with no empty-result state
+- modal opened from the first image and exposed counter/action controls
+- passive landing, browsing, searching, and modal opening created no enhancement
+  jobs: `beforeJobsCount=0`, `afterJobsCount=0`
+- browser console errors/warnings captured during the smoke: none
+
+Server log evidence during the smoke included successful calls to:
+
+- `/api/scan`
+- `/api/search`
+- `/api/folders`
+- `/api/thumbs/warm`
+- `/api/image`
+- `/api/tags`
+- `/api/favorites`
+- `/api/settings`
+- `/api/enhance/jobs`
+
 ## Browser Regression Coverage
 
 The existing browser E2E coverage is only a smoke check for the landing folder
