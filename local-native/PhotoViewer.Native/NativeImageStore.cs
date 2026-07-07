@@ -65,6 +65,19 @@ internal sealed class NativeImageStore
               imported_at_utc TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS albums (
+              album_id TEXT PRIMARY KEY,
+              name TEXT NOT NULL,
+              image_count INTEGER NOT NULL,
+              imported_at_utc TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS native_settings (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              updated_at_utc TEXT NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS import_runs (
               id INTEGER PRIMARY KEY AUTOINCREMENT,
               imported_at_utc TEXT NOT NULL,
@@ -83,7 +96,9 @@ internal sealed class NativeImageStore
     {
         Initialize();
         var favorites = NativeStateBridge.LoadFavorites(_projectRoot);
+        var albums = NativeStateBridge.LoadAlbums(_projectRoot);
         var summary = NativeStateBridge.ReadSummary(_projectRoot);
+        var browserSettingsJson = NativeStateBridge.LoadSettingsJson(_projectRoot);
         var importedAt = DateTime.UtcNow;
 
         using var connection = OpenConnection();
@@ -109,6 +124,35 @@ internal sealed class NativeImageStore
             insert.ExecuteNonQuery();
         }
 
+        ExecuteNonQuery(connection, transaction, "DELETE FROM albums");
+        foreach (var album in albums)
+        {
+            using var insertAlbum = connection.CreateCommand();
+            insertAlbum.Transaction = transaction;
+            insertAlbum.CommandText = """
+                INSERT INTO albums(album_id, name, image_count, imported_at_utc)
+                VALUES ($id, $name, $count, $imported)
+                ON CONFLICT(album_id) DO UPDATE SET
+                  name = excluded.name,
+                  image_count = excluded.image_count,
+                  imported_at_utc = excluded.imported_at_utc
+                """;
+            insertAlbum.Parameters.AddWithValue("$id", album.Id);
+            insertAlbum.Parameters.AddWithValue("$name", album.Name);
+            insertAlbum.Parameters.AddWithValue("$count", album.ImageCount);
+            insertAlbum.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
+            insertAlbum.ExecuteNonQuery();
+        }
+
+        UpsertSetting(connection, transaction, "browser_settings_found", browserSettingsJson is null ? "0" : "1", importedAt);
+        if (browserSettingsJson is not null)
+        {
+            UpsertSetting(connection, transaction, "browser_settings_json", browserSettingsJson, importedAt);
+        }
+
+        UpsertSetting(connection, transaction, "keybindings_json", DefaultKeyBindingsJson, importedAt);
+        UpsertSetting(connection, transaction, "view_mode", GetSetting(connection, transaction, "view_mode") ?? "details", importedAt);
+
         ExecuteNonQuery(connection, transaction, "UPDATE images SET favorite_level = 0");
         ExecuteNonQuery(connection, transaction, """
             UPDATE images
@@ -131,7 +175,7 @@ internal sealed class NativeImageStore
             """;
         run.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
         run.Parameters.AddWithValue("$favorites", favorites.Count);
-        run.Parameters.AddWithValue("$albums", summary.AlbumCount);
+        run.Parameters.AddWithValue("$albums", albums.Count);
         run.Parameters.AddWithValue("$settings", summary.SettingsFound ? 1 : 0);
         run.Parameters.AddWithValue("$images", CountImages(connection, transaction));
         run.Parameters.AddWithValue("$root", _projectRoot);
@@ -197,6 +241,8 @@ internal sealed class NativeImageStore
             rootCommand.Parameters.AddWithValue("$elapsed", (long)elapsed.TotalMilliseconds);
             rootCommand.ExecuteNonQuery();
         }
+
+        UpsertSetting(connection, transaction, "recent_folder", resolvedRoot, finishedAt);
 
         using var upsert = connection.CreateCommand();
         upsert.Transaction = transaction;
@@ -302,11 +348,187 @@ internal sealed class NativeImageStore
         return images;
     }
 
+    public List<NativeImageRecord> SearchImagesForRoot(string root, string query, bool favoritesOnly, int limit = 200)
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level
+            FROM images
+            WHERE scan_root = $root
+              AND ($favoritesOnly = 0 OR favorite_level > 0)
+              AND (
+                $query = ''
+                OR filename LIKE $like COLLATE NOCASE
+                OR folder LIKE $like COLLATE NOCASE
+                OR absolute_path LIKE $like COLLATE NOCASE
+              )
+            ORDER BY favorite_level DESC, modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
+            LIMIT $limit
+            """;
+        command.Parameters.AddWithValue("$root", Path.GetFullPath(root));
+        command.Parameters.AddWithValue("$favoritesOnly", favoritesOnly ? 1 : 0);
+        command.Parameters.AddWithValue("$query", query);
+        command.Parameters.AddWithValue("$like", $"%{query}%");
+        command.Parameters.AddWithValue("$limit", limit);
+
+        using var reader = command.ExecuteReader();
+        var images = new List<NativeImageRecord>();
+        while (reader.Read())
+        {
+            images.Add(ReadImage(reader));
+        }
+
+        return images;
+    }
+
+    public string? LoadRecentFolder()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        var stored = GetSetting(connection, null, "recent_folder");
+        if (!string.IsNullOrWhiteSpace(stored))
+        {
+            return stored;
+        }
+
+        using var command = connection.CreateCommand();
+        command.CommandText = """
+            SELECT root_path
+            FROM scan_roots
+            ORDER BY last_scan_finished_utc DESC
+            LIMIT 1
+            """;
+        return command.ExecuteScalar() as string;
+    }
+
+    public string GetSetting(string key, string defaultValue)
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        return GetSetting(connection, null, key) ?? defaultValue;
+    }
+
+    public void SaveSetting(string key, string value)
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        UpsertSetting(connection, transaction, key, value, DateTime.UtcNow);
+        transaction.Commit();
+    }
+
+    public void SaveViewState(string viewMode, string searchText, bool favoritesOnly)
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var now = DateTime.UtcNow;
+        UpsertSetting(connection, transaction, "view_mode", viewMode, now);
+        UpsertSetting(connection, transaction, "search_text", searchText, now);
+        UpsertSetting(connection, transaction, "favorites_only", favoritesOnly ? "1" : "0", now);
+        transaction.Commit();
+    }
+
+    public void SetFavoriteLevel(string absolutePath, int level)
+    {
+        Initialize();
+        var normalizedPath = Path.GetFullPath(absolutePath);
+        var clamped = Math.Clamp(level, 0, 5);
+        var now = DateTime.UtcNow.ToString("O");
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        if (clamped == 0)
+        {
+            using var deleteFavorite = connection.CreateCommand();
+            deleteFavorite.Transaction = transaction;
+            deleteFavorite.CommandText = "DELETE FROM favorites WHERE image_id = $id OR absolute_path = $path";
+            deleteFavorite.Parameters.AddWithValue("$id", normalizedPath);
+            deleteFavorite.Parameters.AddWithValue("$path", normalizedPath);
+            deleteFavorite.ExecuteNonQuery();
+        }
+        else
+        {
+            using var upsertFavorite = connection.CreateCommand();
+            upsertFavorite.Transaction = transaction;
+            upsertFavorite.CommandText = """
+                INSERT INTO favorites(image_id, absolute_path, level, imported_at_utc)
+                VALUES ($id, $path, $level, $imported)
+                ON CONFLICT(image_id) DO UPDATE SET
+                  absolute_path = excluded.absolute_path,
+                  level = excluded.level,
+                  imported_at_utc = excluded.imported_at_utc
+                """;
+            upsertFavorite.Parameters.AddWithValue("$id", normalizedPath);
+            upsertFavorite.Parameters.AddWithValue("$path", normalizedPath);
+            upsertFavorite.Parameters.AddWithValue("$level", clamped);
+            upsertFavorite.Parameters.AddWithValue("$imported", now);
+            upsertFavorite.ExecuteNonQuery();
+        }
+
+        using var updateImage = connection.CreateCommand();
+        updateImage.Transaction = transaction;
+        updateImage.CommandText = "UPDATE images SET favorite_level = $level WHERE id = $id OR absolute_path = $path";
+        updateImage.Parameters.AddWithValue("$level", clamped);
+        updateImage.Parameters.AddWithValue("$id", normalizedPath);
+        updateImage.Parameters.AddWithValue("$path", normalizedPath);
+        updateImage.ExecuteNonQuery();
+        transaction.Commit();
+    }
+
+    public void RemoveImage(string absolutePath)
+    {
+        Initialize();
+        var normalizedPath = Path.GetFullPath(absolutePath);
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+
+        using (var deleteImage = connection.CreateCommand())
+        {
+            deleteImage.Transaction = transaction;
+            deleteImage.CommandText = "DELETE FROM images WHERE id = $id OR absolute_path = $path";
+            deleteImage.Parameters.AddWithValue("$id", normalizedPath);
+            deleteImage.Parameters.AddWithValue("$path", normalizedPath);
+            deleteImage.ExecuteNonQuery();
+        }
+
+        using (var deleteFavorite = connection.CreateCommand())
+        {
+            deleteFavorite.Transaction = transaction;
+            deleteFavorite.CommandText = "DELETE FROM favorites WHERE image_id = $id OR absolute_path = $path";
+            deleteFavorite.Parameters.AddWithValue("$id", normalizedPath);
+            deleteFavorite.Parameters.AddWithValue("$path", normalizedPath);
+            deleteFavorite.ExecuteNonQuery();
+        }
+
+        transaction.Commit();
+    }
+
     public int CountImages()
     {
         Initialize();
         using var connection = OpenConnection();
         return CountImages(connection, null);
+    }
+
+    public int CountAlbums()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM albums";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    public int CountSettings()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM native_settings";
+        return Convert.ToInt32(command.ExecuteScalar());
     }
 
     private SqliteConnection OpenConnection()
@@ -331,4 +553,48 @@ internal sealed class NativeImageStore
         command.CommandText = sql;
         command.ExecuteNonQuery();
     }
+
+    private static NativeImageRecord ReadImage(SqliteDataReader reader)
+    {
+        return new NativeImageRecord(
+            Id: reader.GetString(0),
+            AbsolutePath: reader.GetString(1),
+            Filename: reader.GetString(2),
+            Folder: reader.GetString(3),
+            SizeBytes: reader.GetInt64(4),
+            CreatedAtUtc: DateTime.Parse(reader.GetString(5), null, System.Globalization.DateTimeStyles.RoundtripKind),
+            ModifiedAtUtc: DateTime.Parse(reader.GetString(6), null, System.Globalization.DateTimeStyles.RoundtripKind),
+            FavoriteLevel: reader.GetInt32(7)
+        );
+    }
+
+    private static string? GetSetting(SqliteConnection connection, SqliteTransaction? transaction, string key)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT value FROM native_settings WHERE key = $key";
+        command.Parameters.AddWithValue("$key", key);
+        return command.ExecuteScalar() as string;
+    }
+
+    private static void UpsertSetting(SqliteConnection connection, SqliteTransaction transaction, string key, string value, DateTime updatedAt)
+    {
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO native_settings(key, value, updated_at_utc)
+            VALUES ($key, $value, $updated)
+            ON CONFLICT(key) DO UPDATE SET
+              value = excluded.value,
+              updated_at_utc = excluded.updated_at_utc
+            """;
+        command.Parameters.AddWithValue("$key", key);
+        command.Parameters.AddWithValue("$value", value);
+        command.Parameters.AddWithValue("$updated", updatedAt.ToString("O"));
+        command.ExecuteNonQuery();
+    }
+
+    private const string DefaultKeyBindingsJson = """
+        {"next":"Right","previous":"Left","favoriteUp":"Ctrl+Up","favoriteDown":"Ctrl+Down","delete":"Delete","openFile":"Enter","openFolder":"Ctrl+Enter","toggleView":"Ctrl+G"}
+        """;
 }

@@ -8,8 +8,8 @@ app to change shape.
 | Source | Current Shape | Native Handling |
 | --- | --- | --- |
 | `.cache/favorites.json` | `Record<absolutePath, level>` | Read immediately; later write through native store and optional JSON sync. |
-| `.cache/albums.json` | `{ albums: Album[] }` | Import after native relation store exists. |
-| `.cache/settings.json` | app settings JSON | Read key binding/default confirmation settings after native command map exists. |
+| `.cache/albums.json` | `{ albums: Album[] }` | M2 imports album id/name/image-count summary rows into SQLite `albums`. Full album image membership remains M4 parity work. |
+| `.cache/settings.json` | app settings JSON | M2 stores browser settings presence/raw JSON marker and native key-binding defaults in SQLite `native_settings`. |
 | `.cache/index_*.json` | per-root scan cache | Treat as optional seed data; do not rely on whole-file JSON long term. |
 | `.cache/thumbs` | WebP thumbnails | Reuse only after cache key compatibility is proven. |
 | `.cache/display` | WebP display variants | Reuse as a warm display cache when source/version matches. |
@@ -47,6 +47,18 @@ M1 creates `.cache/native/photoviewer-native.sqlite` with:
 
 Favorites import is active. Albums, settings, and browser-only `pvu_*` state
 remain compatibility targets for later milestones.
+
+## M2 Native Store
+
+M2 extends `.cache/native/photoviewer-native.sqlite` with:
+
+- `albums`
+- `native_settings`
+
+Native settings currently include recent folder, view mode, search text,
+favorite-only filter, default key-binding JSON, and browser settings import
+markers. Favorite level mutation writes to SQLite immediately. Delete removes
+the image/favorite rows only after the Windows Recycle Bin operation succeeds.
 
 ## Compatibility Rules
 

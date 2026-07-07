@@ -33,6 +33,14 @@ Headless scan/import verification:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessScan -Folder "C:\path\to\images"
 ```
 
+M2 headless state checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessImport
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSearch -Folder "C:\path\to\images" -Search "name" -FavoritesOnly
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -FavoritePath "C:\path\to\image.png" -FavoriteLevel 4
+```
+
 ## M0 Notes
 
 This first app is intentionally small. It proves the local shape:
@@ -53,3 +61,12 @@ Expected limitations:
 - Albums and browser-only `localStorage` view state are mapped in docs first and
   should be imported after the native store is chosen.
 - Enhancement jobs stay out of the hot path.
+
+## M2 Notes
+
+- List/grid browsing is native WinForms state, backed by SQLite settings.
+- Previous/next navigation, favorite level mutation, search/favorite filters,
+  recent folder restore, open file/folder, and Recycle Bin delete are present.
+- `.cache/albums.json` and `.cache/settings.json` are imported as compatibility
+  state summaries. Browser `pvu_*` localStorage is still not read directly.
+- Recycle delete has no hard-delete fallback; failure leaves the file in place.

@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Drawing;
+using Microsoft.VisualBasic.FileIO;
 
 namespace PhotoViewer.Native;
 
@@ -12,11 +13,20 @@ internal sealed class MainForm : Form
     private readonly Button _importButton = new();
     private readonly TextBox _searchText = new();
     private readonly CheckBox _favoritesOnly = new();
+    private readonly ComboBox _viewMode = new();
+    private readonly Button _previousButton = new();
+    private readonly Button _nextButton = new();
+    private readonly NumericUpDown _favoriteLevel = new();
+    private readonly Button _openFileButton = new();
+    private readonly Button _openFolderButton = new();
+    private readonly Button _deleteButton = new();
+    private readonly Button _settingsButton = new();
     private readonly Label _stateLabel = new();
     private readonly Label _statusLabel = new();
     private readonly ListView _list = new();
     private readonly PictureBox _preview = new();
     private readonly Label _previewLabel = new();
+    private readonly ImageList _gridImages = new();
 
     private readonly string _projectRoot;
     private readonly NativeImageStore _store;
@@ -25,6 +35,7 @@ internal sealed class MainForm : Form
     private List<NativeImageRecord> _visibleImages = [];
     private CancellationTokenSource? _scanCancellation;
     private long _previewVersion;
+    private bool _updatingFavoriteControl;
 
     public MainForm(string? initialFolder)
     {
@@ -32,6 +43,7 @@ internal sealed class MainForm : Form
         Width = 1280;
         Height = 820;
         MinimumSize = new Size(900, 560);
+        KeyPreview = true;
 
         _projectRoot = NativeStateBridge.ResolveProjectRoot();
         _store = new NativeImageStore(_projectRoot);
@@ -44,6 +56,14 @@ internal sealed class MainForm : Form
         {
             _folderText.Text = initialFolder;
         }
+        else
+        {
+            _folderText.Text = _store.LoadRecentFolder() ?? "";
+        }
+
+        _searchText.Text = _store.GetSetting("search_text", "");
+        _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
+        ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplyStateSummary(report);
     }
 
@@ -65,9 +85,10 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 26));
 
@@ -109,11 +130,19 @@ internal sealed class MainForm : Form
 
         _searchText.Dock = DockStyle.Fill;
         _searchText.PlaceholderText = "Search name/folder";
-        _searchText.TextChanged += (_, _) => ApplyFilter();
+        _searchText.TextChanged += (_, _) =>
+        {
+            ApplyFilter();
+            SaveViewState();
+        };
 
         _favoritesOnly.Text = "Favorites";
         _favoritesOnly.Dock = DockStyle.Fill;
-        _favoritesOnly.CheckedChanged += (_, _) => ApplyFilter();
+        _favoritesOnly.CheckedChanged += (_, _) =>
+        {
+            ApplyFilter();
+            SaveViewState();
+        };
 
         _stateLabel.Dock = DockStyle.Fill;
         _stateLabel.TextAlign = ContentAlignment.MiddleRight;
@@ -128,6 +157,76 @@ internal sealed class MainForm : Form
         toolbar.Controls.Add(_favoritesOnly, 6, 0);
         toolbar.Controls.Add(_stateLabel, 8, 0);
 
+        var actions = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            Padding = new Padding(8, 4, 8, 2),
+        };
+
+        _viewMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _viewMode.Width = 96;
+        _viewMode.Items.AddRange(["List", "Grid"]);
+        _viewMode.SelectedIndexChanged += (_, _) =>
+        {
+            ApplyViewMode(_viewMode.SelectedItem?.ToString() == "Grid" ? "grid" : "details");
+            SaveViewState();
+        };
+
+        _previousButton.Text = "Previous";
+        _previousButton.Width = 82;
+        _previousButton.Click += (_, _) => SelectOffset(-1);
+
+        _nextButton.Text = "Next";
+        _nextButton.Width = 82;
+        _nextButton.Click += (_, _) => SelectOffset(1);
+
+        var favoriteLabel = new Label
+        {
+            Text = "Favorite",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 6, 0, 0),
+        };
+
+        _favoriteLevel.Minimum = 0;
+        _favoriteLevel.Maximum = 5;
+        _favoriteLevel.Width = 48;
+        _favoriteLevel.ValueChanged += (_, _) =>
+        {
+            if (!_updatingFavoriteControl)
+            {
+                SetSelectedFavoriteLevel((int)_favoriteLevel.Value);
+            }
+        };
+
+        _openFileButton.Text = "Open File";
+        _openFileButton.Width = 86;
+        _openFileButton.Click += (_, _) => OpenSelectedFile();
+
+        _openFolderButton.Text = "Open Folder";
+        _openFolderButton.Width = 96;
+        _openFolderButton.Click += (_, _) => OpenSelectedFolder();
+
+        _deleteButton.Text = "Recycle";
+        _deleteButton.Width = 76;
+        _deleteButton.Click += (_, _) => DeleteSelectedImage();
+
+        _settingsButton.Text = "Settings";
+        _settingsButton.Width = 82;
+        _settingsButton.Click += (_, _) => ShowNativeSettings();
+
+        actions.Controls.Add(_viewMode);
+        actions.Controls.Add(_previousButton);
+        actions.Controls.Add(_nextButton);
+        actions.Controls.Add(favoriteLabel);
+        actions.Controls.Add(_favoriteLevel);
+        actions.Controls.Add(_openFileButton);
+        actions.Controls.Add(_openFolderButton);
+        actions.Controls.Add(_deleteButton);
+        actions.Controls.Add(_settingsButton);
+
         var split = new SplitContainer
         {
             Dock = DockStyle.Fill,
@@ -140,8 +239,14 @@ internal sealed class MainForm : Form
         _list.FullRowSelect = true;
         _list.HideSelection = false;
         _list.VirtualMode = true;
+        _list.MultiSelect = false;
+        _gridImages.ImageSize = new Size(96, 96);
+        _gridImages.ColorDepth = ColorDepth.Depth32Bit;
+        _gridImages.Images.Add(CreateGridPlaceholder());
+        _list.SmallImageList = _gridImages;
+        _list.LargeImageList = _gridImages;
+        _list.Columns.Add("Name", 300);
         _list.Columns.Add("Fav", 48);
-        _list.Columns.Add("Name", 280);
         _list.Columns.Add("Folder", 300);
         _list.Columns.Add("Modified", 150);
         _list.Columns.Add("Size", 86);
@@ -188,9 +293,11 @@ internal sealed class MainForm : Form
         _statusLabel.Text = "Ready.";
 
         root.Controls.Add(toolbar, 0, 0);
-        root.Controls.Add(split, 0, 1);
-        root.Controls.Add(_statusLabel, 0, 2);
+        root.Controls.Add(actions, 0, 1);
+        root.Controls.Add(split, 0, 2);
+        root.Controls.Add(_statusLabel, 0, 3);
         Controls.Add(root);
+        UpdateSelectionActions();
     }
 
     private void ApplyStateSummary(NativeImportReport? report = null)
@@ -221,6 +328,7 @@ internal sealed class MainForm : Form
         if (dialog.ShowDialog(this) == DialogResult.OK)
         {
             _folderText.Text = dialog.SelectedPath;
+            _store.SaveSetting("recent_folder", dialog.SelectedPath);
         }
     }
 
@@ -297,14 +405,23 @@ internal sealed class MainForm : Form
         _visibleImages = source.ToList();
         _list.VirtualListSize = _visibleImages.Count;
         _list.Invalidate();
+        if (_visibleImages.Count > 0 && _list.SelectedIndices.Count == 0)
+        {
+            _list.SelectedIndices.Add(0);
+        }
+
+        UpdateSelectionActions();
         SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images.");
     }
 
     private static ListViewItem CreateListItem(NativeImageRecord image)
     {
         var favorite = image.FavoriteLevel > 0 ? image.FavoriteLevel.ToString() : "";
-        var item = new ListViewItem(favorite);
-        item.SubItems.Add(image.Filename);
+        var item = new ListViewItem(favorite.Length > 0 ? $"★{favorite} {image.Filename}" : image.Filename)
+        {
+            ImageIndex = 0,
+        };
+        item.SubItems.Add(favorite);
         item.SubItems.Add(image.Folder);
         item.SubItems.Add(image.ModifiedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
         item.SubItems.Add(FormatBytes(image.SizeBytes));
@@ -342,6 +459,8 @@ internal sealed class MainForm : Form
             _preview.Image = loaded;
             previous?.Dispose();
             _previewLabel.Text = $"{image.Filename}  {FormatBytes(image.SizeBytes)}  fav {image.FavoriteLevel}";
+            UpdateSelectionActions();
+            _ = Task.Run(() => WarmNeighborMetadata(index));
         }
         catch (Exception ex)
         {
@@ -354,22 +473,82 @@ internal sealed class MainForm : Form
 
     private void OpenSelectedFile()
     {
-        if (_list.SelectedIndices.Count == 0)
-        {
-            return;
-        }
-
-        var index = _list.SelectedIndices[0];
-        if (index < 0 || index >= _visibleImages.Count)
+        var image = GetSelectedImage();
+        if (image is null)
         {
             return;
         }
 
         Process.Start(new ProcessStartInfo
         {
-            FileName = _visibleImages[index].AbsolutePath,
+            FileName = image.AbsolutePath,
             UseShellExecute = true,
         });
+    }
+
+    private void OpenSelectedFolder()
+    {
+        var image = GetSelectedImage();
+        if (image is null)
+        {
+            return;
+        }
+
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"/select,\"{image.AbsolutePath}\"",
+            UseShellExecute = true,
+        });
+    }
+
+    private void DeleteSelectedImage()
+    {
+        var deletedIndex = GetSelectedIndex();
+        var image = GetSelectedImage();
+        if (image is null)
+        {
+            return;
+        }
+
+        try
+        {
+            FileSystem.DeleteFile(
+                image.AbsolutePath,
+                UIOption.OnlyErrorDialogs,
+                RecycleOption.SendToRecycleBin,
+                UICancelOption.ThrowException);
+            _store.RemoveImage(image.AbsolutePath);
+            _allImages.RemoveAll(item => string.Equals(item.AbsolutePath, image.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+            _visibleImages.RemoveAll(item => string.Equals(item.AbsolutePath, image.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+            _list.VirtualListSize = _visibleImages.Count;
+            _list.Invalidate();
+            ClearPreview("Deleted to Recycle Bin.");
+            SelectNearestAfterDelete(deletedIndex);
+            SetStatus($"Moved to Recycle Bin: {image.Filename}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Recycle failed; file was not hard-deleted: {ex.Message}");
+        }
+    }
+
+    private void SetSelectedFavoriteLevel(int level)
+    {
+        var index = GetSelectedIndex();
+        if (index < 0)
+        {
+            return;
+        }
+
+        var current = _visibleImages[index];
+        _store.SetFavoriteLevel(current.AbsolutePath, level);
+        _favorites = _store.LoadFavorites();
+        var updated = current with { FavoriteLevel = level };
+        ReplaceImage(current.AbsolutePath, updated);
+        ApplyFilter();
+        SelectImage(updated.AbsolutePath);
+        SetStatus($"Favorite level {level}: {updated.Filename}");
     }
 
     private void ClearPreview(string message)
@@ -383,6 +562,189 @@ internal sealed class MainForm : Form
     private void SetStatus(string message)
     {
         _statusLabel.Text = message;
+    }
+
+    protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
+    {
+        switch (keyData)
+        {
+            case Keys.Right:
+                SelectOffset(1);
+                return true;
+            case Keys.Left:
+                SelectOffset(-1);
+                return true;
+            case Keys.Control | Keys.Up:
+                SetSelectedFavoriteLevel(Math.Min(5, (int)_favoriteLevel.Value + 1));
+                return true;
+            case Keys.Control | Keys.Down:
+                SetSelectedFavoriteLevel(Math.Max(0, (int)_favoriteLevel.Value - 1));
+                return true;
+            case Keys.Delete:
+                DeleteSelectedImage();
+                return true;
+            case Keys.Enter:
+                OpenSelectedFile();
+                return true;
+            case Keys.Control | Keys.Enter:
+                OpenSelectedFolder();
+                return true;
+            case Keys.Control | Keys.G:
+                ApplyViewMode(_list.View == View.Details ? "grid" : "details");
+                SaveViewState();
+                return true;
+        }
+
+        return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private int GetSelectedIndex()
+    {
+        if (_list.SelectedIndices.Count == 0)
+        {
+            return -1;
+        }
+
+        var index = _list.SelectedIndices[0];
+        return index >= 0 && index < _visibleImages.Count ? index : -1;
+    }
+
+    private NativeImageRecord? GetSelectedImage()
+    {
+        var index = GetSelectedIndex();
+        return index >= 0 ? _visibleImages[index] : null;
+    }
+
+    private void SelectOffset(int offset)
+    {
+        if (_visibleImages.Count == 0)
+        {
+            return;
+        }
+
+        var current = GetSelectedIndex();
+        var next = Math.Clamp(current < 0 ? 0 : current + offset, 0, _visibleImages.Count - 1);
+        _list.SelectedIndices.Clear();
+        _list.SelectedIndices.Add(next);
+        _list.EnsureVisible(next);
+        UpdateSelectionActions();
+    }
+
+    private void SelectImage(string absolutePath)
+    {
+        var index = _visibleImages.FindIndex(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+        if (index < 0)
+        {
+            return;
+        }
+
+        _list.SelectedIndices.Clear();
+        _list.SelectedIndices.Add(index);
+        _list.EnsureVisible(index);
+        UpdateSelectionActions();
+    }
+
+    private void SelectNearestAfterDelete(int deletedIndex)
+    {
+        if (_visibleImages.Count == 0)
+        {
+            UpdateSelectionActions();
+            return;
+        }
+
+        _list.SelectedIndices.Clear();
+        _list.SelectedIndices.Add(Math.Clamp(deletedIndex, 0, _visibleImages.Count - 1));
+        UpdateSelectionActions();
+    }
+
+    private void UpdateSelectionActions()
+    {
+        var index = GetSelectedIndex();
+        var selected = index >= 0 ? _visibleImages[index] : null;
+        _previousButton.Enabled = index > 0;
+        _nextButton.Enabled = index >= 0 && index < _visibleImages.Count - 1;
+        _openFileButton.Enabled = selected is not null;
+        _openFolderButton.Enabled = selected is not null;
+        _deleteButton.Enabled = selected is not null;
+        _favoriteLevel.Enabled = selected is not null;
+        _updatingFavoriteControl = true;
+        _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
+        _updatingFavoriteControl = false;
+    }
+
+    private void ReplaceImage(string absolutePath, NativeImageRecord updated)
+    {
+        var allIndex = _allImages.FindIndex(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+        if (allIndex >= 0)
+        {
+            _allImages[allIndex] = updated;
+        }
+
+        var visibleIndex = _visibleImages.FindIndex(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+        if (visibleIndex >= 0)
+        {
+            _visibleImages[visibleIndex] = updated;
+        }
+    }
+
+    private void ApplyViewMode(string mode)
+    {
+        var grid = string.Equals(mode, "grid", StringComparison.OrdinalIgnoreCase);
+        _list.View = grid ? View.LargeIcon : View.Details;
+        _list.FullRowSelect = !grid;
+        if (_viewMode.Items.Count > 0)
+        {
+            _viewMode.SelectedItem = grid ? "Grid" : "List";
+        }
+
+        _store.SaveSetting("view_mode", grid ? "grid" : "details");
+    }
+
+    private void SaveViewState()
+    {
+        _store.SaveViewState(_list.View == View.LargeIcon ? "grid" : "details", _searchText.Text.Trim(), _favoritesOnly.Checked);
+    }
+
+    private void ShowNativeSettings()
+    {
+        var bindings = _store.GetSetting("keybindings_json", "{}");
+        var browserSettingsFound = _store.GetSetting("browser_settings_found", "0") == "1" ? "yes" : "no";
+        MessageBox.Show(
+            this,
+            $"Native SQLite: {_store.DatabasePath}{Environment.NewLine}Browser settings imported: {browserSettingsFound}{Environment.NewLine}Key bindings: {bindings}",
+            "Native Settings",
+            MessageBoxButtons.OK,
+            MessageBoxIcon.Information);
+    }
+
+    private void WarmNeighborMetadata(int index)
+    {
+        foreach (var neighbor in new[] { index - 1, index + 1 })
+        {
+            if (neighbor < 0 || neighbor >= _visibleImages.Count)
+            {
+                continue;
+            }
+
+            try
+            {
+                _ = new FileInfo(_visibleImages[neighbor].AbsolutePath).Length;
+            }
+            catch
+            {
+                // Metadata warmup is best-effort only.
+            }
+        }
+    }
+
+    private static Bitmap CreateGridPlaceholder()
+    {
+        var bitmap = new Bitmap(96, 96);
+        using var graphics = Graphics.FromImage(bitmap);
+        graphics.Clear(Color.FromArgb(38, 38, 38));
+        using var border = new Pen(Color.FromArgb(80, 80, 80));
+        graphics.DrawRectangle(border, 8, 8, 80, 80);
+        return bitmap;
     }
 
     private static Image LoadImageCopy(string filePath)
