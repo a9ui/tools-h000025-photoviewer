@@ -39,6 +39,12 @@ internal static class Program
                 : 2;
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-seen-smoke")
+        {
+            var folder = args.Length >= 2 ? args[1] : null;
+            return NativeHeadlessRunner.RunSeenStateSmoke(folder);
+        }
+
         if (args.Length >= 2 && args[0] == "--headless-perf")
         {
             var iterations = 40;

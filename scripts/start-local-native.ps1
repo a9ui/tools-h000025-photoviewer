@@ -9,6 +9,7 @@ param(
   [switch]$HeadlessUiSmoke,
   [switch]$HeadlessFolderSetSmoke,
   [switch]$HeadlessLargeScrollSmoke,
+  [switch]$HeadlessSeenSmoke,
   [switch]$PrepareFixture,
   [string]$Search = "",
   [string[]]$FolderSet = @(),
@@ -131,6 +132,12 @@ if ($PrepareFixture) {
   $arguments += "--"
   $arguments += "--headless-large-scroll-smoke"
   $arguments += $Folder
+} elseif ($HeadlessSeenSmoke) {
+  $arguments += "--"
+  $arguments += "--headless-seen-smoke"
+  if ($Folder.Trim().Length -gt 0) {
+    $arguments += $Folder
+  }
 } elseif ($FavoritePath.Trim().Length -gt 0) {
   $arguments += "--"
   $arguments += "--headless-favorite"

@@ -10,5 +10,6 @@ internal sealed record NativeImageRecord(
     DateTime ModifiedAtUtc,
     int FavoriteLevel,
     int? Width = null,
-    int? Height = null
+    int? Height = null,
+    bool IsSeen = false
 );
