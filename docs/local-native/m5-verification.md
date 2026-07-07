@@ -103,6 +103,38 @@ git diff --name-only -- src
   `src/components/CachedImage.tsx`.
 - `git diff --name-only -- src` returned no files.
 
+Final post-canonical-intent rerun after the browser-baseline smoke also passed:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `-PrepareFixture` passed and skipped existing state files; no favorites,
+  albums, settings, or browser export state was overwritten.
+- `-HeadlessImport` passed with favorites 1, albums 2, album membership rows 3,
+  browser state keys 5, settings 12, images 3.
+- `-HeadlessScan` passed with images 3, favorites 1, imported favorites 1,
+  elapsed 4 ms.
+- `-HeadlessPerf -PerfIterations 20` passed:
+  - scan 3 ms
+  - search p50 0.22 ms
+  - search p95 0.48 ms
+  - navigation p95 8.03 ms
+  - cache hit rate 95.0%
+  - header coverage 100.0%
+  - mutation probe added 1, updated 1, removed 1
+  - watcher events 3
+- `-HeadlessCacheCompat` passed after the cache had been warmed by the
+  browser-baseline smoke:
+  - images checked: 3
+  - thumbnail compatible: 2
+  - thumbnail missing: 0
+  - thumbnail incompatible: 1
+  - display compatible: 3
+  - display missing: 0
+  - display incompatible: 0
+- `corepack pnpm typecheck` passed.
+- `corepack pnpm test:unit` passed: 16 files, 94 tests.
+- `git diff --name-only -- src` returned no files.
+
 ## Browser Smoke
 
 M5 also ran a one-off Playwright smoke against a temporary local dev server at
