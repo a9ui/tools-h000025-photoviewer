@@ -37,9 +37,10 @@ Out of scope:
 | #48 `Build local native browser workflow drop-in` | draft/open, CLEAN | `codex/h25-local-native-m1` | `codex/h25-local-native-m2` | `d2428db45a4f2dd2f0723b2889181e5f8fa08ea1` | success, run `28869670313` |
 | #55 `Build local native M3 performance acceleration` | draft/open, CLEAN | `codex/h25-local-native-m2` | `codex/h25-local-native-m3` | `43caeef1e94a816a55f28c1b5990eef30bda94e9` | success, run `28872084793` |
 | #61 `Build local native M4 parity and cache reuse` | draft/open, CLEAN | `codex/h25-local-native-m3` | `codex/h25-local-native-m4` | `69cb93c1f9d90024e03f328674ce63aaf01f7e6f` | success, run `28881130949` |
+| #66 `Prepare local native M5 release candidate readiness` | draft/open, verify live | `codex/h25-local-native-m4` | `codex/h25-local-native-m5` | verify live | verify live |
 
-All four PR diffs were checked with `gh pr diff <n> --name-only`; none include
-`src/**`.
+PR diffs were checked with `gh pr diff <n> --name-only`; PRs #43, #48, #55,
+#61, and #66 include no `src/**`.
 
 ## Local Verification Evidence
 
@@ -109,7 +110,7 @@ ordered stack merge with one verify gate at each step:
    merge.
 5. Retarget #61 to `main`, update/rebase if needed, wait for Actions, then
    merge.
-6. Retarget and merge the M5 PR last, after its fixture/review docs and CI
+6. Retarget and merge PR #66 last, after its fixture/review docs and CI
    pass against the integrated stack.
 
 Merge commits are the lowest-friction path for this stack because the

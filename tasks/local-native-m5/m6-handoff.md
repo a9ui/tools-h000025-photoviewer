@@ -36,7 +36,7 @@ Read these files in full before planning or editing:
 - `tasks/local-native-m5/release-candidate-review.md`
 - this file
 
-Then inspect GitHub PRs #43, #48, #55, #61, the M5 PR, GitHub Actions,
+Then inspect GitHub PRs #43, #48, #55, #61, #66, GitHub Actions,
 SQLite jobs summary, Agmsg trace for the M5 closeout correlation id, and local
 `git status`.
 
@@ -46,6 +46,7 @@ SQLite jobs summary, Agmsg trace for the M5 closeout correlation id, and local
 - M2 draft PR #48 is stacked on PR #43.
 - M3 draft PR #55 is stacked on PR #48.
 - M4 draft PR #61 is stacked on PR #55.
+- M5 draft PR #66 is `Prepare local native M5 release candidate readiness`.
 - M5 branch is `codex/h25-local-native-m5`, stacked on
   `codex/h25-local-native-m4`.
 - M5 GitHub issues are #62-#65 under milestone #10.
@@ -56,7 +57,7 @@ SQLite jobs summary, Agmsg trace for the M5 closeout correlation id, and local
 
 ## Merge Rule
 
-Do not merge #48, #55, #61, or the M5 PR while their base is still another
+Do not merge #48, #55, #61, or #66 while their base is still another
 feature branch. Merge #43 first, then retarget and verify the next PR against
 `main` before merging it. Repeat for #55, #61, and the M5 PR.
 

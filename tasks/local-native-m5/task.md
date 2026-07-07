@@ -9,6 +9,7 @@ without changing the browser app.
 
 - Milestone: #10 `Local Native M5 - Release Candidate Readiness`
 - Label: `local-native-m5`
+- Draft PR: #66 `Prepare local native M5 release candidate readiness`
 - Issues:
   - #62 `M5-001 PR stack merge readiness review`
   - #63 `M5-002 Repeatable local-native fixture generation`
@@ -38,7 +39,7 @@ Linear is intentionally not used.
 Do not merge upper stacked PRs while their base remains another feature branch.
 The safe order is:
 
-1. Keep PRs #43, #48, #55, #61, and the M5 PR draft until M5 verification and
+1. Keep PRs #43, #48, #55, #61, and M5 PR #66 draft until M5 verification and
    review are complete.
 2. Merge PR #43 first.
 3. Retarget PR #48 to `main`, update/rebase if GitHub shows duplicated lower
@@ -47,7 +48,7 @@ The safe order is:
    merge.
 5. Retarget PR #61 to `main`, update/rebase if needed, rerun Actions, then
    merge.
-6. Retarget the M5 PR to `main`, rerun Actions, then merge.
+6. Retarget PR #66 to `main`, rerun Actions, then merge.
 7. Only delete stacked branches after every upper PR has been retargeted,
    merged, or explicitly closed.
 
