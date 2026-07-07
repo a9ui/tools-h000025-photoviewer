@@ -5,7 +5,9 @@ param(
   [switch]$HeadlessImport,
   [switch]$HeadlessSearch,
   [switch]$HeadlessPerf,
+  [switch]$HeadlessCacheCompat,
   [string]$Search = "",
+  [string]$BrowserStateExport = "",
   [switch]$FavoritesOnly,
   [string]$FavoritePath = "",
   [int]$FavoriteLevel = 0,
@@ -42,6 +44,10 @@ if ($HeadlessScan) {
 } elseif ($HeadlessImport) {
   $arguments += "--"
   $arguments += "--headless-import"
+  if ($BrowserStateExport.Trim().Length -gt 0) {
+    $arguments += "--browser-state-export"
+    $arguments += $BrowserStateExport
+  }
 } elseif ($HeadlessSearch) {
   if ($Folder.Trim().Length -eq 0) {
     throw "-HeadlessSearch requires -Folder."
@@ -68,6 +74,14 @@ if ($HeadlessScan) {
     $arguments += "--search"
     $arguments += $Search
   }
+} elseif ($HeadlessCacheCompat) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessCacheCompat requires -Folder."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-cache-compat"
+  $arguments += $Folder
 } elseif ($FavoritePath.Trim().Length -gt 0) {
   $arguments += "--"
   $arguments += "--headless-favorite"

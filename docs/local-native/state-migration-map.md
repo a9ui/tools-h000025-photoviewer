@@ -8,11 +8,11 @@ app to change shape.
 | Source | Current Shape | Native Handling |
 | --- | --- | --- |
 | `.cache/favorites.json` | `Record<absolutePath, level>` | Read immediately; later write through native store and optional JSON sync. |
-| `.cache/albums.json` | `{ albums: Album[] }` | M2 imports album id/name/image-count summary rows into SQLite `albums`. Full album image membership remains M4 parity work. |
+| `.cache/albums.json` | `{ albums: Album[] }` | M4 imports album id/name/image-count summary rows into SQLite `albums` and full membership into `album_images`. |
 | `.cache/settings.json` | app settings JSON | M2 stores browser settings presence/raw JSON marker and native key-binding defaults in SQLite `native_settings`. |
 | `.cache/index_*.json` | per-root scan cache | Treat as optional seed data; do not rely on whole-file JSON long term. |
-| `.cache/thumbs` | WebP thumbnails | Reuse only after cache key compatibility is proven. |
-| `.cache/display` | WebP display variants | Reuse as a warm display cache when source/version matches. |
+| `.cache/thumbs` | WebP thumbnails | M4 checks the browser key formula and WebP header compatibility before native reuse. It does not delete or regenerate assets. |
+| `.cache/display` | WebP display variants | M4 checks the browser display key formula and WebP header compatibility before native reuse. It does not delete or regenerate assets. |
 
 ## Browser-Only State
 
@@ -33,8 +33,9 @@ desktop executable:
 - `pvu_last_dir_set`
 - `pvu_enhance_settings`
 
-Native import should use an explicit export file from the browser app or a
-small compatibility route. Do not read Chrome profile storage directly.
+Native import uses an explicit export file such as
+`.cache/native/browser-localstorage-export.json`, or a path supplied to the
+headless import command. Do not read Chrome profile storage directly.
 
 ## M1 Native Store
 
@@ -71,6 +72,28 @@ M3 extends the same SQLite database with:
 Incremental scan compares size/mtime against existing rows, removes deleted
 paths, and only upserts changed files. Full scans still replace the root slice
 when no prior rows exist.
+
+## M4 Native Store
+
+M4 extends the same SQLite database with:
+
+- `album_images` for full album-to-image membership imported from
+  `.cache/albums.json`
+- `browser_state` for explicit `pvu_*` localStorage export imports
+- `cache_compatibility` for measured thumbnail/display cache-key checks
+
+Browser `pvu_*` state is imported only from an explicit JSON export file. The
+native app records raw imported keys under `browser_state` and mirrors them as
+`native_settings` entries prefixed with `browser_`.
+
+Thumbnail/display reuse is read-only until compatibility is proven. The native
+check uses the browser formula from `src/lib/thumbnailCache.ts`:
+
+- thumbnail key: `base64url(absolutePath + "|" + sourceMtimeMs)`
+- display key: `base64url(absolutePath + "|" + sourceMtimeMs + "|display:2200")`
+
+The native check classifies compatible, missing, and incompatible cache files
+and records the counts; it does not create, rewrite, or delete cache assets.
 
 ## Compatibility Rules
 

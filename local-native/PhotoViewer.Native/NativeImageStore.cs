@@ -81,6 +81,36 @@ internal sealed class NativeImageStore
               imported_at_utc TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS album_images (
+              album_id TEXT NOT NULL,
+              image_id TEXT NOT NULL,
+              absolute_path TEXT NOT NULL,
+              position INTEGER NOT NULL,
+              imported_at_utc TEXT NOT NULL,
+              PRIMARY KEY(album_id, image_id)
+            );
+
+            CREATE INDEX IF NOT EXISTS idx_album_images_path ON album_images(absolute_path);
+
+            CREATE TABLE IF NOT EXISTS browser_state (
+              key TEXT PRIMARY KEY,
+              value TEXT NOT NULL,
+              imported_at_utc TEXT NOT NULL,
+              source_path TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS cache_compatibility (
+              checked_at_utc TEXT PRIMARY KEY,
+              folder TEXT NOT NULL,
+              images_checked INTEGER NOT NULL,
+              thumb_compatible INTEGER NOT NULL,
+              thumb_missing INTEGER NOT NULL,
+              thumb_incompatible INTEGER NOT NULL,
+              display_compatible INTEGER NOT NULL,
+              display_missing INTEGER NOT NULL,
+              display_incompatible INTEGER NOT NULL
+            );
+
             CREATE TABLE IF NOT EXISTS native_settings (
               key TEXT PRIMARY KEY,
               value TEXT NOT NULL,
@@ -103,11 +133,13 @@ internal sealed class NativeImageStore
         EnsureColumn(connection, "images", "height", "INTEGER");
     }
 
-    public NativeImportReport ImportProjectState()
+    public NativeImportReport ImportProjectState(string? browserStateExportPath = null)
     {
         Initialize();
         var favorites = NativeStateBridge.LoadFavorites(_projectRoot);
         var albums = NativeStateBridge.LoadAlbums(_projectRoot);
+        var browserState = NativeStateBridge.LoadBrowserStateExport(_projectRoot, browserStateExportPath);
+        var resolvedBrowserStateExportPath = NativeStateBridge.ResolveBrowserStateExportPath(_projectRoot, browserStateExportPath) ?? "";
         var summary = NativeStateBridge.ReadSummary(_projectRoot);
         var browserSettingsJson = NativeStateBridge.LoadSettingsJson(_projectRoot);
         var importedAt = DateTime.UtcNow;
@@ -136,6 +168,7 @@ internal sealed class NativeImageStore
         }
 
         ExecuteNonQuery(connection, transaction, "DELETE FROM albums");
+        ExecuteNonQuery(connection, transaction, "DELETE FROM album_images");
         foreach (var album in albums)
         {
             using var insertAlbum = connection.CreateCommand();
@@ -153,12 +186,62 @@ internal sealed class NativeImageStore
             insertAlbum.Parameters.AddWithValue("$count", album.ImageCount);
             insertAlbum.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
             insertAlbum.ExecuteNonQuery();
+
+            var position = 0;
+            foreach (var imagePath in album.ImagePaths)
+            {
+                using var insertImage = connection.CreateCommand();
+                insertImage.Transaction = transaction;
+                insertImage.CommandText = """
+                    INSERT INTO album_images(album_id, image_id, absolute_path, position, imported_at_utc)
+                    VALUES ($album, $image, $path, $position, $imported)
+                    ON CONFLICT(album_id, image_id) DO UPDATE SET
+                      absolute_path = excluded.absolute_path,
+                      position = excluded.position,
+                      imported_at_utc = excluded.imported_at_utc
+                    """;
+                insertImage.Parameters.AddWithValue("$album", album.Id);
+                insertImage.Parameters.AddWithValue("$image", imagePath);
+                insertImage.Parameters.AddWithValue("$path", imagePath);
+                insertImage.Parameters.AddWithValue("$position", position++);
+                insertImage.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
+                insertImage.ExecuteNonQuery();
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
+        {
+            ExecuteNonQuery(connection, transaction, "DELETE FROM browser_state");
+            foreach (var record in browserState)
+            {
+                using var insertState = connection.CreateCommand();
+                insertState.Transaction = transaction;
+                insertState.CommandText = """
+                    INSERT INTO browser_state(key, value, imported_at_utc, source_path)
+                    VALUES ($key, $value, $imported, $source)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value = excluded.value,
+                      imported_at_utc = excluded.imported_at_utc,
+                      source_path = excluded.source_path
+                    """;
+                insertState.Parameters.AddWithValue("$key", record.Key);
+                insertState.Parameters.AddWithValue("$value", record.Value);
+                insertState.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
+                insertState.Parameters.AddWithValue("$source", resolvedBrowserStateExportPath);
+                insertState.ExecuteNonQuery();
+                UpsertSetting(connection, transaction, $"browser_{record.Key}", record.Value, importedAt);
+            }
         }
 
         UpsertSetting(connection, transaction, "browser_settings_found", browserSettingsJson is null ? "0" : "1", importedAt);
         if (browserSettingsJson is not null)
         {
             UpsertSetting(connection, transaction, "browser_settings_json", browserSettingsJson, importedAt);
+        }
+        UpsertSetting(connection, transaction, "browser_state_export_found", string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "0" : "1", importedAt);
+        if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
+        {
+            UpsertSetting(connection, transaction, "browser_state_export_path", resolvedBrowserStateExportPath, importedAt);
         }
 
         UpsertSetting(connection, transaction, "keybindings_json", DefaultKeyBindingsJson, importedAt);
@@ -190,7 +273,9 @@ internal sealed class NativeImageStore
         run.Parameters.AddWithValue("$settings", summary.SettingsFound ? 1 : 0);
         run.Parameters.AddWithValue("$images", CountImages(connection, transaction));
         run.Parameters.AddWithValue("$root", _projectRoot);
-        run.Parameters.AddWithValue("$note", "Browser pvu_* localStorage is not read directly; use explicit export/import in a later milestone.");
+        run.Parameters.AddWithValue("$note", browserState.Count > 0
+            ? $"Imported {browserState.Count} pvu_* keys from explicit browser localStorage export."
+            : "Browser pvu_* localStorage is not read directly; no explicit export file was imported.");
         run.ExecuteNonQuery();
 
         transaction.Commit();
@@ -199,7 +284,9 @@ internal sealed class NativeImageStore
             DatabasePath: _databasePath,
             FavoriteCount: favorites.Count,
             AlbumCount: summary.AlbumCount,
+            AlbumImageCount: summary.AlbumImageCount,
             SettingsFound: summary.SettingsFound,
+            BrowserStateKeyCount: browserState.Count,
             ImageCount: CountImages(),
             ImportedAtUtc: importedAt
         );
@@ -615,6 +702,24 @@ internal sealed class NativeImageStore
         return Convert.ToInt32(command.ExecuteScalar());
     }
 
+    public int CountAlbumImages()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM album_images";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    public int CountBrowserStateKeys()
+    {
+        Initialize();
+        using var connection = OpenConnection();
+        using var command = connection.CreateCommand();
+        command.CommandText = "SELECT COUNT(*) FROM browser_state";
+        return Convert.ToInt32(command.ExecuteScalar());
+    }
+
     public int CountSettings()
     {
         Initialize();
@@ -622,6 +727,45 @@ internal sealed class NativeImageStore
         using var command = connection.CreateCommand();
         command.CommandText = "SELECT COUNT(*) FROM native_settings";
         return Convert.ToInt32(command.ExecuteScalar());
+    }
+
+    public NativeCacheCompatibilityReport CheckCacheCompatibility(string folder)
+    {
+        Initialize();
+        var images = LoadImagesForRoot(folder);
+        var report = NativeCacheCompatibility.Check(_projectRoot, images);
+        var checkedAt = DateTime.UtcNow;
+
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            INSERT INTO cache_compatibility(
+              checked_at_utc,
+              folder,
+              images_checked,
+              thumb_compatible,
+              thumb_missing,
+              thumb_incompatible,
+              display_compatible,
+              display_missing,
+              display_incompatible
+            )
+            VALUES ($checked, $folder, $images, $thumbCompatible, $thumbMissing, $thumbIncompatible, $displayCompatible, $displayMissing, $displayIncompatible)
+            """;
+        command.Parameters.AddWithValue("$checked", checkedAt.ToString("O"));
+        command.Parameters.AddWithValue("$folder", Path.GetFullPath(folder));
+        command.Parameters.AddWithValue("$images", report.ImagesChecked);
+        command.Parameters.AddWithValue("$thumbCompatible", report.ThumbnailCompatible);
+        command.Parameters.AddWithValue("$thumbMissing", report.ThumbnailMissing);
+        command.Parameters.AddWithValue("$thumbIncompatible", report.ThumbnailIncompatible);
+        command.Parameters.AddWithValue("$displayCompatible", report.DisplayCompatible);
+        command.Parameters.AddWithValue("$displayMissing", report.DisplayMissing);
+        command.Parameters.AddWithValue("$displayIncompatible", report.DisplayIncompatible);
+        command.ExecuteNonQuery();
+        transaction.Commit();
+        return report;
     }
 
     private SqliteConnection OpenConnection()

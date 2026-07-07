@@ -91,3 +91,22 @@ M3 headless performance verification:
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessPerf -Folder "C:\path\to\images" -Search "name" -PerfIterations 40
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessIncrementalScan -Folder "C:\path\to\images"
 ```
+
+## M4 Notes
+
+- `.cache/albums.json` imports full image membership into SQLite `album_images`
+  in addition to the existing `albums` summary rows.
+- Browser `pvu_*` localStorage imports use an explicit JSON export file only.
+  The default path is `.cache/native/browser-localstorage-export.json`; Chrome
+  profile storage is never read.
+- Thumbnail/display cache reuse is measured before use. The native check uses
+  the browser cache-key formula and verifies a WebP header, then records
+  compatible, missing, and incompatible counts without deleting or regenerating
+  cache assets.
+
+M4 headless parity and cache checks:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessImport -BrowserStateExport .\.cache\native\browser-localstorage-export.json
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessCacheCompat -Folder "C:\path\to\images"
+```
