@@ -599,7 +599,7 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
-    public void SaveViewState(string viewMode, string searchText, bool favoritesOnly)
+    public void SaveViewState(string viewMode, string searchText, bool favoritesOnly, string favoriteFilter)
     {
         Initialize();
         using var connection = OpenConnection();
@@ -608,6 +608,7 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "view_mode", viewMode, now);
         UpsertSetting(connection, transaction, "search_text", searchText, now);
         UpsertSetting(connection, transaction, "favorites_only", favoritesOnly ? "1" : "0", now);
+        UpsertSetting(connection, transaction, "favorite_filter", favoriteFilter, now);
         transaction.Commit();
     }
 

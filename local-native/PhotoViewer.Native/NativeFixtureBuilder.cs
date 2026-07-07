@@ -94,7 +94,7 @@ internal static class NativeFixtureBuilder
         WriteFixtureCache(projectRoot, images);
 
         Console.WriteLine(
-            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=1 thumbIncompatible=1 displayCompatible=1 displayMissing=2 displayIncompatible=0");
+            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
         return 0;
     }
 
@@ -105,12 +105,14 @@ internal static class NativeFixtureBuilder
             ("m2-fixture-1.png", Color.DarkSlateBlue),
             ("m2-fixture-2.png", Color.SeaGreen),
             ("m2-fixture-3.png", Color.IndianRed),
+            (Path.Combine("nested", "m10-folder-fixture-4.png"), Color.Goldenrod),
         };
         var paths = new List<string>(specs.Length);
 
         foreach (var (name, color) in specs)
         {
             var path = Path.GetFullPath(Path.Combine(fixtureRoot, name));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             using (var bitmap = new Bitmap(32, 32))
             using (var graphics = Graphics.FromImage(bitmap))
             {
