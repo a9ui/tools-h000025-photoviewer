@@ -430,9 +430,42 @@ internal sealed class NativeImageStore
         return images;
     }
 
+    public List<NativeImageRecord> LoadImagesForRoots(IEnumerable<string> roots)
+    {
+        return NativeFolderSet.NormalizeDistinct(roots)
+            .SelectMany(LoadImagesForRoot)
+            .OrderByDescending(static item => item.ModifiedAtUtc)
+            .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
     public List<NativeImageRecord> SearchImagesIndexed(string root, string query, bool favoritesOnly, int limit = 200)
     {
         return SearchImagesIndexed(root, query, favoritesOnly, limit, out _);
+    }
+
+    public List<NativeImageRecord> SearchImagesIndexed(IEnumerable<string> roots, string query, bool favoritesOnly, int limit = 200)
+    {
+        return SearchImagesIndexed(roots, query, favoritesOnly, limit, out _);
+    }
+
+    public List<NativeImageRecord> SearchImagesIndexed(IEnumerable<string> roots, string query, bool favoritesOnly, int limit, out bool usedIndex)
+    {
+        usedIndex = true;
+        var results = new List<NativeImageRecord>();
+        foreach (var root in NativeFolderSet.NormalizeDistinct(roots))
+        {
+            var rootResults = SearchImagesIndexed(root, query, favoritesOnly, limit, out var rootUsedIndex);
+            usedIndex = usedIndex && rootUsedIndex;
+            results.AddRange(rootResults);
+        }
+
+        return results
+            .OrderByDescending(static item => item.FavoriteLevel)
+            .ThenByDescending(static item => item.ModifiedAtUtc)
+            .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .Take(limit)
+            .ToList();
     }
 
     public List<NativeImageRecord> SearchImagesIndexed(string root, string query, bool favoritesOnly, int limit, out bool usedIndex)
@@ -565,12 +598,29 @@ internal sealed class NativeImageStore
 
     public string? LoadRecentFolder()
     {
+        var folderSet = LoadRecentFolderSet();
+        if (folderSet.Count > 0)
+        {
+            return NativeFolderSet.FormatForDisplay(folderSet);
+        }
+
+        return null;
+    }
+
+    public List<string> LoadRecentFolderSet()
+    {
         Initialize();
         using var connection = OpenConnection();
+        var storedSet = NativeFolderSet.Parse(GetSetting(connection, null, "recent_folder_set"));
+        if (storedSet.Count > 0)
+        {
+            return storedSet;
+        }
+
         var stored = GetSetting(connection, null, "recent_folder");
         if (!string.IsNullOrWhiteSpace(stored))
         {
-            return stored;
+            return NativeFolderSet.Parse(stored);
         }
 
         using var command = connection.CreateCommand();
@@ -580,7 +630,25 @@ internal sealed class NativeImageStore
             ORDER BY last_scan_finished_utc DESC
             LIMIT 1
             """;
-        return command.ExecuteScalar() as string;
+        var latestRoot = command.ExecuteScalar() as string;
+        return NativeFolderSet.Parse(latestRoot);
+    }
+
+    public void SaveRecentFolderSet(IEnumerable<string> roots)
+    {
+        var normalized = NativeFolderSet.NormalizeDistinct(roots);
+        if (normalized.Count == 0)
+        {
+            return;
+        }
+
+        Initialize();
+        using var connection = OpenConnection();
+        using var transaction = connection.BeginTransaction();
+        var now = DateTime.UtcNow;
+        UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(normalized), now);
+        UpsertSetting(connection, transaction, "recent_folder", normalized[0], now);
+        transaction.Commit();
     }
 
     public string GetSetting(string key, string defaultValue)

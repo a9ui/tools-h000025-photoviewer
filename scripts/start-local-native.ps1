@@ -7,8 +7,10 @@ param(
   [switch]$HeadlessPerf,
   [switch]$HeadlessCacheCompat,
   [switch]$HeadlessUiSmoke,
+  [switch]$HeadlessFolderSetSmoke,
   [switch]$PrepareFixture,
   [string]$Search = "",
+  [string[]]$FolderSet = @(),
   [string]$BrowserStateExport = "",
   [switch]$FavoritesOnly,
   [string]$FavoritePath = "",
@@ -95,6 +97,27 @@ if ($PrepareFixture) {
   $arguments += "--"
   $arguments += "--headless-ui-smoke"
   $arguments += $Folder
+  if ($Search.Trim().Length -gt 0) {
+    $arguments += "--search"
+    $arguments += $Search
+  }
+} elseif ($HeadlessFolderSetSmoke) {
+  $folderSetValues = @()
+  foreach ($root in $FolderSet) {
+    $folderSetValues += @($root -split "[,;|]" | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
+  }
+  if ($folderSetValues.Count -lt 2 -and $Folder.Trim().Length -gt 0) {
+    $folderSetValues += @($Folder -split "[,;|]" | ForEach-Object { $_.Trim() } | Where-Object { $_.Length -gt 0 })
+  }
+  if ($folderSetValues.Count -lt 2) {
+    throw "-HeadlessFolderSetSmoke requires at least two -FolderSet values, or a comma-separated -Folder value."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-folder-set-smoke"
+  foreach ($root in $folderSetValues) {
+    $arguments += $root
+  }
   if ($Search.Trim().Length -gt 0) {
     $arguments += "--search"
     $arguments += $Search

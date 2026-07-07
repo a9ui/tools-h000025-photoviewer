@@ -18,14 +18,17 @@ internal static class NativeFixtureBuilder
         var projectRoot = NativeStateBridge.ResolveProjectRoot();
         var cacheRoot = Path.Combine(projectRoot, ".cache");
         var fixtureRoot = Path.Combine(cacheRoot, "native-fixture");
+        var fixtureExtraRoot = Path.Combine(cacheRoot, "native-fixture-extra");
         var nativeRoot = Path.Combine(cacheRoot, "native");
 
         Directory.CreateDirectory(fixtureRoot);
+        Directory.CreateDirectory(fixtureExtraRoot);
         Directory.CreateDirectory(nativeRoot);
         Directory.CreateDirectory(Path.Combine(cacheRoot, "thumbs"));
         Directory.CreateDirectory(Path.Combine(cacheRoot, "display"));
 
         var images = WriteFixtureImages(fixtureRoot);
+        var extraImages = WriteFolderSetFixtureImages(fixtureExtraRoot);
         var created = new List<string>();
         var skipped = new List<string>();
 
@@ -57,6 +60,7 @@ internal static class NativeFixtureBuilder
                         items = new object[]
                         {
                             new { absolutePath = images[2] },
+                            new { absolutePath = extraImages[0] },
                         },
                     },
                 },
@@ -83,7 +87,7 @@ internal static class NativeFixtureBuilder
                 {
                     ["pvu_view"] = "grid",
                     ["pvu_fav_only"] = "false",
-                    ["pvu_recent_dirs"] = new[] { fixtureRoot },
+                    ["pvu_recent_dirs"] = new[] { fixtureRoot, fixtureExtraRoot },
                     ["pvu_recent_albums"] = new[] { "native-fixture-picks" },
                     ["pvu_enhance_settings"] = new { enabled = false },
                 },
@@ -94,7 +98,7 @@ internal static class NativeFixtureBuilder
         WriteFixtureCache(projectRoot, images);
 
         Console.WriteLine(
-            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
+            $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} extraFolder=\"{fixtureExtraRoot}\" extraImages={extraImages.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
         return 0;
     }
 
@@ -106,6 +110,33 @@ internal static class NativeFixtureBuilder
             ("m2-fixture-2.png", Color.SeaGreen),
             ("m2-fixture-3.png", Color.IndianRed),
             (Path.Combine("nested", "m10-folder-fixture-4.png"), Color.Goldenrod),
+        };
+        var paths = new List<string>(specs.Length);
+
+        foreach (var (name, color) in specs)
+        {
+            var path = Path.GetFullPath(Path.Combine(fixtureRoot, name));
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using (var bitmap = new Bitmap(32, 32))
+            using (var graphics = Graphics.FromImage(bitmap))
+            {
+                graphics.Clear(color);
+                bitmap.Save(path, ImageFormat.Png);
+            }
+
+            TrySetStableTimes(path);
+            paths.Add(path);
+        }
+
+        return paths;
+    }
+
+    private static List<string> WriteFolderSetFixtureImages(string fixtureRoot)
+    {
+        var specs = new[]
+        {
+            ("m11-folder-set-fixture-1.png", Color.MidnightBlue),
+            (Path.Combine("nested-extra", "m11-folder-set-fixture-2.png"), Color.Teal),
         };
         var paths = new List<string>(specs.Length);
 

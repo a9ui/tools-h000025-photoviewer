@@ -291,6 +291,52 @@ M10 smoke result additions:
 | Persistence keys | DEFERRED | M10 persists native-only `favorite_filter`; prior native settings persistence remains covered. | Full parity for pinned previews, filters beyond favorite key, scroll/seen state, recent dirs, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M10 UI smoke exercises the denser toolbar and folder action row at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M11 Native Multi Root Folder Set Slice
+
+M11 adds native multi-root folder-set behavior. It still does not claim full
+native parity.
+
+M11 folder-set smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessFolderSetSmoke -FolderSet .\.cache\native-fixture,.\.cache\native-fixture-extra -Search fixture
+```
+
+M11 folder-set smoke result additions:
+
+- roots: 2
+- removedRoots: 1
+- folderBuckets: 4
+- imagesBeforeRemove: 6
+- searchMatches: 6
+- recentSetPersisted: true
+- removeFolder: true
+- openRecentSet: true
+- manualRefreshAdded: true
+- manualRefreshRemoved: true
+- watcherRoots: true
+
+| Area | M11 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Landing and folder set | VERIFIED | M11 adds semicolon/newline/pipe parsed folder sets, scans two roots, persists `recent_folder_set`, removes one active root, opens the persisted recent set, manually refreshes probe add/remove, and watches all active roots. Folder-set smoke verifies roots `2`, removedRoots `1`, recentSetPersisted/openRecentSet/manualRefresh/watcherRoots all `true`. | None for the M11 folder-set scope. Future folder acquisition polish can be handled outside this verified row. | `codex_pm` | Keep `-HeadlessFolderSetSmoke` plus normal native UI smoke in future regressions. |
+| Legacy browser state | DEFERRED | Fixture browser export now lists both fixture roots in `pvu_recent_dirs`; import remains explicit export only and imports 5 `pvu_*` keys. | Malformed export UX and user-facing recovery text. | `codex_pm` | Fixture with malformed export plus native UI/headless error output and recovery state. |
+| Search bar | DEFERRED | M11 folder-set smoke verifies indexed search over two active roots with `searchMatches=6`; existing clear/no-results search evidence remains covered. | Tag entry, multi-token semantics beyond existing FTS tokenization evidence, and search chip behavior. | `cursor_impl` | Native UI/headless search smoke covering tag-like text, multi-token query semantics, and any accepted chip-equivalent behavior. |
+| Sidebar quick search and filters | DEFERRED | Existing M10 favorite/unrated/level filter evidence remains covered after M11. | Enhanced-only, date presets, manual date range, and richer count labels beyond favorite state. | `cursor_impl` | Native UI/headless filter smoke with fixture rows for enhanced/date buckets or explicit product decision to defer those filters. |
+| Folder visibility | DEFERRED | M11 folder-set smoke verifies multi-root folder bucket construction with `folderBuckets=4`; existing show/hide selected controls remain covered by native UI smoke. | Folder range selection remains explicitly deferred for a later product/UI decision. | `codex_pm` / `claude_ui` / `cursor_impl` | Decide whether range selection is required in native; if adopted, add native UI smoke that proves range selection on folder buckets. |
+| Sorting and display | DEFERRED | Existing M8/M9/M10 sort/reshuffle/thumbnail controls remain covered after M11. | Date sections, scroll memory, seen/unseen state, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering every sort mode, display variant, persisted thumbnail size, and scroll/seen behavior. |
+| Virtual gallery | DEFERRED | M11 folder-set smoke verifies the virtual list can hold six images from two roots and then reload a reduced active set after root removal. | Date sections, scroll memory, seen/unseen state, drag/open parity, placeholder behavior, large-fixture virtualized scroll state, and native thumbnail warmup UI. | `codex_pm` | Native UI/manual sweep plus headless perf evidence for a large fixture and virtualized scroll state. |
+| Selection and preview tabs | DEFERRED | Existing M10 multi-selection, selected-count reporting, and background clear evidence remains covered after M11. | Preview tabs, pin/unpin, close/restore closed tab, hover/quick preview, and richer multi-selection actions. | `cursor_impl` | Native UI smoke for accepted preview-tab operations, or explicit product decision to defer tabs. |
+| Right preview panel | DEFERRED | Existing selected-count/splitter/detail evidence remains covered after M11. | Bulk favorite/open/recycle confirmation and richer detail tabs. | `cursor_impl` | Native UI smoke or manual screenshot sweep proving bulk actions on disposable files, or explicit product decision to defer bulk actions. |
+| Modal navigation | DEFERRED | Existing M9 detail-modal navigation remains covered after M11 folder-set changes. | Edge/click/swipe equivalents, loading-slot UI, and broader manual modal polish. | `cursor_impl` | Native detail-modal UI smoke/manual sweep covering edge/click equivalents, loading state, and any remaining browser modal affordances. |
+| Modal image controls | DEFERRED | Existing M9 detail-modal controls remain covered after M11 folder-set changes. | Immersive chrome hide/show, richer feedback, and any browser-specific modal controls not yet mapped. | `cursor_impl` | Native detail-modal UI smoke/manual sweep for chrome hide/show, feedback states, and any remaining mapped controls. |
+| Modal metadata | DEFERRED | Existing filename/size/dimensions/favorite metadata remains covered. | Prompt/negative/settings metadata, prompt tag actions, copy prompt/negative/PNG info, and no-metadata fallback. | `cursor_impl` | Fixture with embedded metadata plus native UI/headless copy/fallback evidence. |
+| Delete flows | DEFERRED | M11 does not change Recycle flow and smoke still avoids destructive delete. | Confirmation/cancel, do-not-ask setting, bulk delete confirmation, disposable Recycle Bin UI test, and error-equivalent UI paths. | `codex_pm` | Disposable-copy native UI test proving confirmation/cancel/recycle failure behavior without hard-delete fallback. |
+| Settings modal | DEFERRED | M11 persists native-only `recent_folder_set`; read-only keybinding recorder decision remains unchanged. | Editable keybinding recorder, confirm-before-delete UI, edge/navigation settings, malformed settings fallback, and full browser settings parity. | `cursor_impl` | Native settings UI smoke with editable recorder, or a durable product decision keeping the recorder read-only. |
+| Enhancement isolation | DEFERRED | M11 folder-set smoke verifies passive multi-root scan/search/preview flow did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M11. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Persistence keys | DEFERRED | M11 persists native-only `recent_folder_set` and keeps backward `recent_folder`; fixture explicit export includes two `pvu_recent_dirs`. | Full parity for pinned previews, filters beyond favorite key, scroll/seen state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Native responsive/layout parity | DEFERRED | M11 UI smoke exercises the added folder-set action buttons at desktop size. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:
