@@ -10,6 +10,7 @@ existing thumbnail/display cache assets when cache-key compatibility is proven.
 
 - Milestone: `Local Native M4 - Native Parity And Cache Reuse`
 - Label: `local-native-m4`
+- Draft PR: #61 `Build local native M4 parity and cache reuse`
 - Issues:
   - #59 `M4-001 Album membership parity`
   - #60 `M4-002 Browser pvu export import handling`
