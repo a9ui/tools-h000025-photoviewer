@@ -13,7 +13,16 @@ internal static class Program
 
         if (args.Length >= 1 && args[0] == "--headless-import")
         {
-            return NativeHeadlessRunner.RunImport();
+            string? browserStateExportPath = null;
+            for (var i = 1; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--browser-state-export", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    browserStateExportPath = args[++i];
+                }
+            }
+
+            return NativeHeadlessRunner.RunImport(browserStateExportPath);
         }
 
         if (args.Length >= 2 && args[0] == "--headless-search")
@@ -47,6 +56,11 @@ internal static class Program
             }
 
             return NativeHeadlessRunner.RunPerformance(args[1], Math.Max(10, iterations), searchQuery);
+        }
+
+        if (args.Length >= 2 && args[0] == "--headless-cache-compat")
+        {
+            return NativeHeadlessRunner.RunCacheCompatibility(args[1]);
         }
 
         ApplicationConfiguration.Initialize();

@@ -4,14 +4,14 @@ namespace PhotoViewer.Native;
 
 internal static class NativeHeadlessRunner
 {
-    public static int RunImport()
+    public static int RunImport(string? browserStateExportPath = null)
     {
         var projectRoot = NativeStateBridge.ResolveProjectRoot();
         var store = new NativeImageStore(projectRoot);
-        var import = store.ImportProjectState();
+        var import = store.ImportProjectState(browserStateExportPath);
 
         Console.WriteLine(
-            $"native-import complete favorites={import.FavoriteCount} albums={store.CountAlbums()} settings={store.CountSettings()} images={import.ImageCount} db=\"{store.DatabasePath}\"");
+            $"native-import complete favorites={import.FavoriteCount} albums={store.CountAlbums()} albumImages={store.CountAlbumImages()} browserStateKeys={store.CountBrowserStateKeys()} settings={store.CountSettings()} images={import.ImageCount} db=\"{store.DatabasePath}\"");
         return 0;
     }
 
@@ -95,5 +95,29 @@ internal static class NativeHeadlessRunner
     public static int RunPerformance(string folder, int iterations, string searchQuery)
     {
         return NativeHeadlessPerformance.Run(folder, iterations, searchQuery);
+    }
+
+    public static int RunCacheCompatibility(string folder)
+    {
+        if (!Directory.Exists(folder))
+        {
+            Console.Error.WriteLine($"native-cache-compat error=folder-not-found folder=\"{folder}\"");
+            return 2;
+        }
+
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var store = new NativeImageStore(projectRoot);
+        store.Initialize();
+        if (store.LoadImagesForRoot(folder).Count == 0)
+        {
+            var favorites = store.LoadFavorites();
+            var images = NativeImageScanner.ScanAsync(folder, favorites, progress: null, CancellationToken.None).GetAwaiter().GetResult();
+            store.SaveScanResult(folder, images, TimeSpan.Zero);
+        }
+
+        var report = store.CheckCacheCompatibility(folder);
+        Console.WriteLine(
+            $"native-cache-compat complete folder=\"{Path.GetFullPath(folder)}\" images={report.ImagesChecked} thumbCompatible={report.ThumbnailCompatible} thumbMissing={report.ThumbnailMissing} thumbIncompatible={report.ThumbnailIncompatible} displayCompatible={report.DisplayCompatible} displayMissing={report.DisplayMissing} displayIncompatible={report.DisplayIncompatible}");
+        return 0;
     }
 }

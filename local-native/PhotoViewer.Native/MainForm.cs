@@ -312,7 +312,7 @@ internal sealed class MainForm : Form
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
-        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / albums {report.AlbumCount:n0} / settings {(report.SettingsFound ? "yes" : "no")}";
+        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
     }
 
     private void ImportState()
@@ -322,7 +322,7 @@ internal sealed class MainForm : Form
         _allImages = ReapplyFavorites(_allImages);
         ApplyFilter();
         ApplyStateSummary(report);
-        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.AlbumCount:n0} albums, db {report.ImageCount:n0} images.");
+        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.");
     }
 
     private void BrowseFolder()
