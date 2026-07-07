@@ -7,7 +7,8 @@ internal static class Program
     {
         if (args.Length >= 2 && args[0] == "--headless-scan")
         {
-            return await NativeHeadlessRunner.RunScanAsync(args[1], CancellationToken.None);
+            var incremental = args.Any(static item => string.Equals(item, "--incremental", StringComparison.OrdinalIgnoreCase));
+            return await NativeHeadlessRunner.RunScanAsync(args[1], CancellationToken.None, incremental);
         }
 
         if (args.Length >= 1 && args[0] == "--headless-import")
@@ -27,6 +28,25 @@ internal static class Program
             return int.TryParse(args[2], out var level)
                 ? NativeHeadlessRunner.RunFavorite(args[1], level)
                 : 2;
+        }
+
+        if (args.Length >= 2 && args[0] == "--headless-perf")
+        {
+            var iterations = 40;
+            var searchQuery = "";
+            for (var i = 2; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--iterations", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    _ = int.TryParse(args[++i], out iterations);
+                }
+                else if (string.Equals(args[i], "--search", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    searchQuery = args[++i];
+                }
+            }
+
+            return NativeHeadlessRunner.RunPerformance(args[1], Math.Max(10, iterations), searchQuery);
         }
 
         ApplicationConfiguration.Initialize();

@@ -70,3 +70,24 @@ Expected limitations:
 - `.cache/albums.json` and `.cache/settings.json` are imported as compatibility
   state summaries. Browser `pvu_*` localStorage is still not read directly.
 - Recycle delete has no hard-delete fallback; failure leaves the file in place.
+
+## M3 Notes
+
+- Incremental scan reuses unchanged rows by size/mtime and only upserts deltas.
+- `FileSystemWatcher` debounces folder changes into incremental rescans.
+- Search uses SQLite FTS5 (`image_search_fts`) with a LIKE fallback for
+  substring compatibility.
+- Preview navigation keeps a small ring buffer for previous/current/next images.
+- Header-first dimensions are read from PNG/JPEG/GIF headers during scan.
+- A native cache scheduler prioritizes preview decode over neighbor warmup.
+- Headless performance checks report search/navigation p95 and cache hit rate.
+- When the performance target is under this project's `.cache`, the headless
+  check also runs a safe add/update/delete mutation probe and records watcher
+  events.
+
+M3 headless performance verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessPerf -Folder "C:\path\to\images" -Search "name" -PerfIterations 40
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessIncrementalScan -Folder "C:\path\to\images"
+```
