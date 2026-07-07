@@ -6,6 +6,7 @@ param(
   [switch]$HeadlessSearch,
   [switch]$HeadlessPerf,
   [switch]$HeadlessCacheCompat,
+  [switch]$PrepareFixture,
   [string]$Search = "",
   [string]$BrowserStateExport = "",
   [switch]$FavoritesOnly,
@@ -24,7 +25,10 @@ if (-not (Test-Path -LiteralPath $NativeProject)) {
 }
 
 $arguments = @("run", "--project", $NativeProject)
-if ($HeadlessScan) {
+if ($PrepareFixture) {
+  $arguments += "--"
+  $arguments += "--prepare-fixture"
+} elseif ($HeadlessScan) {
   if ($Folder.Trim().Length -eq 0) {
     throw "-HeadlessScan requires -Folder."
   }
