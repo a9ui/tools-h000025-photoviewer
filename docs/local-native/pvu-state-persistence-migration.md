@@ -7,17 +7,18 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_RECENT_FOLDER_MIGRATION_AFTER_DATE_RANGE_ROW`.
+`ADOPT_BOUNDED_PVU_RIGHT_PREVIEW_MIGRATION_AFTER_RECENT_FOLDER_ROW`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_last_dir_set` / `pvu_recent_dirs` from an explicit browser
+  `pvu_view.rightPanelOpen` / `rightPanelWidth` from an explicit browser
   localStorage export.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
-  `pvu_view.dateFrom` / `dateTo` into native date settings.
+  `pvu_view.dateFrom` / `dateTo` into native date settings, and
+  `pvu_last_dir_set` / `pvu_recent_dirs` into native recent-folder settings.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
@@ -50,6 +51,10 @@ Meaning:
 | `pvu_recent_dirs` JSON array | fallback source for `recent_folder_set` / `recent_folder` | `ADOPT`: first valid browser recent folder set is imported when `pvu_last_dir_set` is absent or empty. |
 | Existing native `recent_folder_set` / `recent_folder` or scan roots | Preserve native recent state | `ADOPT`: import does not clobber later native scan/user choices. |
 | Malformed `pvu_recent_dirs` | recoverable warning, no native recent overwrite | `ADOPT`: invalid recent-dirs state is skipped with recovery guidance. |
+| `pvu_view.rightPanelOpen=true` / `false` | `native_settings.preview_visible=1` / `0` | `ADOPT`: imported on first native import when native preview visibility is absent. |
+| `pvu_view.rightPanelWidth=N` | `native_settings.preview_splitter_distance=1280 - clamp(N, 240, 900)` | `ADOPT`: browser right-panel width maps to the native split container's left-panel distance for the 1280px desktop layout. |
+| Existing native `preview_visible` / `preview_splitter_distance` | Preserve native right-preview settings | `ADOPT`: import does not clobber a native user choice. |
+| Malformed `pvu_view.rightPanelOpen` / `rightPanelWidth` | recoverable warning, no native right-preview overwrite | `ADOPT`: invalid right-preview values are skipped with recovery guidance. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -65,7 +70,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | --- | --- | --- |
 | `pvu_view.thumbSize` | `DEFER` | Native has `thumbnail_size`, but broader display mapping belongs with #111/#112 display-mode work. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | These map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
-| `pvu_view.rightPanelOpen` / `rightPanelWidth` | `DEFER` | Native preview visibility/splitter exists; migrate with UI polish or right-panel parity evidence. |
+| `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_view.hiddenFolders` / `folderSortBy` | `DEFER` | Folder bucket behavior and range semantics remain tied to #102/folder UI decisions. |
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
@@ -96,6 +101,7 @@ Expected result:
 - `pvuFavoriteFilterMigrated=true`
 - `pvuDateRangeMigrated=true`
 - `pvuRecentFoldersMigrated=true`
+- `pvuRightPreviewMigrated=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
 - `enhancedMirrorStored=true`
@@ -106,17 +112,20 @@ Expected result:
 - `nativeFavoriteFilterPreserved=true`
 - `nativeDateRangePreserved=true`
 - `nativeRecentFolderSetPreserved=true`
+- `nativeRightPreviewPreserved=true`
 - `malformedEnhancedOnlyWarning=true`
 - `malformedFavoriteFilterWarning=true`
 - `malformedDateRangeWarning=true`
 - `malformedRecentDirsWarning=true`
+- `malformedRightPreviewWarning=true`
 - `nativeEnhancedOnlyStillPreserved=true`
 - `nativeFavoriteFilterStillPreserved=true`
 - `nativeDateRangeStillPreserved=true`
 - `nativeRecentFolderSetStillPreserved=true`
+- `nativeRightPreviewStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
-- `malformedWarnings=4`
+- `malformedWarnings=5`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
@@ -124,8 +133,8 @@ The smoke uses a synthetic project root under ignored
 
 ## Verification On 2026-07-08
 
-Recorded in branch `codex/h25-117-pvu-row5` from `origin/main`
-`e5fcf8e9f87c8e91ecb974893f6fc101ce7877d5`:
+Recorded in branch `codex/h25-117-row5-pvu-state` after rebasing PR #131 onto
+PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
@@ -133,18 +142,23 @@ Recorded in branch `codex/h25-117-pvu-row5` from `origin/main`
   passed with `pvuViewModeMigrated=true`,
   `pvuEnhancedOnlyMigrated=true`, `pvuFavoriteFilterMigrated=true`,
   `pvuDateRangeMigrated=true`, `pvuRecentFoldersMigrated=true`,
+  `pvuRightPreviewMigrated=true`,
   `migrationRecorded=true`, `browserMirrorStored=true`,
   `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
   `recentMirrorStored=true`, `nativeViewModePreserved=true`,
-  `nativeEnhancedOnlyPreserved=true`, `nativeFavoriteFilterPreserved=true`,
-  `nativeDateRangePreserved=true`, `nativeRecentFolderSetPreserved=true`,
-  `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
-  `malformedDateRangeWarning=true`, `malformedRecentDirsWarning=true`,
+  `nativeEnhancedOnlyPreserved=true`,
+  `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
+  `nativeRecentFolderSetPreserved=true`, `nativeRightPreviewPreserved=true`,
+  `malformedEnhancedOnlyWarning=true`,
+  `malformedFavoriteFilterWarning=true`, `malformedDateRangeWarning=true`,
+  `malformedRecentDirsWarning=true`,
+  `malformedRightPreviewWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
-  `nativeRecentFolderSetStillPreserved=true`, `browserStateKeys=5`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=4`.
+  `nativeRecentFolderSetStillPreserved=true`,
+  `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=5`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
   passed and created only ignored fixture/cache state in this clean worktree.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
@@ -168,6 +182,7 @@ Recorded in branch `codex/h25-117-pvu-row5` from `origin/main`
 - `ADOPT`: bounded `pvu_fav_only` / `pvu_unfav_only` migration.
 - `ADOPT`: bounded `pvu_view.dateFrom` / `dateTo` migration.
 - `ADOPT`: bounded `pvu_last_dir_set` / `pvu_recent_dirs` migration.
+- `ADOPT`: bounded `pvu_view.rightPanelOpen` / `rightPanelWidth` migration.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and

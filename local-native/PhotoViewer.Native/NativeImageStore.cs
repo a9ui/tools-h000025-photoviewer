@@ -5,6 +5,11 @@ namespace PhotoViewer.Native;
 
 internal sealed class NativeImageStore
 {
+    private const int DefaultNativeWindowWidth = 1280;
+    private const int MinimumPreviewSplitterDistance = 120;
+    private const int MinimumBrowserRightPanelWidth = 240;
+    private const int MaximumBrowserRightPanelWidth = 900;
+
     private readonly string _projectRoot;
     private readonly string _databasePath;
     private readonly string _connectionString;
@@ -1007,6 +1012,45 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser date-range state was skipped; rerun the browser export or remove malformed pvu_view dateFrom/dateTo values, then run Import again."));
             }
+
+            if (!pvuViewMalformed && TryReadBrowserRightPreviewState(pvuView, out var previewVisible, out var previewSplitterDistance, out var hasRightPreviewState, out warningMessage))
+            {
+                var migratedRightPreviewState = false;
+                if (hasRightPreviewState &&
+                    previewVisible.HasValue &&
+                    GetSetting(connection, transaction, "preview_visible") is null)
+                {
+                    UpsertSetting(connection, transaction, "preview_visible", previewVisible.Value ? "1" : "0", importedAt);
+                    migratedRightPreviewState = true;
+                }
+
+                if (hasRightPreviewState &&
+                    previewSplitterDistance.HasValue &&
+                    GetSetting(connection, transaction, "preview_splitter_distance") is null)
+                {
+                    UpsertSetting(
+                        connection,
+                        transaction,
+                        "preview_splitter_distance",
+                        previewSplitterDistance.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        importedAt);
+                    migratedRightPreviewState = true;
+                }
+
+                if (migratedRightPreviewState)
+                {
+                    migrations.Add("pvu_view.rightPanel->preview_panel");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-right-preview-value",
+                    warningMessage,
+                    "Browser right-preview state was skipped; rerun the browser export or remove malformed pvu_view rightPanelOpen/rightPanelWidth values, then run Import again."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1445,6 +1489,93 @@ internal sealed class NativeImageStore
         command.Transaction = transaction;
         command.CommandText = "SELECT 1 FROM scan_roots LIMIT 1";
         return command.ExecuteScalar() is not null;
+    }
+
+    private static bool TryReadBrowserRightPreviewState(
+        string value,
+        out bool? previewVisible,
+        out int? previewSplitterDistance,
+        out bool hasRightPreviewState,
+        out string? warningMessage)
+    {
+        previewVisible = null;
+        previewSplitterDistance = null;
+        hasRightPreviewState = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (document.RootElement.TryGetProperty("rightPanelOpen", out var rightPanelOpen))
+            {
+                hasRightPreviewState = true;
+                if (!TryReadJsonBoolean(rightPanelOpen, out var open))
+                {
+                    warningMessage = "pvu_view.rightPanelOpen must be a boolean value.";
+                    return false;
+                }
+
+                previewVisible = open;
+            }
+
+            if (document.RootElement.TryGetProperty("rightPanelWidth", out var rightPanelWidth))
+            {
+                hasRightPreviewState = true;
+                if (!TryReadBrowserRightPanelWidth(rightPanelWidth, out var width))
+                {
+                    warningMessage = "pvu_view.rightPanelWidth must be a positive pixel width.";
+                    return false;
+                }
+
+                previewSplitterDistance = ConvertBrowserRightPanelWidthToSplitterDistance(width);
+            }
+
+            warningMessage = null;
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserRightPanelWidth(JsonElement element, out int width)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out width))
+        {
+            return width > 0;
+        }
+
+        if (element.ValueKind == JsonValueKind.String &&
+            int.TryParse(element.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out width))
+        {
+            return width > 0;
+        }
+
+        width = 0;
+        return false;
+    }
+
+    private static int ConvertBrowserRightPanelWidthToSplitterDistance(int rightPanelWidth)
+    {
+        var clampedRightPanelWidth = Math.Clamp(
+            rightPanelWidth,
+            MinimumBrowserRightPanelWidth,
+            MaximumBrowserRightPanelWidth);
+        return Math.Max(MinimumPreviewSplitterDistance, DefaultNativeWindowWidth - clampedRightPanelWidth);
     }
 
     private static bool TryReadBrowserBoolean(string value, out bool result, out string? warningMessage)
