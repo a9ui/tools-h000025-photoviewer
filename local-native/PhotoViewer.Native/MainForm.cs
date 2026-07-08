@@ -1061,6 +1061,7 @@ internal sealed class MainForm : Form
         Require(keyboardFavorite, "keyboard favorite shortcut failed");
 
         keyboardMessage = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
+        ApplyViewMode("details");
         var gridHandled = ProcessCmdKey(ref keyboardMessage, Keys.Control | Keys.G);
         var gridToggle = gridHandled && _list.View == View.LargeIcon;
         Require(gridToggle, "keyboard grid toggle failed");

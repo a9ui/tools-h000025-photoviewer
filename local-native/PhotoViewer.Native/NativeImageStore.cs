@@ -984,6 +984,27 @@ internal sealed class NativeImageStore
             }
         }
 
+        if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
+        {
+            if (TryReadBrowserBoolean(pvuEnhancedOnly, out var enhancedOnly, out var warningMessage))
+            {
+                if (GetSetting(connection, transaction, "enhanced_only_filter") is null)
+                {
+                    UpsertSetting(connection, transaction, "enhanced_only_filter", enhancedOnly ? "1" : "0", importedAt);
+                    migrations.Add("pvu_enhanced_only->enhanced_only_filter");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_enhanced_only",
+                    "",
+                    "malformed-boolean-value",
+                    warningMessage,
+                    "Browser enhanced-only state was skipped; rerun the browser export or remove the malformed pvu_enhanced_only value, then run Import again."));
+            }
+        }
+
         UpsertSetting(
             connection,
             transaction,
@@ -1071,6 +1092,105 @@ internal sealed class NativeImageStore
         }
 
         viewMode = "";
+        return false;
+    }
+
+    private static bool TryReadBrowserBoolean(string value, out bool result, out string? warningMessage)
+    {
+        if (TryNormalizeBrowserBoolean(value, out result))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            warningMessage = null;
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (TryReadJsonBoolean(document.RootElement, out result))
+            {
+                warningMessage = null;
+                return true;
+            }
+        }
+        catch (JsonException ex)
+        {
+            result = false;
+            warningMessage = ex.Message;
+            return false;
+        }
+
+        result = false;
+        warningMessage = $"Unsupported boolean value: {trimmed}";
+        return false;
+    }
+
+    private static bool TryReadJsonBoolean(JsonElement element, out bool result)
+    {
+        if (element.ValueKind == JsonValueKind.True)
+        {
+            result = true;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.False)
+        {
+            result = false;
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out var number))
+        {
+            if (number == 1)
+            {
+                result = true;
+                return true;
+            }
+
+            if (number == 0)
+            {
+                result = false;
+                return true;
+            }
+        }
+
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            return TryNormalizeBrowserBoolean(element.GetString(), out result);
+        }
+
+        result = false;
+        return false;
+    }
+
+    private static bool TryNormalizeBrowserBoolean(string? value, out bool result)
+    {
+        var normalized = value?.Trim();
+        if (string.Equals(normalized, "1", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "true", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "yes", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "on", StringComparison.OrdinalIgnoreCase))
+        {
+            result = true;
+            return true;
+        }
+
+        if (string.Equals(normalized, "0", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "false", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "no", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(normalized, "off", StringComparison.OrdinalIgnoreCase))
+        {
+            result = false;
+            return true;
+        }
+
+        result = false;
         return false;
     }
 

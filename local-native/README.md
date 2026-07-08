@@ -477,7 +477,9 @@ See `docs/local-native/malformed-import-recovery.md` and
 #117 starts complete `pvu_*` state persistence migration as a bounded
 key-by-key lane. The first accepted row imports explicit browser
 `pvu_view.viewMode` into native `view_mode` when native has no saved view mode
-yet, while preserving later native choices.
+yet, while preserving later native choices. The next accepted row imports
+explicit browser `pvu_enhanced_only` into native `enhanced_only_filter` under
+the same first-import-only rule.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

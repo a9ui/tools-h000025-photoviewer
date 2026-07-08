@@ -90,9 +90,11 @@ native app records raw imported keys under `browser_state` and mirrors them as
 
 #117 starts the full `pvu_*` migration as a key-by-key post-v1 lane. The first
 accepted row maps explicit browser `pvu_view.viewMode` into native
-`native_settings.view_mode` only when the native setting does not exist yet.
-This gives first-import continuity without clobbering later native user
-choices on every startup or Import action.
+`native_settings.view_mode`; the next accepted row maps explicit browser
+`pvu_enhanced_only` into native `native_settings.enhanced_only_filter`.
+Both migrations write only when the native setting does not exist yet. This
+gives first-import continuity without clobbering later native user choices on
+every startup or Import action.
 
 The dedicated smoke is:
 
