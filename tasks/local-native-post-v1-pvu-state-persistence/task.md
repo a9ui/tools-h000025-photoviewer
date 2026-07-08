@@ -9,8 +9,12 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 Build the #117 plan first, then advance only the smallest safe `pvu_*`
 persistence row under `local-native/**`.
 
-This slice migrates explicit browser `pvu_view.viewMode` into native
+The previous slice migrated explicit browser `pvu_view.viewMode` into native
 `view_mode` on first import, while preserving later native user choices.
+
+This continuation migrates explicit browser `pvu_enhanced_only` into native
+`enhanced_only_filter` on first import, while preserving later native user
+choices.
 
 ## Guardrails
 
@@ -50,7 +54,7 @@ Read in full before planning or editing:
 - GitHub issue #117
 - GitHub issue #115
 - GitHub issue #116
-- GitHub PR #121
+- GitHub PR #122
 - GitHub PR #120
 - GitHub milestone #26
 - GitHub issues #97-#118 as context only
@@ -58,15 +62,22 @@ Read in full before planning or editing:
 ## Implementation
 
 - Keep `browser_state` raw import behavior unchanged.
-- Add a bounded migration for `pvu_view.viewMode`:
+- Keep the existing bounded migration for `pvu_view.viewMode`:
   - browser `grid` -> native `view_mode=grid`;
   - browser `list` -> native `view_mode=details`;
   - malformed `pvu_view` JSON is a recoverable warning;
   - existing native `view_mode` is not overwritten.
-- Add `--headless-pvu-state-smoke` using a synthetic project root under
+- Add a bounded migration for `pvu_enhanced_only`:
+  - browser truthy values (`1`, `true`) -> native
+    `enhanced_only_filter=1`;
+  - browser falsy values (`0`, `false`) -> native
+    `enhanced_only_filter=0`;
+  - malformed boolean values are recoverable warnings;
+  - existing native `enhanced_only_filter` is not overwritten.
+- Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Update `NativeFixtureBuilder` so newly generated browser export fixtures use
-  a browser-shaped `pvu_view` object.
+  a browser-shaped `pvu_view` object and `pvu_enhanced_only`.
 - Record the remaining `pvu_*` key split in
   `docs/local-native/pvu-state-persistence-migration.md`.
 
@@ -86,12 +97,32 @@ Browser commands are baseline preservation only. Native acceptance for #117 is
 the dedicated pvu-state smoke plus existing import/UI smoke. The new smoke
 must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
+## Current Verification
+
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-next-row`:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuEnhancedOnlyMigrated=true`, `nativeEnhancedOnlyPreserved=true`,
+  `migrationRecorded=true`, `malformedEnhancedOnlyWarning=true`,
+  `nativeEnhancedOnlyStillPreserved=true`, and `browserStateKeys=2`.
+- `-PrepareFixture` passed and generated ignored fixture/cache state.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `browserStateKeys=6` and `warnings=0`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `gridToggle=true`, `enhancedOnlyFilter=true`,
+  `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
+- `git diff --name-only -- src` returned no files.
+- `git diff --check` passed.
+- `corepack pnpm typecheck` passed.
+
 ## Closeout Requirements
 
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #235.
+2. Update SQLite job #236.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.

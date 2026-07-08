@@ -7,16 +7,18 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_VIEW_MODE_MIGRATION_FIRST`.
+`ADOPT_BOUNDED_PVU_ENHANCED_ONLY_MIGRATION_AFTER_VIEW_MODE`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_view.viewMode` from an explicit browser localStorage export.
+  `pvu_enhanced_only` from an explicit browser localStorage export.
+- The previous accepted row remains `pvu_view.viewMode` into native
+  `view_mode`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
-- The migration writes native `view_mode` only when no native `view_mode`
-  setting exists yet, so later native user choices are not overwritten on every
+- The migrations write native settings only when the target native setting
+  does not exist yet, so later native user choices are not overwritten on every
   startup/import.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
@@ -29,9 +31,13 @@ Meaning:
 | `pvu_view.viewMode=grid` | `native_settings.view_mode=grid` | `ADOPT`: imported on first native import when `view_mode` is absent. |
 | `pvu_view.viewMode=list` | `native_settings.view_mode=details` | `ADOPT`: browser list maps to the native WinForms details/list view. |
 | Existing native `view_mode` | Preserve native setting | `ADOPT`: import does not clobber a native user choice. |
+| `pvu_enhanced_only=1` / `true` | `native_settings.enhanced_only_filter=1` | `ADOPT`: imported on first native import when `enhanced_only_filter` is absent. |
+| `pvu_enhanced_only=0` / `false` | `native_settings.enhanced_only_filter=0` | `ADOPT`: browser cleared state maps to the native enhanced checkbox state. |
+| Existing native `enhanced_only_filter` | Preserve native setting | `ADOPT`: import does not clobber a native user choice. |
 
-The raw browser key is still stored under `browser_state` and mirrored as
-`native_settings.browser_pvu_view` for traceability.
+The raw browser keys are still stored under `browser_state` and mirrored as
+`native_settings.browser_pvu_view` /
+`native_settings.browser_pvu_enhanced_only` for traceability.
 
 ## Split Plan For Remaining pvu Keys
 
@@ -45,7 +51,7 @@ The raw browser key is still stored under `browser_state` and mirrored as
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
 | `pvu_perf_enabled` | `DEFER` | Browser performance instrumentation flag has no native user-facing equivalent yet. |
 | `pvu_fav_only` / `pvu_unfav_only` / `pvu_fav_levels` | `DEFER` | Native favorite filters exist; import mapping needs a separate filter-state smoke. |
-| `pvu_enhanced_only` | `PARTIAL_ADOPT` | Native enhanced-only state exists from M19; import mapping can be a later safe row. |
+| `pvu_enhanced_only` | `ADOPT` | Native enhanced-only state exists from M19; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_scroll_memory` | `DEFER` | Native has selected-image/index restore, not browser scroll-memory parity. |
 | `pvu_seen_images` | `ADOPT` | Already imported into native `seen_images` by M14. |
 | `pvu_recent_albums` | `DEFER` | Albums import exists, but recent-album UI semantics are not native-accepted. |
@@ -65,19 +71,49 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 Expected result:
 
 - `pvuViewModeMigrated=true`
+- `pvuEnhancedOnlyMigrated=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
+- `enhancedMirrorStored=true`
 - `nativeViewModePreserved=true`
+- `nativeEnhancedOnlyPreserved=true`
+- `malformedEnhancedOnlyWarning=true`
+- `nativeEnhancedOnlyStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
+- `malformedWarnings=1`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
 
+## Verification On 2026-07-08
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuViewModeMigrated=true`,
+  `pvuEnhancedOnlyMigrated=true`, `migrationRecorded=true`,
+  `browserMirrorStored=true`, `enhancedMirrorStored=true`,
+  `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
+  `malformedEnhancedOnlyWarning=true`,
+  `nativeEnhancedOnlyStillPreserved=true`, `browserStateKeys=2`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=1`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed and created only ignored fixture/cache state in this clean worktree.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `gridToggle=true`, `enhancedOnlyFilter=true`,
+  `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
+- `git diff --name-only -- src` returned no files.
+- `git diff --check` passed.
+- `corepack pnpm typecheck` passed.
+
 ## Follow-Up Classification
 
 - `ADOPT`: bounded `pvu_view.viewMode` migration.
+- `ADOPT`: bounded `pvu_enhanced_only` migration.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and

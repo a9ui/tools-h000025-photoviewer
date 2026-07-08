@@ -97,6 +97,7 @@ internal static class NativeHeadlessRunner
                     thumbSize = 220,
                     rightPanelOpen = true,
                 },
+                ["pvu_enhanced_only"] = "1",
             },
         };
         File.WriteAllText(
@@ -107,22 +108,54 @@ internal static class NativeHeadlessRunner
         var store = new NativeImageStore(smokeRoot);
         var firstImport = store.ImportProjectState(exportPath);
         var pvuViewModeMigrated = string.Equals(store.GetSetting("view_mode", ""), "grid", StringComparison.OrdinalIgnoreCase);
-        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "1", StringComparison.OrdinalIgnoreCase) &&
-            store.GetSetting("pvu_state_migrations", "").Contains("pvu_view.viewMode", StringComparison.OrdinalIgnoreCase);
+        var pvuEnhancedOnlyMigrated = string.Equals(store.GetSetting("enhanced_only_filter", ""), "1", StringComparison.OrdinalIgnoreCase);
+        var migrations = store.GetSetting("pvu_state_migrations", "");
+        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "2", StringComparison.OrdinalIgnoreCase) &&
+            migrations.Contains("pvu_view.viewMode", StringComparison.OrdinalIgnoreCase) &&
+            migrations.Contains("pvu_enhanced_only", StringComparison.OrdinalIgnoreCase);
         var browserMirrorStored = store.GetSetting("browser_pvu_view", "").Contains("viewMode", StringComparison.OrdinalIgnoreCase);
+        var enhancedMirrorStored = string.Equals(store.GetSetting("browser_pvu_enhanced_only", ""), "1", StringComparison.OrdinalIgnoreCase);
 
         store.SaveSetting("view_mode", "details");
+        store.SaveSetting("enhanced_only_filter", "0");
         var secondImport = store.ImportProjectState(exportPath);
         var nativeViewModePreserved = string.Equals(store.GetSetting("view_mode", ""), "details", StringComparison.OrdinalIgnoreCase);
+        var nativeEnhancedOnlyPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
+
+        var malformedExportPath = Path.Combine(smokeNative, "malformed-enhanced-only-export.json");
+        var malformedPayload = new
+        {
+            localStorage = new Dictionary<string, object>
+            {
+                ["pvu_view"] = new { viewMode = "grid" },
+                ["pvu_enhanced_only"] = "maybe",
+            },
+        };
+        File.WriteAllText(
+            malformedExportPath,
+            JsonSerializer.Serialize(malformedPayload, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var malformedImport = store.ImportProjectState(malformedExportPath);
+        var malformedEnhancedOnlyWarning = malformedImport.Warnings.Any(static warning =>
+            string.Equals(warning.Source, "browser-state-export:pvu_enhanced_only", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(warning.Code, "malformed-boolean-value", StringComparison.OrdinalIgnoreCase));
+        var nativeEnhancedOnlyStillPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
         var passed = pvuViewModeMigrated &&
+            pvuEnhancedOnlyMigrated &&
             migrationRecorded &&
             browserMirrorStored &&
+            enhancedMirrorStored &&
             nativeViewModePreserved &&
+            nativeEnhancedOnlyPreserved &&
+            malformedEnhancedOnlyWarning &&
+            nativeEnhancedOnlyStillPreserved &&
             firstImport.WarningCount == 0 &&
-            secondImport.WarningCount == 0;
+            secondImport.WarningCount == 0 &&
+            malformedImport.WarningCount == 1;
 
         Console.WriteLine(
-            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return passed ? 0 : 2;
     }
 

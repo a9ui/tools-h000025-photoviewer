@@ -97,6 +97,7 @@ internal static class NativeFixtureBuilder
                         rightPanelOpen = true,
                     },
                     ["pvu_fav_only"] = "false",
+                    ["pvu_enhanced_only"] = "false",
                     ["pvu_recent_dirs"] = new[] { fixtureRoot, fixtureExtraRoot },
                     ["pvu_recent_albums"] = new[] { "native-fixture-picks" },
                     ["pvu_enhance_settings"] = new { enabled = false },
