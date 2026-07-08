@@ -49,7 +49,9 @@ internal static class NativeStateBridge
         return new NativeStateSummary(projectRoot, favorites.Count, albums.Count, albumImageCount, settingsFound);
     }
 
-    public static Dictionary<string, int> LoadFavorites(string projectRoot)
+    public static Dictionary<string, int> LoadFavorites(
+        string projectRoot,
+        ICollection<NativeImportWarning>? warnings = null)
     {
         var path = Path.Combine(projectRoot, ".cache", "favorites.json");
         var favorites = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -64,6 +66,13 @@ internal static class NativeStateBridge
             using var doc = JsonDocument.Parse(stream);
             if (doc.RootElement.ValueKind != JsonValueKind.Object)
             {
+                AddWarning(
+                    warnings,
+                    "favorites",
+                    path,
+                    "unexpected-shape",
+                    "favorites.json was readable JSON but not an object.",
+                    "Favorites were skipped; fix or regenerate .cache/favorites.json, then run Import again.");
                 return favorites;
             }
 
@@ -86,15 +95,35 @@ internal static class NativeStateBridge
                 }
             }
         }
-        catch
+        catch (JsonException ex)
         {
+            AddWarning(
+                warnings,
+                "favorites",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Favorites were skipped; fix or regenerate .cache/favorites.json, then run Import again.");
+            return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "favorites",
+                path,
+                "unreadable",
+                ex.Message,
+                "Favorites were skipped; check file permissions or replace .cache/favorites.json, then run Import again.");
             return new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         }
 
         return favorites;
     }
 
-    public static List<NativeAlbumRecord> LoadAlbums(string projectRoot)
+    public static List<NativeAlbumRecord> LoadAlbums(
+        string projectRoot,
+        ICollection<NativeImportWarning>? warnings = null)
     {
         var path = Path.Combine(projectRoot, ".cache", "albums.json");
         var records = new List<NativeAlbumRecord>();
@@ -110,6 +139,13 @@ internal static class NativeStateBridge
             if (!doc.RootElement.TryGetProperty("albums", out var albums) ||
                 albums.ValueKind != JsonValueKind.Array)
             {
+                AddWarning(
+                    warnings,
+                    "albums",
+                    path,
+                    "unexpected-shape",
+                    "albums.json was readable JSON but did not contain an albums array.",
+                    "Albums were skipped; export or repair .cache/albums.json, then run Import again.");
                 return records;
             }
 
@@ -136,8 +172,26 @@ internal static class NativeStateBridge
                 records.Add(new NativeAlbumRecord(id, name, imageCount, imagePaths));
             }
         }
-        catch
+        catch (JsonException ex)
         {
+            AddWarning(
+                warnings,
+                "albums",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Albums were skipped; fix or regenerate .cache/albums.json, then run Import again.");
+            return [];
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "albums",
+                path,
+                "unreadable",
+                ex.Message,
+                "Albums were skipped; check file permissions or replace .cache/albums.json, then run Import again.");
             return [];
         }
 
@@ -146,7 +200,8 @@ internal static class NativeStateBridge
 
     public static IReadOnlyList<NativeBrowserStateRecord> LoadBrowserStateExport(
         string projectRoot,
-        string? explicitExportPath)
+        string? explicitExportPath,
+        ICollection<NativeImportWarning>? warnings = null)
     {
         var path = ResolveBrowserStateExportPath(projectRoot, explicitExportPath);
         if (path is null || !File.Exists(path))
@@ -166,8 +221,26 @@ internal static class NativeStateBridge
                 .Select(static item => new NativeBrowserStateRecord(item.Key, item.Value))
                 .ToList();
         }
-        catch
+        catch (JsonException ex)
         {
+            AddWarning(
+                warnings,
+                "browser-state-export",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Browser localStorage export was skipped; rerun the browser export to a valid JSON file, then run Import again.");
+            return [];
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "browser-state-export",
+                path,
+                "unreadable",
+                ex.Message,
+                "Browser localStorage export was skipped; check the path or permissions, then run Import again.");
             return [];
         }
     }
@@ -183,7 +256,9 @@ internal static class NativeStateBridge
         return File.Exists(defaultPath) ? defaultPath : null;
     }
 
-    public static string? LoadSettingsJson(string projectRoot)
+    public static string? LoadSettingsJson(
+        string projectRoot,
+        ICollection<NativeImportWarning>? warnings = null)
     {
         var path = Path.Combine(projectRoot, ".cache", "settings.json");
         if (!File.Exists(path))
@@ -193,10 +268,42 @@ internal static class NativeStateBridge
 
         try
         {
-            return File.ReadAllText(path);
+            var json = File.ReadAllText(path);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                AddWarning(
+                    warnings,
+                    "settings",
+                    path,
+                    "unexpected-shape",
+                    "settings.json was readable JSON but not an object.",
+                    "Settings fell back to native defaults; fix or regenerate .cache/settings.json, then run Import again.");
+                return null;
+            }
+
+            return json;
         }
-        catch
+        catch (JsonException ex)
         {
+            AddWarning(
+                warnings,
+                "settings",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Settings fell back to native defaults; fix or regenerate .cache/settings.json, then run Import again.");
+            return null;
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "settings",
+                path,
+                "unreadable",
+                ex.Message,
+                "Settings fell back to native defaults; check file permissions or replace .cache/settings.json, then run Import again.");
             return null;
         }
     }
@@ -334,6 +441,22 @@ internal static class NativeStateBridge
         return value.ValueKind == JsonValueKind.String
             ? value.GetString() ?? string.Empty
             : value.GetRawText();
+    }
+
+    private static bool IsRecoverableReadException(Exception ex)
+    {
+        return ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException;
+    }
+
+    private static void AddWarning(
+        ICollection<NativeImportWarning>? warnings,
+        string source,
+        string path,
+        string code,
+        string message,
+        string recoveryAction)
+    {
+        warnings?.Add(new NativeImportWarning(source, Path.GetFullPath(path), code, message, recoveryAction));
     }
 
     private static IEnumerable<string> EnumerateRootCandidates()

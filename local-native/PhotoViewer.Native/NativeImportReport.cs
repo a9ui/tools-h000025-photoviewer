@@ -9,5 +9,13 @@ internal sealed record NativeImportReport(
     int BrowserStateKeyCount,
     int SeenImageCount,
     int ImageCount,
-    DateTime ImportedAtUtc
-);
+    DateTime ImportedAtUtc,
+    IReadOnlyList<NativeImportWarning> Warnings
+)
+{
+    public int WarningCount => Warnings.Count;
+
+    public string RecoverySummary => Warnings.Count == 0
+        ? ""
+        : string.Join(" | ", Warnings.Select(static warning => $"{warning.Source}: {warning.RecoveryAction}"));
+}

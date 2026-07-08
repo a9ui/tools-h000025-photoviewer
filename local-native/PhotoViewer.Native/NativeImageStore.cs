@@ -146,14 +146,18 @@ internal sealed class NativeImageStore
     public NativeImportReport ImportProjectState(string? browserStateExportPath = null)
     {
         Initialize();
-        var favorites = NativeStateBridge.LoadFavorites(_projectRoot);
-        var albums = NativeStateBridge.LoadAlbums(_projectRoot);
-        var browserState = NativeStateBridge.LoadBrowserStateExport(_projectRoot, browserStateExportPath);
+        var warnings = new List<NativeImportWarning>();
+        var favorites = NativeStateBridge.LoadFavorites(_projectRoot, warnings);
+        var albums = NativeStateBridge.LoadAlbums(_projectRoot, warnings);
+        var browserState = NativeStateBridge.LoadBrowserStateExport(_projectRoot, browserStateExportPath, warnings);
         var resolvedBrowserStateExportPath = NativeStateBridge.ResolveBrowserStateExportPath(_projectRoot, browserStateExportPath) ?? "";
-        var summary = NativeStateBridge.ReadSummary(_projectRoot);
-        var browserSettingsJson = NativeStateBridge.LoadSettingsJson(_projectRoot);
+        var settingsPath = Path.Combine(_projectRoot, ".cache", "settings.json");
+        var settingsFound = File.Exists(settingsPath);
+        var browserSettingsJson = NativeStateBridge.LoadSettingsJson(_projectRoot, warnings);
         var importedAt = DateTime.UtcNow;
         var importedSeenCount = 0;
+        var browserStateImportFailed = warnings.Any(static warning =>
+            string.Equals(warning.Source, "browser-state-export", StringComparison.Ordinal));
 
         using var connection = OpenConnection();
         using var transaction = connection.BeginTransaction();
@@ -220,7 +224,7 @@ internal sealed class NativeImageStore
             }
         }
 
-        if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
+        if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) && !browserStateImportFailed)
         {
             ExecuteNonQuery(connection, transaction, "DELETE FROM browser_state");
             foreach (var record in browserState)
@@ -243,20 +247,30 @@ internal sealed class NativeImageStore
                 UpsertSetting(connection, transaction, $"browser_{record.Key}", record.Value, importedAt);
             }
 
-            importedSeenCount = ImportBrowserSeenImages(connection, transaction, browserState, importedAt);
+            importedSeenCount = ImportBrowserSeenImages(connection, transaction, browserState, importedAt, warnings);
         }
 
-        UpsertSetting(connection, transaction, "browser_settings_found", browserSettingsJson is null ? "0" : "1", importedAt);
+        UpsertSetting(connection, transaction, "browser_settings_found", settingsFound ? "1" : "0", importedAt);
+        UpsertSetting(connection, transaction, "browser_settings_imported", browserSettingsJson is null ? "0" : "1", importedAt);
         if (browserSettingsJson is not null)
         {
             UpsertSetting(connection, transaction, "browser_settings_json", browserSettingsJson, importedAt);
         }
+        else
+        {
+            UpsertSetting(connection, transaction, "browser_settings_json", "", importedAt);
+        }
+
         UpsertSetting(connection, transaction, "browser_state_export_found", string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "0" : "1", importedAt);
+        UpsertSetting(connection, transaction, "browser_state_export_imported", !browserStateImportFailed && !string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "1" : "0", importedAt);
         UpsertSetting(connection, transaction, "browser_seen_image_count", importedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
         if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
         {
             UpsertSetting(connection, transaction, "browser_state_export_path", resolvedBrowserStateExportPath, importedAt);
         }
+        UpsertSetting(connection, transaction, "import_warning_count", warnings.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
+        UpsertSetting(connection, transaction, "import_warnings_json", JsonSerializer.Serialize(warnings), importedAt);
+        UpsertSetting(connection, transaction, "import_recovery_summary", BuildRecoverySummary(warnings), importedAt);
 
         UpsertSetting(connection, transaction, "keybindings_json", DefaultKeyBindingsJson, importedAt);
         UpsertSetting(connection, transaction, "view_mode", GetSetting(connection, transaction, "view_mode") ?? "details", importedAt);
@@ -284,12 +298,10 @@ internal sealed class NativeImageStore
         run.Parameters.AddWithValue("$imported", importedAt.ToString("O"));
         run.Parameters.AddWithValue("$favorites", favorites.Count);
         run.Parameters.AddWithValue("$albums", albums.Count);
-        run.Parameters.AddWithValue("$settings", summary.SettingsFound ? 1 : 0);
+        run.Parameters.AddWithValue("$settings", settingsFound ? 1 : 0);
         run.Parameters.AddWithValue("$images", CountImages(connection, transaction));
         run.Parameters.AddWithValue("$root", _projectRoot);
-        run.Parameters.AddWithValue("$note", browserState.Count > 0
-            ? $"Imported {browserState.Count} pvu_* keys from explicit browser localStorage export."
-            : "Browser pvu_* localStorage is not read directly; no explicit export file was imported.");
+        run.Parameters.AddWithValue("$note", BuildImportNote(browserState.Count, resolvedBrowserStateExportPath, browserStateImportFailed, warnings));
         run.ExecuteNonQuery();
 
         transaction.Commit();
@@ -297,13 +309,14 @@ internal sealed class NativeImageStore
         return new NativeImportReport(
             DatabasePath: _databasePath,
             FavoriteCount: favorites.Count,
-            AlbumCount: summary.AlbumCount,
-            AlbumImageCount: summary.AlbumImageCount,
-            SettingsFound: summary.SettingsFound,
+            AlbumCount: albums.Count,
+            AlbumImageCount: albums.Sum(static album => album.ImagePaths.Count),
+            SettingsFound: settingsFound,
             BrowserStateKeyCount: browserState.Count,
             SeenImageCount: CountSeenImages(connection, null),
             ImageCount: CountImages(),
-            ImportedAtUtc: importedAt
+            ImportedAtUtc: importedAt,
+            Warnings: warnings
         );
     }
 
@@ -900,7 +913,8 @@ internal sealed class NativeImageStore
         SqliteConnection connection,
         SqliteTransaction transaction,
         IReadOnlyList<NativeBrowserStateRecord> browserState,
-        DateTime importedAt)
+        DateTime importedAt,
+        ICollection<NativeImportWarning> warnings)
     {
         var seenRecord = browserState.FirstOrDefault(static item =>
             string.Equals(item.Key, "pvu_seen_images", StringComparison.Ordinal));
@@ -917,6 +931,12 @@ internal sealed class NativeImageStore
         }
         catch (JsonException)
         {
+            warnings.Add(new NativeImportWarning(
+                "browser-state-export:pvu_seen_images",
+                "",
+                "malformed-json-value",
+                "pvu_seen_images was present but could not be parsed as JSON.",
+                "Seen-image state was skipped; rerun the browser export or remove the malformed pvu_seen_images value, then run Import again."));
             return 0;
         }
 
@@ -931,6 +951,36 @@ internal sealed class NativeImageStore
         }
 
         return imported.Count;
+    }
+
+    private static string BuildImportNote(
+        int browserStateCount,
+        string resolvedBrowserStateExportPath,
+        bool browserStateImportFailed,
+        IReadOnlyCollection<NativeImportWarning> warnings)
+    {
+        if (warnings.Count > 0)
+        {
+            return $"Import completed with {warnings.Count} recoverable warning(s): {BuildRecoverySummary(warnings)}";
+        }
+
+        if (browserStateImportFailed)
+        {
+            return "Browser localStorage export was skipped after a recoverable import warning.";
+        }
+
+        return browserStateCount > 0
+            ? $"Imported {browserStateCount} pvu_* keys from explicit browser localStorage export."
+            : string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath)
+                ? "Browser pvu_* localStorage is not read directly; no explicit export file was imported."
+                : "Explicit browser localStorage export contained no pvu_* keys.";
+    }
+
+    private static string BuildRecoverySummary(IReadOnlyCollection<NativeImportWarning> warnings)
+    {
+        return warnings.Count == 0
+            ? ""
+            : string.Join(" | ", warnings.Select(static warning => $"{warning.Source}: {warning.RecoveryAction}"));
     }
 
     private static IEnumerable<string> ParseBrowserSeenImageIds(string value)
