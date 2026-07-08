@@ -68,6 +68,12 @@ deferred as a native migration target because current browser pinned preview
 tabs belong to #99/#100 and native has no accepted tab/pin/restore state
 contract yet.
 
+This Row17 continuation formally records the browser recent-albums key:
+`pvu_recent_albums` is raw-mirrored for traceability when an explicit export
+contains it, but it is deferred as a native migration target because album
+cache import exists separately and there is no accepted native recent-album
+UI/state contract.
+
 ## Guardrails
 
 - No Linear.
@@ -105,6 +111,8 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #146
+- GitHub PR #145
 - GitHub PR #144
 - GitHub PR #142
 - GitHub PR #141
@@ -251,6 +259,12 @@ Read in full before planning or editing:
     `preview_tabs` settings;
   - it is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser recent-album state in #117:
+  - `pvu_recent_albums` is kept as a raw browser mirror under
+    `browser_pvu_recent_albums` when an explicit export contains it;
+  - it does not create native `recent_albums` or `recent_album` settings;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -267,10 +281,12 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Prepa
 dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large
 corepack pnpm typecheck
 git diff --name-only -- src
 git diff --name-only -- scripts
 git diff --name-only -- H000033
+rg -n "^(<<<<<<<|=======|>>>>>>>)" .
 git diff --check
 ```
 
@@ -282,24 +298,25 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
+`pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=9`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=10`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row16-pvu-state` based on `origin/main`
-`d7348766f950575f987e2606fab78b240bc94e9e` after PR #144 and the Row15
-verification commit:
+`codex/h25-117-row16-pvu-recent-albums` based on `origin/main`
+`4cd9f84fe11be576e905959069ca838db814a5da` after PR #146:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
+  `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
   `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
   `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
@@ -310,14 +327,14 @@ verification commit:
   `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=9`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=10`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
   existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=7`, `warnings=0`, and no browser runtime.
+  `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
   `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
@@ -325,7 +342,12 @@ verification commit:
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
   `enhancedOnlyFilter=true`, `favoriteLevelFilter=true`, `sortName=true`,
-  `randomReshuffle=true`, `browserStateKeys=7`, `settingsImported=true`,
+  `randomReshuffle=true`, `browserStateKeys=6`, `settingsImported=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large` passed
+  with `totalImages=240`, `targetIndex=180`, `restoredIndex=180`,
+  `statePersisted=true`, `restoreSelected=true`, `ensureVisible=true`,
   `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `corepack pnpm typecheck` passed.
@@ -340,7 +362,7 @@ verification commit:
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #256 and create/update the next row if more #117 native
+2. Update SQLite job #257 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
