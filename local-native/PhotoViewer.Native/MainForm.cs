@@ -7,6 +7,9 @@ namespace PhotoViewer.Native;
 
 internal sealed class MainForm : Form
 {
+    private static readonly char[] PromptTagLeadingTrimChars = [' ', '\t', '\r', '\n', '(', '[', '{'];
+    private static readonly char[] PromptTagTrailingTrimChars = [' ', '\t', '\r', '\n', ')', ']', '}'];
+
     private readonly TextBox _folderText = new();
     private readonly Button _browseButton = new();
     private readonly Button _scanButton = new();
@@ -1118,6 +1121,17 @@ internal sealed class MainForm : Form
             _lastMetadataCopyText.Contains("Steps: 12", StringComparison.OrdinalIgnoreCase);
         Require(metadataCopy, "metadata copy action failed");
 
+        var promptTag = SplitPromptTags(metadataTarget!.Prompt).FirstOrDefault();
+        Require(promptTag is not null, "metadata fixture prompt tag missing");
+        var promptTagAction = AddPromptTagToSearch(promptTag!) &&
+            string.Equals(_searchText.Text, promptTag, StringComparison.OrdinalIgnoreCase) &&
+            _visibleImages.Any(image => string.Equals(image.AbsolutePath, metadataTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        Require(promptTagAction, "prompt tag search action failed");
+        _clearSearchButton.PerformClick();
+        Require(_searchText.Text.Length == 0 && _visibleImages.Count == initialVisible, "prompt tag search reset failed");
+        SelectImage(metadataTarget.AbsolutePath);
+        await LoadSelectedPreviewAsync();
+
         var detailReport = RunDetailModalSmoke();
         Require(detailReport.ModalOpened, "detail modal did not load image");
         Require(detailReport.Navigation, "detail modal navigation failed");
@@ -1128,6 +1142,7 @@ internal sealed class MainForm : Form
         Require(detailReport.Favorite, "detail modal favorite control failed");
         Require(detailReport.OpenExternal, "detail modal open-external target failed");
         Require(detailReport.MetadataDisplay, "detail modal metadata display failed");
+        Require(detailReport.PromptTags, "detail modal prompt tags failed");
         var metadataDisplay = metadataPreview && detailReport.MetadataDisplay;
 
         var settingsSnapshot = BuildNativeSettingsSnapshot();
@@ -1263,6 +1278,7 @@ internal sealed class MainForm : Form
             DetailOpenExternal: detailReport.OpenExternal,
             MetadataDisplay: metadataDisplay,
             MetadataCopy: metadataCopy,
+            PromptTagAction: promptTagAction,
             SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
@@ -2683,6 +2699,27 @@ internal sealed class MainForm : Form
         }
     }
 
+    private bool AddPromptTagToSearch(string tag)
+    {
+        var normalized = NormalizePromptTag(tag);
+        if (normalized.Length == 0)
+        {
+            return false;
+        }
+
+        var currentTags = ParseSearchTags(_searchText.Text);
+        if (currentTags.Any(existing => string.Equals(existing, normalized, StringComparison.OrdinalIgnoreCase)))
+        {
+            SetStatus($"Prompt tag already in search: {normalized}");
+            return false;
+        }
+
+        currentTags.Add(normalized);
+        _searchText.Text = string.Join(", ", currentTags);
+        SetStatus($"Added prompt tag to search: {normalized}");
+        return true;
+    }
+
     private static void OpenExternalPath(string absolutePath)
     {
         Process.Start(new ProcessStartInfo
@@ -2711,7 +2748,8 @@ internal sealed class MainForm : Form
             _visibleImages,
             index,
             OpenExternalPath,
-            SetFavoriteLevelForPath);
+            SetFavoriteLevelForPath,
+            AddPromptTagToSearch);
     }
 
     private DetailSmokeReport RunDetailModalSmoke()
@@ -2719,7 +2757,7 @@ internal sealed class MainForm : Form
         var index = GetSelectedIndex();
         if (index < 0)
         {
-            return new DetailSmokeReport(false, false, false, false, false, false, false, false, false);
+            return new DetailSmokeReport(false, false, false, false, false, false, false, false, false, false);
         }
 
         using var detail = CreateDetailModal(index);
@@ -3671,6 +3709,44 @@ internal sealed class MainForm : Form
             !string.IsNullOrWhiteSpace(image.MetadataRaw);
     }
 
+    private static List<string> SplitPromptTags(string prompt)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tags = new List<string>();
+        foreach (var rawTag in prompt.Split(','))
+        {
+            var tag = NormalizePromptTag(rawTag);
+            if (tag.Length < 2 || tag.Contains('\n', StringComparison.Ordinal) || !seen.Add(tag))
+            {
+                continue;
+            }
+
+            tags.Add(tag);
+            if (tags.Count >= 160)
+            {
+                break;
+            }
+        }
+
+        return tags;
+    }
+
+    private static List<string> ParseSearchTags(string query)
+    {
+        return query
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(static token => token.Length > 0)
+            .ToList();
+    }
+
+    private static string NormalizePromptTag(string tag)
+    {
+        return tag
+            .TrimStart(PromptTagLeadingTrimChars)
+            .TrimEnd(PromptTagTrailingTrimChars)
+            .Trim();
+    }
+
     private static void AddMetadataCopyBlock(ICollection<string> lines, string label, string value)
     {
         var normalized = value.Trim();
@@ -3917,6 +3993,7 @@ internal sealed class MainForm : Form
             $"detailOpenExternal={BoolText(report.DetailOpenExternal)}",
             $"metadataDisplay={BoolText(report.MetadataDisplay)}",
             $"metadataCopy={BoolText(report.MetadataCopy)}",
+            $"promptTagAction={BoolText(report.PromptTagAction)}",
             $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
             $"searchMatches={report.SearchMatches}",
             $"favoriteMatches={report.FavoriteMatches}",
@@ -4132,9 +4209,11 @@ internal sealed class MainForm : Form
         private readonly List<NativeImageRecord> _images;
         private readonly Action<string> _openExternal;
         private readonly Action<string, int> _favoriteChanged;
+        private readonly Func<string, bool> _addPromptTagToSearch;
         private readonly FlowLayoutPanel _toolbar = new();
         private readonly Panel _imageHost = new();
         private readonly PictureBox _imageBox = new();
+        private readonly FlowLayoutPanel _promptTags = new();
         private readonly Label _metaLabel = new();
         private Image? _sourceImage;
         private int _index;
@@ -4148,7 +4227,8 @@ internal sealed class MainForm : Form
             IReadOnlyList<NativeImageRecord> images,
             int startIndex,
             Action<string> openExternal,
-            Action<string, int> favoriteChanged)
+            Action<string, int> favoriteChanged,
+            Func<string, bool> addPromptTagToSearch)
         {
             if (images.Count == 0)
             {
@@ -4159,6 +4239,7 @@ internal sealed class MainForm : Form
             _index = Math.Clamp(startIndex, 0, _images.Count - 1);
             _openExternal = openExternal;
             _favoriteChanged = favoriteChanged;
+            _addPromptTagToSearch = addPromptTagToSearch;
 
             Text = "PhotoViewer Detail";
             Width = 1040;
@@ -4203,7 +4284,8 @@ internal sealed class MainForm : Form
             var metadataDisplay = !HasMetadata(CurrentImage) ||
                 (_metaLabel.Text.Contains("Prompt:", StringComparison.OrdinalIgnoreCase) &&
                     _metaLabel.Text.Contains("Negative prompt:", StringComparison.OrdinalIgnoreCase));
-            return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal, metadataDisplay);
+            var promptTags = SplitPromptTags(CurrentImage.Prompt).Count == 0 || _promptTags.Controls.Count > 0;
+            return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal, metadataDisplay, promptTags);
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -4265,10 +4347,11 @@ internal sealed class MainForm : Form
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 1,
-                RowCount = 3,
+                RowCount = 4,
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
 
             _toolbar.Dock = DockStyle.Fill;
@@ -4297,6 +4380,12 @@ internal sealed class MainForm : Form
             _imageBox.MouseUp += (_, _) => _dragging = false;
             _imageHost.Controls.Add(_imageBox);
 
+            _promptTags.Dock = DockStyle.Fill;
+            _promptTags.FlowDirection = FlowDirection.LeftToRight;
+            _promptTags.WrapContents = false;
+            _promptTags.AutoScroll = true;
+            _promptTags.Padding = new Padding(8, 4, 8, 2);
+
             _metaLabel.Dock = DockStyle.Fill;
             _metaLabel.Padding = new Padding(8, 4, 8, 4);
             _metaLabel.AutoEllipsis = false;
@@ -4304,7 +4393,8 @@ internal sealed class MainForm : Form
 
             root.Controls.Add(_toolbar, 0, 0);
             root.Controls.Add(_imageHost, 0, 1);
-            root.Controls.Add(_metaLabel, 0, 2);
+            root.Controls.Add(_promptTags, 0, 2);
+            root.Controls.Add(_metaLabel, 0, 3);
             Controls.Add(root);
         }
 
@@ -4330,6 +4420,7 @@ internal sealed class MainForm : Form
                 _flipped = false;
                 _zoom = CalculateFitZoom();
                 ApplyDisplayImage();
+                UpdatePromptTags();
                 UpdateMeta();
             }
             catch (Exception ex)
@@ -4457,6 +4548,40 @@ internal sealed class MainForm : Form
             UpdateMeta();
         }
 
+        private void UpdatePromptTags()
+        {
+            _promptTags.SuspendLayout();
+            try
+            {
+                _promptTags.Controls.Clear();
+                foreach (var tag in SplitPromptTags(CurrentImage.Prompt))
+                {
+                    var button = new Button
+                    {
+                        Text = tag,
+                        Tag = tag,
+                        Width = Math.Clamp(32 + (tag.Length * 7), 64, 180),
+                        Height = 28,
+                        AutoEllipsis = true,
+                    };
+                    button.Click += (_, _) =>
+                    {
+                        if (_addPromptTagToSearch((string)button.Tag!))
+                        {
+                            Close();
+                        }
+                    };
+                    _promptTags.Controls.Add(button);
+                }
+
+                _promptTags.Visible = _promptTags.Controls.Count > 0;
+            }
+            finally
+            {
+                _promptTags.ResumeLayout();
+            }
+        }
+
         private void UpdateMeta()
         {
             var image = CurrentImage;
@@ -4567,7 +4692,8 @@ internal sealed class MainForm : Form
         bool Flip,
         bool Favorite,
         bool OpenExternal,
-        bool MetadataDisplay);
+        bool MetadataDisplay,
+        bool PromptTags);
 
     private sealed record NativeSettingsSnapshot(
         string DatabasePath,
@@ -4656,6 +4782,7 @@ internal sealed class MainForm : Form
         bool DetailOpenExternal,
         bool MetadataDisplay,
         bool MetadataCopy,
+        bool PromptTagAction,
         bool SettingsReadOnly,
         int SearchMatches,
         int FavoriteMatches,
