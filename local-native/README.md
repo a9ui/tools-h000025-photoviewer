@@ -633,6 +633,20 @@ powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -Headl
 This is not copy metadata (#108), prompt tag actions (#109), search chips
 (#110), or broader metadata workflow parity.
 
+## Post-v1 #108 Notes
+
+#108 adds the first bounded native copy-metadata slice. The main native UI now
+has an explicit `Copy` action for exactly one selected image. It copies PNG
+info plus the #107 prompt, negative prompt, generation settings summary, and
+raw `parameters` metadata when present.
+
+The native UI smoke verifies the action path and copied content with
+`metadataCopy=true` without relying on OS clipboard automation in CI. The real
+desktop action still writes to the system clipboard.
+
+This is not prompt tag actions (#109), search chips (#110), bulk metadata
+editing, browser workflow parity, or any automatic enhancement worker path.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a

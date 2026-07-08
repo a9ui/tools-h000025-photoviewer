@@ -38,6 +38,7 @@ internal sealed class MainForm : Form
     private readonly Button _previousButton = new();
     private readonly Button _nextButton = new();
     private readonly Button _detailButton = new();
+    private readonly Button _copyMetadataButton = new();
     private readonly NumericUpDown _favoriteLevel = new();
     private readonly Button _openFileButton = new();
     private readonly Button _openFolderButton = new();
@@ -69,6 +70,7 @@ internal sealed class MainForm : Form
     private List<string> _currentRoots = [];
     private CancellationTokenSource? _scanCancellation;
     private long _previewVersion;
+    private string _lastMetadataCopyText = "";
     private bool _updatingFavoriteControl;
     private bool _updatingFolderBuckets;
     private bool _updatingFavoriteFilter;
@@ -605,6 +607,10 @@ internal sealed class MainForm : Form
         _detailButton.Width = 72;
         _detailButton.Click += (_, _) => ShowDetailModal();
 
+        _copyMetadataButton.Text = "Copy";
+        _copyMetadataButton.Width = 62;
+        _copyMetadataButton.Click += (_, _) => CopySelectedMetadata();
+
         var favoriteLabel = new Label
         {
             Text = "Favorite",
@@ -648,6 +654,7 @@ internal sealed class MainForm : Form
         actions.Controls.Add(_previousButton);
         actions.Controls.Add(_nextButton);
         actions.Controls.Add(_detailButton);
+        actions.Controls.Add(_copyMetadataButton);
         actions.Controls.Add(favoriteLabel);
         actions.Controls.Add(_favoriteLevel);
         actions.Controls.Add(_openFileButton);
@@ -1101,6 +1108,15 @@ internal sealed class MainForm : Form
         var metadataPreview = _previewLabel.Text.Contains("Prompt:", StringComparison.OrdinalIgnoreCase) &&
             _previewLabel.Text.Contains("Negative prompt:", StringComparison.OrdinalIgnoreCase);
         Require(metadataPreview, "preview metadata display failed");
+        var metadataCopy = CopySelectedMetadata(useSystemClipboard: false) &&
+            _lastMetadataCopyText.Contains("PNG info", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("Prompt:", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("Negative prompt:", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("Settings:", StringComparison.OrdinalIgnoreCase) &&
+            _lastMetadataCopyText.Contains("Steps: 12", StringComparison.OrdinalIgnoreCase);
+        Require(metadataCopy, "metadata copy action failed");
 
         var detailReport = RunDetailModalSmoke();
         Require(detailReport.ModalOpened, "detail modal did not load image");
@@ -1246,6 +1262,7 @@ internal sealed class MainForm : Form
             DetailFavorite: detailReport.Favorite,
             DetailOpenExternal: detailReport.OpenExternal,
             MetadataDisplay: metadataDisplay,
+            MetadataCopy: metadataCopy,
             SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
@@ -2628,6 +2645,44 @@ internal sealed class MainForm : Form
         OpenExternalPath(image.AbsolutePath);
     }
 
+    private bool CopySelectedMetadata(bool useSystemClipboard = true)
+    {
+        if (_list.SelectedIndices.Count != 1)
+        {
+            SetStatus("Select one image to copy PNG info.");
+            return false;
+        }
+
+        var image = GetSelectedImage();
+        if (image is null)
+        {
+            SetStatus("Select one image to copy PNG info.");
+            return false;
+        }
+
+        var copyText = BuildMetadataCopyText(image);
+        _lastMetadataCopyText = copyText;
+        var copyKind = MetadataCopyKind(image);
+
+        if (!useSystemClipboard)
+        {
+            SetStatus($"Prepared {copyKind} copy: {image.Filename}");
+            return true;
+        }
+
+        try
+        {
+            Clipboard.SetText(copyText);
+            SetStatus($"Copied {copyKind}: {image.Filename}");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Copy failed: {ex.Message}");
+            return false;
+        }
+    }
+
     private static void OpenExternalPath(string absolutePath)
     {
         Process.Start(new ProcessStartInfo
@@ -2965,6 +3020,7 @@ internal sealed class MainForm : Form
         _previousButton.Enabled = index > 0;
         _nextButton.Enabled = index >= 0 && index < _visibleImages.Count - 1;
         _detailButton.Enabled = selected is not null;
+        _copyMetadataButton.Enabled = selected is not null && selectedCount == 1;
         _openFileButton.Enabled = selected is not null;
         _openFolderButton.Enabled = selected is not null;
         _deleteButton.Enabled = selected is not null;
@@ -3567,6 +3623,37 @@ internal sealed class MainForm : Form
         return string.IsNullOrWhiteSpace(metadata) ? details : $"{details}  {metadata}";
     }
 
+    private static string BuildMetadataCopyText(NativeImageRecord image)
+    {
+        var dimensions = FormatDimensions(image);
+        var lines = new List<string>
+        {
+            MetadataCopyKind(image),
+            $"File: {image.Filename}",
+            $"Path: {image.AbsolutePath}",
+            $"Size: {FormatBytes(image.SizeBytes)}",
+            $"Favorite: {image.FavoriteLevel}",
+        };
+
+        if (!string.IsNullOrWhiteSpace(dimensions))
+        {
+            lines.Insert(4, $"Dimensions: {dimensions}");
+        }
+
+        AddMetadataCopyBlock(lines, "Prompt", image.Prompt);
+        AddMetadataCopyBlock(lines, "Negative prompt", image.NegativePrompt);
+        AddMetadataCopyBlock(lines, "Settings", image.MetadataSettingsSummary);
+        AddMetadataCopyBlock(lines, "Raw parameters", image.MetadataRaw);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static string MetadataCopyKind(NativeImageRecord image)
+    {
+        return string.Equals(Path.GetExtension(image.AbsolutePath), ".png", StringComparison.OrdinalIgnoreCase)
+            ? "PNG info"
+            : "Image info";
+    }
+
     private static string FormatMetadataDisplay(NativeImageRecord image, int maxValueLength)
     {
         var parts = new List<string>();
@@ -3582,6 +3669,18 @@ internal sealed class MainForm : Form
             !string.IsNullOrWhiteSpace(image.NegativePrompt) ||
             !string.IsNullOrWhiteSpace(image.MetadataSettingsSummary) ||
             !string.IsNullOrWhiteSpace(image.MetadataRaw);
+    }
+
+    private static void AddMetadataCopyBlock(ICollection<string> lines, string label, string value)
+    {
+        var normalized = value.Trim();
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        lines.Add($"{label}:");
+        lines.Add(normalized);
     }
 
     private static void AddMetadataPart(ICollection<string> parts, string label, string value, int maxValueLength)
@@ -3817,6 +3916,7 @@ internal sealed class MainForm : Form
             $"detailFavorite={BoolText(report.DetailFavorite)}",
             $"detailOpenExternal={BoolText(report.DetailOpenExternal)}",
             $"metadataDisplay={BoolText(report.MetadataDisplay)}",
+            $"metadataCopy={BoolText(report.MetadataCopy)}",
             $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
             $"searchMatches={report.SearchMatches}",
             $"favoriteMatches={report.FavoriteMatches}",
@@ -4555,6 +4655,7 @@ internal sealed class MainForm : Form
         bool DetailFavorite,
         bool DetailOpenExternal,
         bool MetadataDisplay,
+        bool MetadataCopy,
         bool SettingsReadOnly,
         int SearchMatches,
         int FavoriteMatches,
