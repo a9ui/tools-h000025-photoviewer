@@ -17,6 +17,9 @@ internal sealed class MainForm : Form
     private readonly Button _importButton = new();
     private readonly TextBox _searchText = new();
     private readonly Button _clearSearchButton = new();
+    private readonly FlowLayoutPanel _searchChipPanel = new();
+    private readonly ComboBox _searchSuggestion = new();
+    private readonly Button _addSearchSuggestionButton = new();
     private readonly CheckBox _favoritesOnly = new();
     private readonly CheckBox _enhancedOnly = new();
     private readonly ComboBox _favoriteFilter = new();
@@ -69,6 +72,7 @@ internal sealed class MainForm : Form
     private readonly Dictionary<string, string> _dateSectionHeadersByPath = new(StringComparer.OrdinalIgnoreCase);
     private List<NativeImageRecord> _allImages = [];
     private List<NativeImageRecord> _visibleImages = [];
+    private List<SearchTagSuggestion> _searchTagSuggestions = [];
     private string _currentFolder = "";
     private List<string> _currentRoots = [];
     private CancellationTokenSource? _scanCancellation;
@@ -80,6 +84,7 @@ internal sealed class MainForm : Form
     private bool _updatingDateFilter;
     private bool _updatingDateRange;
     private bool _updatingThumbnailSize;
+    private bool _updatingSearchSuggestions;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
@@ -461,9 +466,10 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 5,
+            RowCount = 6,
         };
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
+        root.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -512,6 +518,7 @@ internal sealed class MainForm : Form
         _searchText.PlaceholderText = "Search name/folder";
         _searchText.TextChanged += (_, _) =>
         {
+            RefreshSearchChipControls();
             ApplyFilter();
             SaveViewState();
         };
@@ -564,6 +571,52 @@ internal sealed class MainForm : Form
         toolbar.Controls.Add(_favoriteFilter, 8, 0);
         toolbar.Controls.Add(_enhancedOnly, 9, 0);
         toolbar.Controls.Add(_stateLabel, 11, 0);
+
+        var searchControls = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 4,
+            RowCount = 1,
+            Padding = new Padding(8, 2, 8, 2),
+        };
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 226));
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
+        searchControls.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+        var searchTagLabel = new Label
+        {
+            Text = "Search tags",
+            Dock = DockStyle.Fill,
+            TextAlign = ContentAlignment.MiddleLeft,
+        };
+
+        _searchChipPanel.Dock = DockStyle.Fill;
+        _searchChipPanel.FlowDirection = FlowDirection.LeftToRight;
+        _searchChipPanel.WrapContents = false;
+        _searchChipPanel.AutoScroll = true;
+        _searchChipPanel.BorderStyle = BorderStyle.FixedSingle;
+
+        _searchSuggestion.Dock = DockStyle.Fill;
+        _searchSuggestion.DropDownStyle = ComboBoxStyle.DropDownList;
+        _searchSuggestion.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_updatingSearchSuggestions)
+            {
+                _addSearchSuggestionButton.Enabled = _searchSuggestion.SelectedItem is SearchTagSuggestion;
+            }
+        };
+
+        _addSearchSuggestionButton.Text = "Add Tag";
+        _addSearchSuggestionButton.Dock = DockStyle.Fill;
+        _addSearchSuggestionButton.Enabled = false;
+        _addSearchSuggestionButton.Click += (_, _) => AddSelectedSearchSuggestion();
+
+        searchControls.Controls.Add(searchTagLabel, 0, 0);
+        searchControls.Controls.Add(_searchChipPanel, 1, 0);
+        searchControls.Controls.Add(_searchSuggestion, 2, 0);
+        searchControls.Controls.Add(_addSearchSuggestionButton, 3, 0);
 
         var actions = new FlowLayoutPanel
         {
@@ -971,12 +1024,15 @@ internal sealed class MainForm : Form
         _statusLabel.Text = "Ready.";
 
         root.Controls.Add(toolbar, 0, 0);
-        root.Controls.Add(actions, 0, 1);
-        root.Controls.Add(displayControls, 0, 2);
-        root.Controls.Add(split, 0, 3);
-        root.Controls.Add(_statusLabel, 0, 4);
+        root.Controls.Add(searchControls, 0, 1);
+        root.Controls.Add(actions, 0, 2);
+        root.Controls.Add(displayControls, 0, 3);
+        root.Controls.Add(split, 0, 4);
+        root.Controls.Add(_statusLabel, 0, 5);
         Controls.Add(root);
         ApplyThumbnailSize(96);
+        RefreshSearchTagSuggestions();
+        RefreshSearchChipControls();
         UpdateSelectionActions();
     }
 
@@ -1123,12 +1179,45 @@ internal sealed class MainForm : Form
 
         var promptTag = SplitPromptTags(metadataTarget!.Prompt).FirstOrDefault();
         Require(promptTag is not null, "metadata fixture prompt tag missing");
+        var normalizedPromptTag = NormalizePromptTag(promptTag!);
         var promptTagAction = AddPromptTagToSearch(promptTag!) &&
-            string.Equals(_searchText.Text, promptTag, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_searchText.Text, normalizedPromptTag, StringComparison.OrdinalIgnoreCase) &&
             _visibleImages.Any(image => string.Equals(image.AbsolutePath, metadataTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
         Require(promptTagAction, "prompt tag search action failed");
+        var promptActionChip = _searchChipPanel.Controls
+            .OfType<Button>()
+            .Any(button => string.Equals(button.Tag as string, normalizedPromptTag, StringComparison.OrdinalIgnoreCase));
+        _searchText.Text = $"{normalizedPromptTag}, fixture";
+        var queryChipTags = _searchChipPanel.Controls
+            .OfType<Button>()
+            .Select(static button => button.Tag as string)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToList();
+        var searchChipsMirrored = queryChipTags.Count == 2 &&
+            queryChipTags.Any(tag => string.Equals(tag, normalizedPromptTag, StringComparison.OrdinalIgnoreCase)) &&
+            queryChipTags.Any(static tag => string.Equals(tag, "fixture", StringComparison.OrdinalIgnoreCase));
+        RemoveSearchTag(normalizedPromptTag);
+        var chipTagsAfterRemove = _searchChipPanel.Controls
+            .OfType<Button>()
+            .Select(static button => button.Tag as string)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToList();
+        var searchChips = promptActionChip &&
+            searchChipsMirrored &&
+            string.Equals(_searchText.Text, "fixture", StringComparison.OrdinalIgnoreCase) &&
+            chipTagsAfterRemove.Count == 1 &&
+            chipTagsAfterRemove.Any(static tag => string.Equals(tag, "fixture", StringComparison.OrdinalIgnoreCase)) &&
+            _visibleImages.Any(image => string.Equals(image.AbsolutePath, metadataTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        Require(searchChips, "search chips did not mirror and remove query tags");
         _clearSearchButton.PerformClick();
         Require(_searchText.Text.Length == 0 && _visibleImages.Count == initialVisible, "prompt tag search reset failed");
+        var searchSuggestion = SelectSearchSuggestion(normalizedPromptTag) &&
+            AddSelectedSearchSuggestion() &&
+            string.Equals(_searchText.Text, normalizedPromptTag, StringComparison.OrdinalIgnoreCase) &&
+            _visibleImages.Any(image => string.Equals(image.AbsolutePath, metadataTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        Require(searchSuggestion, "search suggestion add failed");
+        _clearSearchButton.PerformClick();
+        Require(_searchText.Text.Length == 0 && _visibleImages.Count == initialVisible, "search suggestion reset failed");
         SelectImage(metadataTarget.AbsolutePath);
         await LoadSelectedPreviewAsync();
 
@@ -1279,6 +1368,8 @@ internal sealed class MainForm : Form
             MetadataDisplay: metadataDisplay,
             MetadataCopy: metadataCopy,
             PromptTagAction: promptTagAction,
+            SearchChips: searchChips,
+            SearchSuggestion: searchSuggestion,
             SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
@@ -1877,6 +1968,7 @@ internal sealed class MainForm : Form
         var report = _store.ImportProjectState();
         _favorites = _store.LoadFavorites();
         _allImages = ReapplyFavorites(_allImages);
+        RefreshSearchTagSuggestions();
         BuildFolderBuckets();
         ApplyFilter();
         ApplyStateSummary(report);
@@ -1958,11 +2050,13 @@ internal sealed class MainForm : Form
         {
             _store.SaveRecentFolderSet(roots);
             _allImages = _store.LoadImagesForRoots(roots);
+            RefreshSearchTagSuggestions();
             _folderWatcher.Watch(roots);
         }
         else
         {
             _allImages = [];
+            RefreshSearchTagSuggestions();
             _folderWatcher.Watch([]);
         }
 
@@ -2075,6 +2169,7 @@ internal sealed class MainForm : Form
             stopwatch.Stop();
             _store.SaveRecentFolderSet(roots);
             _allImages = _store.LoadImagesForRoots(roots);
+            RefreshSearchTagSuggestions();
             BuildFolderBuckets();
             ApplyFilter();
             ApplyStateSummary();
@@ -2718,6 +2813,169 @@ internal sealed class MainForm : Form
         _searchText.Text = string.Join(", ", currentTags);
         SetStatus($"Added prompt tag to search: {normalized}");
         return true;
+    }
+
+    private bool AddSelectedSearchSuggestion()
+    {
+        return _searchSuggestion.SelectedItem is SearchTagSuggestion suggestion && AddPromptTagToSearch(suggestion.Tag);
+    }
+
+    private void RemoveSearchTag(string tag)
+    {
+        var currentTags = ParseSearchTags(_searchText.Text);
+        var nextTags = currentTags
+            .Where(item => !string.Equals(item, tag, StringComparison.OrdinalIgnoreCase))
+            .ToList();
+
+        if (nextTags.Count == currentTags.Count)
+        {
+            return;
+        }
+
+        _searchText.Text = string.Join(", ", nextTags);
+        SetStatus($"Removed search tag: {tag}");
+    }
+
+    private void RefreshSearchTagSuggestions()
+    {
+        var counts = new Dictionary<string, SearchTagSuggestionAccumulator>(StringComparer.OrdinalIgnoreCase);
+        foreach (var image in _allImages)
+        {
+            foreach (var rawTag in SplitPromptTags(image.Prompt))
+            {
+                var normalized = NormalizePromptTag(rawTag);
+                if (normalized.Length < 2)
+                {
+                    continue;
+                }
+
+                if (counts.TryGetValue(normalized, out var current))
+                {
+                    counts[normalized] = current with { Count = current.Count + 1 };
+                }
+                else
+                {
+                    counts[normalized] = new SearchTagSuggestionAccumulator(normalized, 1);
+                }
+            }
+        }
+
+        _searchTagSuggestions = counts.Values
+            .OrderByDescending(static item => item.Count)
+            .ThenBy(static item => item.Tag, StringComparer.OrdinalIgnoreCase)
+            .Take(2000)
+            .Select(static item => new SearchTagSuggestion(item.Tag, item.Count))
+            .ToList();
+        RefreshSearchSuggestionOptions();
+    }
+
+    private void RefreshSearchChipControls()
+    {
+        var tags = ParseSearchTags(_searchText.Text);
+        _searchChipPanel.SuspendLayout();
+        try
+        {
+            var oldControls = _searchChipPanel.Controls.Cast<Control>().ToArray();
+            _searchChipPanel.Controls.Clear();
+            foreach (var control in oldControls)
+            {
+                control.Dispose();
+            }
+
+            foreach (var tag in tags)
+            {
+                var button = new Button
+                {
+                    Text = $"{tag} x",
+                    Tag = tag,
+                    Height = 24,
+                    Width = Math.Clamp(46 + tag.Length * 7, 76, 190),
+                    Margin = new Padding(2, 1, 2, 1),
+                    UseMnemonic = false,
+                };
+                button.Click += (_, _) => RemoveSearchTag(tag);
+                _searchChipPanel.Controls.Add(button);
+            }
+        }
+        finally
+        {
+            _searchChipPanel.ResumeLayout();
+        }
+
+        RefreshSearchSuggestionOptions();
+    }
+
+    private void RefreshSearchSuggestionOptions()
+    {
+        if (_updatingSearchSuggestions)
+        {
+            return;
+        }
+
+        _updatingSearchSuggestions = true;
+        try
+        {
+            var selectedTag = (_searchSuggestion.SelectedItem as SearchTagSuggestion)?.Tag ?? "";
+            var committedTags = ParseSearchTags(_searchText.Text).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            var candidates = _searchTagSuggestions
+                .Where(item => !committedTags.Contains(item.Tag))
+                .Take(200)
+                .ToList();
+
+            _searchSuggestion.BeginUpdate();
+            _searchSuggestion.Items.Clear();
+            foreach (var suggestion in candidates)
+            {
+                _searchSuggestion.Items.Add(suggestion);
+            }
+
+            _searchSuggestion.EndUpdate();
+
+            if (_searchSuggestion.Items.Count == 0)
+            {
+                _searchSuggestion.SelectedIndex = -1;
+            }
+            else
+            {
+                var selectedIndex = 0;
+                if (selectedTag.Length > 0)
+                {
+                    for (var index = 0; index < _searchSuggestion.Items.Count; index++)
+                    {
+                        if (_searchSuggestion.Items[index] is SearchTagSuggestion suggestion &&
+                            string.Equals(suggestion.Tag, selectedTag, StringComparison.OrdinalIgnoreCase))
+                        {
+                            selectedIndex = index;
+                            break;
+                        }
+                    }
+                }
+
+                _searchSuggestion.SelectedIndex = selectedIndex;
+            }
+
+            _searchSuggestion.Enabled = _searchSuggestion.Items.Count > 0;
+            _addSearchSuggestionButton.Enabled = _searchSuggestion.SelectedItem is SearchTagSuggestion;
+        }
+        finally
+        {
+            _updatingSearchSuggestions = false;
+        }
+    }
+
+    private bool SelectSearchSuggestion(string tag)
+    {
+        for (var index = 0; index < _searchSuggestion.Items.Count; index++)
+        {
+            if (_searchSuggestion.Items[index] is SearchTagSuggestion suggestion &&
+                string.Equals(suggestion.Tag, tag, StringComparison.OrdinalIgnoreCase))
+            {
+                _searchSuggestion.SelectedIndex = index;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static void OpenExternalPath(string absolutePath)
@@ -3994,6 +4252,8 @@ internal sealed class MainForm : Form
             $"metadataDisplay={BoolText(report.MetadataDisplay)}",
             $"metadataCopy={BoolText(report.MetadataCopy)}",
             $"promptTagAction={BoolText(report.PromptTagAction)}",
+            $"searchChips={BoolText(report.SearchChips)}",
+            $"searchSuggestion={BoolText(report.SearchSuggestion)}",
             $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
             $"searchMatches={report.SearchMatches}",
             $"favoriteMatches={report.FavoriteMatches}",
@@ -4727,6 +4987,16 @@ internal sealed class MainForm : Form
         }
     }
 
+    private sealed record SearchTagSuggestion(string Tag, int Count)
+    {
+        public override string ToString()
+        {
+            return $"{Tag} ({Count:n0})";
+        }
+    }
+
+    private sealed record SearchTagSuggestionAccumulator(string Tag, int Count);
+
     private sealed record NativeUiScreenshotReport(
         string Folder,
         string OutputPath,
@@ -4783,6 +5053,8 @@ internal sealed class MainForm : Form
         bool MetadataDisplay,
         bool MetadataCopy,
         bool PromptTagAction,
+        bool SearchChips,
+        bool SearchSuggestion,
         bool SettingsReadOnly,
         int SearchMatches,
         int FavoriteMatches,

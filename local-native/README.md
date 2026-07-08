@@ -662,6 +662,23 @@ The native UI smoke verifies this action path with `promptTagAction=true` while
 keeping browser app changes, `scripts/**` changes, destructive flows, and
 automatic enhancement workers out of scope.
 
+## Post-v1 #110 Notes
+
+#110 adds the first bounded native search-chip slice. The existing native search
+text remains canonical; the new row mirrors comma-separated search tokens as
+removable chips and offers an `Add Tag` suggestion control built from scanned
+#107 prompt metadata.
+
+This adopts the clear browser evidence for comma-separated tags and prompt-tag
+suggestions, but only as a small native control layer. Drag/reorder behavior,
+inline token editing, rich keyboard dropdown interaction, and broader advanced
+search parity remain deferred.
+
+The native UI smoke verifies this path with `searchChips=true` and
+`searchSuggestion=true`, alongside the existing `promptTagAction=true` check.
+This does not change `src/**`, `scripts/**`, enhancement queues, destructive
+flows, or cache/state deletion behavior.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
