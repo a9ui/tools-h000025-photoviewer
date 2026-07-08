@@ -188,6 +188,14 @@ as a raw browser mirror under `native_settings.browser_pvu_enhance_settings`;
 native does not create `enhance_settings`, `enhancement_settings`, or
 `enhancement_queue_settings` settings and does not increase
 `pvu_state_migration_count`.
+The twentieth #117 row formally records browser localStorage `pvu_favorites`
+and `pvu_favorites_backup` as raw mirrors only. Native keeps the accepted disk
+`.cache/favorites.json` import path into the native favorites table, but does
+not import browser localStorage favorites without an accepted conflict policy.
+Explicit exports keep those keys only as raw browser mirrors under
+`native_settings.browser_pvu_favorites` and
+`native_settings.browser_pvu_favorites_backup`; they do not increase
+`pvu_state_migration_count`.
 
 The dedicated smoke is:
 
