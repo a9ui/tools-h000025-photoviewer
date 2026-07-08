@@ -103,7 +103,7 @@ internal sealed class MainForm : Form
     {
         Text = "PhotoViewer Local Native";
         Width = 1280;
-        Height = 820;
+        Height = 920;
         MinimumSize = new Size(900, 560);
         KeyPreview = true;
 
@@ -494,21 +494,39 @@ internal sealed class MainForm : Form
         var toolbar = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 12,
+            ColumnCount = 1,
+            RowCount = 2,
             Padding = new Padding(8, 6, 8, 4),
         };
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 170));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8));
-        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+        toolbar.RowStyles.Add(new RowStyle(SizeType.Percent, 50));
+
+        var pathToolbar = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 6,
+            RowCount = 1,
+            Margin = Padding.Empty,
+        };
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 68));
+        pathToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
+
+        var filterToolbar = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 5,
+            RowCount = 1,
+            Margin = Padding.Empty,
+        };
+        filterToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        filterToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
+        filterToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
+        filterToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
+        filterToolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
 
         _folderText.Dock = DockStyle.Fill;
         _folderText.PlaceholderText = "Image folder path(s); separate with ;";
@@ -575,18 +593,34 @@ internal sealed class MainForm : Form
         _stateLabel.Dock = DockStyle.Fill;
         _stateLabel.TextAlign = ContentAlignment.MiddleRight;
         _stateLabel.AutoEllipsis = true;
+        _browseButton.MinimumSize = TextFitSize(_browseButton, 78, 26);
+        _scanButton.MinimumSize = TextFitSize(_scanButton, 64, 26);
+        _cancelButton.MinimumSize = TextFitSize(_cancelButton, 70, 26);
+        _importButton.MinimumSize = TextFitSize(_importButton, 68, 26);
+        _clearSearchButton.MinimumSize = TextFitSize(_clearSearchButton, 58, 26);
+        _favoritesOnly.MinimumSize = TextFitSize(_favoritesOnly, 84, 26);
+        _enhancedOnly.MinimumSize = TextFitSize(_enhancedOnly, 96, 26);
+        pathToolbar.ColumnStyles[1].Width = _browseButton.MinimumSize.Width;
+        pathToolbar.ColumnStyles[2].Width = _scanButton.MinimumSize.Width;
+        pathToolbar.ColumnStyles[3].Width = _cancelButton.MinimumSize.Width;
+        pathToolbar.ColumnStyles[4].Width = _importButton.MinimumSize.Width;
+        filterToolbar.ColumnStyles[1].Width = _clearSearchButton.MinimumSize.Width;
+        filterToolbar.ColumnStyles[2].Width = _favoritesOnly.MinimumSize.Width;
+        filterToolbar.ColumnStyles[4].Width = _enhancedOnly.MinimumSize.Width;
 
-        toolbar.Controls.Add(_folderText, 0, 0);
-        toolbar.Controls.Add(_browseButton, 1, 0);
-        toolbar.Controls.Add(_scanButton, 2, 0);
-        toolbar.Controls.Add(_cancelButton, 3, 0);
-        toolbar.Controls.Add(_importButton, 4, 0);
-        toolbar.Controls.Add(_searchText, 5, 0);
-        toolbar.Controls.Add(_clearSearchButton, 6, 0);
-        toolbar.Controls.Add(_favoritesOnly, 7, 0);
-        toolbar.Controls.Add(_favoriteFilter, 8, 0);
-        toolbar.Controls.Add(_enhancedOnly, 9, 0);
-        toolbar.Controls.Add(_stateLabel, 11, 0);
+        pathToolbar.Controls.Add(_folderText, 0, 0);
+        pathToolbar.Controls.Add(_browseButton, 1, 0);
+        pathToolbar.Controls.Add(_scanButton, 2, 0);
+        pathToolbar.Controls.Add(_cancelButton, 3, 0);
+        pathToolbar.Controls.Add(_importButton, 4, 0);
+        pathToolbar.Controls.Add(_stateLabel, 5, 0);
+        filterToolbar.Controls.Add(_searchText, 0, 0);
+        filterToolbar.Controls.Add(_clearSearchButton, 1, 0);
+        filterToolbar.Controls.Add(_favoritesOnly, 2, 0);
+        filterToolbar.Controls.Add(_favoriteFilter, 3, 0);
+        filterToolbar.Controls.Add(_enhancedOnly, 4, 0);
+        toolbar.Controls.Add(pathToolbar, 0, 0);
+        toolbar.Controls.Add(filterToolbar, 0, 1);
 
         var searchControls = new TableLayoutPanel
         {
@@ -595,15 +629,15 @@ internal sealed class MainForm : Form
             RowCount = 1,
             Padding = new Padding(8, 2, 8, 2),
         };
-        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 76));
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
         searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 226));
+        searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 260));
         searchControls.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 82));
         searchControls.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
 
         var searchTagLabel = new Label
         {
-            Text = "Search tags",
+            Text = "Tags",
             Dock = DockStyle.Fill,
             TextAlign = ContentAlignment.MiddleLeft,
         };
@@ -626,8 +660,10 @@ internal sealed class MainForm : Form
 
         _addSearchSuggestionButton.Text = "Add Tag";
         _addSearchSuggestionButton.Dock = DockStyle.Fill;
+        _addSearchSuggestionButton.MinimumSize = TextFitSize(_addSearchSuggestionButton, 82, 26);
         _addSearchSuggestionButton.Enabled = false;
         _addSearchSuggestionButton.Click += (_, _) => AddSelectedSearchSuggestion();
+        searchControls.ColumnStyles[3].Width = _addSearchSuggestionButton.MinimumSize.Width;
 
         searchControls.Controls.Add(searchTagLabel, 0, 0);
         searchControls.Controls.Add(_searchChipPanel, 1, 0);
@@ -638,12 +674,12 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
+            WrapContents = true,
             Padding = new Padding(8, 4, 8, 2),
         };
 
         _viewMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        _viewMode.Width = 96;
+        _viewMode.Width = 124;
         _viewMode.Items.AddRange(["List", "Grid"]);
         _viewMode.SelectedIndexChanged += (_, _) =>
         {
@@ -652,35 +688,35 @@ internal sealed class MainForm : Form
         };
 
         _addFolderButton.Text = "Add Folder";
-        _addFolderButton.Width = 92;
+        ApplyTextFitSize(_addFolderButton, 92);
         _addFolderButton.Click += (_, _) => AddFolderToSet();
 
         _removeFolderButton.Text = "Remove Folder";
-        _removeFolderButton.Width = 112;
+        ApplyTextFitSize(_removeFolderButton, 112);
         _removeFolderButton.Click += (_, _) => RemoveSelectedFolderFromSet();
 
         _recentSetButton.Text = "Recent Set";
-        _recentSetButton.Width = 92;
+        ApplyTextFitSize(_recentSetButton, 92);
         _recentSetButton.Click += async (_, _) => await OpenRecentFolderSetAsync();
 
         _refreshButton.Text = "Refresh";
-        _refreshButton.Width = 76;
+        ApplyTextFitSize(_refreshButton, 76);
         _refreshButton.Click += async (_, _) => await RefreshCurrentFolderSetAsync();
 
         _previousButton.Text = "Previous";
-        _previousButton.Width = 82;
+        ApplyTextFitSize(_previousButton, 82);
         _previousButton.Click += (_, _) => SelectOffset(-1);
 
         _nextButton.Text = "Next";
-        _nextButton.Width = 82;
+        ApplyTextFitSize(_nextButton, 82);
         _nextButton.Click += (_, _) => SelectOffset(1);
 
         _detailButton.Text = "Detail";
-        _detailButton.Width = 72;
+        ApplyTextFitSize(_detailButton, 72);
         _detailButton.Click += (_, _) => ShowDetailModal();
 
         _copyMetadataButton.Text = "Copy";
-        _copyMetadataButton.Width = 62;
+        ApplyTextFitSize(_copyMetadataButton, 62);
         _copyMetadataButton.Click += (_, _) => CopySelectedMetadata();
 
         var favoriteLabel = new Label
@@ -703,19 +739,19 @@ internal sealed class MainForm : Form
         };
 
         _openFileButton.Text = "Open File";
-        _openFileButton.Width = 86;
+        ApplyTextFitSize(_openFileButton, 86);
         _openFileButton.Click += (_, _) => OpenSelectedFile();
 
         _openFolderButton.Text = "Open Folder";
-        _openFolderButton.Width = 96;
+        ApplyTextFitSize(_openFolderButton, 96);
         _openFolderButton.Click += (_, _) => OpenSelectedFolder();
 
         _deleteButton.Text = "Recycle";
-        _deleteButton.Width = 76;
+        ApplyTextFitSize(_deleteButton, 76);
         _deleteButton.Click += (_, _) => DeleteSelectedImage();
 
         _settingsButton.Text = "Settings";
-        _settingsButton.Width = 82;
+        ApplyTextFitSize(_settingsButton, 82);
         _settingsButton.Click += (_, _) => ShowNativeSettings();
 
         actions.Controls.Add(_viewMode);
@@ -738,7 +774,7 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
+            WrapContents = true,
             Padding = new Padding(8, 4, 8, 2),
         };
 
@@ -751,7 +787,7 @@ internal sealed class MainForm : Form
         };
 
         _sortMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        _sortMode.Width = 108;
+        _sortMode.Width = 154;
         _sortMode.Items.AddRange(["Modified", "Created", "Name", "Folder", "Size", "Favorite", "Random"]);
         _sortMode.SelectedIndexChanged += (_, _) =>
         {
@@ -760,7 +796,7 @@ internal sealed class MainForm : Form
         };
 
         _reshuffleButton.Text = "Reshuffle";
-        _reshuffleButton.Width = 82;
+        ApplyTextFitSize(_reshuffleButton, 82);
         _reshuffleButton.Click += (_, _) => ReshuffleSort();
 
         var dateLabel = new Label
@@ -772,7 +808,7 @@ internal sealed class MainForm : Form
         };
 
         _dateFilter.DropDownStyle = ComboBoxStyle.DropDownList;
-        _dateFilter.Width = 112;
+        _dateFilter.Width = 138;
         _dateFilter.SelectedIndexChanged += (_, _) =>
         {
             if (_updatingDateFilter)
@@ -814,7 +850,7 @@ internal sealed class MainForm : Form
         };
 
         _displayStyle.DropDownStyle = ComboBoxStyle.DropDownList;
-        _displayStyle.Width = 96;
+        _displayStyle.Width = 142;
         _displayStyle.Items.AddRange(["Standard", "Compact", "Poster"]);
         _displayStyle.SelectedIndexChanged += (_, _) =>
         {
@@ -835,7 +871,7 @@ internal sealed class MainForm : Form
         };
 
         _aspectMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        _aspectMode.Width = 76;
+        _aspectMode.Width = 108;
         _aspectMode.Items.AddRange(["Original", "1:1", "2:3"]);
         _aspectMode.SelectedIndexChanged += (_, _) =>
         {
@@ -858,7 +894,7 @@ internal sealed class MainForm : Form
         _thumbnailSize.Minimum = GalleryThumbnailMin;
         _thumbnailSize.Maximum = GalleryThumbnailMax;
         _thumbnailSize.Increment = GalleryThumbnailStep;
-        _thumbnailSize.Width = 58;
+        _thumbnailSize.Width = 74;
         _thumbnailSize.ValueChanged += (_, _) =>
         {
             if (_updatingThumbnailSize)
@@ -871,7 +907,7 @@ internal sealed class MainForm : Form
         };
 
         _previewVisible.Text = "Preview";
-        _previewVisible.Width = 78;
+        ApplyTextFitSize(_previewVisible, 78);
         _previewVisible.Checked = true;
         _previewVisible.CheckedChanged += (_, _) =>
         {
@@ -880,7 +916,7 @@ internal sealed class MainForm : Form
         };
 
         _detailsVisible.Text = "Details";
-        _detailsVisible.Width = 72;
+        ApplyTextFitSize(_detailsVisible, 72);
         _detailsVisible.Checked = true;
         _detailsVisible.CheckedChanged += (_, _) =>
         {
@@ -979,7 +1015,7 @@ internal sealed class MainForm : Form
             RowCount = 3,
             Padding = new Padding(8, 4, 8, 2),
         };
-        folderPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 22));
+        folderPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 34));
         folderPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         folderPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
 
@@ -1006,7 +1042,7 @@ internal sealed class MainForm : Form
         };
 
         _folderSortMode.DropDownStyle = ComboBoxStyle.DropDownList;
-        _folderSortMode.Width = 94;
+        _folderSortMode.Width = 132;
         _folderSortMode.Items.AddRange(["NameAsc", "NameDesc", "CountDesc", "CountAsc"]);
         _folderSortMode.SelectedIndexChanged += (_, _) =>
         {
@@ -1019,31 +1055,31 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
+            WrapContents = true,
         };
 
         _showAllFoldersButton.Text = "All";
-        _showAllFoldersButton.Width = 54;
+        ApplyTextFitSize(_showAllFoldersButton, 54);
         _showAllFoldersButton.Click += (_, _) => SetAllFolderBuckets(visible: true);
 
         _hideAllFoldersButton.Text = "None";
-        _hideAllFoldersButton.Width = 58;
+        ApplyTextFitSize(_hideAllFoldersButton, 58);
         _hideAllFoldersButton.Click += (_, _) => SetAllFolderBuckets(visible: false);
 
         _invertFoldersButton.Text = "Invert";
-        _invertFoldersButton.Width = 64;
+        ApplyTextFitSize(_invertFoldersButton, 64);
         _invertFoldersButton.Click += (_, _) => InvertFolderBuckets();
 
-        _showSelectedFoldersButton.Text = "Show Sel";
-        _showSelectedFoldersButton.Width = 76;
+        _showSelectedFoldersButton.Text = "Show";
+        ApplyTextFitSize(_showSelectedFoldersButton, 76);
         _showSelectedFoldersButton.Click += (_, _) => SetSelectedFolderBuckets(visible: true);
 
-        _hideSelectedFoldersButton.Text = "Hide Sel";
-        _hideSelectedFoldersButton.Width = 74;
+        _hideSelectedFoldersButton.Text = "Hide";
+        ApplyTextFitSize(_hideSelectedFoldersButton, 74);
         _hideSelectedFoldersButton.Click += (_, _) => SetSelectedFolderBuckets(visible: false);
 
-        _clearFolderSelectionButton.Text = "Clear Sel";
-        _clearFolderSelectionButton.Width = 76;
+        _clearFolderSelectionButton.Text = "Clear";
+        ApplyTextFitSize(_clearFolderSelectionButton, 76);
         _clearFolderSelectionButton.Click += (_, _) => ClearFolderBucketSelection();
 
         folderActions.Controls.Add(_folderSortMode);
@@ -1053,6 +1089,8 @@ internal sealed class MainForm : Form
         folderActions.Controls.Add(_showSelectedFoldersButton);
         folderActions.Controls.Add(_hideSelectedFoldersButton);
         folderActions.Controls.Add(_clearFolderSelectionButton);
+        folderPanel.RowStyles[2].Height = Math.Max(folderPanel.RowStyles[2].Height, FlowPanelRowHeight(folderActions, 30));
+        browserPanel.RowStyles[0].Height = Math.Max(browserPanel.RowStyles[0].Height, 118 + folderPanel.RowStyles[2].Height);
 
         folderPanel.Controls.Add(_folderBucketLabel, 0, 0);
         folderPanel.Controls.Add(_folderBuckets, 0, 1);
@@ -1096,6 +1134,11 @@ internal sealed class MainForm : Form
         _statusLabel.TextAlign = ContentAlignment.MiddleLeft;
         _statusLabel.AutoEllipsis = true;
         _statusLabel.Text = "Ready.";
+        root.RowStyles[0].Height = Math.Max(root.RowStyles[0].Height, StackedControlRowHeight(_browseButton, toolbar.Padding, 2, 42));
+        root.RowStyles[1].Height = Math.Max(root.RowStyles[1].Height, ControlRowHeight(_addSearchSuggestionButton, searchControls.Padding, 34));
+        root.RowStyles[2].Height = Math.Max(root.RowStyles[2].Height, FlowPanelRowHeight(actions, 38, 2));
+        root.RowStyles[3].Height = Math.Max(root.RowStyles[3].Height, FlowPanelRowHeight(displayControls, 38, 2));
+        root.RowStyles[5].Height = Math.Max(root.RowStyles[5].Height, TextFitHeight(_statusLabel, 20) + _statusLabel.Padding.Vertical);
 
         root.Controls.Add(toolbar, 0, 0);
         root.Controls.Add(searchControls, 0, 1);
@@ -1108,6 +1151,70 @@ internal sealed class MainForm : Form
         RefreshSearchTagSuggestions();
         RefreshSearchChipControls();
         UpdateSelectionActions();
+    }
+
+    private static void ApplyTextFitSize(Control control, int minimumWidth, int minimumHeight = 28)
+    {
+        var size = TextFitSize(control, minimumWidth, minimumHeight);
+        control.MinimumSize = size;
+        control.Width = size.Width;
+        control.Height = size.Height;
+    }
+
+    private static Size TextFitSize(Control control, int minimumWidth, int minimumHeight)
+    {
+        return new Size(
+            Math.Max(minimumWidth, TextFitWidth(control, minimumWidth)),
+            Math.Max(minimumHeight, TextFitHeight(control, minimumHeight)));
+    }
+
+    private static int TextFitWidth(Control control, int minimum)
+    {
+        if (string.IsNullOrWhiteSpace(control.Text))
+        {
+            return minimum;
+        }
+
+        var measured = TextRenderer.MeasureText(control.Text, control.Font);
+        var extraWidth = control is CheckBox ? 52 : 12;
+        return measured.Width + extraWidth;
+    }
+
+    private static int TextFitHeight(Control control, int minimum)
+    {
+        if (string.IsNullOrWhiteSpace(control.Text))
+        {
+            return minimum;
+        }
+
+        var measured = TextRenderer.MeasureText(control.Text, control.Font);
+        return measured.Height + 8;
+    }
+
+    private static float ControlRowHeight(Control control, Padding padding, int minimum)
+    {
+        return Math.Max(minimum, TextFitHeight(control, minimum) + padding.Vertical);
+    }
+
+    private static float StackedControlRowHeight(Control control, Padding padding, int rows, int minimum)
+    {
+        return Math.Max(minimum, (TextFitHeight(control, minimum) * Math.Max(1, rows)) + padding.Vertical);
+    }
+
+    private static float FlowPanelRowHeight(FlowLayoutPanel panel, int minimum, int rows = 1)
+    {
+        if (panel.Controls.Count == 0)
+        {
+            return minimum;
+        }
+
+        var controlHeight = panel.Controls
+            .Cast<Control>()
+            .Where(static control => control.Visible)
+            .Select(static control => control.Height + control.Margin.Vertical)
+            .DefaultIfEmpty(0)
+            .Max();
+        return Math.Max(minimum, (controlHeight * Math.Max(1, rows)) + panel.Padding.Vertical);
     }
 
     private async Task<NativeUiSmokeReport> RunUiSmokeScenarioAsync(string folder, string searchQuery)
@@ -2562,7 +2669,7 @@ internal sealed class MainForm : Form
         picker.Format = DateTimePickerFormat.Custom;
         picker.CustomFormat = "yyyy-MM-dd";
         picker.ShowCheckBox = true;
-        picker.Width = 124;
+        picker.Width = 158;
         picker.Value = DateTime.Today;
         picker.Checked = false;
         picker.ValueChanged += (_, _) => ManualDateRangeChanged();

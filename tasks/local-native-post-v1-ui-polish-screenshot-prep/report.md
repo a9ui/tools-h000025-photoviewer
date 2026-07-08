@@ -136,3 +136,98 @@ Observed results so far:
   issues.
 - `NEEDS_HUMAN`: none for this #118 first slice. Existing #102 folder range
   control semantics still need human/product direction before implementation.
+
+## Second Sweep After #114 Decision
+
+Date: 2026-07-09 JST
+
+Decision:
+`ADOPT_SECOND_NATIVE_UI_TEXT_FIT_POLISH`.
+
+Scope:
+
+- This sweep keeps #114 keybinding-recorder work at `NEEDS_HUMAN/DEFER` and
+  does not reopen that implementation.
+- The only adopted work is native WinForms layout polish under
+  `local-native/PhotoViewer.Native/MainForm.cs` plus refreshed #118 screenshot
+  evidence.
+- Browser PhotoViewer, `src/**`, `scripts/**`, deployment, automatic
+  enhancement workers, and cache/state deletion remain out of scope.
+
+Live evidence before the fix:
+
+```text
+main dcd41c69c28e26cbffde6ef9b8c16454a47d6939
+native-ui-screenshot ... width=1280 height=820 scannedImages=4 visibleImages=4 previewLoaded=true textFitWarnings=30 overlapWarnings=0 focusControl=TextBox enhancementStateUnchanged=true browserRuntime=false localHttpServer=false nodeRuntime=false
+```
+
+Manual review of that captured image found real visible clipping in the dense
+native toolbar/action/filter rows, so the advice was classified as `ADOPT`, not
+`DEFER`.
+
+Implemented in the second sweep:
+
+- Split the native top toolbar into path/action and search/filter rows so
+  Browse/Scan/Cancel/Import/Search/Favorites/Enhanced no longer compete in a
+  single 1280px row.
+- Added small text-fit helpers that size dense buttons and checkboxes from
+  `TextRenderer.MeasureText` while keeping the existing control behavior.
+- Allowed the action/display/folder command rows to wrap where needed.
+- Widened dense ComboBox/date/filter controls enough for the current evidence
+  pass.
+- Shortened folder scoped commands from `Show Sel`/`Hide Sel`/`Clear Sel` to
+  `Show`/`Hide`/`Clear`.
+- Raised the default native window height from 820 to 920 so large-font/high-DPI
+  captures retain both the command surface and list/preview evidence.
+
+Final screenshot helper result:
+
+```text
+native-ui-screenshot complete runtime=winforms folder="C:\\Users\\a9ui\\.codex\\worktrees\\02f7\\H000025_PhotoViewer\\.cache\\native-fixture" output="C:\\Users\\a9ui\\.codex\\worktrees\\02f7\\H000025_PhotoViewer\\tasks\\local-native-post-v1-ui-polish-screenshot-prep\\artifacts\\native-ui-screenshot.png" width=1280 height=920 scannedImages=4 visibleImages=4 previewLoaded=true textFitWarnings=1 overlapWarnings=0 focusControl=TextBox enhancementStateUnchanged=true browserRuntime=false localHttpServer=false nodeRuntime=false
+```
+
+Second sweep verification:
+
+```powershell
+dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
+dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-ui-screenshot .\.cache\native-fixture .\tasks\local-native-post-v1-ui-polish-screenshot-prep\artifacts\native-ui-screenshot.png --search fixture
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+git diff --name-only -- src
+git diff --name-only -- scripts
+git diff --check
+corepack pnpm typecheck
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1
+```
+
+Observed results:
+
+- Native build passed with 0 warnings and 0 errors.
+- Fixture prep reused existing ignored `.cache/**` state and did not delete
+  cache/state assets.
+- Screenshot helper passed with `textFitWarnings=1`, `overlapWarnings=0`,
+  `focusControl=TextBox`, and `enhancementStateUnchanged=true`.
+- Native UI smoke passed, including keyboard, detail modal, folder, filter,
+  display, preview/details toggle, and passive enhancement isolation checks.
+- `git diff --name-only -- src` and `git diff --name-only -- scripts` returned
+  empty.
+- `git diff --check` passed.
+- `corepack pnpm typecheck` passed.
+- `scripts/verify-project.ps1` passed: 16 test files / 94 tests passed, lint
+  had the existing `CachedImage.tsx` `<img>` warnings only, audit/typecheck/build
+  passed, and e2e remained skipped unless `-Full` is supplied.
+
+Second sweep classification:
+
+- `ADOPT`: bounded native layout/text-fit polish for #118.
+- `PARTIAL_ADOPT`: keep `textFitWarnings=1` as conservative helper evidence;
+  the final captured image has no helper-reported overlap and no remaining
+  visible command-row cutoff comparable to the pre-fix capture.
+- `REJECT`: #114 keybinding recorder implementation, browser app changes,
+  `src/**`, `scripts/**`, deployment, H000033 work, automatic enhancement
+  workers, and cache/state deletion.
+- `DEFER`: residual #113 gallery zoom parity, #97/#98 enhancement UI, #102
+  folder range selection, #104 bulk open, #105/#106 destructive flows, and broad
+  #110/#111/#112 parity decisions.
+- `NEEDS_HUMAN`: #114 remains `NEEDS_HUMAN/DEFER` until the keybinding recorder
+  contract is accepted.
