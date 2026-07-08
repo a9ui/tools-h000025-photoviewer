@@ -124,6 +124,11 @@ through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots. It writes
 only when native hidden-folder state does not exist yet. Malformed folder keys,
 non-array values, and hidden-folder exports without browser roots are skipped
 with recoverable warnings.
+The tenth accepted row records explicit browser `pvu_seen_images` as part of
+#117 and verifies import into native `seen_images`. This row is additive:
+browser-export seen rows are upserted with source `browser_export`, existing
+native seen rows are preserved, and malformed seen-image JSON is skipped with
+a recoverable warning.
 
 The dedicated smoke is:
 
