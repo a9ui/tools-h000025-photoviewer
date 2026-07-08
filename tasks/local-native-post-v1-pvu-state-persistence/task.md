@@ -68,6 +68,11 @@ deferred as a native migration target because current browser pinned preview
 tabs belong to #99/#100 and native has no accepted tab/pin/restore state
 contract yet.
 
+This continuation formally records Row 17 for browser `pvu_recent_albums`: it
+is raw-mirrored for traceability if an explicit export contains it, but it is
+deferred as a native migration target because album import exists while native
+has no accepted recent-album UI selection/restore contract yet.
+
 ## Guardrails
 
 - No Linear.
@@ -251,6 +256,13 @@ Read in full before planning or editing:
     `preview_tabs` settings;
   - it is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser recent-album state in #117:
+  - `pvu_recent_albums` is kept as a raw browser mirror under
+    `browser_pvu_recent_albums` when an explicit export contains it;
+  - it does not create native `recent_albums`, `recent_album`, or
+    `recent_album_ids` settings;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -282,23 +294,24 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
+`pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=9`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=10`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row16-pvu-state` based on `origin/main`
-`d7348766f950575f987e2606fab78b240bc94e9e` after PR #144 and the Row15
-verification commit:
+`codex/h25-117-row17-pvu-recent-albums` based on `origin/main`
+`4cd9f84fe11be576e905959069ca838db814a5da` after PR #146:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
+  `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
   `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
   `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
   `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
@@ -310,14 +323,15 @@ verification commit:
   `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=9`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=10`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
   existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=7`, `warnings=0`, and no browser runtime.
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
   `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
@@ -340,7 +354,7 @@ verification commit:
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #256 and create/update the next row if more #117 native
+2. Update SQLite job #257 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
