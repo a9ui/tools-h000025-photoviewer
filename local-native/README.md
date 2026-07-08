@@ -444,25 +444,6 @@ See `docs/local-native/m20-verification.md` and
 `tasks/local-native-m20/task.md` for the v1 closeout gate, Japanese M1-M19
 inventory, and remaining-row classification.
 
-## Post-v1 #103 Notes
-
-#103 adds the first native bulk favorite action slice after #117 Row25 found no
-safe remaining pvu migration key. It reuses the existing favorite level
-control and `Ctrl+Up` / `Ctrl+Down` shortcuts: when multiple gallery images are
-selected, the chosen favorite level is applied to the whole selection.
-
-The native UI smoke verifies the accepted behavior with:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
-```
-
-Expected #103 evidence includes `multiSelection=true`,
-`bulkFavoriteSet=true`, `bulkFavoriteClear=true`, and
-`enhancementStateUnchanged=true`. This slice does not add destructive batch
-actions, enhancement queue/output UI, metadata display, preview tabs, or
-browser app changes.
-
 ## Post-v1 #116 Notes
 
 #116 records the native browser API/error parity matrix after v1. It does not
@@ -613,6 +594,14 @@ does not create `enhance_queue_open`, `enhanceQueueOpen`,
 `enhancement_queue_panel_open` settings, and `pvu_state_migration_count` stays
 at the Row 11 count of 11. Native explicit enhancement queue/settings work
 remains owned by #97/#98 and must stay explicit-action-only.
+The twenty-fifth #117 row is the final pvu-state inventory. A read-only
+current browser source scan found no unclassified `pvu_*` localStorage key and
+no unclassified `pvu_view` / `ViewSettings` field. `pvu_job` is only a ComfyUI
+adapter filename prefix, not browser state. `pvu_fav_levels` and
+`pvu_recent_albums` remain raw-mirror-only if explicit exports contain them,
+but current browser source does not persist those keys. No native setting is
+added, `pvu_state_migration_count` remains 11, and #117 has no next bounded
+pvu-state row after Row24.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

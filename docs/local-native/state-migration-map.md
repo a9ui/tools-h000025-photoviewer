@@ -224,6 +224,14 @@ the enhancement queue panel visibility only inside the raw
 does not increase `pvu_state_migration_count`. Explicit native enhancement
 queue/settings work remains owned by #97/#98 and must stay
 explicit-action-only.
+The twenty-fifth #117 row is a final inventory and close-or-defer audit. A
+read-only scan of current `src/**` browser state found no unclassified
+localStorage `pvu_*` key and no unclassified `ViewSettings` field inside
+`pvu_view`. The `pvu_job` matches are ComfyUI adapter filename prefixes, not
+localStorage migration targets. `pvu_fav_levels` and `pvu_recent_albums`
+remain raw-mirror-only if explicit exports contain them, but current browser
+source does not persist those keys. No native setting is added, no migration
+count changes, and #117 has no next bounded pvu-state row after Row24.
 
 The dedicated smoke is:
 

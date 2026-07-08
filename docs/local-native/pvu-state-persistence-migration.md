@@ -1,19 +1,30 @@
 # Local Native Post-v1 #117 pvu State Persistence Migration
 
-Date: 2026-07-08
+Date: 2026-07-09
 
 Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 
 ## Decision
 
 Decision:
-`DEFER_BROWSER_ENHANCE_QUEUE_OPEN_AFTER_MODAL_EDGE_RATIO`.
+`CLOSE_AFTER_ROW25_FINAL_PVU_STATE_INVENTORY`.
 
 Meaning:
 
-- #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser `pvu_view.enhanceQueueOpen` after the
-  modal edge-ratio row.
+- Row25 is a close-or-defer audit, not another migration row.
+- A read-only source scan of `src/**` on top of `0032b262` found no
+  unclassified current browser `localStorage` `pvu_*` key and no unclassified
+  `ViewSettings` field inside `pvu_view`.
+- The only `pvu_` hit outside current browser state was `pvu_job`, used as a
+  ComfyUI adapter filename prefix in tests/runtime payloads. It is not a
+  localStorage migration target.
+- `pvu_fav_levels` and `pvu_recent_albums` remain documented because explicit
+  browser exports can contain them, but the current browser source scan did
+  not find current localStorage writes for those keys.
+- #117 has no next bounded native pvu-state row after Row24. Future work for
+  preview tabs, enhancement queue/settings, folder range selection,
+  destructive flows, display/aspect behavior, UI polish, WPF, deployment, and
+  workers stays in its existing separate issues.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -58,6 +69,10 @@ Meaning:
   `browser_pvu_view` mirror, and native does not create
   `enhance_queue_open`, `enhanceQueueOpen`, `enhancement_queue_open`,
   `enhancement_queue_visible`, or `enhancement_queue_panel_open` settings.
+- Row25 final inventory closes the #117 pvu-state lane once GitHub, SQLite,
+  and Agmsg closeout surfaces are updated. It does not change
+  `pvu_state_migration_count`, does not add native settings, and does not
+  change browser or native runtime behavior.
 - Browser hidden folders are stored as browser folder keys, not native
   absolute folder paths. The previous accepted hidden-folders row converts only
   keys that can be mapped through the explicit exported `pvu_last_dir_set` /
@@ -211,6 +226,11 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_server_legacy_imported` for traceability.
 
 ## Split Plan For Remaining pvu Keys
+
+Row25 final inventory found no unclassified current browser localStorage
+`pvu_*` key and no unclassified `pvu_view` field. The table below is the
+closed classification map for #117, not a request to keep opening additional
+generic migration rows.
 
 | Key | #117 classification | Reason / next evidence |
 | --- | --- | --- |
