@@ -199,6 +199,11 @@ internal static class NativeHeadlessRunner
         var markerMirrorStored =
             string.Equals(store.GetSetting("browser_pvu_legacy_imported", ""), "1", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("browser_pvu_server_legacy_imported", ""), "1", StringComparison.OrdinalIgnoreCase);
+        var pvuFavLevelsDeferred =
+            favLevelsMirrorStored &&
+            !migrations.Contains("pvu_fav_levels", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("fav_levels", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("favorite_filter_level", ""));
         var pvuPerfFlagDeferred =
             perfMirrorStored &&
             !migrations.Contains("pvu_perf_enabled", StringComparison.OrdinalIgnoreCase) &&
@@ -207,11 +212,6 @@ internal static class NativeHeadlessRunner
             scrollMemoryMirrorStored &&
             !migrations.Contains("pvu_scroll_memory", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(store.GetSetting("scroll_memory", ""));
-        var pvuFavLevelsDeferred =
-            favLevelsMirrorStored &&
-            !migrations.Contains("pvu_fav_levels", StringComparison.OrdinalIgnoreCase) &&
-            string.IsNullOrWhiteSpace(store.GetSetting("fav_levels", "")) &&
-            string.IsNullOrWhiteSpace(store.GetSetting("favorite_filter_level", ""));
         var pvuLegacyMarkersRejected =
             markerMirrorStored &&
             !migrations.Contains("pvu_legacy_imported", StringComparison.OrdinalIgnoreCase) &&
@@ -339,9 +339,9 @@ internal static class NativeHeadlessRunner
             favLevelsMirrorStored &&
             perfMirrorStored &&
             markerMirrorStored &&
+            pvuFavLevelsDeferred &&
             pvuPerfFlagDeferred &&
             pvuScrollMemoryDeferred &&
-            pvuFavLevelsDeferred &&
             pvuLegacyMarkersRejected &&
             nativeViewModePreserved &&
             nativeEnhancedOnlyPreserved &&

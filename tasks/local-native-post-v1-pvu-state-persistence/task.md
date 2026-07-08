@@ -56,10 +56,11 @@ it is raw-mirrored for traceability but deferred as a native migration target
 because the browser per-view scroll map is not equivalent to native
 `last_selected_image` / `last_visible_index` restore.
 
-This continuation formally records Row 15 for browser `pvu_fav_levels`: it is
-raw-mirrored for traceability if an explicit export contains it, but it is
-deferred as a native migration target because current browser code does not
-persist this key and there is no accepted native conflict policy.
+This Row15 continuation formally records the non-evidenced browser favorite
+levels key: `pvu_fav_levels` is raw-mirrored for traceability when an explicit
+export contains it, but it is deferred as a native migration target because
+current browser code does not persist this key and there is no accepted native
+conflict policy.
 
 ## Guardrails
 
@@ -98,14 +99,10 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #142
+- GitHub PR #144
+- GitHub PR #141
 - GitHub PR #140
-- GitHub PR #139
-- GitHub PR #138
-- GitHub PR #137
-- GitHub PR #136
-- GitHub PR #135
-- GitHub issue #115
-- GitHub issue #116
 - GitHub PR #134
 - GitHub PR #133
 - GitHub PR #131
@@ -229,7 +226,7 @@ Read in full before planning or editing:
     `pvu_state_migration_count` remains at the Row 11 count;
   - native gallery-state restore through `last_selected_image` and
     `last_visible_index` remains separate from browser scroll-memory import.
-- Formally defer browser favorite-level state in #117:
+- Formally defer non-evidenced browser favorite-level state in #117:
   - `pvu_fav_levels` is kept as a raw browser mirror under
     `browser_pvu_fav_levels` when an explicit export contains it;
   - it does not create native `fav_levels` or `favorite_filter_level`
@@ -281,15 +278,16 @@ Recorded on 2026-07-08 in branch
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
-- `--headless-pvu-state-smoke` passed with `pvuFavLevelsDeferred=true`,
-  `favLevelsMirrorStored=true`,
+- `--headless-pvu-state-smoke` passed with
   `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+  `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
   `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
   `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
-  contract, `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
-  `seenMirrorStored=true`, `nativeFolderSortModePreserved=true`,
-  `nativeSeenImagesPreserved=true`,
+  contract,
+  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `seenMirrorStored=true`,
+  `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
   `nativeSeenImagesStillPreserved=true`, `browserStateKeys=8`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
@@ -329,7 +327,7 @@ Recorded on 2026-07-08 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #253 and create/update the next row if more #117 native
+2. Update SQLite job #255 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or

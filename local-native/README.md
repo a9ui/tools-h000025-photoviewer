@@ -526,10 +526,10 @@ setting and `pvu_state_migration_count` stays at the Row 11 count of 11.
 Native selected-image/index restore remains the accepted native gallery-state
 mechanism and is not treated as browser scroll-memory import parity.
 The fifteenth #117 row formally defers browser `pvu_fav_levels` as a native
-migration target. Current browser code does not persist this key, so explicit
-exports keep it only as a raw browser mirror as `browser_pvu_fav_levels`;
-native does not create `fav_levels` or `favorite_filter_level` settings and
-`pvu_state_migration_count` stays at the Row 11 count of 11.
+migration target. Current browser code does not persist that key, so native
+keeps it only as a raw mirror as `browser_pvu_fav_levels` if an explicit export
+contains it. Native does not create `fav_levels` or `favorite_filter_level`
+settings and `pvu_state_migration_count` stays at 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

@@ -137,8 +137,8 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_recent_dirs` /
 `native_settings.browser_pvu_seen_images` /
 `native_settings.browser_pvu_scroll_memory` /
-`native_settings.browser_pvu_fav_levels` /
 `native_settings.browser_pvu_perf_enabled` /
+`native_settings.browser_pvu_fav_levels` /
 `native_settings.browser_pvu_legacy_imported` /
 `native_settings.browser_pvu_server_legacy_imported` for traceability.
 
@@ -201,8 +201,8 @@ Expected result:
 - `recentMirrorStored=true`
 - `seenMirrorStored=true`
 - `scrollMemoryMirrorStored=true`
-- `favLevelsMirrorStored=true`
 - `perfMirrorStored=true`
+- `favLevelsMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
 - `nativeEnhancedOnlyPreserved=true`
@@ -248,10 +248,9 @@ browser performance flag, Row 14 does not add browser scroll memory, and Row
 `markerMirrorStored=true`, `perfMirrorStored=true`,
 `scrollMemoryMirrorStored=true`, and `favLevelsMirrorStored=true` are the
 raw-mirror evidence. The final `browserStateKeys=8` count is measured after
-the malformed follow-up import,
-where PR #141 keeps `pvu_perf_enabled` in the malformed recovery path while
-Row 14 keeps `pvu_scroll_memory` and Row 15 keeps `pvu_fav_levels` as native
-settings raw mirrors only.
+the malformed follow-up import, where PR #141 keeps `pvu_perf_enabled` in the
+malformed recovery path while Row 14 keeps `pvu_scroll_memory` and Row 15
+keeps `pvu_fav_levels` as native settings raw mirrors only.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
@@ -262,17 +261,52 @@ Recorded on 2026-07-08 in branch
 `codex/h25-117-row14-pvu-fav-levels` rebased on `origin/main`
 `4433182a7fd1d84142eac920187fea3f88410c55` after PR #142:
 
-- Verification is pending after the Row 15 rebase resolution.
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
   passed with `pvuFavLevelsDeferred=true`,
   `favLevelsMirrorStored=true`, `pvuScrollMemoryDeferred=true`,
   `scrollMemoryMirrorStored=true`, `pvuPerfFlagDeferred=true`,
-  `perfMirrorStored=true`, `migrationRecorded=true`,
-  `pvu_state_migration_count=11` by smoke contract, `browserStateKeys=8`,
+  `perfMirrorStored=true`, `pvuLegacyMarkersRejected=true`,
+  `markerMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `seenMirrorStored=true`, `nativeFolderSortModePreserved=true`,
+  `nativeSeenImagesPreserved=true`,
+  `nativeFolderSortModeStillPreserved=true`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=8`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed using ignored fixture/cache state while preserving existing cache/state
+  assets.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
+  `seenImages` / `settings` / `images` counts reflect existing ignored cache
+  state and may increase across repeated smoke runs.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large`
+  passed with `totalImages=240`, `targetIndex=180`,
+  `restoredIndex=180`, `statePersisted=true`, `restoreSelected=true`,
+  `ensureVisible=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `gridToggle=true`, `folderSortMode=true`,
+  `thumbnailSize=true`, `enhancedOnlyFilter=true`, `sortName=true`,
+  `randomReshuffle=true`, `settingsImported=true`, `browserStateKeys=6`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" .` returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 14 Scroll-Memory Verification
 
