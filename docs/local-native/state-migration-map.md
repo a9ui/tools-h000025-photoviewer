@@ -159,6 +159,13 @@ explicit export contains it, native stores only the raw mirror under
 `native_settings.browser_pvu_fav_levels`. Native does not create `fav_levels`
 or `favorite_filter_level` settings and does not increase
 `pvu_state_migration_count`.
+The sixteenth #117 row formally defers browser `pvu_pinned_tabs` as a native
+migration target. Current browser code persists pinned preview tab ids in
+`pvu_pinned_tabs`, but native has no accepted preview-tab, pinned-tab, or
+restore-tab state contract yet. Explicit exports keep the key only as a raw
+browser mirror under `native_settings.browser_pvu_pinned_tabs`; native does
+not create `pinned_tabs`, `pinned_preview_tabs`, or `preview_tabs` settings and
+does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

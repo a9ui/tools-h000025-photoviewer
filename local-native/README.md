@@ -530,6 +530,13 @@ migration target. Current browser code does not persist that key, so native
 keeps it only as a raw mirror as `browser_pvu_fav_levels` if an explicit export
 contains it. Native does not create `fav_levels` or `favorite_filter_level`
 settings and `pvu_state_migration_count` stays at 11.
+The sixteenth #117 row formally defers browser `pvu_pinned_tabs` as a native
+migration target. Current browser code persists pinned preview tab ids, but
+native has no accepted preview-tab, pinned-tab, or restore-tab state contract
+yet. Explicit exports keep it only as a raw browser mirror as
+`browser_pvu_pinned_tabs`; native does not create `pinned_tabs`,
+`pinned_preview_tabs`, or `preview_tabs` settings and
+`pvu_state_migration_count` stays at the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
