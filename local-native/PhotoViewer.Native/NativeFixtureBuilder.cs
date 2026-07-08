@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Drawing.Imaging;
 using System.Text;
 using System.Text.Json;
@@ -7,6 +8,13 @@ namespace PhotoViewer.Native;
 internal static class NativeFixtureBuilder
 {
     private const int LargeScrollFixtureCount = 240;
+    private const string MetadataFixtureFilename = "m2-fixture-1.png";
+    private const string MetadataFixtureParameters = """
+native metadata prompt, soft light, fixture composition
+Negative prompt: native negative prompt, blur, low quality
+Steps: 12, Sampler: Native Fixture, CFG scale: 7, Seed: 107, Size: 32x32
+""";
+    private static readonly byte[] PngSignature = [0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A];
     private static readonly DateTime FixtureTimestampUtc = new(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc);
     private static readonly JsonSerializerOptions JsonOptions = new()
     {
@@ -143,6 +151,11 @@ internal static class NativeFixtureBuilder
             {
                 graphics.Clear(color);
                 bitmap.Save(path, ImageFormat.Png);
+            }
+
+            if (string.Equals(name, MetadataFixtureFilename, StringComparison.OrdinalIgnoreCase))
+            {
+                AddPngTextParameters(path, MetadataFixtureParameters);
             }
 
             TrySetStableTimes(path);
@@ -335,6 +348,58 @@ internal static class NativeFixtureBuilder
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         File.WriteAllText(path, "not a usable webp fixture", Encoding.ASCII);
         TrySetStableTimes(path);
+    }
+
+    private static void AddPngTextParameters(string path, string parameters)
+    {
+        var source = File.ReadAllBytes(path);
+        if (source.Length < 33 ||
+            !source.AsSpan(0, 8).SequenceEqual(PngSignature) ||
+            !source.AsSpan(12, 4).SequenceEqual("IHDR"u8))
+        {
+            throw new InvalidDataException($"Fixture PNG is not a valid IHDR-first PNG: {path}");
+        }
+
+        var ihdrLength = BinaryPrimitives.ReadUInt32BigEndian(source.AsSpan(8, 4));
+        var insertOffset = checked((int)(8 + 8 + ihdrLength + 4));
+        var chunk = BuildPngTextChunk("parameters", parameters.Trim());
+        var output = new byte[source.Length + chunk.Length];
+        Buffer.BlockCopy(source, 0, output, 0, insertOffset);
+        Buffer.BlockCopy(chunk, 0, output, insertOffset, chunk.Length);
+        Buffer.BlockCopy(source, insertOffset, output, insertOffset + chunk.Length, source.Length - insertOffset);
+        File.WriteAllBytes(path, output);
+    }
+
+    private static byte[] BuildPngTextChunk(string keyword, string text)
+    {
+        var keywordBytes = Encoding.ASCII.GetBytes(keyword);
+        var textBytes = Utf8NoBom.GetBytes(text);
+        var data = new byte[keywordBytes.Length + 1 + textBytes.Length];
+        Buffer.BlockCopy(keywordBytes, 0, data, 0, keywordBytes.Length);
+        Buffer.BlockCopy(textBytes, 0, data, keywordBytes.Length + 1, textBytes.Length);
+
+        var chunk = new byte[12 + data.Length];
+        BinaryPrimitives.WriteUInt32BigEndian(chunk.AsSpan(0, 4), (uint)data.Length);
+        "tEXt"u8.CopyTo(chunk.AsSpan(4, 4));
+        Buffer.BlockCopy(data, 0, chunk, 8, data.Length);
+        var crc = ComputePngCrc32(chunk.AsSpan(4, 4 + data.Length));
+        BinaryPrimitives.WriteUInt32BigEndian(chunk.AsSpan(8 + data.Length, 4), crc);
+        return chunk;
+    }
+
+    private static uint ComputePngCrc32(ReadOnlySpan<byte> data)
+    {
+        var crc = 0xFFFFFFFFu;
+        foreach (var value in data)
+        {
+            crc ^= value;
+            for (var bit = 0; bit < 8; bit++)
+            {
+                crc = (crc & 1) != 0 ? (crc >> 1) ^ 0xEDB88320u : crc >> 1;
+            }
+        }
+
+        return ~crc;
     }
 
     private static void TrySetStableTimes(string path)

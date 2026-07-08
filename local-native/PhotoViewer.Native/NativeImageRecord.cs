@@ -11,5 +11,10 @@ internal sealed record NativeImageRecord(
     int FavoriteLevel,
     int? Width = null,
     int? Height = null,
+    string Prompt = "",
+    string NegativePrompt = "",
+    string MetadataSettingsSummary = "",
+    string MetadataRaw = "",
+    bool MetadataChecked = false,
     bool IsSeen = false
 );

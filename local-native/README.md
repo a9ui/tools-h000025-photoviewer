@@ -612,6 +612,27 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 See `docs/local-native/pvu-state-persistence-migration.md` and
 `tasks/local-native-post-v1-pvu-state-persistence/task.md`.
 
+## Post-v1 #107 Notes
+
+#107 adds the first bounded native PNG metadata display slice. Native scan now
+extracts PNG `tEXt` keyword `parameters` before IDAT, stores prompt, negative
+prompt, compact settings summary, raw parameters, and metadata-checked state in
+SQLite image rows, and displays metadata from the right-preview details label
+and detail modal metadata label.
+
+The repeatable fixture writes deterministic `parameters` metadata to
+`m2-fixture-1.png`. The native UI smoke verifies display evidence with
+`metadataDisplay=true` while keeping browser/runtime/server paths out of scope
+and preserving passive enhancement isolation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
+
+This is not copy metadata (#108), prompt tag actions (#109), search chips
+(#110), or broader metadata workflow parity.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
