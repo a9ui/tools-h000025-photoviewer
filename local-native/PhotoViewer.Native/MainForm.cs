@@ -165,6 +165,47 @@ internal sealed class MainForm : Form
         return Task.FromResult(exitCode);
     }
 
+    public static Task<int> RunUiScreenshotAsync(string folder, string outputPath, string searchQuery)
+    {
+        if (!Directory.Exists(folder))
+        {
+            Console.Error.WriteLine($"native-ui-screenshot error=folder-not-found folder=\"{Quote(folder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var resolvedFolder = Path.GetFullPath(folder);
+        var resolvedOutputPath = Path.GetFullPath(outputPath);
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunUiScreenshotScenarioAsync(resolvedFolder, resolvedOutputPath, searchQuery);
+                Console.WriteLine(FormatUiScreenshotReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-ui-screenshot error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
     public static Task<int> RunFolderSetSmokeAsync(IReadOnlyList<string> folders, string searchQuery)
     {
         var roots = NativeFolderSet.NormalizeDistinct(folders);
@@ -1176,6 +1217,82 @@ internal sealed class MainForm : Form
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
+    private async Task<NativeUiScreenshotReport> RunUiScreenshotScenarioAsync(string folder, string outputPath, string searchQuery)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+
+        _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        _enhancedOnly.Checked = false;
+        SelectFavoriteFilter("all");
+        ApplyManualDateRange(null, null);
+        ImportState();
+
+        await ScanCurrentFolderAsync();
+        Require(_allImages.Count > 0, "scan produced no images");
+        Require(_visibleImages.Count > 0, "scan produced no visible images");
+
+        ApplyViewMode("details");
+        ApplySortMode("Modified");
+        ApplyFilter();
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            _searchText.Text = searchQuery;
+            ApplyFilter();
+            Require(_visibleImages.Count > 0, "screenshot search produced no visible images");
+        }
+
+        var screenshotTarget = _visibleImages[0];
+        SelectImage(screenshotTarget.AbsolutePath);
+        Application.DoEvents();
+        var previewLoaded = await WaitForPreviewAsync(screenshotTarget.Filename, timeoutMs: 5000);
+        if (!previewLoaded)
+        {
+            await LoadSelectedPreviewAsync();
+            previewLoaded = await WaitForPreviewAsync(screenshotTarget.Filename, timeoutMs: 5000);
+        }
+
+        if (!previewLoaded)
+        {
+            var previous = _preview.Image;
+            _preview.Image = LoadImageCopy(screenshotTarget.AbsolutePath);
+            previous?.Dispose();
+            _previewLabel.Text = $"{screenshotTarget.Filename}  {FormatBytes(screenshotTarget.SizeBytes)}  {FormatDimensions(screenshotTarget)}  fav {screenshotTarget.FavoriteLevel}";
+            UpdateSelectionActions();
+            previewLoaded = true;
+        }
+
+        Require(previewLoaded, "preview did not load for screenshot");
+
+        _searchText.Focus();
+        ActiveControl = _searchText;
+        Refresh();
+        Update();
+        Application.DoEvents();
+
+        var textFitWarnings = CountTextFitWarnings(this);
+        var overlapWarnings = CountSiblingOverlapWarnings(this);
+        SaveScreenshot(outputPath);
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during native UI screenshot capture");
+
+        return new NativeUiScreenshotReport(
+            Folder: folder,
+            OutputPath: outputPath,
+            Width: Width,
+            Height: Height,
+            ScannedImages: _allImages.Count,
+            VisibleImages: _visibleImages.Count,
+            PreviewLoaded: previewLoaded,
+            TextFitWarnings: textFitWarnings,
+            OverlapWarnings: overlapWarnings,
+            FocusControl: ActiveControl?.GetType().Name ?? "",
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+    }
+
     private async Task<NativeEnhancedFilterSmokeReport> RunEnhancedFilterSmokeScenarioAsync(string folder)
     {
         var beforeEnhancementState = EnhancementStateFingerprint();
@@ -1677,8 +1794,8 @@ internal sealed class MainForm : Form
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
-        var warningText = report.WarningCount > 0 ? $" / warn {report.WarningCount:n0}" : "";
-        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}{warningText}";
+        var warningText = report.WarningCount > 0 ? $" warn {report.WarningCount:n0}" : "";
+        _stateLabel.Text = $"db {report.ImageCount:n0} fav {report.FavoriteCount:n0} seen {report.SeenImageCount:n0} alb {report.AlbumCount:n0}/{report.AlbumImageCount:n0} pvu {report.BrowserStateKeyCount:n0}{warningText}";
     }
 
     private void ImportState()
@@ -3403,6 +3520,68 @@ internal sealed class MainForm : Form
         return value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
     }
 
+    private void SaveScreenshot(string outputPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(outputPath)!);
+        using var bitmap = new Bitmap(Math.Max(1, Width), Math.Max(1, Height));
+        DrawToBitmap(bitmap, new Rectangle(Point.Empty, Size));
+        bitmap.Save(outputPath, ImageFormat.Png);
+    }
+
+    private static int CountTextFitWarnings(Control root)
+    {
+        var warnings = IsTextFitWarning(root) ? 1 : 0;
+        foreach (Control child in root.Controls)
+        {
+            warnings += CountTextFitWarnings(child);
+        }
+
+        return warnings;
+    }
+
+    private static bool IsTextFitWarning(Control control)
+    {
+        if (!control.Visible || string.IsNullOrWhiteSpace(control.Text))
+        {
+            return false;
+        }
+
+        if (control is not Button && control is not CheckBox)
+        {
+            return false;
+        }
+
+        var measured = TextRenderer.MeasureText(control.Text, control.Font);
+        var extraWidth = control is CheckBox ? 26 : 8;
+        return measured.Width + extraWidth > control.ClientSize.Width || measured.Height + 6 > control.ClientSize.Height;
+    }
+
+    private static int CountSiblingOverlapWarnings(Control parent)
+    {
+        var visibleChildren = parent.Controls
+            .Cast<Control>()
+            .Where(static child => child.Visible && child.Width > 0 && child.Height > 0)
+            .ToList();
+        var warnings = 0;
+        for (var i = 0; i < visibleChildren.Count; i++)
+        {
+            for (var j = i + 1; j < visibleChildren.Count; j++)
+            {
+                if (visibleChildren[i].Bounds.IntersectsWith(visibleChildren[j].Bounds))
+                {
+                    warnings++;
+                }
+            }
+        }
+
+        foreach (var child in visibleChildren)
+        {
+            warnings += CountSiblingOverlapWarnings(child);
+        }
+
+        return warnings;
+    }
+
     private static string FormatUiSmokeReport(NativeUiSmokeReport report)
     {
         return string.Join(" ", new[]
@@ -3454,6 +3633,29 @@ internal sealed class MainForm : Form
             $"albumImages={report.AlbumImages}",
             $"browserStateKeys={report.BrowserStateKeys}",
             $"settingsImported={BoolText(report.SettingsImported)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
+    private static string FormatUiScreenshotReport(NativeUiScreenshotReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-ui-screenshot complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"output=\"{Quote(report.OutputPath)}\"",
+            $"width={report.Width}",
+            $"height={report.Height}",
+            $"scannedImages={report.ScannedImages}",
+            $"visibleImages={report.VisibleImages}",
+            $"previewLoaded={BoolText(report.PreviewLoaded)}",
+            $"textFitWarnings={report.TextFitWarnings}",
+            $"overlapWarnings={report.OverlapWarnings}",
+            $"focusControl={report.FocusControl}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -4099,6 +4301,19 @@ internal sealed class MainForm : Form
             return Label;
         }
     }
+
+    private sealed record NativeUiScreenshotReport(
+        string Folder,
+        string OutputPath,
+        int Width,
+        int Height,
+        int ScannedImages,
+        int VisibleImages,
+        bool PreviewLoaded,
+        int TextFitWarnings,
+        int OverlapWarnings,
+        string FocusControl,
+        bool EnhancementStateUnchanged);
 
     private sealed record NativeUiSmokeReport(
         string Folder,

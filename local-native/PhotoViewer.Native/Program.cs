@@ -94,6 +94,21 @@ internal static class Program
             return await MainForm.RunUiSmokeAsync(args[1], searchQuery);
         }
 
+        if (args.Length >= 3 && args[0] == "--headless-ui-screenshot")
+        {
+            var searchQuery = "fixture";
+            for (var i = 3; i < args.Length; i++)
+            {
+                if (string.Equals(args[i], "--search", StringComparison.OrdinalIgnoreCase) && i + 1 < args.Length)
+                {
+                    searchQuery = args[++i];
+                }
+            }
+
+            ApplicationConfiguration.Initialize();
+            return await MainForm.RunUiScreenshotAsync(args[1], args[2], searchQuery);
+        }
+
         if (args.Length >= 3 && args[0] == "--headless-folder-set-smoke")
         {
             var searchQuery = "fixture";
