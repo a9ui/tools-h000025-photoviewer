@@ -712,6 +712,27 @@ enhancement-isolation checks. Exact browser thumbnail crop/object-fit parity,
 fixed columns, broader display-model persistence, and richer visual polish
 remain deferred.
 
+## Post-v1 #113 Notes
+
+#113 adds the first bounded native gallery zoom interaction slice. Native grid
+view now maps modified wheel input and keyboard zoom shortcuts onto the
+accepted `Thumb` control instead of adding a new gallery model.
+
+In Grid view, `Ctrl`/`Alt` + mouse wheel adjusts the existing native thumbnail
+size by one native step. `Ctrl++` / numpad `+` increase it, `Ctrl+-` / numpad
+`-` decrease it, and `Ctrl+0` / numpad `0` reset to the native maximum
+accepted browser-default equivalent. The operation persists through the
+existing `thumbnail_size` setting and keeps the selected item visible when one
+is selected.
+
+This is a native gallery/list surface interaction slice, not detail-modal zoom
+and not the #114 keybinding recorder. Browser `thumbSize` range parity,
+centered-scroll parity, list/details wheel semantics, richer visual polish,
+and broader `pvu_view` display migration remain deferred.
+
+The native UI smoke verifies this first slice with `galleryWheelZoom=true` and
+`galleryKeyboardZoom=true` alongside the existing post-v1 smoke flags.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
