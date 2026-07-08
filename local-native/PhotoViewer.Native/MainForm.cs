@@ -1081,6 +1081,14 @@ internal sealed class MainForm : Form
         UpdateSelectionActions();
         var multiSelection = _list.SelectedIndices.Count == 2 && _selectionLabel.Text.Contains("Selected 2", StringComparison.OrdinalIgnoreCase);
         Require(multiSelection, "multi-selection count failed");
+        var bulkFavoriteTargets = GetSelectedImages().Select(static image => image.AbsolutePath).ToArray();
+        SetSelectedFavoriteLevel(5);
+        var bulkFavoriteSet = bulkFavoriteTargets.Length == 2 && bulkFavoriteTargets.All(path => FavoriteLevelForPath(path) == 5);
+        Require(bulkFavoriteSet, "bulk favorite set failed");
+        SetSelectedFavoriteLevel(0);
+        var bulkFavoriteClear = bulkFavoriteTargets.Length == 2 && bulkFavoriteTargets.All(path => FavoriteLevelForPath(path) == 0);
+        Require(bulkFavoriteClear, "bulk favorite clear failed");
+        SetFavoriteLevelForPath(bulkFavoriteTargets[0], 5);
         ClearImageSelection();
         var backgroundClear = _list.SelectedIndices.Count == 0 && _selectionLabel.Text.Contains("Selected 0", StringComparison.OrdinalIgnoreCase);
         Require(backgroundClear, "background clear selection failed");
@@ -1157,7 +1165,9 @@ internal sealed class MainForm : Form
         Require(unratedFilter, "unrated filter failed");
         var favoriteFilterCounts = _favoriteFilter.Items
             .Cast<FavoriteFilterOption>()
-            .Any(item => string.Equals(item.Key, smokeFavoriteLevel.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase) && item.Label.Contains("(1)", StringComparison.Ordinal));
+            .Any(item =>
+                string.Equals(item.Key, smokeFavoriteLevel.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase) &&
+                item.Label.Contains($"({_allImages.Count(image => image.FavoriteLevel == smokeFavoriteLevel):n0})", StringComparison.Ordinal));
         Require(favoriteFilterCounts, "favorite filter count label failed");
         SelectFavoriteFilter("all");
         _enhancedOnly.Checked = true;
@@ -1207,6 +1217,8 @@ internal sealed class MainForm : Form
             SelectedCount: selectedCount,
             GalleryStateRestore: galleryStateRestore,
             MultiSelection: multiSelection,
+            BulkFavoriteSet: bulkFavoriteSet,
+            BulkFavoriteClear: bulkFavoriteClear,
             BackgroundClear: backgroundClear,
             FavoriteFilterCounts: favoriteFilterCounts,
             FavoriteLevelFilter: favoriteLevelFilter,
@@ -2704,34 +2716,57 @@ internal sealed class MainForm : Form
 
     private void SetSelectedFavoriteLevel(int level)
     {
-        var index = GetSelectedIndex();
-        if (index < 0)
+        var selectedPaths = GetSelectedImages()
+            .Select(static item => item.AbsolutePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (selectedPaths.Length == 0)
         {
             return;
         }
 
-        var current = _visibleImages[index];
-        SetFavoriteLevelForPath(current.AbsolutePath, level);
+        SetFavoriteLevelForPaths(selectedPaths, level);
     }
 
     private void SetFavoriteLevelForPath(string absolutePath, int level)
     {
-        var current = _visibleImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase))
-            ?? _allImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
-        if (current is null)
+        SetFavoriteLevelForPaths([absolutePath], level);
+    }
+
+    private void SetFavoriteLevelForPaths(IReadOnlyCollection<string> absolutePaths, int level)
+    {
+        var clamped = Math.Clamp(level, 0, 5);
+        var updatedPaths = new List<string>();
+        string? firstUpdatedFilename = null;
+
+        foreach (var absolutePath in absolutePaths)
+        {
+            var current = _visibleImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase))
+                ?? _allImages.FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+            if (current is null)
+            {
+                continue;
+            }
+
+            _store.SetFavoriteLevel(current.AbsolutePath, clamped);
+            var updated = current with { FavoriteLevel = clamped };
+            ReplaceImage(current.AbsolutePath, updated);
+            updatedPaths.Add(updated.AbsolutePath);
+            firstUpdatedFilename ??= updated.Filename;
+        }
+
+        if (updatedPaths.Count == 0)
         {
             return;
         }
 
-        var clamped = Math.Clamp(level, 0, 5);
-        _store.SetFavoriteLevel(current.AbsolutePath, clamped);
         _favorites = _store.LoadFavorites();
-        var updated = current with { FavoriteLevel = clamped };
-        ReplaceImage(current.AbsolutePath, updated);
         RefreshFavoriteFilterOptions();
         ApplyFilter();
-        SelectImage(updated.AbsolutePath);
-        SetStatus($"Favorite level {clamped}: {updated.Filename}");
+        SelectImages(updatedPaths);
+        SetStatus(updatedPaths.Count == 1
+            ? $"Favorite level {clamped}: {firstUpdatedFilename}"
+            : $"Favorite level {clamped}: {updatedPaths.Count:n0} images");
     }
 
     private void ClearPreview(string message)
@@ -2823,6 +2858,24 @@ internal sealed class MainForm : Form
         return index >= 0 ? _visibleImages[index] : null;
     }
 
+    private List<NativeImageRecord> GetSelectedImages()
+    {
+        return _list.SelectedIndices
+            .Cast<int>()
+            .Where(index => index >= 0 && index < _visibleImages.Count)
+            .Distinct()
+            .OrderBy(static index => index)
+            .Select(index => _visibleImages[index])
+            .ToList();
+    }
+
+    private int FavoriteLevelForPath(string absolutePath)
+    {
+        return _allImages
+            .FirstOrDefault(item => string.Equals(item.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase))
+            ?.FavoriteLevel ?? 0;
+    }
+
     private void SelectOffset(int offset)
     {
         if (_visibleImages.Count == 0)
@@ -2849,6 +2902,30 @@ internal sealed class MainForm : Form
         _list.SelectedIndices.Clear();
         _list.SelectedIndices.Add(index);
         _list.EnsureVisible(index);
+        UpdateSelectionActions();
+    }
+
+    private void SelectImages(IEnumerable<string> absolutePaths)
+    {
+        var selectedIndices = absolutePaths
+            .Select(path => _visibleImages.FindIndex(item => string.Equals(item.AbsolutePath, path, StringComparison.OrdinalIgnoreCase)))
+            .Where(static index => index >= 0)
+            .Distinct()
+            .OrderBy(static index => index)
+            .ToArray();
+        if (selectedIndices.Length == 0)
+        {
+            UpdateSelectionActions();
+            return;
+        }
+
+        _list.SelectedIndices.Clear();
+        foreach (var index in selectedIndices)
+        {
+            _list.SelectedIndices.Add(index);
+        }
+
+        _list.EnsureVisible(selectedIndices[0]);
         UpdateSelectionActions();
     }
 
@@ -2885,7 +2962,7 @@ internal sealed class MainForm : Form
         _refreshButton.Enabled = CurrentFolderSetRoots().Count > 0;
         _recentSetButton.Enabled = true;
         _addFolderButton.Enabled = true;
-        _favoriteLevel.Enabled = selected is not null && selectedCount == 1;
+        _favoriteLevel.Enabled = selectedCount > 0;
         _selectionLabel.Text = selectedCount > 0
             ? $"Selected {selectedCount:n0} / {_visibleImages.Count:n0}"
             : $"Selected 0 / {_visibleImages.Count:n0}";
@@ -3661,6 +3738,8 @@ internal sealed class MainForm : Form
             $"selectedCount={BoolText(report.SelectedCount)}",
             $"galleryStateRestore={BoolText(report.GalleryStateRestore)}",
             $"multiSelection={BoolText(report.MultiSelection)}",
+            $"bulkFavoriteSet={BoolText(report.BulkFavoriteSet)}",
+            $"bulkFavoriteClear={BoolText(report.BulkFavoriteClear)}",
             $"backgroundClear={BoolText(report.BackgroundClear)}",
             $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
             $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
@@ -4387,6 +4466,8 @@ internal sealed class MainForm : Form
         bool SelectedCount,
         bool GalleryStateRestore,
         bool MultiSelection,
+        bool BulkFavoriteSet,
+        bool BulkFavoriteClear,
         bool BackgroundClear,
         bool FavoriteFilterCounts,
         bool FavoriteLevelFilter,

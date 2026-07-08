@@ -748,7 +748,7 @@ reclassified as v1-required with evidence:
 | #100 Restore recently closed preview tabs | v1 後の最善化 | `cursor_impl` | Native tab restore evidence. |
 | #101 Hover quick preview | v1 後の最善化 | `cursor_impl` | Native UI/manual evidence. |
 | #102 Folder bucket range selection | v1 後の最善化 | `human` / `codex_pm` / `cursor_impl` | Replacement/custom folder bucket control decision plus smoke. |
-| #103 Bulk favorite actions | v1 後の最善化 | `cursor_impl` | Multi-selection favorite smoke. |
+| #103 Bulk favorite actions | v1 後の最善化 | `cursor_impl` | Native UI smoke with `bulkFavoriteSet=true` and `bulkFavoriteClear=true`. |
 | #104 Bulk open actions | v1 後の最善化 | `cursor_impl` | Multi-selection open smoke or product decision. |
 | #105 Bulk recycle/delete actions | v1 後の最善化 | `codex_pm` / `cursor_impl` | Disposable fixture destructive-flow evidence. |
 | #106 Delete confirmation and do-not-ask settings | v1 後の最善化 | `codex_pm` / `cursor_impl` | Confirmation/cancel/do-not-ask settings smoke. |
