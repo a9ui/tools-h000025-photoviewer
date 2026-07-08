@@ -68,6 +68,9 @@ internal sealed class MainForm : Form
     private readonly PictureBox _preview = new();
     private readonly Label _selectionLabel = new();
     private readonly Label _previewLabel = new();
+    private readonly TabControl _previewTabs = new();
+    private readonly Button _pinPreviewTabButton = new();
+    private readonly Button _closePreviewTabButton = new();
     private readonly ImageList _gridImages = new();
     private SplitContainer? _mainSplit;
 
@@ -95,6 +98,7 @@ internal sealed class MainForm : Form
     private bool _updatingDisplayStyle;
     private bool _updatingAspectMode;
     private bool _updatingSearchSuggestions;
+    private bool _updatingPreviewTabs;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
@@ -1103,9 +1107,10 @@ internal sealed class MainForm : Form
         {
             Dock = DockStyle.Fill,
             ColumnCount = 1,
-            RowCount = 3,
+            RowCount = 4,
         };
         previewPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        previewPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 38));
         previewPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 24));
         previewPanel.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
 
@@ -1124,9 +1129,39 @@ internal sealed class MainForm : Form
         _previewLabel.AutoEllipsis = true;
         _previewLabel.Text = "Select an image.";
 
+        var previewTabActions = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill,
+            ColumnCount = 3,
+            RowCount = 1,
+            Padding = new Padding(4, 2, 4, 2),
+        };
+        previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
+
+        _previewTabs.Dock = DockStyle.Fill;
+        _previewTabs.ShowToolTips = true;
+        _previewTabs.SelectedIndexChanged += async (_, _) => await ActivateSelectedPreviewTabAsync();
+
+        _pinPreviewTabButton.Text = "Pin";
+        _pinPreviewTabButton.Dock = DockStyle.Fill;
+        ApplyTextFitSize(_pinPreviewTabButton, 54, 26);
+        _pinPreviewTabButton.Click += (_, _) => ToggleActivePreviewTabPin();
+
+        _closePreviewTabButton.Text = "Close";
+        _closePreviewTabButton.Dock = DockStyle.Fill;
+        ApplyTextFitSize(_closePreviewTabButton, 64, 26);
+        _closePreviewTabButton.Click += (_, _) => CloseActivePreviewTab();
+
+        previewTabActions.Controls.Add(_previewTabs, 0, 0);
+        previewTabActions.Controls.Add(_pinPreviewTabButton, 1, 0);
+        previewTabActions.Controls.Add(_closePreviewTabButton, 2, 0);
+
         previewPanel.Controls.Add(_preview, 0, 0);
-        previewPanel.Controls.Add(_selectionLabel, 0, 1);
-        previewPanel.Controls.Add(_previewLabel, 0, 2);
+        previewPanel.Controls.Add(previewTabActions, 0, 1);
+        previewPanel.Controls.Add(_selectionLabel, 0, 2);
+        previewPanel.Controls.Add(_previewLabel, 0, 3);
         split.Panel2.Controls.Add(previewPanel);
 
         _statusLabel.Dock = DockStyle.Fill;
@@ -1374,6 +1409,29 @@ internal sealed class MainForm : Form
         await LoadSelectedPreviewAsync();
         var previewLoaded = await WaitForPreviewAsync(previewTarget.Filename);
         Require(previewLoaded, "preview did not load fixture image");
+        var previewTabsFirst = _previewTabs.TabPages.Count == 1 &&
+            string.Equals(ActivePreviewTabState()?.Path, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        var previewTabPin = ToggleActivePreviewTabPin() &&
+            ActivePreviewTabState()?.IsPinned == true &&
+            string.Equals(_pinPreviewTabButton.Text, "Unpin", StringComparison.OrdinalIgnoreCase);
+        Require(previewTabPin, "preview tab pin failed");
+        var secondPreviewTarget = _visibleImages.FirstOrDefault(image =>
+            !string.Equals(image.AbsolutePath, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        Require(secondPreviewTarget is not null, "preview tab smoke needs a second fixture image");
+        SelectImage(secondPreviewTarget!.AbsolutePath);
+        await LoadSelectedPreviewAsync();
+        var previewTabs = previewTabsFirst &&
+            _previewTabs.TabPages.Count >= 2 &&
+            string.Equals(ActivePreviewTabState()?.Path, secondPreviewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Require(previewTabs, "preview tab creation failed");
+        var previewTabCloseAction = CloseActivePreviewTab();
+        await LoadSelectedPreviewAsync();
+        var activeAfterClose = ActivePreviewTabState();
+        var previewTabClose = previewTabCloseAction &&
+            _previewTabs.TabPages.Count == 1 &&
+            activeAfterClose?.IsPinned == true &&
+            string.Equals(activeAfterClose.Path, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Require(previewTabClose, "preview tab close failed");
         var metadataTarget = _visibleImages.FirstOrDefault(static image =>
             image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
             image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
@@ -1579,6 +1637,9 @@ internal sealed class MainForm : Form
             ScannedImages: scannedImages,
             InitialVisible: initialVisible,
             PreviewLoaded: previewLoaded,
+            PreviewTabs: previewTabs,
+            PreviewTabPin: previewTabPin,
+            PreviewTabClose: previewTabClose,
             NavigationButtons: navigationButtons,
             KeyboardNavigation: keyboardNavigation,
             KeyboardFavorite: keyboardFavorite,
@@ -2969,6 +3030,7 @@ internal sealed class MainForm : Form
             previous?.Dispose();
 
             _previewLabel.Text = FormatPreviewDetails(image, dimensionHint);
+            EnsurePreviewTab(image);
             UpdateSelectionActions();
             WarmNeighborPreviews(index);
         }
@@ -2979,6 +3041,158 @@ internal sealed class MainForm : Form
                 ClearPreview($"Preview failed: {ex.Message}");
             }
         }
+    }
+
+    private void EnsurePreviewTab(NativeImageRecord image)
+    {
+        var page = FindPreviewTabPage(image.AbsolutePath);
+        var state = new PreviewTabState(image.AbsolutePath, image.Filename, IsPinnedPreviewTab(page));
+
+        _updatingPreviewTabs = true;
+        try
+        {
+            if (page is null)
+            {
+                page = new TabPage(FormatPreviewTabText(state))
+                {
+                    Tag = state,
+                    ToolTipText = image.AbsolutePath,
+                };
+                _previewTabs.TabPages.Add(page);
+            }
+            else
+            {
+                page.Tag = state;
+                page.Text = FormatPreviewTabText(state);
+                page.ToolTipText = image.AbsolutePath;
+            }
+
+            _previewTabs.SelectedTab = page;
+        }
+        finally
+        {
+            _updatingPreviewTabs = false;
+        }
+
+        UpdatePreviewTabActions();
+    }
+
+    private async Task ActivateSelectedPreviewTabAsync()
+    {
+        if (_updatingPreviewTabs)
+        {
+            return;
+        }
+
+        var state = ActivePreviewTabState();
+        UpdatePreviewTabActions();
+        if (state is null)
+        {
+            return;
+        }
+
+        if (!IsVisibleImagePath(state.Path))
+        {
+            SetStatus($"Preview tab outside current filter: {state.Filename}");
+            return;
+        }
+
+        SelectImage(state.Path);
+        await LoadSelectedPreviewAsync();
+    }
+
+    private bool ToggleActivePreviewTabPin()
+    {
+        var page = _previewTabs.SelectedTab;
+        if (page?.Tag is not PreviewTabState state)
+        {
+            return false;
+        }
+
+        var updated = state with { IsPinned = !state.IsPinned };
+        page.Tag = updated;
+        page.Text = FormatPreviewTabText(updated);
+        page.ToolTipText = updated.Path;
+        UpdatePreviewTabActions();
+        SetStatus(updated.IsPinned
+            ? $"Pinned preview: {updated.Filename}"
+            : $"Unpinned preview: {updated.Filename}");
+        return true;
+    }
+
+    private bool CloseActivePreviewTab()
+    {
+        var page = _previewTabs.SelectedTab;
+        if (page?.Tag is not PreviewTabState state)
+        {
+            return false;
+        }
+
+        var selectedIndex = _previewTabs.SelectedIndex;
+        _updatingPreviewTabs = true;
+        try
+        {
+            _previewTabs.TabPages.Remove(page);
+            page.Dispose();
+            if (_previewTabs.TabPages.Count > 0)
+            {
+                _previewTabs.SelectedIndex = Math.Clamp(selectedIndex, 0, _previewTabs.TabPages.Count - 1);
+            }
+        }
+        finally
+        {
+            _updatingPreviewTabs = false;
+        }
+
+        UpdatePreviewTabActions();
+        if (ActivePreviewTabState() is { } nextState)
+        {
+            SelectImage(nextState.Path);
+        }
+        else
+        {
+            ClearImageSelection();
+        }
+
+        SetStatus($"Closed preview tab: {state.Filename}");
+        return true;
+    }
+
+    private TabPage? FindPreviewTabPage(string absolutePath)
+    {
+        return _previewTabs.TabPages
+            .Cast<TabPage>()
+            .FirstOrDefault(page => page.Tag is PreviewTabState state &&
+                string.Equals(state.Path, absolutePath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private PreviewTabState? ActivePreviewTabState()
+    {
+        return _previewTabs.SelectedTab?.Tag as PreviewTabState;
+    }
+
+    private bool IsPinnedPreviewTab(TabPage? page)
+    {
+        return page?.Tag is PreviewTabState { IsPinned: true };
+    }
+
+    private bool IsVisibleImagePath(string absolutePath)
+    {
+        return _visibleImages.Any(image => string.Equals(image.AbsolutePath, absolutePath, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private void UpdatePreviewTabActions()
+    {
+        var state = ActivePreviewTabState();
+        _pinPreviewTabButton.Enabled = state is not null;
+        _closePreviewTabButton.Enabled = state is not null;
+        _pinPreviewTabButton.Text = state?.IsPinned == true ? "Unpin" : "Pin";
+    }
+
+    private static string FormatPreviewTabText(PreviewTabState state)
+    {
+        var text = state.IsPinned ? $"P {state.Filename}" : state.Filename;
+        return text.Length <= 32 ? text : $"{text[..29]}...";
     }
 
     private async Task<bool> WaitForPreviewAsync(string expectedFilename, int timeoutMs = 2000)
@@ -3390,6 +3604,7 @@ internal sealed class MainForm : Form
         _preview.Image = null;
         previous?.Dispose();
         _previewLabel.Text = message;
+        UpdatePreviewTabActions();
     }
 
     private void ClearImageSelection()
@@ -3652,6 +3867,7 @@ internal sealed class MainForm : Form
         _updatingFavoriteControl = true;
         _favoriteLevel.Value = selected is null ? 0 : Math.Clamp(selected.FavoriteLevel, 0, 5);
         _updatingFavoriteControl = false;
+        UpdatePreviewTabActions();
         SaveGalleryStateIfChanged(selected, index);
     }
 
@@ -4688,6 +4904,9 @@ internal sealed class MainForm : Form
             $"scannedImages={report.ScannedImages}",
             $"initialVisible={report.InitialVisible}",
             $"previewLoaded={BoolText(report.PreviewLoaded)}",
+            $"previewTabs={BoolText(report.PreviewTabs)}",
+            $"previewTabPin={BoolText(report.PreviewTabPin)}",
+            $"previewTabClose={BoolText(report.PreviewTabClose)}",
             $"navigationButtons={BoolText(report.NavigationButtons)}",
             $"keyboardNavigation={BoolText(report.KeyboardNavigation)}",
             $"keyboardFavorite={BoolText(report.KeyboardFavorite)}",
@@ -5475,6 +5694,8 @@ internal sealed class MainForm : Form
 
     private sealed record SearchTagSuggestionAccumulator(string Tag, int Count);
 
+    private sealed record PreviewTabState(string Path, string Filename, bool IsPinned);
+
     private sealed record NativeUiScreenshotReport(
         string Folder,
         string OutputPath,
@@ -5493,6 +5714,9 @@ internal sealed class MainForm : Form
         int ScannedImages,
         int InitialVisible,
         bool PreviewLoaded,
+        bool PreviewTabs,
+        bool PreviewTabPin,
+        bool PreviewTabClose,
         bool NavigationButtons,
         bool KeyboardNavigation,
         bool KeyboardFavorite,
