@@ -56,11 +56,14 @@ Read in full before planning or editing:
 ## Starting Evidence
 
 - Milestone #26 is open with 20 open / 2 closed issues.
-- #117 remains open and is already dispatched as SQLite job #236.
+- #117 was active during queue triage, then closed by PR #123 before final
+  #118 handoff. Do not reopen it from #118 unless a new residual pvu issue is
+  created.
 - #118 has no issue comments yet.
 - Open PRs are currently none.
-- Latest main CI #28915773995 passed at
-  `7d9b75f3cd7e0d4c60d6e33ecdd8d54204f6672f`.
+- Latest confirmed main CI before #118 handoff work began was #28915773995 at
+  `7d9b75f3cd7e0d4c60d6e33ecdd8d54204f6672f`; PR #123 and PR #124 also had
+  passing PR CI before merge.
 - Existing M5 matrix repeatedly defers native responsive/layout parity to
   desktop screenshot or Human Surface review for overlap, text fit, keyboard
   focus, and polish.
