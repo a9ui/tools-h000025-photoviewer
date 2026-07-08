@@ -247,6 +247,7 @@ internal static class NativeHeadlessRunner
                 ["pvu_unfav_only"] = "0",
                 ["pvu_recent_dirs"] = new { invalid = true },
                 ["pvu_seen_images"] = "{ malformed",
+                ["pvu_perf_enabled"] = "1",
             },
         };
         File.WriteAllText(
