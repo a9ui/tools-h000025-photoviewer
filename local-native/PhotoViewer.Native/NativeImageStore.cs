@@ -965,6 +965,7 @@ internal sealed class NativeImageStore
 
         if (TryGetBrowserStateValue(browserState, "pvu_view", out var pvuView))
         {
+            var pvuViewMalformed = false;
             if (TryReadBrowserViewMode(pvuView, out var viewMode, out var warningMessage))
             {
                 if (GetSetting(connection, transaction, "view_mode") is null)
@@ -981,6 +982,30 @@ internal sealed class NativeImageStore
                     "malformed-json-value",
                     warningMessage,
                     "Browser view-mode state was skipped; rerun the browser export or remove the malformed pvu_view value, then run Import again."));
+                pvuViewMalformed = true;
+            }
+
+            if (!pvuViewMalformed && TryReadBrowserDateRange(pvuView, out var dateFrom, out var dateTo, out var hasDateRange, out warningMessage))
+            {
+                if (hasDateRange &&
+                    GetSetting(connection, transaction, "date_filter") is null &&
+                    GetSetting(connection, transaction, "date_from") is null &&
+                    GetSetting(connection, transaction, "date_to") is null)
+                {
+                    UpsertSetting(connection, transaction, "date_filter", "custom", importedAt);
+                    UpsertSetting(connection, transaction, "date_from", dateFrom, importedAt);
+                    UpsertSetting(connection, transaction, "date_to", dateTo, importedAt);
+                    migrations.Add("pvu_view.dateFrom/dateTo->date_from/date_to");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-date-range-value",
+                    warningMessage,
+                    "Browser date-range state was skipped; rerun the browser export or remove malformed pvu_view dateFrom/dateTo values, then run Import again."));
             }
         }
 
@@ -1157,6 +1182,106 @@ internal sealed class NativeImageStore
 
         viewMode = "";
         return false;
+    }
+
+    private static bool TryReadBrowserDateRange(
+        string value,
+        out string dateFrom,
+        out string dateTo,
+        out bool hasDateRange,
+        out string? warningMessage)
+    {
+        dateFrom = "";
+        dateTo = "";
+        hasDateRange = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        if (!trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (!TryReadBrowserDateValue(document.RootElement, "dateFrom", out dateFrom, out var hasFrom, out warningMessage) ||
+                !TryReadBrowserDateValue(document.RootElement, "dateTo", out dateTo, out var hasTo, out warningMessage))
+            {
+                return false;
+            }
+
+            hasDateRange = (hasFrom && !string.IsNullOrWhiteSpace(dateFrom)) ||
+                (hasTo && !string.IsNullOrWhiteSpace(dateTo));
+            warningMessage = null;
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserDateValue(
+        JsonElement root,
+        string propertyName,
+        out string value,
+        out bool present,
+        out string? warningMessage)
+    {
+        value = "";
+        present = false;
+        warningMessage = null;
+
+        if (!root.TryGetProperty(propertyName, out var element))
+        {
+            return true;
+        }
+
+        present = true;
+        if (element.ValueKind == JsonValueKind.Null)
+        {
+            return true;
+        }
+
+        if (element.ValueKind != JsonValueKind.String)
+        {
+            warningMessage = $"pvu_view.{propertyName} must be a yyyy-MM-dd string.";
+            return false;
+        }
+
+        value = element.GetString()?.Trim() ?? "";
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            value = "";
+            return true;
+        }
+
+        if (!DateTime.TryParseExact(
+            value,
+            "yyyy-MM-dd",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None,
+            out _))
+        {
+            warningMessage = $"pvu_view.{propertyName} must be a valid yyyy-MM-dd date.";
+            return false;
+        }
+
+        return true;
     }
 
     private static bool TryReadBrowserBoolean(string value, out bool result, out string? warningMessage)

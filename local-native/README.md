@@ -482,7 +482,9 @@ explicit browser `pvu_enhanced_only` into native `enhanced_only_filter` under
 the same first-import-only rule. The third accepted row imports explicit
 browser `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter` as
 `favorites`, `unrated`, or `all`, also only when native has no saved favorite
-filter yet.
+filter yet. The fourth accepted row imports explicit browser
+`pvu_view.dateFrom` / `dateTo` into native `date_filter`, `date_from`, and
+`date_to` under the same first-import-only rule.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
