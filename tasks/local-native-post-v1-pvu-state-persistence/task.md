@@ -85,6 +85,12 @@ deferred as a native migration target because explicit native enhancement
 queue/settings UI remains owned by #97/#98 and ordinary native browsing must
 not start enhancement workers.
 
+This Row20 continuation formally records browser localStorage `pvu_favorites`
+and `pvu_favorites_backup`: they are raw-mirrored for traceability if an
+explicit export contains them, but they are deferred as native migration
+targets because native already imports disk `.cache/favorites.json` and
+localStorage favorites need an accepted conflict policy before import.
+
 ## Guardrails
 
 - No Linear.
@@ -294,6 +300,16 @@ Read in full before planning or editing:
     `pvu_state_migration_count` remains at the Row 11 count;
   - explicit native enhancement queue/settings UI remains in #97/#98 and this
     row must not start automatic workers.
+- Formally defer browser localStorage favorites in #117:
+  - `pvu_favorites` is kept as a raw browser mirror under
+    `browser_pvu_favorites` when an explicit export contains it;
+  - `pvu_favorites_backup` is kept as a raw browser mirror under
+    `browser_pvu_favorites_backup` when an explicit export contains it;
+  - native keeps the accepted disk `.cache/favorites.json` import path, but
+    does not import browser localStorage favorites into the native favorites
+    table without a conflict policy;
+  - they are not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -324,6 +340,8 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
+`pvuLocalStorageFavoritesDeferred=true`, `favoriteStorageMirrorStored=true`,
+`favoriteBackupMirrorStored=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
@@ -331,11 +349,56 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=11`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
-## Current Verification
+## Current Row 20 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row20-pvu-favorites` based on `origin/main`
+`5a25011f75061ea0160f4e2420b561dc5643559f` after PR #150:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuLocalStorageFavoritesDeferred=true`,
+  `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
+  `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
+  `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+  `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
+  `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
+  `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
+  `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+  `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
+  `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
+  `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
+  contract, `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
+  `enhancedOnlyFilter=true`, `favoriteLevelFilter=true`, `sortName=true`,
+  `randomReshuffle=true`, `browserStateKeys=7`,
+  `settingsImported=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `git diff --check` passed.
+
+## Current Row 19 Verification
 
 Recorded on 2026-07-09 in branch
 `codex/h25-117-row18-pvu-enhance-settings` rebased by merge onto
