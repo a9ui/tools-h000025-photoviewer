@@ -56,9 +56,8 @@ Read in full before planning or editing:
 ## Starting Evidence
 
 - Milestone #26 is open with 20 open / 2 closed issues.
-- #117 was active during queue triage, then closed by PR #123 before final
-  #118 handoff. Do not reopen it from #118 unless a new residual pvu issue is
-  created.
+- #117 remains open after PR #123 and is represented by SQLite job #237 for a
+  later bounded pvu row. Do not compete with that lane from #118.
 - #118 has no issue comments yet.
 - Open PRs are currently none.
 - Latest confirmed main CI before #118 handoff work began was #28915773995 at
