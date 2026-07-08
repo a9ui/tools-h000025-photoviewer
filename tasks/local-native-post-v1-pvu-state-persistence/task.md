@@ -21,11 +21,16 @@ and `date_to` on first import. The fifth slice migrated explicit browser
 The sixth slice migrated explicit browser `pvu_view.rightPanelOpen` /
 `rightPanelWidth` into native `preview_visible` and
 `preview_splitter_distance` on first import, while preserving later native
-right-preview choices.
+right-preview choices. The seventh slice migrated explicit browser
+`pvu_view.thumbSize` into native `thumbnail_size` on first import, clamped to
+the current native UI range, while preserving later native thumbnail-size
+choices.
 
-This continuation migrates explicit browser `pvu_view.thumbSize` into native
-`thumbnail_size` on first import, clamped to the current native UI range, while
-preserving later native thumbnail-size choices.
+This continuation migrates explicit browser `pvu_view.sortBy` into native
+`sort_mode` on first import only for values with matching native semantics.
+Browser ascending sort directions and `randomSeed` remain deferred because the
+current native sort surface does not persist equivalent direction or seed
+state.
 
 ## Guardrails
 
@@ -132,6 +137,15 @@ Read in full before planning or editing:
   - malformed thumbnail-size values are recoverable warnings;
   - broader display-style, aspect, columns, and pinned-tab state remains
     deferred to the existing post-v1 rows.
+- Add a bounded migration for `pvu_view.sortBy`:
+  - browser `newest` -> native `sort_mode=Modified`;
+  - browser `created-newest` -> native `sort_mode=Created`;
+  - browser `name` -> native `sort_mode=Name`;
+  - browser `random` -> native `sort_mode=Random`;
+  - existing native `sort_mode` is not overwritten;
+  - malformed or unsupported sort values are recoverable warnings;
+  - browser `oldest`, `created-oldest`, and `randomSeed` remain deferred
+    until native has an accepted persisted direction/seed design.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -160,9 +174,9 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row6-thumb-size`
-rebased onto `origin/main` `10dbf1245a40e35509516e7f26ffb7a254f05d70`
-after PR #131:
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row8-sort-mode`
+based on `origin/main` `ffe9c51d6e98066c772e04758100f6bc5d2de204`
+after PR #133:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
@@ -170,29 +184,33 @@ after PR #131:
   `pvuViewModeMigrated=true`, `pvuEnhancedOnlyMigrated=true`,
   `pvuFavoriteFilterMigrated=true`, `pvuDateRangeMigrated=true`,
   `pvuThumbnailSizeMigrated=true`, `pvuThumbnailSizeClamped=true`,
+  `pvuSortModeMigrated=true`,
   `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
   `migrationRecorded=true`, `browserMirrorStored=true`,
   `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
   `recentMirrorStored=true`,
   `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
   `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
-  `nativeThumbnailSizePreserved=true`, `nativeRecentFolderSetPreserved=true`,
+  `nativeThumbnailSizePreserved=true`, `nativeSortModePreserved=true`,
+  `nativeRecentFolderSetPreserved=true`,
   `nativeRightPreviewPreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
   `malformedDateRangeWarning=true`, `malformedThumbnailSizeWarning=true`,
+  `unsupportedSortModeWarning=true`,
   `malformedRecentDirsWarning=true`, `malformedRightPreviewWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
   `nativeThumbnailSizeStillPreserved=true`,
+  `nativeSortModeStillPreserved=true`,
   `nativeRecentFolderSetStillPreserved=true`,
   `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=6`.
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=7`.
 - `-PrepareFixture` passed and created only ignored fixture/cache state in this
   clean worktree.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=4`, `settings=37`, `images=4`,
+  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
   `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `thumbnailSize=true`, `enhancedOnlyFilter=true`,
@@ -208,7 +226,8 @@ after PR #131:
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #245.
+2. Update SQLite job #247 and create/update the next row if more #117 native
+   queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.

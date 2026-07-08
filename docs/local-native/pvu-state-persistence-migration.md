@@ -7,28 +7,30 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_THUMBNAIL_SIZE_MIGRATION_AFTER_RIGHT_PREVIEW_ROW`.
+`ADOPT_BOUNDED_PVU_SORT_MODE_MIGRATION_AFTER_THUMBNAIL_SIZE_ROW`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_view.thumbSize` from an explicit browser localStorage export.
+  `pvu_view.sortBy` from an explicit browser localStorage export.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
   `pvu_view.dateFrom` / `dateTo` into native date settings, and
   `pvu_last_dir_set` / `pvu_recent_dirs` into native recent-folder settings,
   and `pvu_view.rightPanelOpen` / `rightPanelWidth` into native right-preview
-  settings.
+  settings, and `pvu_view.thumbSize` into native `thumbnail_size`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
   does not exist yet, so later native user choices are not overwritten on every
   startup/import.
-- Browser `thumbSize` uses the browser range, while the current native UI
-  supports a narrower 64-192 range. The imported value is clamped to the
-  native range rather than widening the native display-control scope in this
-  row.
+- Browser sort values are imported only where the current native sort surface
+  has matching semantics: `newest` -> `Modified`, `created-newest` ->
+  `Created`, `name` -> `Name`, and `random` -> `Random`.
+- Browser ascending directions `oldest` / `created-oldest` and browser
+  `randomSeed` remain deferred because the current native sort surface does
+  not persist equivalent direction or seed state.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -63,6 +65,13 @@ Meaning:
 | `pvu_view.thumbSize` positive integer | `native_settings.thumbnail_size` clamped to native 64-192 | `ADOPT`: imported on first native import when `thumbnail_size` is absent. |
 | Existing native `thumbnail_size` | Preserve native thumbnail size | `ADOPT`: import does not clobber a native user choice. |
 | Malformed `pvu_view.thumbSize` | recoverable warning, no native thumbnail overwrite | `ADOPT`: invalid thumbnail-size values are skipped with recovery guidance. |
+| `pvu_view.sortBy=newest` | `native_settings.sort_mode=Modified` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
+| `pvu_view.sortBy=created-newest` | `native_settings.sort_mode=Created` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
+| `pvu_view.sortBy=name` | `native_settings.sort_mode=Name` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
+| `pvu_view.sortBy=random` | `native_settings.sort_mode=Random` | `ADOPT`: imports only random mode; browser `randomSeed` remains deferred. |
+| Existing native `sort_mode` | Preserve native sort mode | `ADOPT`: import does not clobber a native user choice. |
+| `pvu_view.sortBy=oldest` / `created-oldest` | warning-only, no native sort overwrite | `DEFER`: current native sort surface has no persisted ascending direction. |
+| Malformed / unsupported `pvu_view.sortBy` | warning-only, no native sort overwrite | `ADOPT`: invalid sort values are skipped with recovery guidance. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -77,6 +86,8 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | Key | #117 classification | Reason / next evidence |
 | --- | --- | --- |
 | `pvu_view.thumbSize` | `ADOPT` | Native has `thumbnail_size`; this row imports only the scalar size, clamped to native 64-192, without adopting broader display-mode work. |
+| `pvu_view.sortBy` | `ADOPT` | Native has `sort_mode`; import only browser values with matching native semantics (`newest`, `created-newest`, `name`, `random`) and preserve existing native choices. |
+| `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | These map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
@@ -110,6 +121,7 @@ Expected result:
 - `pvuDateRangeMigrated=true`
 - `pvuThumbnailSizeMigrated=true`
 - `pvuThumbnailSizeClamped=true`
+- `pvuSortModeMigrated=true`
 - `pvuRecentFoldersMigrated=true`
 - `pvuRightPreviewMigrated=true`
 - `migrationRecorded=true`
@@ -122,23 +134,26 @@ Expected result:
 - `nativeFavoriteFilterPreserved=true`
 - `nativeDateRangePreserved=true`
 - `nativeThumbnailSizePreserved=true`
+- `nativeSortModePreserved=true`
 - `nativeRecentFolderSetPreserved=true`
 - `nativeRightPreviewPreserved=true`
 - `malformedEnhancedOnlyWarning=true`
 - `malformedFavoriteFilterWarning=true`
 - `malformedDateRangeWarning=true`
 - `malformedThumbnailSizeWarning=true`
+- `unsupportedSortModeWarning=true`
 - `malformedRecentDirsWarning=true`
 - `malformedRightPreviewWarning=true`
 - `nativeEnhancedOnlyStillPreserved=true`
 - `nativeFavoriteFilterStillPreserved=true`
 - `nativeDateRangeStillPreserved=true`
 - `nativeThumbnailSizeStillPreserved=true`
+- `nativeSortModeStillPreserved=true`
 - `nativeRecentFolderSetStillPreserved=true`
 - `nativeRightPreviewStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
-- `malformedWarnings=6`
+- `malformedWarnings=7`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
@@ -188,6 +203,37 @@ PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
 
+## Current Row 8 Verification
+
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row8-sort-mode`
+based on `origin/main` `ffe9c51d6e98066c772e04758100f6bc5d2de204`
+after PR #133:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuSortModeMigrated=true`,
+  `nativeSortModePreserved=true`, `unsupportedSortModeWarning=true`,
+  `nativeSortModeStillPreserved=true`, `migrationRecorded=true`,
+  `browserMirrorStored=true`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=7`, `browserStateKeys=5`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed and created only ignored fixture/cache state in this clean worktree.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
+  `warnings=0`, and no browser runtime.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `sortName=true`, `randomReshuffle=true`,
+  `thumbnailSize=true`, `settingsImported=true`, `browserStateKeys=6`, and
+  `enhancementStateUnchanged=true`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `git diff --check` passed.
+
 ## Current Row 7 Verification
 
 Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row6-thumb-size`
@@ -229,11 +275,14 @@ after PR #131:
 - `ADOPT`: bounded `pvu_view.rightPanelOpen` / `rightPanelWidth` migration.
 - `ADOPT`: bounded `pvu_view.thumbSize` migration into native
   `thumbnail_size`, clamped to the current native UI range.
+- `ADOPT`: bounded `pvu_view.sortBy` migration into native `sort_mode` for
+  browser values with matching native semantics.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and
   browser marker-only keys as native migration targets.
-- `DEFER`: `pvu_fav_levels`, pinned tabs, enhancement settings, broader
-  display details, `pvu_recent_albums`, scroll memory, and browser
-  localStorage favorites to their existing post-v1 issue rows.
+- `DEFER`: browser ascending sort directions, `randomSeed`,
+  `pvu_fav_levels`, pinned tabs, enhancement settings, broader display
+  details, `pvu_recent_albums`, scroll memory, and browser localStorage
+  favorites to their existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.
