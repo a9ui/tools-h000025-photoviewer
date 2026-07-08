@@ -92,9 +92,11 @@ native app records raw imported keys under `browser_state` and mirrors them as
 accepted row maps explicit browser `pvu_view.viewMode` into native
 `native_settings.view_mode`; the next accepted row maps explicit browser
 `pvu_enhanced_only` into native `native_settings.enhanced_only_filter`.
-Both migrations write only when the native setting does not exist yet. This
-gives first-import continuity without clobbering later native user choices on
-every startup or Import action.
+The third accepted row maps explicit browser `pvu_fav_only` /
+`pvu_unfav_only` into native `native_settings.favorite_filter` as
+`favorites`, `unrated`, or `all`. These migrations write only when the native
+setting does not exist yet. This gives first-import continuity without
+clobbering later native user choices on every startup or Import action.
 
 The dedicated smoke is:
 

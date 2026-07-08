@@ -1005,6 +1005,15 @@ internal sealed class NativeImageStore
             }
         }
 
+        if (TryReadBrowserFavoriteFilter(browserState, warnings, out var favoriteFilter))
+        {
+            if (GetSetting(connection, transaction, "favorite_filter") is null)
+            {
+                UpsertSetting(connection, transaction, "favorite_filter", favoriteFilter, importedAt);
+                migrations.Add("pvu_fav_only/pvu_unfav_only->favorite_filter");
+            }
+        }
+
         UpsertSetting(
             connection,
             transaction,
@@ -1027,6 +1036,61 @@ internal sealed class NativeImageStore
         }
 
         value = record.Value;
+        return true;
+    }
+
+    private static bool TryReadBrowserFavoriteFilter(
+        IReadOnlyList<NativeBrowserStateRecord> browserState,
+        ICollection<NativeImportWarning> warnings,
+        out string favoriteFilter)
+    {
+        var hasFavoriteOnly = TryGetBrowserStateValue(browserState, "pvu_fav_only", out var favoriteOnlyValue);
+        var hasUnratedOnly = TryGetBrowserStateValue(browserState, "pvu_unfav_only", out var unratedOnlyValue);
+        var hasValidValue = false;
+        var favoriteOnly = false;
+        var unratedOnly = false;
+
+        if (hasFavoriteOnly)
+        {
+            if (TryReadBrowserBoolean(favoriteOnlyValue, out favoriteOnly, out var warningMessage))
+            {
+                hasValidValue = true;
+            }
+            else if (!string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_fav_only",
+                    "",
+                    "malformed-boolean-value",
+                    warningMessage,
+                    "Browser favorites-only filter state was skipped; rerun the browser export or remove the malformed pvu_fav_only value, then run Import again."));
+            }
+        }
+
+        if (hasUnratedOnly)
+        {
+            if (TryReadBrowserBoolean(unratedOnlyValue, out unratedOnly, out var warningMessage))
+            {
+                hasValidValue = true;
+            }
+            else if (!string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_unfav_only",
+                    "",
+                    "malformed-boolean-value",
+                    warningMessage,
+                    "Browser unrated-only filter state was skipped; rerun the browser export or remove the malformed pvu_unfav_only value, then run Import again."));
+            }
+        }
+
+        if (!hasValidValue)
+        {
+            favoriteFilter = "";
+            return false;
+        }
+
+        favoriteFilter = favoriteOnly ? "favorites" : unratedOnly ? "unrated" : "all";
         return true;
     }
 

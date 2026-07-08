@@ -9,12 +9,14 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 Build the #117 plan first, then advance only the smallest safe `pvu_*`
 persistence row under `local-native/**`.
 
-The previous slice migrated explicit browser `pvu_view.viewMode` into native
-`view_mode` on first import, while preserving later native user choices.
-
-This continuation migrates explicit browser `pvu_enhanced_only` into native
+The previous slices migrated explicit browser `pvu_view.viewMode` into native
+`view_mode` and explicit browser `pvu_enhanced_only` into native
 `enhanced_only_filter` on first import, while preserving later native user
 choices.
+
+This continuation migrates explicit browser `pvu_fav_only` / `pvu_unfav_only`
+into native `favorite_filter` on first import, while preserving later native
+user choices.
 
 ## Guardrails
 
@@ -54,6 +56,7 @@ Read in full before planning or editing:
 - GitHub issue #117
 - GitHub issue #115
 - GitHub issue #116
+- GitHub PR #123
 - GitHub PR #122
 - GitHub PR #120
 - GitHub milestone #26
@@ -67,17 +70,26 @@ Read in full before planning or editing:
   - browser `list` -> native `view_mode=details`;
   - malformed `pvu_view` JSON is a recoverable warning;
   - existing native `view_mode` is not overwritten.
-- Add a bounded migration for `pvu_enhanced_only`:
+- Keep the existing bounded migration for `pvu_enhanced_only`:
   - browser truthy values (`1`, `true`) -> native
     `enhanced_only_filter=1`;
   - browser falsy values (`0`, `false`) -> native
     `enhanced_only_filter=0`;
   - malformed boolean values are recoverable warnings;
   - existing native `enhanced_only_filter` is not overwritten.
+- Add a bounded migration for `pvu_fav_only` / `pvu_unfav_only`:
+  - browser favorite-only truthy values (`1`, `true`) -> native
+    `favorite_filter=favorites`;
+  - browser unrated-only truthy values with favorite-only off -> native
+    `favorite_filter=unrated`;
+  - browser cleared values -> native `favorite_filter=all`;
+  - if both are truthy, favorite-only wins to match browser conflict behavior;
+  - malformed boolean values are recoverable warnings;
+  - existing native `favorite_filter` is not overwritten.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
-- Update `NativeFixtureBuilder` so newly generated browser export fixtures use
-  a browser-shaped `pvu_view` object and `pvu_enhanced_only`.
+- Keep `NativeFixtureBuilder` browser export fixtures explicit and
+  browser-shaped; do not read Chrome profile storage.
 - Record the remaining `pvu_*` key split in
   `docs/local-native/pvu-state-persistence-migration.md`.
 
@@ -99,17 +111,23 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-next-row`:
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row3`:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
-  `pvuEnhancedOnlyMigrated=true`, `nativeEnhancedOnlyPreserved=true`,
-  `migrationRecorded=true`, `malformedEnhancedOnlyWarning=true`,
-  `nativeEnhancedOnlyStillPreserved=true`, and `browserStateKeys=2`.
+  `pvuViewModeMigrated=true`, `pvuEnhancedOnlyMigrated=true`,
+  `pvuFavoriteFilterMigrated=true`, `migrationRecorded=true`,
+  `browserMirrorStored=true`, `enhancedMirrorStored=true`,
+  `favoriteMirrorStored=true`, `nativeViewModePreserved=true`,
+  `nativeEnhancedOnlyPreserved=true`, `nativeFavoriteFilterPreserved=true`,
+  `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
+  `nativeEnhancedOnlyStillPreserved=true`,
+  `nativeFavoriteFilterStillPreserved=true`, `browserStateKeys=4`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=2`.
 - `-PrepareFixture` passed and generated ignored fixture/cache state.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
-  passed with `browserStateKeys=6` and `warnings=0`.
+  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `enhancedOnlyFilter=true`,
   `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
@@ -122,7 +140,7 @@ Recorded on 2026-07-08 in branch `codex/h25-117-pvu-next-row`:
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #236.
+2. Update SQLite job #237.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.
