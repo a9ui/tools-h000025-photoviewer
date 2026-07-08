@@ -600,6 +600,60 @@ requirement.
 M17 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
+## M18 Native Manual Date Range Filter Slice
+
+M18 advances the browser-mapped manual date range filter row. It does not add a
+browser helper, a webview, a local server, folder range selection, or a new
+gallery layout concept.
+
+Browser evidence maps from:
+
+- `src/components/Sidebar.tsx`: manual `Date from` and `Date to` inputs update
+  `dateFrom` / `dateTo`;
+- `src/store/ImageContext.tsx`: search requests include `dateFrom` / `dateTo`;
+- `src/lib/indexer.ts`: date filtering uses inclusive local day bounds from
+  `00:00:00` through `23:59:59.999`.
+
+M18 date-filter smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke
+```
+
+M18 date-filter smoke result additions:
+
+- manualRangeMatches: 2
+- manualFromOnlyMatches: 2
+- manualToOnlyMatches: 2
+- manualSearchMatches: 2
+- manualFavoriteMatches: 1
+- manualRangeFilter / manualFromOnlyFilter / manualToOnlyFilter: true
+- manualSearchFilter / manualFavoriteFilter / manualRangePersisted: true
+- enhancementStateUnchanged: true
+
+M18 date-section smoke result additions:
+
+- manualRangeHeaderGroups: 2
+- manualRangeListHeaders: true
+- manualRangeGridHeaderGroups: 2
+- manualRangeGridHeaders: true
+- enhancementStateUnchanged: true
+
+| Area | M18 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sidebar quick search and filters | DEFERRED | Native `From` / `To` date inputs now map browser `dateFrom` / `dateTo` behavior onto inclusive local `CreatedAtUtc` date filtering. `-HeadlessDateFilterSmoke` verifies range, from-only, to-only, search composition, favorite-filter composition, and `date_from` / `date_to` persistence. | Enhanced-only filter and richer count labels beyond favorite/date state. | `cursor_impl` / `codex_pm` | Native UI/headless smoke for enhanced/date buckets or explicit product decision to defer enhanced-only filters. |
+| Sorting and display | DEFERRED | Manual date ranges compose with existing Created sort. `-HeadlessDateSectionSmoke` verifies list and grid date header groups after a custom range. | Compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke for remaining display variants that map to existing browser PhotoViewer behavior. |
+| Virtual gallery | DEFERRED | Manual date ranges reduce the visible native image set and rebuild Created-sort list/grid header maps without browser runtime evidence. | Drag/open parity, placeholder behavior, native thumbnail warmup UI, and richer grid section visual polish remain pending. | `codex_pm` / `cursor_impl` | Add native UI/headless evidence for any adopted virtual-gallery row without using browser/runtime evidence as native acceptance. |
+| Persistence keys | DEFERRED | Native SQLite now persists `date_from` and `date_to` along with `date_filter=custom`; date smoke verifies persisted values. | Full parity for pinned previews, filters beyond favorite/gallery/date state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Enhancement isolation | DEFERRED | M18 date-filter and date-section smokes verify passive manual date filtering and grouping did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M18; the manual range is native UI/filter state only. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors and malformed date input handling. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Native responsive/layout parity | DEFERRED | M18 adds compact checked `From` and `To` controls to the existing display controls row and does not change the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
+Rows not listed above keep their latest recorded status, owner, and evidence
+requirement.
+M18 does not reclassify folder range selection; it remains `DEFERRED` pending a
+replacement/custom folder bucket control and browser-mapped UI semantics.
+
 ## Minimum M6 Verification
 
 M6 must run and record:

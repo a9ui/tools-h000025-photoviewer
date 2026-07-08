@@ -361,3 +361,29 @@ folder range selection, drag/open parity, placeholder behavior, native
 thumbnail warmup UI, preview tabs, bulk destructive actions, explicit
 enhancement UI, and screenshot polish remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M18 Notes
+
+M18 first slice maps the browser manual `dateFrom` / `dateTo` controls into
+the native date filter row without touching the browser app. Native now shows
+checked `From` and `To` date inputs beside the existing date preset selector.
+Preset choices still populate the same inclusive local date ranges, while
+manual edits select `Custom range` and persist `date_from` / `date_to` in
+native SQLite settings.
+
+The date-filter smoke now verifies manual range, from-only, to-only, search
+composition, favorite-filter composition, and persisted range state. The
+date-section smoke verifies that manual ranges also rebuild Created-sort list
+and grid header groups:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateSectionSmoke
+```
+
+This remains a parity slice, not full native parity. Folder range selection
+stays deferred pending a replacement/custom folder bucket control and
+browser-mapped UI semantics. Enhanced-only filtering, drag/open parity,
+placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
+destructive actions, explicit enhancement UI, and screenshot polish also remain
+deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
