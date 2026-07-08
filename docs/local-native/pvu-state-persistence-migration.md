@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`DEFER_BROWSER_RECENT_ALBUMS_AFTER_PINNED_TABS`.
+`DEFER_BROWSER_DISPLAY_DETAILS_AFTER_RECENT_ALBUMS`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser `pvu_recent_albums` after the
-  pinned-tabs row.
+  explicit classification of browser `pvu_view.aspectMode` /
+  `displayStyle` / `columns` after the recent-albums row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -81,6 +81,12 @@ Meaning:
   `browser_pvu_recent_albums` if an explicit export contains it, but it does
   not create native `recent_albums`, `recent_album`, or `recent_album_ids`
   settings and is not recorded in `pvu_state_migrations`.
+- Browser `pvu_view.aspectMode`, `displayStyle`, and `columns` are persisted
+  by the browser display controls, but native has no accepted compact/poster,
+  aspect-mode, or fixed-column persistence contract yet. They are preserved
+  inside the raw `browser_pvu_view` mirror, but native does not create
+  `aspect_mode`, `display_style`, `columns`, or `display_columns` settings and
+  does not record them in `pvu_state_migrations`.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -141,6 +147,7 @@ Meaning:
 | `pvu_fav_levels` if present in explicit export | `native_settings.browser_pvu_fav_levels` raw mirror only | `DEFER`: current browser code does not persist this key, so there is no evidenced native migration target or conflict policy. |
 | `pvu_pinned_tabs` if present in explicit export | `native_settings.browser_pvu_pinned_tabs` raw mirror only | `DEFER`: browser pinned preview tabs belong to #99/#100; native has no accepted tab/pin/restore state contract yet. |
 | `pvu_recent_albums` if present in explicit export | `native_settings.browser_pvu_recent_albums` raw mirror only | `DEFER`: album import exists, but native has no accepted recent-album UI selection/restore contract yet. |
+| `pvu_view.aspectMode` / `displayStyle` / `columns` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: compact/poster/aspect/fixed-column display behavior belongs to #111/#112 until native has an accepted display/aspect persistence contract. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -165,7 +172,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.thumbSize` | `ADOPT` | Native has `thumbnail_size`; this row imports only the scalar size, clamped to native 64-192, without adopting broader display-mode work. |
 | `pvu_view.sortBy` | `ADOPT` | Native has `sort_mode`; import only browser values with matching native semantics (`newest`, `created-newest`, `name`, `random`) and preserve existing native choices. |
 | `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
-| `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | These map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
+| `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | Formally covered by Row 18; these map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_view.hiddenFolders` | `ADOPT` | Native already persists `hidden_folder_buckets`; this row maps browser folder keys through the exported browser folder roots and preserves existing native hidden-folder choices. |
@@ -211,6 +218,7 @@ Expected result:
 - `pvuFavLevelsDeferred=true`
 - `pvuPinnedTabsDeferred=true`
 - `pvuRecentAlbumsDeferred=true`
+- `pvuDisplayDetailsDeferred=true`
 - `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
@@ -222,6 +230,7 @@ Expected result:
 - `favLevelsMirrorStored=true`
 - `pinnedTabsMirrorStored=true`
 - `recentAlbumsMirrorStored=true`
+- `displayDetailsMirrorStored=true`
 - `perfMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
@@ -270,26 +279,28 @@ state.
 `markerMirrorStored=true`, `perfMirrorStored=true`,
 `scrollMemoryMirrorStored=true`, `favLevelsMirrorStored=true`,
 `pinnedTabsMirrorStored=true`, and `recentAlbumsMirrorStored=true` are the
-raw-mirror evidence. The final `browserStateKeys=10` count is measured after
-the malformed follow-up import,
+raw-mirror evidence. `displayDetailsMirrorStored=true` is the raw
+`browser_pvu_view` evidence for Row 18. The final `browserStateKeys=10`
+count is measured after the malformed follow-up import,
 where PR #141 keeps `pvu_perf_enabled` in the malformed recovery path while
 Row 14 keeps `pvu_scroll_memory`, Row 15 keeps `pvu_fav_levels`, and Row 16
-keeps `pvu_pinned_tabs`, and Row 17 keeps `pvu_recent_albums` as native
-settings raw mirrors only.
+keeps `pvu_pinned_tabs`, Row 17 keeps `pvu_recent_albums`, and Row 18 keeps
+display details as raw `browser_pvu_view` mirror fields only.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
 
-## Current Row 17 Recent-Albums Verification
+## Current Row 18 Display-Details Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row17-pvu-recent-albums` based on `origin/main`
-`4cd9f84fe11be576e905959069ca838db814a5da` after PR #146:
+`codex/h25-117-row18-pvu-display-details` based on `origin/main`
+`c81ecbacf7c5e742cef6a4ed7fce5580db1f8846` after PR #148:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
-  passed with `pvuRecentAlbumsDeferred=true`,
+  passed with `pvuDisplayDetailsDeferred=true`,
+  `displayDetailsMirrorStored=true`, `pvuRecentAlbumsDeferred=true`,
   `recentAlbumsMirrorStored=true`, `pvuPinnedTabsDeferred=true`,
   `pinnedTabsMirrorStored=true`, `pvuFavLevelsDeferred=true`,
   `favLevelsMirrorStored=true`, `pvuScrollMemoryDeferred=true`,
@@ -673,6 +684,7 @@ after PR #131:
   records explicit exports as raw mirrors only because album import exists but
   native has no accepted recent-album UI selection/restore contract yet.
 - `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
-  selection, enhancement settings, broader display details, and browser
-  localStorage favorites to their existing post-v1 issue rows.
+  selection, enhancement settings, remaining display/aspect behavior beyond
+  raw Row18 mirroring, and browser localStorage favorites to their existing
+  post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.

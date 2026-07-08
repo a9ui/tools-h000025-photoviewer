@@ -112,6 +112,9 @@ internal static class NativeHeadlessRunner
                 {
                     viewMode = "grid",
                     thumbSize = 220,
+                    aspectMode = "portrait",
+                    displayStyle = "poster",
+                    columns = 4,
                     sortBy = "created-newest",
                     rightPanelOpen = true,
                     rightPanelWidth = 360,
@@ -184,11 +187,17 @@ internal static class NativeHeadlessRunner
         var browserPvuViewMirror = store.GetSetting("browser_pvu_view", "");
         var browserMirrorStored = browserPvuViewMirror.Contains("viewMode", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("thumbSize", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("aspectMode", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("displayStyle", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("columns", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("sortBy", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("rightPanelOpen", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("rightPanelWidth", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("hiddenFolders", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("folderSortBy", StringComparison.OrdinalIgnoreCase);
+        var displayDetailsMirrorStored = browserPvuViewMirror.Contains("aspectMode", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("displayStyle", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("columns", StringComparison.OrdinalIgnoreCase);
         var enhancedMirrorStored = string.Equals(store.GetSetting("browser_pvu_enhanced_only", ""), "1", StringComparison.OrdinalIgnoreCase);
         var favoriteMirrorStored = string.Equals(store.GetSetting("browser_pvu_fav_only", ""), "1", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("browser_pvu_unfav_only", ""), "0", StringComparison.OrdinalIgnoreCase);
@@ -228,6 +237,17 @@ internal static class NativeHeadlessRunner
             string.IsNullOrWhiteSpace(store.GetSetting("recent_albums", "")) &&
             string.IsNullOrWhiteSpace(store.GetSetting("recent_album", "")) &&
             string.IsNullOrWhiteSpace(store.GetSetting("recent_album_ids", ""));
+        var pvuDisplayDetailsDeferred =
+            displayDetailsMirrorStored &&
+            !migrations.Contains("pvu_view.aspectMode", StringComparison.OrdinalIgnoreCase) &&
+            !migrations.Contains("pvu_view.displayStyle", StringComparison.OrdinalIgnoreCase) &&
+            !migrations.Contains("pvu_view.columns", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("aspect_mode", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("aspectMode", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("display_style", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("displayStyle", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("columns", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("display_columns", ""));
         var pvuLegacyMarkersRejected =
             markerMirrorStored &&
             !migrations.Contains("pvu_legacy_imported", StringComparison.OrdinalIgnoreCase) &&
@@ -357,6 +377,7 @@ internal static class NativeHeadlessRunner
             favLevelsMirrorStored &&
             pinnedTabsMirrorStored &&
             recentAlbumsMirrorStored &&
+            displayDetailsMirrorStored &&
             perfMirrorStored &&
             markerMirrorStored &&
             pvuFavLevelsDeferred &&
@@ -364,6 +385,7 @@ internal static class NativeHeadlessRunner
             pvuScrollMemoryDeferred &&
             pvuPinnedTabsDeferred &&
             pvuRecentAlbumsDeferred &&
+            pvuDisplayDetailsDeferred &&
             pvuLegacyMarkersRejected &&
             nativeViewModePreserved &&
             nativeEnhancedOnlyPreserved &&
@@ -401,7 +423,7 @@ internal static class NativeHeadlessRunner
             malformedImport.WarningCount == 10;
 
         Console.WriteLine(
-            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} pvuHiddenFoldersMigrated={BoolText(pvuHiddenFoldersMigrated)} pvuSeenImagesMigrated={BoolText(pvuSeenImagesMigrated)} pvuFolderSortModeMigrated={BoolText(pvuFolderSortModeMigrated)} pvuPerfFlagDeferred={BoolText(pvuPerfFlagDeferred)} pvuScrollMemoryDeferred={BoolText(pvuScrollMemoryDeferred)} pvuFavLevelsDeferred={BoolText(pvuFavLevelsDeferred)} pvuPinnedTabsDeferred={BoolText(pvuPinnedTabsDeferred)} pvuRecentAlbumsDeferred={BoolText(pvuRecentAlbumsDeferred)} pvuLegacyMarkersRejected={BoolText(pvuLegacyMarkersRejected)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} seenMirrorStored={BoolText(seenMirrorStored)} scrollMemoryMirrorStored={BoolText(scrollMemoryMirrorStored)} favLevelsMirrorStored={BoolText(favLevelsMirrorStored)} pinnedTabsMirrorStored={BoolText(pinnedTabsMirrorStored)} recentAlbumsMirrorStored={BoolText(recentAlbumsMirrorStored)} perfMirrorStored={BoolText(perfMirrorStored)} markerMirrorStored={BoolText(markerMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} nativeHiddenFoldersPreserved={BoolText(nativeHiddenFoldersPreserved)} nativeSeenImagesPreserved={BoolText(nativeSeenImagesPreserved)} nativeFolderSortModePreserved={BoolText(nativeFolderSortModePreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} malformedHiddenFoldersWarning={BoolText(malformedHiddenFoldersWarning)} malformedSeenImagesWarning={BoolText(malformedSeenImagesWarning)} unsupportedFolderSortWarning={BoolText(unsupportedFolderSortWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} nativeHiddenFoldersStillPreserved={BoolText(nativeHiddenFoldersStillPreserved)} nativeSeenImagesStillPreserved={BoolText(nativeSeenImagesStillPreserved)} nativeFolderSortModeStillPreserved={BoolText(nativeFolderSortModeStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} pvuHiddenFoldersMigrated={BoolText(pvuHiddenFoldersMigrated)} pvuSeenImagesMigrated={BoolText(pvuSeenImagesMigrated)} pvuFolderSortModeMigrated={BoolText(pvuFolderSortModeMigrated)} pvuPerfFlagDeferred={BoolText(pvuPerfFlagDeferred)} pvuScrollMemoryDeferred={BoolText(pvuScrollMemoryDeferred)} pvuFavLevelsDeferred={BoolText(pvuFavLevelsDeferred)} pvuPinnedTabsDeferred={BoolText(pvuPinnedTabsDeferred)} pvuRecentAlbumsDeferred={BoolText(pvuRecentAlbumsDeferred)} pvuDisplayDetailsDeferred={BoolText(pvuDisplayDetailsDeferred)} pvuLegacyMarkersRejected={BoolText(pvuLegacyMarkersRejected)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} seenMirrorStored={BoolText(seenMirrorStored)} scrollMemoryMirrorStored={BoolText(scrollMemoryMirrorStored)} favLevelsMirrorStored={BoolText(favLevelsMirrorStored)} pinnedTabsMirrorStored={BoolText(pinnedTabsMirrorStored)} recentAlbumsMirrorStored={BoolText(recentAlbumsMirrorStored)} displayDetailsMirrorStored={BoolText(displayDetailsMirrorStored)} perfMirrorStored={BoolText(perfMirrorStored)} markerMirrorStored={BoolText(markerMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} nativeHiddenFoldersPreserved={BoolText(nativeHiddenFoldersPreserved)} nativeSeenImagesPreserved={BoolText(nativeSeenImagesPreserved)} nativeFolderSortModePreserved={BoolText(nativeFolderSortModePreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} malformedHiddenFoldersWarning={BoolText(malformedHiddenFoldersWarning)} malformedSeenImagesWarning={BoolText(malformedSeenImagesWarning)} unsupportedFolderSortWarning={BoolText(unsupportedFolderSortWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} nativeHiddenFoldersStillPreserved={BoolText(nativeHiddenFoldersStillPreserved)} nativeSeenImagesStillPreserved={BoolText(nativeSeenImagesStillPreserved)} nativeFolderSortModeStillPreserved={BoolText(nativeFolderSortModeStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return passed ? 0 : 2;
     }
 

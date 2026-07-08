@@ -543,6 +543,14 @@ recent-album UI selection/restore contract yet. Explicit exports keep it only
 as a raw browser mirror as `browser_pvu_recent_albums`; native does not create
 `recent_albums`, `recent_album`, or `recent_album_ids` settings and
 `pvu_state_migration_count` stays at the Row 11 count of 11.
+The eighteenth #117 row formally defers browser
+`pvu_view.aspectMode` / `displayStyle` / `columns` as native migration
+targets. Native already imports the accepted scalar `thumbSize`, but
+compact/poster/aspect/column display behavior belongs to #111/#112 until the
+native UI has an accepted display/aspect contract. Explicit exports keep these
+fields only inside the raw `browser_pvu_view` mirror; native does not create
+`aspect_mode`, `display_style`, `columns`, or `display_columns` settings and
+`pvu_state_migration_count` stays at the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

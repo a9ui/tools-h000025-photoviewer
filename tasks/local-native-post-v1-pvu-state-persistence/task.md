@@ -73,6 +73,12 @@ is raw-mirrored for traceability if an explicit export contains it, but it is
 deferred as a native migration target because album import exists while native
 has no accepted recent-album UI selection/restore contract yet.
 
+This Row18 continuation formally records browser display details inside
+`pvu_view`: `aspectMode`, `displayStyle`, and `columns` are raw-mirrored for
+traceability in `browser_pvu_view`, but they are deferred as native migration
+targets because compact/poster/aspect/fixed-column display behavior belongs to
+#111/#112 until native has an accepted display/aspect persistence contract.
+
 ## Guardrails
 
 - No Linear.
@@ -263,6 +269,16 @@ Read in full before planning or editing:
     `recent_album_ids` settings;
   - it is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser display details in #117:
+  - `pvu_view.aspectMode`, `pvu_view.displayStyle`, and `pvu_view.columns`
+    are kept only inside the raw `browser_pvu_view` mirror when an explicit
+    export contains them;
+  - native does not create `aspect_mode`, `display_style`, `columns`, or
+    `display_columns` settings;
+  - they are not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count;
+  - #111 compact/poster display modes and #112 aspect controls remain
+    separate.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -295,6 +311,7 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
+`pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
@@ -305,12 +322,13 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row17-pvu-recent-albums` based on `origin/main`
-`4cd9f84fe11be576e905959069ca838db814a5da` after PR #146:
+`codex/h25-117-row18-pvu-display-details` based on `origin/main`
+`c81ecbacf7c5e742cef6a4ed7fce5580db1f8846` after PR #148:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
+  `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
   `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
   `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
   `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
