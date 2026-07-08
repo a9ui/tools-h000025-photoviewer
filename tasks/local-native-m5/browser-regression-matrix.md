@@ -559,9 +559,45 @@ M16 date-section smoke result additions:
 | Enhancement isolation | DEFERRED | M16 date-section smoke verifies passive date grouping did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
 | Native responsive/layout parity | DEFERRED | M16 adds a compact text header marker inside existing Created-sort list rows and does not change the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M17 Native Grid Date Section Header Slice
+
+M17 advances the M16 browser-mapped date section/header behavior into native
+grid view. It does not add manual date range fields, a browser helper, a
+webview, a local server, or a new grid layout concept.
+
+Browser evidence remains the same as M16:
+
+- `src/lib/dateSectionLayout.ts`: groups by local `createdAt` day and formats
+  section labels as month/day labels;
+- `src/components/ImageGrid.tsx`: enables date separators only for created
+  sort modes;
+- browser fallback list/grid separators mark the first item for each date when
+  full section layout is unavailable.
+
+M17 date-section smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateSectionSmoke
+```
+
+M17 date-section smoke result additions:
+
+- gridHeaderGroups: 4
+- gridFirstItemGrouped: true
+- gridTodaySingleGroup: true
+- enhancementStateUnchanged: true
+
+| Area | M17 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sorting and display | DEFERRED | Native Created-sort grid view now marks the first visible image for each local created date with the same browser-mapped date header label used by M16 list view. `-HeadlessDateSectionSmoke` verifies `gridHeaderGroups=4` and `gridFirstItemGrouped=true`. | Manual date ranges, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` / `codex_pm` | Native UI/headless smoke or product decision for any accepted manual range controls and remaining display variants. |
+| Virtual gallery | DEFERRED | Grid date headers are rebuilt from the filtered visible native list, so the Today date preset collapses to one grid header group in the smoke while preserving the existing virtual grid path. | Drag/open parity, placeholder behavior, native thumbnail warmup UI, and richer grid section visual polish remain pending. | `codex_pm` / `cursor_impl` | Add native UI/headless evidence for any adopted virtual-gallery row without using browser/runtime evidence as native acceptance. |
+| Sidebar quick search and filters | DEFERRED | Existing M15 date presets now have native grid header evidence after filtering. | Manual date range inputs, enhanced-only filter, and richer count labels beyond favorite/date state. | `cursor_impl` / `codex_pm` | Native UI/headless filter smoke for manual from/to date fields and enhanced/date buckets, or explicit product decision to keep manual ranges deferred. |
+| Enhancement isolation | DEFERRED | M17 date-section smoke verifies passive grid date grouping did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Native responsive/layout parity | DEFERRED | M17 keeps the marker inside the existing grid item text and does not change the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
 Rows not listed above keep their latest recorded status, owner, and evidence
 requirement.
-M16 does not reclassify folder range selection; it remains `DEFERRED` pending a
+M17 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
 ## Minimum M6 Verification

@@ -339,3 +339,25 @@ layout, manual date range inputs, folder range selection, drag/open parity,
 placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
 destructive actions, and explicit enhancement UI remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M17 Notes
+
+M17 first slice extends the M16 browser-mapped date header behavior to the
+native grid view without touching the browser app. It keeps the existing
+WinForms virtual `ListView` grid surface and uses the same filtered visible
+list, Created sort, local `CreatedAtUtc` day grouping, and first-item date
+header marker that M16 introduced for list view.
+
+The M17 date-section smoke verifies both list and grid date headers. It checks
+that grid headers are present after clearing the date filter and that the
+native grid still collapses to one date group after the Today preset filter:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateSectionSmoke
+```
+
+This remains a parity slice, not full native parity. Manual date range inputs,
+folder range selection, drag/open parity, placeholder behavior, native
+thumbnail warmup UI, preview tabs, bulk destructive actions, explicit
+enhancement UI, and screenshot polish remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.
