@@ -32,6 +32,8 @@ desktop executable:
 - `pvu_recent_dirs`
 - `pvu_last_dir_set`
 - `pvu_enhance_settings`
+- `pvu_favorites`
+- `pvu_favorites_backup`
 
 Native import uses an explicit export file such as
 `.cache/native/browser-localstorage-export.json`, or a path supplied to the
@@ -188,6 +190,14 @@ as a raw browser mirror under `native_settings.browser_pvu_enhance_settings`;
 native does not create `enhance_settings`, `enhancement_settings`, or
 `enhancement_queue_settings` settings and does not increase
 `pvu_state_migration_count`.
+The twentieth #117 row formally partial-adopts browser localStorage
+`pvu_favorites` and `pvu_favorites_backup`. Native keeps importing favorites
+from the canonical disk `.cache/favorites.json`; explicit browser exports keep
+the localStorage maps only as raw browser mirrors under
+`native_settings.browser_pvu_favorites` and
+`native_settings.browser_pvu_favorites_backup`. Native does not merge them into
+native favorites, does not create localStorage-favorites settings, and does not
+increase `pvu_state_migration_count` until a conflict policy is accepted.
 
 The dedicated smoke is:
 

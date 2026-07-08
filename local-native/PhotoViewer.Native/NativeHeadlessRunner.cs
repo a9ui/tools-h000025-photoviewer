@@ -87,10 +87,13 @@ internal static class NativeHeadlessRunner
         var browserRecentFallback = Path.Combine(smokeRoot, "browser-recent-fallback");
         var browserHiddenFolder = Path.Combine(browserRecentB, "hidden-nested");
         var browserSeenImage = Path.Combine(browserRecentA, "seen-browser.png");
+        var browserFavoriteImage = Path.Combine(browserRecentA, "browser-localstorage-favorite.png");
+        var browserBackupFavoriteImage = Path.Combine(browserRecentB, "browser-localstorage-backup-favorite.png");
         var nativeRecentA = Path.Combine(smokeRoot, "native-recent-a");
         var nativeRecentB = Path.Combine(smokeRoot, "native-recent-b");
         var nativeHiddenFolder = Path.Combine(nativeRecentA, "native-hidden");
         var nativeSeenImage = Path.Combine(nativeRecentA, "native-seen.png");
+        var nativeFavoriteImage = Path.Combine(nativeRecentA, "native-favorite.png");
         Directory.CreateDirectory(Path.Combine(smokeRoot, "src"));
         Directory.CreateDirectory(smokeNative);
         Directory.CreateDirectory(browserRecentA);
@@ -101,6 +104,15 @@ internal static class NativeHeadlessRunner
         Directory.CreateDirectory(nativeRecentB);
         Directory.CreateDirectory(nativeHiddenFolder);
         File.WriteAllText(Path.Combine(smokeRoot, "PROJECT.md"), "# Native pvu state smoke" + Environment.NewLine, Encoding.UTF8);
+        File.WriteAllText(
+            Path.Combine(smokeRoot, ".cache", "favorites.json"),
+            JsonSerializer.Serialize(
+                new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [nativeFavoriteImage] = 5,
+                },
+                new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
 
         var exportPath = Path.Combine(smokeNative, "browser-localstorage-export.json");
         var browserLastDirSet = NativeFolderSet.FormatForSetting(new[] { browserRecentA, browserRecentB });
@@ -131,6 +143,14 @@ internal static class NativeHeadlessRunner
                 ["pvu_seen_images"] = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
                 {
                     [browserSeenImage] = true,
+                },
+                ["pvu_favorites"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [browserFavoriteImage] = 4,
+                },
+                ["pvu_favorites_backup"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [browserBackupFavoriteImage] = 2,
                 },
                 ["pvu_scroll_memory"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
                 {
@@ -205,6 +225,8 @@ internal static class NativeHeadlessRunner
         var recentMirrorStored = store.GetSetting("browser_pvu_last_dir_set", "").Contains("browser-recent-a", StringComparison.OrdinalIgnoreCase) &&
             store.GetSetting("browser_pvu_recent_dirs", "").Contains("browser-recent-b", StringComparison.OrdinalIgnoreCase);
         var seenMirrorStored = store.GetSetting("browser_pvu_seen_images", "").Contains("seen-browser", StringComparison.OrdinalIgnoreCase);
+        var favoritesMapMirrorStored = store.GetSetting("browser_pvu_favorites", "").Contains("browser-localstorage-favorite", StringComparison.OrdinalIgnoreCase);
+        var favoritesBackupMirrorStored = store.GetSetting("browser_pvu_favorites_backup", "").Contains("browser-localstorage-backup-favorite", StringComparison.OrdinalIgnoreCase);
         var scrollMemoryMirrorStored = store.GetSetting("browser_pvu_scroll_memory", "").Contains("browser:created-newest:fixture", StringComparison.OrdinalIgnoreCase);
         var favLevelsMirrorStored = store.GetSetting("browser_pvu_fav_levels", "").Contains("3", StringComparison.OrdinalIgnoreCase);
         var pinnedTabsMirrorStored = store.GetSetting("browser_pvu_pinned_tabs", "").Contains("preview-tab-a", StringComparison.OrdinalIgnoreCase);
@@ -227,6 +249,22 @@ internal static class NativeHeadlessRunner
             scrollMemoryMirrorStored &&
             !migrations.Contains("pvu_scroll_memory", StringComparison.OrdinalIgnoreCase) &&
             string.IsNullOrWhiteSpace(store.GetSetting("scroll_memory", ""));
+        var nativeFavorites = store.LoadFavorites();
+        var nativeFavoritesPreserved =
+            nativeFavorites.Count == 1 &&
+            nativeFavorites.TryGetValue(Path.GetFullPath(nativeFavoriteImage), out var nativeFavoriteLevel) &&
+            nativeFavoriteLevel == 5 &&
+            !nativeFavorites.ContainsKey(Path.GetFullPath(browserFavoriteImage)) &&
+            !nativeFavorites.ContainsKey(Path.GetFullPath(browserBackupFavoriteImage));
+        var pvuFavoritesPartialAdopted =
+            favoritesMapMirrorStored &&
+            favoritesBackupMirrorStored &&
+            nativeFavoritesPreserved &&
+            !migrations.Contains("pvu_favorites", StringComparison.OrdinalIgnoreCase) &&
+            !migrations.Contains("pvu_favorites_backup", StringComparison.OrdinalIgnoreCase) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("favorites_from_localstorage", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("localstorage_favorites", "")) &&
+            string.IsNullOrWhiteSpace(store.GetSetting("browser_favorites_imported", ""));
         var pvuPinnedTabsDeferred =
             pinnedTabsMirrorStored &&
             !migrations.Contains("pvu_pinned_tabs", StringComparison.OrdinalIgnoreCase) &&
@@ -307,6 +345,14 @@ internal static class NativeHeadlessRunner
                 ["pvu_unfav_only"] = "0",
                 ["pvu_recent_dirs"] = new { invalid = true },
                 ["pvu_seen_images"] = "{ malformed",
+                ["pvu_favorites"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [browserFavoriteImage] = 4,
+                },
+                ["pvu_favorites_backup"] = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [browserBackupFavoriteImage] = 2,
+                },
                 ["pvu_fav_levels"] = new[] { 3, 5 },
                 ["pvu_pinned_tabs"] = new[] { "preview-tab-a", "preview-tab-b" },
                 ["pvu_recent_albums"] = new[] { "recent-album-a", "recent-album-b" },
@@ -365,6 +411,13 @@ internal static class NativeHeadlessRunner
         var nativeHiddenFoldersStillPreserved = string.Equals(store.GetSetting("hidden_folder_buckets", ""), nativeHiddenFolder, StringComparison.OrdinalIgnoreCase);
         var nativeSeenImagesStillPreserved = store.CountSeenImages() == 2;
         var nativeFolderSortModeStillPreserved = string.Equals(store.GetSetting("folder_sort_mode", ""), "NameDesc", StringComparison.OrdinalIgnoreCase);
+        var nativeFavoritesStill = store.LoadFavorites();
+        var nativeFavoritesStillPreserved =
+            nativeFavoritesStill.Count == 1 &&
+            nativeFavoritesStill.TryGetValue(Path.GetFullPath(nativeFavoriteImage), out var nativeFavoriteLevelStill) &&
+            nativeFavoriteLevelStill == 5 &&
+            !nativeFavoritesStill.ContainsKey(Path.GetFullPath(browserFavoriteImage)) &&
+            !nativeFavoritesStill.ContainsKey(Path.GetFullPath(browserBackupFavoriteImage));
         var passed = pvuViewModeMigrated &&
             pvuEnhancedOnlyMigrated &&
             pvuFavoriteFilterMigrated &&
@@ -383,6 +436,8 @@ internal static class NativeHeadlessRunner
             favoriteMirrorStored &&
             recentMirrorStored &&
             seenMirrorStored &&
+            favoritesMapMirrorStored &&
+            favoritesBackupMirrorStored &&
             scrollMemoryMirrorStored &&
             favLevelsMirrorStored &&
             pinnedTabsMirrorStored &&
@@ -394,6 +449,7 @@ internal static class NativeHeadlessRunner
             pvuFavLevelsDeferred &&
             pvuPerfFlagDeferred &&
             pvuScrollMemoryDeferred &&
+            pvuFavoritesPartialAdopted &&
             pvuPinnedTabsDeferred &&
             pvuRecentAlbumsDeferred &&
             pvuDisplayDetailsDeferred &&
@@ -410,6 +466,7 @@ internal static class NativeHeadlessRunner
             nativeHiddenFoldersPreserved &&
             nativeSeenImagesPreserved &&
             nativeFolderSortModePreserved &&
+            nativeFavoritesPreserved &&
             malformedEnhancedOnlyWarning &&
             malformedFavoriteFilterWarning &&
             malformedDateRangeWarning &&
@@ -430,13 +487,14 @@ internal static class NativeHeadlessRunner
             nativeHiddenFoldersStillPreserved &&
             nativeSeenImagesStillPreserved &&
             nativeFolderSortModeStillPreserved &&
-            browserStateKeyCount == 11 &&
+            nativeFavoritesStillPreserved &&
+            browserStateKeyCount == 13 &&
             firstImport.WarningCount == 0 &&
             secondImport.WarningCount == 0 &&
             malformedImport.WarningCount == 10;
 
         Console.WriteLine(
-            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} pvuHiddenFoldersMigrated={BoolText(pvuHiddenFoldersMigrated)} pvuSeenImagesMigrated={BoolText(pvuSeenImagesMigrated)} pvuFolderSortModeMigrated={BoolText(pvuFolderSortModeMigrated)} pvuPerfFlagDeferred={BoolText(pvuPerfFlagDeferred)} pvuScrollMemoryDeferred={BoolText(pvuScrollMemoryDeferred)} pvuFavLevelsDeferred={BoolText(pvuFavLevelsDeferred)} pvuPinnedTabsDeferred={BoolText(pvuPinnedTabsDeferred)} pvuRecentAlbumsDeferred={BoolText(pvuRecentAlbumsDeferred)} pvuDisplayDetailsDeferred={BoolText(pvuDisplayDetailsDeferred)} pvuEnhanceSettingsDeferred={BoolText(pvuEnhanceSettingsDeferred)} pvuLegacyMarkersRejected={BoolText(pvuLegacyMarkersRejected)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} seenMirrorStored={BoolText(seenMirrorStored)} scrollMemoryMirrorStored={BoolText(scrollMemoryMirrorStored)} favLevelsMirrorStored={BoolText(favLevelsMirrorStored)} pinnedTabsMirrorStored={BoolText(pinnedTabsMirrorStored)} recentAlbumsMirrorStored={BoolText(recentAlbumsMirrorStored)} displayDetailsMirrorStored={BoolText(displayDetailsMirrorStored)} enhanceSettingsMirrorStored={BoolText(enhanceSettingsMirrorStored)} perfMirrorStored={BoolText(perfMirrorStored)} markerMirrorStored={BoolText(markerMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} nativeHiddenFoldersPreserved={BoolText(nativeHiddenFoldersPreserved)} nativeSeenImagesPreserved={BoolText(nativeSeenImagesPreserved)} nativeFolderSortModePreserved={BoolText(nativeFolderSortModePreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} malformedHiddenFoldersWarning={BoolText(malformedHiddenFoldersWarning)} malformedSeenImagesWarning={BoolText(malformedSeenImagesWarning)} unsupportedFolderSortWarning={BoolText(unsupportedFolderSortWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} nativeHiddenFoldersStillPreserved={BoolText(nativeHiddenFoldersStillPreserved)} nativeSeenImagesStillPreserved={BoolText(nativeSeenImagesStillPreserved)} nativeFolderSortModeStillPreserved={BoolText(nativeFolderSortModeStillPreserved)} browserStateKeys={browserStateKeyCount} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} pvuHiddenFoldersMigrated={BoolText(pvuHiddenFoldersMigrated)} pvuSeenImagesMigrated={BoolText(pvuSeenImagesMigrated)} pvuFolderSortModeMigrated={BoolText(pvuFolderSortModeMigrated)} pvuPerfFlagDeferred={BoolText(pvuPerfFlagDeferred)} pvuScrollMemoryDeferred={BoolText(pvuScrollMemoryDeferred)} pvuFavoritesPartialAdopted={BoolText(pvuFavoritesPartialAdopted)} pvuFavLevelsDeferred={BoolText(pvuFavLevelsDeferred)} pvuPinnedTabsDeferred={BoolText(pvuPinnedTabsDeferred)} pvuRecentAlbumsDeferred={BoolText(pvuRecentAlbumsDeferred)} pvuDisplayDetailsDeferred={BoolText(pvuDisplayDetailsDeferred)} pvuEnhanceSettingsDeferred={BoolText(pvuEnhanceSettingsDeferred)} pvuLegacyMarkersRejected={BoolText(pvuLegacyMarkersRejected)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} seenMirrorStored={BoolText(seenMirrorStored)} favoritesMapMirrorStored={BoolText(favoritesMapMirrorStored)} favoritesBackupMirrorStored={BoolText(favoritesBackupMirrorStored)} scrollMemoryMirrorStored={BoolText(scrollMemoryMirrorStored)} favLevelsMirrorStored={BoolText(favLevelsMirrorStored)} pinnedTabsMirrorStored={BoolText(pinnedTabsMirrorStored)} recentAlbumsMirrorStored={BoolText(recentAlbumsMirrorStored)} displayDetailsMirrorStored={BoolText(displayDetailsMirrorStored)} enhanceSettingsMirrorStored={BoolText(enhanceSettingsMirrorStored)} perfMirrorStored={BoolText(perfMirrorStored)} markerMirrorStored={BoolText(markerMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} nativeHiddenFoldersPreserved={BoolText(nativeHiddenFoldersPreserved)} nativeSeenImagesPreserved={BoolText(nativeSeenImagesPreserved)} nativeFolderSortModePreserved={BoolText(nativeFolderSortModePreserved)} nativeFavoritesPreserved={BoolText(nativeFavoritesPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} malformedHiddenFoldersWarning={BoolText(malformedHiddenFoldersWarning)} malformedSeenImagesWarning={BoolText(malformedSeenImagesWarning)} unsupportedFolderSortWarning={BoolText(unsupportedFolderSortWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} nativeHiddenFoldersStillPreserved={BoolText(nativeHiddenFoldersStillPreserved)} nativeSeenImagesStillPreserved={BoolText(nativeSeenImagesStillPreserved)} nativeFolderSortModeStillPreserved={BoolText(nativeFolderSortModeStillPreserved)} nativeFavoritesStillPreserved={BoolText(nativeFavoritesStillPreserved)} browserStateKeys={browserStateKeyCount} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return passed ? 0 : 2;
     }
 

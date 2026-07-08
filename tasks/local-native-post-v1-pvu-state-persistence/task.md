@@ -85,6 +85,13 @@ deferred as a native migration target because explicit native enhancement
 queue/settings UI remains owned by #97/#98 and ordinary native browsing must
 not start enhancement workers.
 
+This Row20 continuation formally records browser localStorage
+`pvu_favorites` and `pvu_favorites_backup`: they are raw-mirrored for
+traceability if an explicit export contains them, but they are only
+`PARTIAL_ADOPT` as native migration targets because native already imports
+the canonical disk `.cache/favorites.json` and no browser-localStorage
+conflict policy has been accepted.
+
 ## Guardrails
 
 - No Linear.
@@ -294,6 +301,16 @@ Read in full before planning or editing:
     `pvu_state_migration_count` remains at the Row 11 count;
   - explicit native enhancement queue/settings UI remains in #97/#98 and this
     row must not start automatic workers.
+- Formally partial-adopt browser localStorage favorites in #117:
+  - `pvu_favorites` and `pvu_favorites_backup` are kept as raw browser mirrors
+    under `browser_pvu_favorites` and `browser_pvu_favorites_backup` when an
+    explicit export contains them;
+  - native continues to import favorites from `.cache/favorites.json`;
+  - browser localStorage favorite maps do not merge into native favorites and
+    do not create `favorites_from_localstorage`, `localstorage_favorites`, or
+    `browser_favorites_imported` settings;
+  - they are not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -323,6 +340,9 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `seenMirrorStored=true`, `markerMirrorStored=true`,
 `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+`pvuFavoritesPartialAdopted=true`, `favoritesMapMirrorStored=true`,
+`favoritesBackupMirrorStored=true`, `nativeFavoritesPreserved=true`,
+`nativeFavoritesStillPreserved=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
@@ -331,19 +351,22 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=11`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-09 in branch
-`codex/h25-117-row18-pvu-enhance-settings` rebased by merge onto
-`origin/main` after PR #149:
+`codex/h25-117-row20-pvu-favorites-7e2a` based on `origin/main`
+`5a25011f75061ea0160f4e2420b561dc5643559f` after PR #150:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
+  `pvuFavoritesPartialAdopted=true`,
+  `favoritesMapMirrorStored=true`, `favoritesBackupMirrorStored=true`,
+  `nativeFavoritesPreserved=true`, `nativeFavoritesStillPreserved=true`,
   `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
   `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
   `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
@@ -358,7 +381,7 @@ Recorded on 2026-07-09 in branch
   `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=11`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=13`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
@@ -390,7 +413,7 @@ Recorded on 2026-07-09 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #257 and create/update the next row if more #117 native
+2. Update SQLite job #260 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
