@@ -248,6 +248,7 @@ internal sealed class NativeImageStore
             }
 
             importedSeenCount = ImportBrowserSeenImages(connection, transaction, browserState, importedAt, warnings);
+            ApplyBrowserStateMigrations(connection, transaction, browserState, importedAt, warnings);
         }
 
         UpsertSetting(connection, transaction, "browser_settings_found", settingsFound ? "1" : "0", importedAt);
@@ -951,6 +952,126 @@ internal sealed class NativeImageStore
         }
 
         return imported.Count;
+    }
+
+    private static void ApplyBrowserStateMigrations(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyList<NativeBrowserStateRecord> browserState,
+        DateTime importedAt,
+        ICollection<NativeImportWarning> warnings)
+    {
+        var migrations = new List<string>();
+
+        if (TryGetBrowserStateValue(browserState, "pvu_view", out var pvuView))
+        {
+            if (TryReadBrowserViewMode(pvuView, out var viewMode, out var warningMessage))
+            {
+                if (GetSetting(connection, transaction, "view_mode") is null)
+                {
+                    UpsertSetting(connection, transaction, "view_mode", viewMode, importedAt);
+                    migrations.Add("pvu_view.viewMode->view_mode");
+                }
+            }
+            else if (!string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-json-value",
+                    warningMessage,
+                    "Browser view-mode state was skipped; rerun the browser export or remove the malformed pvu_view value, then run Import again."));
+            }
+        }
+
+        UpsertSetting(
+            connection,
+            transaction,
+            "pvu_state_migration_count",
+            migrations.Count.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            importedAt);
+        UpsertSetting(connection, transaction, "pvu_state_migrations", string.Join(",", migrations), importedAt);
+    }
+
+    private static bool TryGetBrowserStateValue(
+        IReadOnlyList<NativeBrowserStateRecord> browserState,
+        string key,
+        out string value)
+    {
+        var record = browserState.FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.Ordinal));
+        if (record is null)
+        {
+            value = "";
+            return false;
+        }
+
+        value = record.Value;
+        return true;
+    }
+
+    private static bool TryReadBrowserViewMode(string value, out string viewMode, out string? warningMessage)
+    {
+        if (TryNormalizeBrowserViewMode(value, out viewMode))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            warningMessage = null;
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind == JsonValueKind.String &&
+                TryNormalizeBrowserViewMode(document.RootElement.GetString(), out viewMode))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (document.RootElement.ValueKind == JsonValueKind.Object &&
+                document.RootElement.TryGetProperty("viewMode", out var viewModeElement) &&
+                viewModeElement.ValueKind == JsonValueKind.String &&
+                TryNormalizeBrowserViewMode(viewModeElement.GetString(), out viewMode))
+            {
+                warningMessage = null;
+                return true;
+            }
+        }
+        catch (JsonException ex)
+        {
+            viewMode = "";
+            warningMessage = ex.Message;
+            return false;
+        }
+
+        viewMode = "";
+        warningMessage = null;
+        return false;
+    }
+
+    private static bool TryNormalizeBrowserViewMode(string? value, out string viewMode)
+    {
+        if (string.Equals(value, "grid", StringComparison.OrdinalIgnoreCase))
+        {
+            viewMode = "grid";
+            return true;
+        }
+
+        if (string.Equals(value, "list", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(value, "details", StringComparison.OrdinalIgnoreCase))
+        {
+            viewMode = "details";
+            return true;
+        }
+
+        viewMode = "";
+        return false;
     }
 
     private static string BuildImportNote(

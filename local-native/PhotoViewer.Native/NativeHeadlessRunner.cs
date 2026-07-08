@@ -76,6 +76,56 @@ internal static class NativeHeadlessRunner
         return passed ? 0 : 2;
     }
 
+    public static int RunPvuStateMigrationSmoke()
+    {
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var runId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}";
+        var smokeRoot = Path.Combine(projectRoot, ".cache", "native-pvu-state-smoke", runId);
+        var smokeNative = Path.Combine(smokeRoot, ".cache", "native");
+        Directory.CreateDirectory(Path.Combine(smokeRoot, "src"));
+        Directory.CreateDirectory(smokeNative);
+        File.WriteAllText(Path.Combine(smokeRoot, "PROJECT.md"), "# Native pvu state smoke" + Environment.NewLine, Encoding.UTF8);
+
+        var exportPath = Path.Combine(smokeNative, "browser-localstorage-export.json");
+        var payload = new
+        {
+            localStorage = new Dictionary<string, object>
+            {
+                ["pvu_view"] = new
+                {
+                    viewMode = "grid",
+                    thumbSize = 220,
+                    rightPanelOpen = true,
+                },
+            },
+        };
+        File.WriteAllText(
+            exportPath,
+            JsonSerializer.Serialize(payload, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+
+        var store = new NativeImageStore(smokeRoot);
+        var firstImport = store.ImportProjectState(exportPath);
+        var pvuViewModeMigrated = string.Equals(store.GetSetting("view_mode", ""), "grid", StringComparison.OrdinalIgnoreCase);
+        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "1", StringComparison.OrdinalIgnoreCase) &&
+            store.GetSetting("pvu_state_migrations", "").Contains("pvu_view.viewMode", StringComparison.OrdinalIgnoreCase);
+        var browserMirrorStored = store.GetSetting("browser_pvu_view", "").Contains("viewMode", StringComparison.OrdinalIgnoreCase);
+
+        store.SaveSetting("view_mode", "details");
+        var secondImport = store.ImportProjectState(exportPath);
+        var nativeViewModePreserved = string.Equals(store.GetSetting("view_mode", ""), "details", StringComparison.OrdinalIgnoreCase);
+        var passed = pvuViewModeMigrated &&
+            migrationRecorded &&
+            browserMirrorStored &&
+            nativeViewModePreserved &&
+            firstImport.WarningCount == 0 &&
+            secondImport.WarningCount == 0;
+
+        Console.WriteLine(
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+        return passed ? 0 : 2;
+    }
+
     public static async Task<int> RunScanAsync(string folder, CancellationToken cancellationToken, bool incremental = false)
     {
         if (!Directory.Exists(folder))

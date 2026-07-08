@@ -30,6 +30,11 @@ internal static class Program
             return NativeHeadlessRunner.RunMalformedImportSmoke();
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-pvu-state-smoke")
+        {
+            return NativeHeadlessRunner.RunPvuStateMigrationSmoke();
+        }
+
         if (args.Length >= 2 && args[0] == "--headless-search")
         {
             var query = args.Length >= 3 ? args[2] : "";
