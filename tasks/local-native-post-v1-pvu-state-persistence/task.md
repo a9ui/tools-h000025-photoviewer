@@ -108,6 +108,12 @@ is raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred
 as a native migration target because the current native local surface has no
 accepted modal edge-zone persistence target.
 
+This Row24 continuation formally records browser `pvu_view.enhanceQueueOpen`:
+it is raw-mirrored for traceability inside `browser_pvu_view`, but it is
+deferred as a native migration target because queue panel visibility belongs
+with #97/#98 explicit enhancement queue/output UI. This row must not start
+workers or introduce broad enhancement settings.
+
 ## Guardrails
 
 - No Linear.
@@ -145,6 +151,9 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #157
+- GitHub PR #158
+- GitHub PR #155
 - GitHub PR #144
 - GitHub PR #142
 - GitHub PR #141
@@ -351,6 +360,16 @@ Read in full before planning or editing:
     `modal_click_edge_ratio` settings;
   - this field is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser enhancement queue-open state in #117:
+  - browser `pvu_view.enhanceQueueOpen` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `enhance_queue_open`, `enhanceQueueOpen`,
+    `enhancement_queue_open`, `enhancement_queue_visible`, or
+    `enhancement_queue_panel_open` settings;
+  - explicit native enhancement queue/settings behavior remains owned by
+    #97/#98 and must stay explicit-action-only;
+  - this field is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -390,12 +409,52 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuSortDirectionSeedDeferred=true`,
 `pvuSidebarOpenDeferred=true`,
 `pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
+`pvuEnhanceQueueOpenDeferred=true`, `enhanceQueueOpenMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 24 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row24-enhance-queue-open` based on the Row23 merge commit
+`c4af4cf59bcee9f4306e2f718c5eed68b7f8f5a3`:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuEnhanceQueueOpenDeferred=true`, `enhanceQueueOpenMirrorStored=true`,
+  `pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
+  `pvuSidebarOpenDeferred=true`, `pvuSortDirectionSeedDeferred=true`,
+  `browserMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `settingsImported=true`, `browserStateKeys=7`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g "!node_modules/**" -g "!.next/**" -g "!.cache/**"`
+  returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 23 Verification
 
@@ -620,8 +679,8 @@ Recorded on 2026-07-09 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #264 and create/update the next row if more #117 native
-   queue work remains.
+2. Update SQLite job #266 and create/update the next row if more #117 native
+   pvu-state work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.

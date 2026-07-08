@@ -98,6 +98,7 @@ internal static class NativeFixtureBuilder
                         folderSortBy = "name-asc",
                         sidebarOpen = true,
                         modalEdgeRatio = 0.28,
+                        enhanceQueueOpen = true,
                         rightPanelOpen = true,
                         rightPanelWidth = 320,
                         dateFrom = "",

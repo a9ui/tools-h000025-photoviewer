@@ -586,6 +586,14 @@ a native migration target. Browser modal edge-click ratio stays inside the raw
 `modalEdgeRatio`, `detail_modal_edge_ratio`, `modal_edge_zone_ratio`, or
 `modal_click_edge_ratio` settings, and `pvu_state_migration_count` stays at the
 Row 11 count of 11.
+The twenty-fourth #117 row formally defers browser
+`pvu_view.enhanceQueueOpen` as a native migration target. Browser enhancement
+queue panel visibility stays inside the raw `browser_pvu_view` mirror; native
+does not create `enhance_queue_open`, `enhanceQueueOpen`,
+`enhancement_queue_open`, `enhancement_queue_visible`, or
+`enhancement_queue_panel_open` settings, and `pvu_state_migration_count` stays
+at the Row 11 count of 11. Native explicit enhancement queue/settings work
+remains owned by #97/#98 and must stay explicit-action-only.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
