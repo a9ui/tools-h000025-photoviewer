@@ -490,7 +490,10 @@ explicit browser `pvu_last_dir_set` / `pvu_recent_dirs` into native
 folder state after scan or user changes. The sixth accepted row imports explicit
 browser `pvu_view.rightPanelOpen` / `rightPanelWidth` into native
 `preview_visible` and `preview_splitter_distance`, preserving later native
-right-preview choices under the same first-import-only rule.
+right-preview choices under the same first-import-only rule. The seventh
+accepted row imports explicit browser `pvu_view.thumbSize` into native
+`thumbnail_size`, clamped to the native Thumb control range, while preserving
+later native thumbnail-size choices under the same first-import-only rule.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

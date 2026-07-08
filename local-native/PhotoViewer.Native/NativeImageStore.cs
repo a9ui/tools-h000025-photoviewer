@@ -9,6 +9,8 @@ internal sealed class NativeImageStore
     private const int MinimumPreviewSplitterDistance = 120;
     private const int MinimumBrowserRightPanelWidth = 240;
     private const int MaximumBrowserRightPanelWidth = 900;
+    private const int MinimumNativeThumbnailSize = 64;
+    private const int MaximumNativeThumbnailSize = 192;
 
     private readonly string _projectRoot;
     private readonly string _databasePath;
@@ -1051,6 +1053,31 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser right-preview state was skipped; rerun the browser export or remove malformed pvu_view rightPanelOpen/rightPanelWidth values, then run Import again."));
             }
+
+            if (!pvuViewMalformed && TryReadBrowserThumbnailSize(pvuView, out var thumbnailSize, out var hasThumbnailSize, out warningMessage))
+            {
+                if (hasThumbnailSize &&
+                    thumbnailSize.HasValue &&
+                    GetSetting(connection, transaction, "thumbnail_size") is null)
+                {
+                    UpsertSetting(
+                        connection,
+                        transaction,
+                        "thumbnail_size",
+                        thumbnailSize.Value.ToString(System.Globalization.CultureInfo.InvariantCulture),
+                        importedAt);
+                    migrations.Add("pvu_view.thumbSize->thumbnail_size");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-thumbnail-size-value",
+                    warningMessage,
+                    "Browser thumbnail-size state was skipped; rerun the browser export or remove malformed pvu_view thumbSize values, then run Import again."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1578,6 +1605,56 @@ internal sealed class NativeImageStore
         return Math.Max(MinimumPreviewSplitterDistance, DefaultNativeWindowWidth - clampedRightPanelWidth);
     }
 
+    private static bool TryReadBrowserThumbnailSize(
+        string value,
+        out int? thumbnailSize,
+        out bool hasThumbnailSize,
+        out string? warningMessage)
+    {
+        thumbnailSize = null;
+        hasThumbnailSize = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("thumbSize", out var thumbSize))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            hasThumbnailSize = true;
+            if (thumbSize.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (!TryReadJsonInt(thumbSize, out var size) || size <= 0)
+            {
+                warningMessage = "pvu_view.thumbSize must be a positive pixel size.";
+                return false;
+            }
+
+            thumbnailSize = Math.Clamp(size, MinimumNativeThumbnailSize, MaximumNativeThumbnailSize);
+            warningMessage = null;
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
     private static bool TryReadBrowserBoolean(string value, out bool result, out string? warningMessage)
     {
         if (TryNormalizeBrowserBoolean(value, out result))
@@ -1674,6 +1751,23 @@ internal sealed class NativeImageStore
         }
 
         result = false;
+        return false;
+    }
+
+    private static bool TryReadJsonInt(JsonElement element, out int value)
+    {
+        if (element.ValueKind == JsonValueKind.Number && element.TryGetInt32(out value))
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String &&
+            int.TryParse(element.GetString(), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out value))
+        {
+            return true;
+        }
+
+        value = 0;
         return false;
     }
 

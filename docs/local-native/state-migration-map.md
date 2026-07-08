@@ -104,7 +104,10 @@ The sixth accepted row maps explicit browser `pvu_view.rightPanelOpen` /
 `rightPanelWidth` into native
 `native_settings.preview_visible` and
 `native_settings.preview_splitter_distance`. These migrations write only when
-the target native state does not exist yet. This gives first-import continuity
+the target native state does not exist yet. The seventh accepted row maps
+explicit browser `pvu_view.thumbSize` into
+`native_settings.thumbnail_size`, clamped to the native Thumb control range,
+under the same first-import-only rule. This gives first-import continuity
 without clobbering later native user choices on every startup or Import action.
 
 The dedicated smoke is:
