@@ -122,9 +122,9 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_last_dir_set` /
 `native_settings.browser_pvu_recent_dirs` /
 `native_settings.browser_pvu_seen_images` /
+`native_settings.browser_pvu_perf_enabled` /
 `native_settings.browser_pvu_legacy_imported` /
-`native_settings.browser_pvu_server_legacy_imported` /
-`native_settings.browser_pvu_perf_enabled` for traceability.
+`native_settings.browser_pvu_server_legacy_imported` for traceability.
 
 ## Split Plan For Remaining pvu Keys
 
@@ -215,7 +215,7 @@ Expected result:
 - `nativeHiddenFoldersStillPreserved=true`
 - `nativeSeenImagesStillPreserved=true`
 - `nativeFolderSortModeStillPreserved=true`
-- `browserStateKeys=6`
+- `browserStateKeys=7`
 - `firstWarnings=0`
 - `secondWarnings=0`
 - `malformedWarnings=10`
@@ -223,48 +223,46 @@ Expected result:
 
 `migrationRecorded=true` keeps `pvu_state_migration_count=11`; Row 12 does
 not add marker-only keys to `pvu_state_migrations`, and Row 13 does not add
-the browser performance flag to `pvu_state_migrations`.
-`markerMirrorStored=true` and `perfMirrorStored=true` are the raw-mirror
-evidence; the final `browserStateKeys=6` count is measured after the malformed
-follow-up import, matching the existing smoke shape.
+the browser perf flag to `pvu_state_migrations`. `markerMirrorStored=true`
+is the marker evidence, `perfMirrorStored=true` is the perf-flag raw mirror
+evidence, and the final `browserStateKeys=7` count is measured after the
+malformed follow-up import, matching the existing smoke shape.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
 
-## Current Row 13 Performance-Flag Verification
+## Current Row 13 Perf-Flag Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row13-pvu-perf-flag` based on `origin/main`
-`01ac9dc612789ba8ec444e959f4af66bb8714aa3` after PR #139:
+`codex/h25-117-row13-pvu-perf-flag-50c1` based on `origin/main`
+`8522939ec8d3da673e3e51d066c73eed956e378f` after PR #140:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
   passed with `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
-  `pvuLegacyMarkersRejected=true`, `migrationRecorded=true`,
-  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
-  `markerMirrorStored=true`, `seenMirrorStored=true`,
-  `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
-  `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=6`,
-  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
+  `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
+  `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
+  contract, `browserStateKeys=7`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
-  passed using ignored fixture/cache state while preserving existing cache/state
-  assets.
+  passed using ignored fixture/cache state while preserving existing
+  cache/state assets.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=0`, `settings=29`, `images=0`, and
-  `warnings=0`.
+  `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
+  `seenImages` / `settings` / `images` counts reflect existing ignored cache
+  state and may increase across repeated smoke runs.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
   passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
   `nativeSeenPersisted=true`, `importedStillSeen=true`,
-  `totalSeenImages=2`, `enhancementStateUnchanged=true`, and
+  `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
-  passed with `folderSortMode=true`, `sortName=true`,
-  `randomReshuffle=true`, `thumbnailSize=true`, `settingsImported=true`,
-  `browserStateKeys=6`, `enhancementStateUnchanged=true`, and
+  passed with `folderSortMode=true`, `enhancedOnlyFilter=true`,
+  `settingsImported=true`, `browserStateKeys=6`,
+  `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `corepack pnpm typecheck` passed.
 - `git diff --name-only -- src` returned no files.
@@ -421,6 +419,7 @@ after PR #131:
   migration count unchanged.
 - `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
   selection, `pvu_fav_levels`, pinned tabs, enhancement settings, broader
-  display details, `pvu_recent_albums`, scroll memory, and browser
+  display details, `pvu_recent_albums`, scroll memory, `pvu_perf_enabled`,
+  and browser
   localStorage favorites to their existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.

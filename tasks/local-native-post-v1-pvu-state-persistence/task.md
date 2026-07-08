@@ -42,11 +42,14 @@ native `folder_sort_mode` on first import for matching folder-bucket sort
 semantics, while preserving later native folder-sort choices. #102 folder
 range-selection behavior stays separate.
 
-This continuation formally records Row 12 for browser marker-only keys:
+The twelfth slice formally recorded browser marker-only keys:
 `pvu_legacy_imported` and `pvu_server_legacy_imported` are raw-mirrored for
 traceability but rejected as native migration targets.
-This continuation formally records Row 13 for browser `pvu_perf_enabled`:
-it is raw-mirrored for traceability but deferred as a native migration target.
+
+This continuation formally records Row 13 for the browser-only performance
+overlay flag: `pvu_perf_enabled` is raw-mirrored for traceability, but it is
+deferred as a native migration target because the native app has no accepted
+user-facing performance-overlay setting yet.
 
 ## Guardrails
 
@@ -238,38 +241,40 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=6`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=7`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row13-pvu-perf-flag` based on `origin/main`
-`01ac9dc612789ba8ec444e959f4af66bb8714aa3` after PR #139:
+`codex/h25-117-row13-pvu-perf-flag-50c1` based on `origin/main`
+`8522939ec8d3da673e3e51d066c73eed956e378f` after PR #140:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
-  `pvuLegacyMarkersRejected=true`, `migrationRecorded=true`,
+  `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
+  `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
+  contract,
   `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
-  `markerMirrorStored=true`, `seenMirrorStored=true`,
+  `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=6`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=7`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
   existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=0`, `settings=29`, `images=0`, and
-  `warnings=0`.
+  `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
+  `seenImages` / `settings` / `images` counts reflect existing ignored cache
+  state and may increase across repeated smoke runs.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
-  `importedStillSeen=true`, `totalSeenImages=2`,
-  `enhancementStateUnchanged=true`, and
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
