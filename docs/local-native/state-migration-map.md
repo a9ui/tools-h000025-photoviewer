@@ -114,10 +114,11 @@ choices on every startup or Import action.
 The eighth accepted row maps explicit browser `pvu_view.sortBy` into
 `native_settings.sort_mode` only for browser values with matching native sort
 semantics: `newest` to `Modified`, `created-newest` to `Created`, `name` to
-`Name`, and `random` to `Random`. Browser ascending directions
-`oldest` / `created-oldest` and browser `randomSeed` remain deferred because
-the current native sort surface does not persist equivalent direction or seed
-state.
+`Name`, and `random` to `Random`. The twenty-first #117 row formally defers
+browser ascending directions `oldest` / `created-oldest` and browser
+`randomSeed`: ascending directions remain warning-only, `randomSeed` remains
+inside the raw `native_settings.browser_pvu_view` mirror, and native does not
+create direction or random-seed settings until a sort-surface contract exists.
 The ninth accepted row maps explicit browser `pvu_view.hiddenFolders` into
 `native_settings.hidden_folder_buckets` by converting browser folder keys
 through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots. It writes

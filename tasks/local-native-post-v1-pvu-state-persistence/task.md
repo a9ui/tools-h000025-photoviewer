@@ -1,6 +1,6 @@
 # Local Native Post-v1 #117 - Bounded pvu State Persistence Migration
 
-Date: 2026-07-08
+Date: 2026-07-09
 
 Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 
@@ -91,6 +91,13 @@ explicit export contains them, but they are deferred as native migration
 targets because native already imports disk `.cache/favorites.json` and
 localStorage favorites need an accepted conflict policy before import.
 
+This Row21 continuation formally records browser ascending sort directions and
+browser random seed state inside `pvu_view`: `sortBy=oldest` /
+`created-oldest` remains warning-only because native has no accepted persisted
+sort direction state, and `randomSeed` is raw-mirrored inside
+`browser_pvu_view` only because native has no accepted browser-seed parity
+setting.
+
 ## Guardrails
 
 - No Linear.
@@ -128,6 +135,11 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #151
+- GitHub PR #150
+- GitHub PR #149
+- GitHub PR #148
+- GitHub PR #146
 - GitHub PR #144
 - GitHub PR #142
 - GitHub PR #141
@@ -216,6 +228,17 @@ Read in full before planning or editing:
   - malformed or unsupported sort values are recoverable warnings;
   - browser `oldest`, `created-oldest`, and `randomSeed` remain deferred
     until native has an accepted persisted direction/seed design.
+- Formally defer browser ascending sort directions and random seed state in
+  #117:
+  - browser `pvu_view.sortBy=oldest` / `created-oldest` remains warning-only
+    and does not create native `sort_direction`, `sort_ascending`, or
+    `sort_order` settings;
+  - browser `pvu_view.randomSeed` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `random_seed`, `sort_random_seed`, or `randomSeed`
+    settings;
+  - neither field is recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Keep the existing bounded migration for `pvu_view.hiddenFolders`:
   - browser folder keys -> native `hidden_folder_buckets` absolute folder
     paths;
@@ -345,6 +368,8 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+`pvuSortDirectionDeferred=true`, `pvuRandomSeedDeferred=true`,
+`randomSeedMirrorStored=true`,
 `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
@@ -352,6 +377,52 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 21 Sort-Direction / Random-Seed Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row21-pvu-sort-seed` based on `origin/main`
+`182269cc70644abe962fac14a3637afb99c36c58` after PR #151:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuSortDirectionDeferred=true`,
+  `pvuRandomSeedDeferred=true`, `randomSeedMirrorStored=true`,
+  `pvuLocalStorageFavoritesDeferred=true`,
+  `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
+  `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
+  `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+  `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
+  contract, `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed using ignored fixture/cache state while preserving existing
+  cache/state assets.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `gridToggle=true`, `folderSortMode=true`,
+  `thumbnailSize=true`, `enhancedOnlyFilter=true`,
+  `favoriteLevelFilter=true`, `sortName=true`, `randomReshuffle=true`,
+  `browserStateKeys=7`, `settingsImported=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g '!node_modules/**' -g '!.next/**' -g '!.cache/**'`
+  returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 20 Verification
 
@@ -453,7 +524,7 @@ Recorded on 2026-07-09 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #257 and create/update the next row if more #117 native
+2. Update SQLite job #261 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or

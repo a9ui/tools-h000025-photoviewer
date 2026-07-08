@@ -498,7 +498,11 @@ thumbnail-size choice. The eighth accepted row imports explicit browser
 `pvu_view.sortBy` values that have matching native sort modes into
 `sort_mode`, preserving an existing native sort choice. Browser ascending
 sort directions and `randomSeed` remain deferred because the current native
-sort surface does not persist equivalent direction or seed state. The ninth
+sort surface does not persist equivalent direction or seed state. The
+twenty-first #117 row formally records that decision: `oldest` /
+`created-oldest` remain warning-only, `randomSeed` remains inside the raw
+`browser_pvu_view` mirror, and native does not create direction or random-seed
+settings until a sort-surface contract exists. The ninth
 accepted row imports explicit browser
 `pvu_view.hiddenFolders` into native `hidden_folder_buckets`, mapping browser
 folder keys through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots
