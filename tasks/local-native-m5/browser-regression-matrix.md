@@ -474,6 +474,52 @@ M14 seen smoke result additions:
 | Persistence keys | DEFERRED | M14 imports `pvu_seen_images` into native SQLite `seen_images` and persists native selected-preview seen state. | Full parity for pinned previews, filters beyond favorite/gallery state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
 | Native responsive/layout parity | DEFERRED | M14 does not change layout; unseen state is shown through existing list/grid item text. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
+## M15 Native Date Filter Preset Slice
+
+M15 advances one browser-mapped date filter row. It does not add native date
+section headers, manual date range fields, a new gallery design, a browser
+helper, a webview, or a local server.
+
+Browser evidence maps from:
+
+- `src/components/Sidebar.tsx`: `Today`, `7d`, `30d`, `This year`, and `Clear`
+  update `dateFrom` / `dateTo`;
+- `src/store/ImageContext.tsx`: search requests include `dateFrom` / `dateTo`;
+- `src/lib/indexer.ts`: date filtering uses image `createdAt`.
+
+M15 date-filter smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke
+```
+
+M15 date-filter smoke result additions:
+
+- totalImages: 4
+- todayMatches: 1
+- last7Matches: 2
+- last30Matches: 3
+- thisYearMatches: 3
+- clearMatches: 4
+- todayFilter / last7Filter / last30Filter / thisYearFilter / clearFilter:
+  true
+- dateFilterPersisted: true
+- enhancementStateUnchanged: true
+
+| Area | M15 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sidebar quick search and filters | DEFERRED | Native `Date` preset selector now maps browser `Today`, `7d`, `30d`, `This year`, and `Clear` behavior onto local `CreatedAtUtc` date filtering. `-HeadlessDateFilterSmoke` verifies all presets and `date_filter` persistence. | Manual date range inputs, enhanced-only filter, and richer count labels beyond favorite/date state. | `cursor_impl` / `codex_pm` | Native UI/headless filter smoke for manual from/to date fields and enhanced/date buckets, or explicit product decision to keep manual ranges deferred. |
+| Sorting and display | DEFERRED | Date presets compose with existing native sort modes; the smoke runs after selecting Created sort. | Date section header layout/grouping in native list/grid, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` | Native UI/headless smoke covering browser-mapped date section headers without inventing a new native visual concept. |
+| Virtual gallery | DEFERRED | Date filtering now reduces the native visible image set while preserving the existing WinForms virtual list path. | Date section headers, drag/open parity, placeholder behavior, and native thumbnail warmup UI. | `codex_pm` / `cursor_impl` | Add native date-section grouping evidence or keep it explicitly deferred with browser behavior mapping and UI smoke requirements. |
+| Persistence keys | DEFERRED | Native SQLite now persists `date_filter`; date smoke verifies persistence. | Full parity for pinned previews, filters beyond favorite/gallery/date preset state, server legacy marker, and enhancement settings. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Enhancement isolation | DEFERRED | M15 date-filter smoke verifies passive date filtering did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M15; the date preset is native UI/filter state only. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors and malformed date input handling. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Native responsive/layout parity | DEFERRED | M15 adds one compact native `Date` selector to the existing display controls row. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
+Rows not listed above keep their M14 status, owner, and evidence requirement.
+M15 does not reclassify folder range selection; it remains `DEFERRED` pending a
+replacement/custom folder bucket control and browser-mapped UI semantics.
+
 ## Minimum M6 Verification
 
 M6 must run and record:

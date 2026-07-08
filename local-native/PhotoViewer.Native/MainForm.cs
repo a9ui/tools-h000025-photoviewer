@@ -16,6 +16,7 @@ internal sealed class MainForm : Form
     private readonly Button _clearSearchButton = new();
     private readonly CheckBox _favoritesOnly = new();
     private readonly ComboBox _favoriteFilter = new();
+    private readonly ComboBox _dateFilter = new();
     private readonly ComboBox _viewMode = new();
     private readonly ComboBox _sortMode = new();
     private readonly Button _reshuffleButton = new();
@@ -66,6 +67,7 @@ internal sealed class MainForm : Form
     private bool _updatingFavoriteControl;
     private bool _updatingFolderBuckets;
     private bool _updatingFavoriteFilter;
+    private bool _updatingDateFilter;
     private bool _updatingThumbnailSize;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
@@ -98,6 +100,7 @@ internal sealed class MainForm : Form
         _searchText.Text = _store.GetSetting("search_text", "");
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
         RefreshFavoriteFilterOptions(_store.GetSetting("favorite_filter", "all"));
+        RefreshDateFilterOptions(_store.GetSetting("date_filter", "all"));
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
@@ -228,6 +231,49 @@ internal sealed class MainForm : Form
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"native-large-scroll-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
+    public static Task<int> RunDateFilterSmokeAsync(string? folder)
+    {
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var resolvedFolder = string.IsNullOrWhiteSpace(folder)
+            ? PrepareDateFilterSmokeFolder(projectRoot)
+            : Path.GetFullPath(folder);
+        if (!Directory.Exists(resolvedFolder))
+        {
+            Console.Error.WriteLine($"native-date-filter-smoke error=folder-not-found folder=\"{Quote(resolvedFolder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunDateFilterSmokeScenarioAsync(resolvedFolder);
+                Console.WriteLine(FormatDateFilterSmokeReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-date-filter-smoke error={Quote(ex.Message)}");
                 exitCode = 2;
             }
             finally
@@ -488,6 +534,27 @@ internal sealed class MainForm : Form
         _reshuffleButton.Width = 82;
         _reshuffleButton.Click += (_, _) => ReshuffleSort();
 
+        var dateLabel = new Label
+        {
+            Text = "Date",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 6, 0, 0),
+        };
+
+        _dateFilter.DropDownStyle = ComboBoxStyle.DropDownList;
+        _dateFilter.Width = 112;
+        _dateFilter.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingDateFilter)
+            {
+                return;
+            }
+
+            ApplyFilter();
+            SaveViewState();
+        };
+
         var thumbLabel = new Label
         {
             Text = "Thumb",
@@ -532,6 +599,8 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(sortLabel);
         displayControls.Controls.Add(_sortMode);
         displayControls.Controls.Add(_reshuffleButton);
+        displayControls.Controls.Add(dateLabel);
+        displayControls.Controls.Add(_dateFilter);
         displayControls.Controls.Add(thumbLabel);
         displayControls.Controls.Add(_thumbnailSize);
         displayControls.Controls.Add(_previewVisible);
@@ -1025,6 +1094,79 @@ internal sealed class MainForm : Form
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
+    private async Task<NativeDateFilterSmokeReport> RunDateFilterSmokeScenarioAsync(string folder)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+        var today = DateTime.Today;
+
+        _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
+        SelectDateFilter("all");
+        ApplySortMode("Created");
+
+        await ScanCurrentFolderAsync(forceFullRefresh: true);
+        Require(_allImages.Count >= 4, "date filter smoke needs at least four fixture images");
+        var totalImages = _allImages.Count;
+        var initialVisible = _visibleImages.Count;
+
+        SelectDateFilter("today");
+        ApplyFilter();
+        var todayMatches = _visibleImages.Count;
+        var todayFilter = todayMatches == 1 && _visibleImages.All(image => IsImageWithinDateFilter(image, "today", today));
+        Require(todayFilter, "today date filter failed");
+        var dateFilterPersisted = string.Equals(_store.GetSetting("date_filter", ""), "today", StringComparison.OrdinalIgnoreCase);
+        Require(dateFilterPersisted, "date filter setting did not persist");
+
+        SelectDateFilter("7d");
+        ApplyFilter();
+        var last7Matches = _visibleImages.Count;
+        var last7Filter = last7Matches == 2 && _visibleImages.All(image => IsImageWithinDateFilter(image, "7d", today));
+        Require(last7Filter, "7d date filter failed");
+
+        SelectDateFilter("30d");
+        ApplyFilter();
+        var last30Matches = _visibleImages.Count;
+        var last30Filter = last30Matches == 3 && _visibleImages.All(image => IsImageWithinDateFilter(image, "30d", today));
+        Require(last30Filter, "30d date filter failed");
+
+        SelectDateFilter("year");
+        ApplyFilter();
+        var thisYearMatches = _visibleImages.Count;
+        var thisYearFilter = thisYearMatches > 0 &&
+            _visibleImages.All(image => IsImageWithinDateFilter(image, "year", today)) &&
+            _visibleImages.All(image => !image.Filename.Contains("last-year", StringComparison.OrdinalIgnoreCase));
+        Require(thisYearFilter, "this-year date filter failed");
+
+        SelectDateFilter("all");
+        ApplyFilter();
+        var clearMatches = _visibleImages.Count;
+        var clearFilter = clearMatches == totalImages;
+        Require(clearFilter, "clear date filter failed");
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during date filter smoke");
+
+        return new NativeDateFilterSmokeReport(
+            Folder: folder,
+            TotalImages: totalImages,
+            InitialVisible: initialVisible,
+            TodayMatches: todayMatches,
+            Last7Matches: last7Matches,
+            Last30Matches: last30Matches,
+            ThisYearMatches: thisYearMatches,
+            ClearMatches: clearMatches,
+            TodayFilter: todayFilter,
+            Last7Filter: last7Filter,
+            Last30Filter: last30Filter,
+            ThisYearFilter: thisYearFilter,
+            ClearFilter: clearFilter,
+            DateFilterPersisted: dateFilterPersisted,
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+    }
+
     private async Task<NativeFolderSetSmokeReport> RunFolderSetSmokeScenarioAsync(IReadOnlyList<string> roots, string searchQuery)
     {
         var beforeEnhancementState = EnhancementStateFingerprint();
@@ -1387,11 +1529,11 @@ internal sealed class MainForm : Form
         var query = _searchText.Text.Trim();
         if (_currentRoots.Count > 0 && _currentRoots.All(Directory.Exists) && _allImages.Count > 0)
         {
-            _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
+            _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyDateFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
                 _currentRoots,
                 query,
                 ShouldPrefilterFavoritesForIndexedSearch(),
-                limit: 100_000)))).ToList();
+                limit: 100_000))))).ToList();
             _list.VirtualListSize = _visibleImages.Count;
             _list.Invalidate();
             RestoreGalleryStateSelection(preferredSelectionPath);
@@ -1402,6 +1544,7 @@ internal sealed class MainForm : Form
 
         IEnumerable<NativeImageRecord> source = _allImages;
         source = ApplyFavoriteFilter(source);
+        source = ApplyDateFilter(source);
 
         if (query.Length > 0)
         {
@@ -1441,6 +1584,89 @@ internal sealed class MainForm : Form
         return int.TryParse(key, out var level) && level is >= 1 and <= 5
             ? images.Where(item => item.FavoriteLevel == level)
             : images;
+    }
+
+    private IEnumerable<NativeImageRecord> ApplyDateFilter(IEnumerable<NativeImageRecord> images)
+    {
+        var key = CurrentDateFilterKey();
+        if (string.Equals(key, "all", StringComparison.OrdinalIgnoreCase))
+        {
+            return images;
+        }
+
+        var today = DateTime.Today;
+        return images.Where(image => IsImageWithinDateFilter(image, key, today));
+    }
+
+    private static bool IsImageWithinDateFilter(NativeImageRecord image, string key, DateTime today)
+    {
+        var imageDate = image.CreatedAtUtc.ToLocalTime().Date;
+        if (string.Equals(key, "today", StringComparison.OrdinalIgnoreCase))
+        {
+            return imageDate == today;
+        }
+
+        if (string.Equals(key, "7d", StringComparison.OrdinalIgnoreCase))
+        {
+            return imageDate >= today.AddDays(-6) && imageDate <= today;
+        }
+
+        if (string.Equals(key, "30d", StringComparison.OrdinalIgnoreCase))
+        {
+            return imageDate >= today.AddDays(-29) && imageDate <= today;
+        }
+
+        if (string.Equals(key, "year", StringComparison.OrdinalIgnoreCase))
+        {
+            return imageDate >= new DateTime(today.Year, 1, 1) && imageDate <= today;
+        }
+
+        return true;
+    }
+
+    private string CurrentDateFilterKey()
+    {
+        return _dateFilter.SelectedItem is DateFilterOption option ? option.Key : "all";
+    }
+
+    private void SelectDateFilter(string key)
+    {
+        var match = _dateFilter.Items
+            .Cast<DateFilterOption>()
+            .FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (match is not null)
+        {
+            _dateFilter.SelectedItem = match;
+        }
+    }
+
+    private void RefreshDateFilterOptions(string? preferredKey = null)
+    {
+        var selectedKey = preferredKey ?? CurrentDateFilterKey();
+        var options = new List<DateFilterOption>
+        {
+            new("all", "All dates"),
+            new("today", "Today"),
+            new("7d", "7d"),
+            new("30d", "30d"),
+            new("year", "This year"),
+        };
+
+        _updatingDateFilter = true;
+        try
+        {
+            _dateFilter.Items.Clear();
+            foreach (var option in options)
+            {
+                _dateFilter.Items.Add(option);
+            }
+
+            _dateFilter.SelectedItem = options.FirstOrDefault(item => string.Equals(item.Key, selectedKey, StringComparison.OrdinalIgnoreCase)) ?? options[0];
+        }
+        finally
+        {
+            _updatingDateFilter = false;
+        }
     }
 
     private string CurrentFavoriteFilterKey()
@@ -2039,7 +2265,8 @@ internal sealed class MainForm : Form
             _list.View == View.LargeIcon ? "grid" : "details",
             _searchText.Text.Trim(),
             _favoritesOnly.Checked,
-            CurrentFavoriteFilterKey());
+            CurrentFavoriteFilterKey(),
+            CurrentDateFilterKey());
     }
 
     private void ApplySortMode(string mode)
@@ -2441,6 +2668,24 @@ internal sealed class MainForm : Form
         return bitmap;
     }
 
+    private static string PrepareDateFilterSmokeFolder(string projectRoot)
+    {
+        var runId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}";
+        var folder = Path.Combine(projectRoot, ".cache", "native-date-filter-smoke", runId);
+        var today = DateTime.Today;
+        WriteSmokeProbePng(Path.Combine(folder, "m15-date-today.png"), Color.DarkCyan, ToUtcNoon(today));
+        WriteSmokeProbePng(Path.Combine(folder, "m15-date-last-7d.png"), Color.ForestGreen, ToUtcNoon(today.AddDays(-6)));
+        WriteSmokeProbePng(Path.Combine(folder, "m15-date-last-30d.png"), Color.SlateBlue, ToUtcNoon(today.AddDays(-20)));
+        WriteSmokeProbePng(Path.Combine(folder, "m15-date-last-year.png"), Color.Firebrick, ToUtcNoon(today.AddYears(-1)));
+        return folder;
+    }
+
+    private static DateTime ToUtcNoon(DateTime localDate)
+    {
+        var localNoon = DateTime.SpecifyKind(localDate.Date.AddHours(12), DateTimeKind.Local);
+        return localNoon.ToUniversalTime();
+    }
+
     private static Image LoadImageCopy(string filePath)
     {
         using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
@@ -2451,7 +2696,7 @@ internal sealed class MainForm : Form
         return new Bitmap(source);
     }
 
-    private static void WriteSmokeProbePng(string path, Color color)
+    private static void WriteSmokeProbePng(string path, Color color, DateTime? timestampUtc = null)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         using var bitmap = new Bitmap(18, 18);
@@ -2461,6 +2706,21 @@ internal sealed class MainForm : Form
         }
 
         bitmap.Save(path, ImageFormat.Png);
+        if (!timestampUtc.HasValue)
+        {
+            return;
+        }
+
+        try
+        {
+            File.SetCreationTimeUtc(path, timestampUtc.Value);
+            File.SetLastWriteTimeUtc(path, timestampUtc.Value);
+            File.SetLastAccessTimeUtc(path, timestampUtc.Value);
+        }
+        catch
+        {
+            // Timestamp normalization is best-effort on local smoke fixtures.
+        }
     }
 
     private List<NativeImageRecord> ReapplyFavorites(IEnumerable<NativeImageRecord> images)
@@ -2597,6 +2857,33 @@ internal sealed class MainForm : Form
             $"restoreSelected={BoolText(report.RestoreSelected)}",
             $"ensureVisible={BoolText(report.EnsureVisible)}",
             $"visibleBeforeRestore={BoolText(report.VisibleBeforeRestore)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
+    private static string FormatDateFilterSmokeReport(NativeDateFilterSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-date-filter-smoke complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"totalImages={report.TotalImages}",
+            $"initialVisible={report.InitialVisible}",
+            $"todayMatches={report.TodayMatches}",
+            $"last7Matches={report.Last7Matches}",
+            $"last30Matches={report.Last30Matches}",
+            $"thisYearMatches={report.ThisYearMatches}",
+            $"clearMatches={report.ClearMatches}",
+            $"todayFilter={BoolText(report.TodayFilter)}",
+            $"last7Filter={BoolText(report.Last7Filter)}",
+            $"last30Filter={BoolText(report.Last30Filter)}",
+            $"thisYearFilter={BoolText(report.ThisYearFilter)}",
+            $"clearFilter={BoolText(report.ClearFilter)}",
+            $"dateFilterPersisted={BoolText(report.DateFilterPersisted)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -3086,6 +3373,14 @@ internal sealed class MainForm : Form
         }
     }
 
+    private sealed record DateFilterOption(string Key, string Label)
+    {
+        public override string ToString()
+        {
+            return Label;
+        }
+    }
+
     private sealed record NativeUiSmokeReport(
         string Folder,
         int ScannedImages,
@@ -3162,5 +3457,22 @@ internal sealed class MainForm : Form
         bool RestoreSelected,
         bool EnsureVisible,
         bool VisibleBeforeRestore,
+        bool EnhancementStateUnchanged);
+
+    private sealed record NativeDateFilterSmokeReport(
+        string Folder,
+        int TotalImages,
+        int InitialVisible,
+        int TodayMatches,
+        int Last7Matches,
+        int Last30Matches,
+        int ThisYearMatches,
+        int ClearMatches,
+        bool TodayFilter,
+        bool Last7Filter,
+        bool Last30Filter,
+        bool ThisYearFilter,
+        bool ClearFilter,
+        bool DateFilterPersisted,
         bool EnhancementStateUnchanged);
 }
