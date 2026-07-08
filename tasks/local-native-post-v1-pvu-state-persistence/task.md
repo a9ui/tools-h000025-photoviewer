@@ -51,6 +51,11 @@ overlay flag: `pvu_perf_enabled` is raw-mirrored for traceability, but it is
 deferred as a native migration target because the native app has no accepted
 user-facing performance-overlay setting yet.
 
+This continuation formally records Row 14 for browser `pvu_scroll_memory`:
+it is raw-mirrored for traceability but deferred as a native migration target
+because the browser per-view scroll map is not equivalent to native
+`last_selected_image` / `last_visible_index` restore.
+
 ## Guardrails
 
 - No Linear.
@@ -88,6 +93,7 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #140
 - GitHub PR #139
 - GitHub PR #138
 - GitHub PR #137
@@ -210,6 +216,14 @@ Read in full before planning or editing:
   - it does not create a native `perf_enabled` setting;
   - it is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser scroll memory in #117:
+  - `pvu_scroll_memory` is kept as a raw browser mirror under
+    `browser_pvu_scroll_memory`;
+  - it does not create a native `scroll_memory` setting;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count;
+  - native gallery-state restore through `last_selected_image` and
+    `last_visible_index` remains separate from browser scroll-memory import.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -238,6 +252,7 @@ the dedicated pvu-state smoke plus existing import/UI smoke. The new smoke must
 report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `seenMirrorStored=true`, `markerMirrorStored=true`,
 `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
+`pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
@@ -248,12 +263,13 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row13-pvu-perf-flag-50c1` based on `origin/main`
-`8522939ec8d3da673e3e51d066c73eed956e378f` after PR #140:
+`codex/h25-117-row14-pvu-scroll-memory` based on `origin/main`
+`272d5c576d18b86ea1fa7342bb1a317f2018bab1` after PR #141:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
+  `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
   `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
   `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
@@ -272,9 +288,15 @@ Recorded on 2026-07-08 in branch
   `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
   `seenImages` / `settings` / `images` counts reflect existing ignored cache
   state and may increase across repeated smoke runs.
+- `-HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large` passed
+  with `totalImages=240`, `targetIndex=180`, `restoredIndex=180`,
+  `statePersisted=true`, `restoreSelected=true`, `ensureVisible=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
-  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
+  `importedStillSeen=true`,
+  `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
@@ -294,7 +316,7 @@ Recorded on 2026-07-08 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #252 and create/update the next row if more #117 native
+2. Update SQLite job #253 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or

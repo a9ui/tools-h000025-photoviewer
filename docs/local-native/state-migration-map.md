@@ -146,6 +146,13 @@ The thirteenth #117 row formally defers browser `pvu_perf_enabled` as a
 native migration target. It is still stored as a raw browser mirror under
 `native_settings.browser_pvu_perf_enabled`, but native does not create a
 `perf_enabled` setting and does not increase `pvu_state_migration_count`.
+The fourteenth #117 row formally defers browser `pvu_scroll_memory` as a
+native migration target. It is still stored as a raw browser mirror under
+`native_settings.browser_pvu_scroll_memory`, but native does not create a
+`scroll_memory` setting and does not increase `pvu_state_migration_count`.
+Native `last_selected_image` / `last_visible_index` restore remains separate
+because it is not the same contract as the browser's per-view scroll-memory
+map.
 
 The dedicated smoke is:
 

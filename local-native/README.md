@@ -519,6 +519,12 @@ The thirteenth #117 row formally defers browser `pvu_perf_enabled` as a
 native migration target. It remains a raw browser mirror as
 `browser_pvu_perf_enabled`, but native does not create a `perf_enabled`
 setting and `pvu_state_migration_count` stays at the Row 11 count of 11.
+The fourteenth #117 row formally defers browser `pvu_scroll_memory` as a
+native migration target. It remains a raw browser mirror as
+`browser_pvu_scroll_memory`, but native does not create a `scroll_memory`
+setting and `pvu_state_migration_count` stays at the Row 11 count of 11.
+Native selected-image/index restore remains the accepted native gallery-state
+mechanism and is not treated as browser scroll-memory import parity.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
