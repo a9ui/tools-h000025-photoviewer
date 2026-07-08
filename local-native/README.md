@@ -484,7 +484,10 @@ browser `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter` as
 `favorites`, `unrated`, or `all`, also only when native has no saved favorite
 filter yet. The fourth accepted row imports explicit browser
 `pvu_view.dateFrom` / `dateTo` into native `date_filter`, `date_from`, and
-`date_to` under the same first-import-only rule.
+`date_to` under the same first-import-only rule. The fifth accepted row imports
+explicit browser `pvu_last_dir_set` / `pvu_recent_dirs` into native
+`recent_folder_set` / `recent_folder`, while preserving existing native recent
+folder state after scan or user changes.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
