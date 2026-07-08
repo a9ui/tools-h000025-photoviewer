@@ -172,6 +172,14 @@ recent-album UI selection/restore contract yet. Explicit exports keep the key
 only as a raw browser mirror under `native_settings.browser_pvu_recent_albums`;
 native does not create `recent_albums`, `recent_album`, or
 `recent_album_ids` settings and does not increase `pvu_state_migration_count`.
+The eighteenth #117 row formally defers browser
+`pvu_view.aspectMode`, `pvu_view.displayStyle`, and `pvu_view.columns` as
+native migration targets. These display details map to #111 compact/poster
+display modes and #112 aspect controls, not to a proven small persistence-only
+native row. Explicit exports keep the fields only in the raw
+`native_settings.browser_pvu_view` mirror; native does not create
+`aspect_mode`, `display_style`, `columns`, or `display_columns` settings and
+does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 
