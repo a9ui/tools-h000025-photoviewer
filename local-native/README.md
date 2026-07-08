@@ -551,6 +551,14 @@ native UI has an accepted display/aspect contract. Explicit exports keep these
 fields only inside the raw `browser_pvu_view` mirror; native does not create
 `aspect_mode`, `display_style`, `columns`, or `display_columns` settings and
 `pvu_state_migration_count` stays at the Row 11 count of 11.
+The nineteenth #117 row formally defers browser `pvu_enhance_settings` as a
+native migration target. Current browser code persists enhancement request
+settings, but native explicit enhancement queue/settings UI remains owned by
+#97/#98 and ordinary native browsing must not start enhancement workers.
+Explicit exports keep it only as a raw browser mirror as
+`browser_pvu_enhance_settings`; native does not create `enhance_settings`,
+`enhancement_settings`, or `enhancement_queue_settings` settings and
+`pvu_state_migration_count` stays at the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

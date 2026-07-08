@@ -79,6 +79,12 @@ traceability in `browser_pvu_view`, but they are deferred as native migration
 targets because compact/poster/aspect/fixed-column display behavior belongs to
 #111/#112 until native has an accepted display/aspect persistence contract.
 
+This Row19 continuation formally records browser `pvu_enhance_settings`: it is
+raw-mirrored for traceability if an explicit export contains it, but it is
+deferred as a native migration target because explicit native enhancement
+queue/settings UI remains owned by #97/#98 and ordinary native browsing must
+not start enhancement workers.
+
 ## Guardrails
 
 - No Linear.
@@ -279,6 +285,15 @@ Read in full before planning or editing:
     `pvu_state_migration_count` remains at the Row 11 count;
   - #111 compact/poster display modes and #112 aspect controls remain
     separate.
+- Formally defer browser enhancement settings in #117:
+  - `pvu_enhance_settings` is kept as a raw browser mirror under
+    `browser_pvu_enhance_settings` when an explicit export contains it;
+  - it does not create native `enhance_settings`, `enhancement_settings`, or
+    `enhancement_queue_settings` settings;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count;
+  - explicit native enhancement queue/settings UI remains in #97/#98 and this
+    row must not start automatic workers.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -312,23 +327,25 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+`pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=10`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=11`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch
-`codex/h25-117-row18-pvu-display-details` based on `origin/main`
-`c81ecbacf7c5e742cef6a4ed7fce5580db1f8846` after PR #148:
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row18-pvu-enhance-settings` rebased by merge onto
+`origin/main` after PR #149:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+  `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
   `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
   `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
   `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
@@ -341,7 +358,7 @@ Recorded on 2026-07-08 in branch
   `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=10`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=11`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
@@ -364,7 +381,8 @@ Recorded on 2026-07-08 in branch
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.
 - `git diff --name-only -- H000033` returned no files.
-- `rg -n "^(<<<<<<<|=======|>>>>>>>)" .` returned no conflict markers.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g '!node_modules/**' -g '!.next/**' -g '!.cache/**'`
+  returned no conflict markers.
 - `git diff --check` passed.
 
 ## Closeout Requirements
