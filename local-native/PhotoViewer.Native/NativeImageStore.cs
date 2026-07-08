@@ -11,6 +11,7 @@ internal sealed class NativeImageStore
     private const int MaximumBrowserRightPanelWidth = 900;
     private const int NativeThumbnailSizeMin = 64;
     private const int NativeThumbnailSizeMax = 192;
+    private const string BrowserRootFolderKey = "__ROOT__";
 
     private readonly string _projectRoot;
     private readonly string _databasePath;
@@ -969,6 +970,7 @@ internal sealed class NativeImageStore
         ICollection<NativeImportWarning> warnings)
     {
         var migrations = new List<string>();
+        var hasBrowserRecentFolderSet = TryReadBrowserRecentFolderSet(browserState, warnings, out var browserRecentFolderSet);
 
         if (TryGetBrowserStateValue(browserState, "pvu_view", out var pvuView))
         {
@@ -1090,6 +1092,25 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser sort state was skipped; native ascending sort direction and random seed parity remain deferred."));
             }
+
+            if (!pvuViewMalformed &&
+                TryReadBrowserHiddenFolders(pvuView, browserRecentFolderSet, out var hiddenFolderBuckets, out var hasHiddenFolders, out warningMessage))
+            {
+                if (hasHiddenFolders && GetSetting(connection, transaction, "hidden_folder_buckets") is null)
+                {
+                    UpsertSetting(connection, transaction, "hidden_folder_buckets", hiddenFolderBuckets, importedAt);
+                    migrations.Add("pvu_view.hiddenFolders->hidden_folder_buckets");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-hidden-folders-value",
+                    warningMessage,
+                    "Browser hidden-folder state was skipped; rerun the browser export with pvu_recent_dirs/pvu_last_dir_set or remove malformed pvu_view.hiddenFolders, then run Import again."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1122,12 +1143,12 @@ internal sealed class NativeImageStore
             }
         }
 
-        if (TryReadBrowserRecentFolderSet(browserState, warnings, out var recentFolderSet) &&
-            recentFolderSet.Count > 0 &&
+        if (hasBrowserRecentFolderSet &&
+            browserRecentFolderSet.Count > 0 &&
             !HasNativeRecentFolderState(connection, transaction))
         {
-            UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(recentFolderSet), importedAt);
-            UpsertSetting(connection, transaction, "recent_folder", recentFolderSet[0], importedAt);
+            UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(browserRecentFolderSet), importedAt);
+            UpsertSetting(connection, transaction, "recent_folder", browserRecentFolderSet[0], importedAt);
             migrations.Add("pvu_recent_dirs/pvu_last_dir_set->recent_folder_set");
         }
 
@@ -1637,6 +1658,141 @@ internal sealed class NativeImageStore
             warningMessage = ex.Message;
             return false;
         }
+    }
+
+    private static bool TryReadBrowserHiddenFolders(
+        string value,
+        IReadOnlyList<string> roots,
+        out string hiddenFolderBuckets,
+        out bool present,
+        out string? warningMessage)
+    {
+        hiddenFolderBuckets = "";
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("hiddenFolders", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (element.ValueKind != JsonValueKind.Array)
+            {
+                warningMessage = "pvu_view.hiddenFolders must be an array of browser folder keys.";
+                return false;
+            }
+
+            if (roots.Count == 0)
+            {
+                warningMessage = "pvu_view.hiddenFolders requires pvu_last_dir_set or pvu_recent_dirs roots in the same browser export.";
+                return false;
+            }
+
+            var hidden = new List<string>();
+            foreach (var item in element.EnumerateArray())
+            {
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    warningMessage = "pvu_view.hiddenFolders entries must be browser folder-key strings.";
+                    return false;
+                }
+
+                var key = item.GetString()?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(key))
+                {
+                    continue;
+                }
+
+                if (!TryMapBrowserFolderKeyToNativeFolder(key, roots, out var folder))
+                {
+                    warningMessage = $"pvu_view.hiddenFolders contains a folder key outside the exported roots: {key}";
+                    return false;
+                }
+
+                hidden.Add(folder);
+            }
+
+            hiddenFolderBuckets = string.Join('\n', hidden.Distinct(StringComparer.OrdinalIgnoreCase));
+            warningMessage = null;
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryMapBrowserFolderKeyToNativeFolder(
+        string key,
+        IReadOnlyList<string> roots,
+        out string folder)
+    {
+        folder = "";
+        var rootIndex = 0;
+        var folderKey = key;
+
+        var separatorIndex = key.IndexOf(':', StringComparison.Ordinal);
+        if (separatorIndex > 0)
+        {
+            if (!int.TryParse(key[..separatorIndex], System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out rootIndex) ||
+                rootIndex < 0 ||
+                rootIndex >= roots.Count)
+            {
+                return false;
+            }
+
+            folderKey = key[(separatorIndex + 1)..];
+        }
+        else if (roots.Count > 1)
+        {
+            return false;
+        }
+
+        if (rootIndex >= roots.Count)
+        {
+            return false;
+        }
+
+        var root = roots[rootIndex];
+        var candidate = string.Equals(folderKey, BrowserRootFolderKey, StringComparison.Ordinal)
+            ? root
+            : Path.Combine(root, folderKey.Replace('/', Path.DirectorySeparatorChar));
+
+        try
+        {
+            candidate = Path.GetFullPath(candidate);
+        }
+        catch
+        {
+            return false;
+        }
+
+        if (!NativeFolderSet.IsPathUnderRoot(candidate, root))
+        {
+            return false;
+        }
+
+        folder = candidate;
+        return true;
     }
 
     private static bool TryReadPositiveInteger(JsonElement element, out int value)

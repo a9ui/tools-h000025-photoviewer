@@ -7,19 +7,20 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_SORT_MODE_MIGRATION_AFTER_THUMBNAIL_SIZE_ROW`.
+`ADOPT_BOUNDED_PVU_HIDDEN_FOLDERS_MIGRATION_AFTER_SORT_MODE_ROW`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_view.sortBy` from an explicit browser localStorage export.
+  `pvu_view.hiddenFolders` from an explicit browser localStorage export.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
   `pvu_view.dateFrom` / `dateTo` into native date settings, and
   `pvu_last_dir_set` / `pvu_recent_dirs` into native recent-folder settings,
   and `pvu_view.rightPanelOpen` / `rightPanelWidth` into native right-preview
-  settings, and `pvu_view.thumbSize` into native `thumbnail_size`.
+  settings, `pvu_view.thumbSize` into native `thumbnail_size`, and
+  `pvu_view.sortBy` into native `sort_mode`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
@@ -31,6 +32,12 @@ Meaning:
 - Browser ascending directions `oldest` / `created-oldest` and browser
   `randomSeed` remain deferred because the current native sort surface does
   not persist equivalent direction or seed state.
+- Browser hidden folders are stored as browser folder keys, not native
+  absolute folder paths. This row converts only keys that can be mapped through
+  the explicit exported `pvu_last_dir_set` / `pvu_recent_dirs` roots.
+- Browser `folderSortBy` remains deferred because native folder bucket sorting
+  is not a separate accepted setting yet, and folder range-selection semantics
+  remain owned by #102.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -72,6 +79,9 @@ Meaning:
 | Existing native `sort_mode` | Preserve native sort mode | `ADOPT`: import does not clobber a native user choice. |
 | `pvu_view.sortBy=oldest` / `created-oldest` | warning-only, no native sort overwrite | `DEFER`: current native sort surface has no persisted ascending direction. |
 | Malformed / unsupported `pvu_view.sortBy` | warning-only, no native sort overwrite | `ADOPT`: invalid sort values are skipped with recovery guidance. |
+| `pvu_view.hiddenFolders` browser folder keys with exported roots | `native_settings.hidden_folder_buckets` absolute native folder paths | `ADOPT`: imported on first native import when hidden-folder state is absent. |
+| Existing native `hidden_folder_buckets` | Preserve native hidden-folder state | `ADOPT`: import does not clobber a native user choice. |
+| Malformed/rootless `pvu_view.hiddenFolders` | recoverable warning, no native hidden-folder overwrite | `ADOPT`: invalid folder keys, non-array values, and exports without roots are skipped with recovery guidance. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -91,7 +101,8 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | These map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
-| `pvu_view.hiddenFolders` / `folderSortBy` | `DEFER` | Folder bucket behavior and range semantics remain tied to #102/folder UI decisions. |
+| `pvu_view.hiddenFolders` | `ADOPT` | Native already persists `hidden_folder_buckets`; this row maps browser folder keys through the exported browser folder roots and preserves existing native hidden-folder choices. |
+| `pvu_view.folderSortBy` | `DEFER` | Native folder bucket sorting is currently fixed by label and range semantics remain tied to #102/folder UI decisions. |
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
 | `pvu_perf_enabled` | `DEFER` | Browser performance instrumentation flag has no native user-facing equivalent yet. |
 | `pvu_fav_only` / `pvu_unfav_only` | `ADOPT` | Native favorite filters exist; explicit browser import now maps first-import state without overwriting native choices. |
@@ -124,6 +135,7 @@ Expected result:
 - `pvuSortModeMigrated=true`
 - `pvuRecentFoldersMigrated=true`
 - `pvuRightPreviewMigrated=true`
+- `pvuHiddenFoldersMigrated=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
 - `enhancedMirrorStored=true`
@@ -137,6 +149,7 @@ Expected result:
 - `nativeSortModePreserved=true`
 - `nativeRecentFolderSetPreserved=true`
 - `nativeRightPreviewPreserved=true`
+- `nativeHiddenFoldersPreserved=true`
 - `malformedEnhancedOnlyWarning=true`
 - `malformedFavoriteFilterWarning=true`
 - `malformedDateRangeWarning=true`
@@ -144,6 +157,7 @@ Expected result:
 - `unsupportedSortModeWarning=true`
 - `malformedRecentDirsWarning=true`
 - `malformedRightPreviewWarning=true`
+- `malformedHiddenFoldersWarning=true`
 - `nativeEnhancedOnlyStillPreserved=true`
 - `nativeFavoriteFilterStillPreserved=true`
 - `nativeDateRangeStillPreserved=true`
@@ -151,9 +165,10 @@ Expected result:
 - `nativeSortModeStillPreserved=true`
 - `nativeRecentFolderSetStillPreserved=true`
 - `nativeRightPreviewStillPreserved=true`
+- `nativeHiddenFoldersStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
-- `malformedWarnings=7`
+- `malformedWarnings=8`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
@@ -188,9 +203,12 @@ PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
   `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
   `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=5`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
-  passed and created only ignored fixture/cache state in this clean worktree.
+  passed using ignored fixture/cache state and preserved existing cache/state
+  assets.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
-  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `seenImages=4`, `settings=37`, `images=4`,
+  `warnings=0`, and no browser runtime.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
   passed with `gridToggle=true`, `enhancedOnlyFilter=true`,
   `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
@@ -203,27 +221,28 @@ PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
 
-## Current Row 8 Verification
+## Current Hidden-Folders Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row8-sort-mode`
-based on `origin/main` `ffe9c51d6e98066c772e04758100f6bc5d2de204`
-after PR #133:
+Recorded on 2026-07-08 in branch
+`codex/h25-117-row8-state-persistence` rebased onto `origin/main`
+`8afe881ffeeaadd0a7618038244bd8dde6039a21` after PR #135:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
   passed with `pvuSortModeMigrated=true`,
   `nativeSortModePreserved=true`, `unsupportedSortModeWarning=true`,
-  `nativeSortModeStillPreserved=true`, `migrationRecorded=true`,
-  `browserMirrorStored=true`, `firstWarnings=0`, `secondWarnings=0`,
-  `malformedWarnings=7`, `browserStateKeys=5`, and
-  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+  `nativeSortModeStillPreserved=true`, `pvuHiddenFoldersMigrated=true`,
+  `nativeHiddenFoldersPreserved=true`,
+  `malformedHiddenFoldersWarning=true`,
+  `nativeHiddenFoldersStillPreserved=true`, `pvuThumbnailSizeMigrated=true`,
+  `pvuRightPreviewMigrated=true`, `migrationRecorded=true`,
+  `browserStateKeys=5`, `firstWarnings=0`, `secondWarnings=0`, and
+  `malformedWarnings=8`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
   passed and created only ignored fixture/cache state in this clean worktree.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
-  passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
-  `warnings=0`, and no browser runtime.
+  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
   passed with `sortName=true`, `randomReshuffle=true`,
   `thumbnailSize=true`, `settingsImported=true`, `browserStateKeys=6`, and
@@ -277,12 +296,14 @@ after PR #131:
   `thumbnail_size`, clamped to the current native UI range.
 - `ADOPT`: bounded `pvu_view.sortBy` migration into native `sort_mode` for
   browser values with matching native semantics.
+- `ADOPT`: bounded `pvu_view.hiddenFolders` migration into native
+  `hidden_folder_buckets`, mapped through explicit browser folder roots.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and
   browser marker-only keys as native migration targets.
 - `DEFER`: browser ascending sort directions, `randomSeed`,
-  `pvu_fav_levels`, pinned tabs, enhancement settings, broader display
-  details, `pvu_recent_albums`, scroll memory, and browser localStorage
-  favorites to their existing post-v1 issue rows.
+  `pvu_view.folderSortBy`, `pvu_fav_levels`, pinned tabs, enhancement
+  settings, broader display details, `pvu_recent_albums`, scroll memory, and
+  browser localStorage favorites to their existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.

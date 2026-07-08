@@ -498,7 +498,11 @@ thumbnail-size choice. The eighth accepted row imports explicit browser
 `pvu_view.sortBy` values that have matching native sort modes into
 `sort_mode`, preserving an existing native sort choice. Browser ascending
 sort directions and `randomSeed` remain deferred because the current native
-sort surface does not persist equivalent direction or seed state.
+sort surface does not persist equivalent direction or seed state. The ninth
+accepted row imports explicit browser
+`pvu_view.hiddenFolders` into native `hidden_folder_buckets`, mapping browser
+folder keys through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots
+and preserving an existing native hidden-folder choice.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
