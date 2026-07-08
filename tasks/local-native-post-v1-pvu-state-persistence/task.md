@@ -24,13 +24,16 @@ The sixth slice migrated explicit browser `pvu_view.rightPanelOpen` /
 right-preview choices. The seventh slice migrated explicit browser
 `pvu_view.thumbSize` into native `thumbnail_size` on first import, clamped to
 the current native UI range, while preserving later native thumbnail-size
-choices.
-
-This continuation migrates explicit browser `pvu_view.sortBy` into native
+choices. The eighth slice migrated explicit browser `pvu_view.sortBy` into native
 `sort_mode` on first import only for values with matching native semantics.
 Browser ascending sort directions and `randomSeed` remain deferred because the
 current native sort surface does not persist equivalent direction or seed
 state.
+
+This continuation migrates explicit browser `pvu_view.hiddenFolders` into
+native `hidden_folder_buckets` on first import, mapping browser folder keys
+through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots while
+preserving later native hidden-folder choices.
 
 ## Guardrails
 
@@ -70,6 +73,9 @@ Read in full before planning or editing:
 - GitHub issue #117
 - GitHub issue #115
 - GitHub issue #116
+- GitHub PR #134
+- GitHub PR #133
+- GitHub PR #131
 - GitHub PR #132
 - GitHub PR #130
 - GitHub PR #129
@@ -146,6 +152,16 @@ Read in full before planning or editing:
   - malformed or unsupported sort values are recoverable warnings;
   - browser `oldest`, `created-oldest`, and `randomSeed` remain deferred
     until native has an accepted persisted direction/seed design.
+- Add a bounded migration for `pvu_view.hiddenFolders`:
+  - browser folder keys -> native `hidden_folder_buckets` absolute folder
+    paths;
+  - folder keys are mapped only through exported browser roots from
+    `pvu_last_dir_set` / `pvu_recent_dirs`;
+  - existing native `hidden_folder_buckets` is not overwritten;
+  - malformed folder keys, non-array values, and hidden-folder exports without
+    roots are recoverable warnings;
+  - `pvu_view.folderSortBy` remains deferred because native folder bucket sort
+    state and #102 folder range semantics are separate rows.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -174,9 +190,9 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row8-sort-mode`
-based on `origin/main` `ffe9c51d6e98066c772e04758100f6bc5d2de204`
-after PR #133:
+Recorded on 2026-07-08 in branch
+`codex/h25-117-row8-state-persistence` rebased onto `origin/main`
+`8afe881ffeeaadd0a7618038244bd8dde6039a21` after PR #135:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
@@ -186,6 +202,7 @@ after PR #133:
   `pvuThumbnailSizeMigrated=true`, `pvuThumbnailSizeClamped=true`,
   `pvuSortModeMigrated=true`,
   `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
+  `pvuHiddenFoldersMigrated=true`,
   `migrationRecorded=true`, `browserMirrorStored=true`,
   `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
   `recentMirrorStored=true`,
@@ -194,23 +211,26 @@ after PR #133:
   `nativeThumbnailSizePreserved=true`, `nativeSortModePreserved=true`,
   `nativeRecentFolderSetPreserved=true`,
   `nativeRightPreviewPreserved=true`,
+  `nativeHiddenFoldersPreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
   `malformedDateRangeWarning=true`, `malformedThumbnailSizeWarning=true`,
   `unsupportedSortModeWarning=true`,
   `malformedRecentDirsWarning=true`, `malformedRightPreviewWarning=true`,
+  `malformedHiddenFoldersWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
   `nativeThumbnailSizeStillPreserved=true`,
   `nativeSortModeStillPreserved=true`,
   `nativeRecentFolderSetStillPreserved=true`,
-  `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=7`.
+  `nativeRightPreviewStillPreserved=true`,
+  `nativeHiddenFoldersStillPreserved=true`, `browserStateKeys=5`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=8`.
 - `-PrepareFixture` passed and created only ignored fixture/cache state in this
-  clean worktree.
+  worktree while preserving existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
+  `browserStateKeys=6`, `seenImages=4`, `settings=37`, `images=4`,
   `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `thumbnailSize=true`, `enhancedOnlyFilter=true`,

@@ -85,15 +85,19 @@ internal static class NativeHeadlessRunner
         var browserRecentA = Path.Combine(smokeRoot, "browser-recent-a");
         var browserRecentB = Path.Combine(smokeRoot, "browser-recent-b");
         var browserRecentFallback = Path.Combine(smokeRoot, "browser-recent-fallback");
+        var browserHiddenFolder = Path.Combine(browserRecentB, "hidden-nested");
         var nativeRecentA = Path.Combine(smokeRoot, "native-recent-a");
         var nativeRecentB = Path.Combine(smokeRoot, "native-recent-b");
+        var nativeHiddenFolder = Path.Combine(nativeRecentA, "native-hidden");
         Directory.CreateDirectory(Path.Combine(smokeRoot, "src"));
         Directory.CreateDirectory(smokeNative);
         Directory.CreateDirectory(browserRecentA);
         Directory.CreateDirectory(browserRecentB);
         Directory.CreateDirectory(browserRecentFallback);
+        Directory.CreateDirectory(browserHiddenFolder);
         Directory.CreateDirectory(nativeRecentA);
         Directory.CreateDirectory(nativeRecentB);
+        Directory.CreateDirectory(nativeHiddenFolder);
         File.WriteAllText(Path.Combine(smokeRoot, "PROJECT.md"), "# Native pvu state smoke" + Environment.NewLine, Encoding.UTF8);
 
         var exportPath = Path.Combine(smokeNative, "browser-localstorage-export.json");
@@ -111,6 +115,7 @@ internal static class NativeHeadlessRunner
                     rightPanelWidth = 360,
                     dateFrom = "2026-07-01",
                     dateTo = "2026-07-08",
+                    hiddenFolders = new[] { "1:hidden-nested" },
                 },
                 ["pvu_enhanced_only"] = "1",
                 ["pvu_fav_only"] = "1",
@@ -141,8 +146,9 @@ internal static class NativeHeadlessRunner
             string.Equals(store.GetSetting("recent_folder", ""), expectedBrowserRecentRoot, StringComparison.OrdinalIgnoreCase);
         var pvuRightPreviewMigrated = string.Equals(store.GetSetting("preview_visible", ""), "1", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("preview_splitter_distance", ""), "920", StringComparison.OrdinalIgnoreCase);
+        var pvuHiddenFoldersMigrated = string.Equals(store.GetSetting("hidden_folder_buckets", ""), browserHiddenFolder, StringComparison.OrdinalIgnoreCase);
         var migrations = store.GetSetting("pvu_state_migrations", "");
-        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "8", StringComparison.OrdinalIgnoreCase) &&
+        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "9", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_view.viewMode", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_enhanced_only", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_fav_only/pvu_unfav_only", StringComparison.OrdinalIgnoreCase) &&
@@ -150,13 +156,15 @@ internal static class NativeHeadlessRunner
             migrations.Contains("pvu_view.rightPanel", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_view.thumbSize", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_view.sortBy", StringComparison.OrdinalIgnoreCase) &&
+            migrations.Contains("pvu_view.hiddenFolders", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_recent_dirs/pvu_last_dir_set", StringComparison.OrdinalIgnoreCase);
         var browserPvuViewMirror = store.GetSetting("browser_pvu_view", "");
         var browserMirrorStored = browserPvuViewMirror.Contains("viewMode", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("thumbSize", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("sortBy", StringComparison.OrdinalIgnoreCase) &&
             browserPvuViewMirror.Contains("rightPanelOpen", StringComparison.OrdinalIgnoreCase) &&
-            browserPvuViewMirror.Contains("rightPanelWidth", StringComparison.OrdinalIgnoreCase);
+            browserPvuViewMirror.Contains("rightPanelWidth", StringComparison.OrdinalIgnoreCase) &&
+            browserPvuViewMirror.Contains("hiddenFolders", StringComparison.OrdinalIgnoreCase);
         var enhancedMirrorStored = string.Equals(store.GetSetting("browser_pvu_enhanced_only", ""), "1", StringComparison.OrdinalIgnoreCase);
         var favoriteMirrorStored = string.Equals(store.GetSetting("browser_pvu_fav_only", ""), "1", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("browser_pvu_unfav_only", ""), "0", StringComparison.OrdinalIgnoreCase);
@@ -174,6 +182,7 @@ internal static class NativeHeadlessRunner
         store.SaveRecentFolderSet(new[] { nativeRecentA, nativeRecentB });
         store.SaveSetting("preview_visible", "0");
         store.SaveSetting("preview_splitter_distance", "840");
+        store.SaveSetting("hidden_folder_buckets", nativeHiddenFolder);
         var secondImport = store.ImportProjectState(exportPath);
         var nativeViewModePreserved = string.Equals(store.GetSetting("view_mode", ""), "details", StringComparison.OrdinalIgnoreCase);
         var nativeEnhancedOnlyPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
@@ -189,13 +198,14 @@ internal static class NativeHeadlessRunner
             string.Equals(store.GetSetting("recent_folder", ""), expectedNativeRecentRoot, StringComparison.OrdinalIgnoreCase);
         var nativeRightPreviewPreserved = string.Equals(store.GetSetting("preview_visible", ""), "0", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("preview_splitter_distance", ""), "840", StringComparison.OrdinalIgnoreCase);
+        var nativeHiddenFoldersPreserved = string.Equals(store.GetSetting("hidden_folder_buckets", ""), nativeHiddenFolder, StringComparison.OrdinalIgnoreCase);
 
         var malformedExportPath = Path.Combine(smokeNative, "malformed-enhanced-only-export.json");
         var malformedPayload = new
         {
             localStorage = new Dictionary<string, object>
             {
-                ["pvu_view"] = new { viewMode = "grid", thumbSize = "wide", sortBy = "oldest", dateFrom = "not-a-date", dateTo = "2026-07-08", rightPanelOpen = "maybe", rightPanelWidth = "wide" },
+                ["pvu_view"] = new { viewMode = "grid", thumbSize = "wide", sortBy = "oldest", dateFrom = "not-a-date", dateTo = "2026-07-08", rightPanelOpen = "maybe", rightPanelWidth = "wide", hiddenFolders = new { invalid = true } },
                 ["pvu_enhanced_only"] = "maybe",
                 ["pvu_fav_only"] = "maybe",
                 ["pvu_unfav_only"] = "0",
@@ -229,6 +239,9 @@ internal static class NativeHeadlessRunner
         var malformedRightPreviewWarning = malformedImport.Warnings.Any(static warning =>
             string.Equals(warning.Source, "browser-state-export:pvu_view", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(warning.Code, "malformed-right-preview-value", StringComparison.OrdinalIgnoreCase));
+        var malformedHiddenFoldersWarning = malformedImport.Warnings.Any(static warning =>
+            string.Equals(warning.Source, "browser-state-export:pvu_view", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(warning.Code, "malformed-hidden-folders-value", StringComparison.OrdinalIgnoreCase));
         var nativeEnhancedOnlyStillPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
         var nativeFavoriteFilterStillPreserved = string.Equals(store.GetSetting("favorite_filter", ""), "unrated", StringComparison.OrdinalIgnoreCase);
         var nativeDateRangeStillPreserved = string.Equals(store.GetSetting("date_filter", ""), "custom", StringComparison.OrdinalIgnoreCase) &&
@@ -240,6 +253,7 @@ internal static class NativeHeadlessRunner
             string.Equals(store.GetSetting("recent_folder", ""), expectedNativeRecentRoot, StringComparison.OrdinalIgnoreCase);
         var nativeRightPreviewStillPreserved = string.Equals(store.GetSetting("preview_visible", ""), "0", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(store.GetSetting("preview_splitter_distance", ""), "840", StringComparison.OrdinalIgnoreCase);
+        var nativeHiddenFoldersStillPreserved = string.Equals(store.GetSetting("hidden_folder_buckets", ""), nativeHiddenFolder, StringComparison.OrdinalIgnoreCase);
         var passed = pvuViewModeMigrated &&
             pvuEnhancedOnlyMigrated &&
             pvuFavoriteFilterMigrated &&
@@ -249,6 +263,7 @@ internal static class NativeHeadlessRunner
             pvuSortModeMigrated &&
             pvuRecentFoldersMigrated &&
             pvuRightPreviewMigrated &&
+            pvuHiddenFoldersMigrated &&
             migrationRecorded &&
             browserMirrorStored &&
             enhancedMirrorStored &&
@@ -262,6 +277,7 @@ internal static class NativeHeadlessRunner
             nativeSortModePreserved &&
             nativeRecentFolderSetPreserved &&
             nativeRightPreviewPreserved &&
+            nativeHiddenFoldersPreserved &&
             malformedEnhancedOnlyWarning &&
             malformedFavoriteFilterWarning &&
             malformedDateRangeWarning &&
@@ -269,6 +285,7 @@ internal static class NativeHeadlessRunner
             unsupportedSortModeWarning &&
             malformedRecentDirsWarning &&
             malformedRightPreviewWarning &&
+            malformedHiddenFoldersWarning &&
             nativeEnhancedOnlyStillPreserved &&
             nativeFavoriteFilterStillPreserved &&
             nativeDateRangeStillPreserved &&
@@ -276,12 +293,13 @@ internal static class NativeHeadlessRunner
             nativeSortModeStillPreserved &&
             nativeRecentFolderSetStillPreserved &&
             nativeRightPreviewStillPreserved &&
+            nativeHiddenFoldersStillPreserved &&
             firstImport.WarningCount == 0 &&
             secondImport.WarningCount == 0 &&
-            malformedImport.WarningCount == 7;
+            malformedImport.WarningCount == 8;
 
         Console.WriteLine(
-            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} pvuDateRangeMigrated={BoolText(pvuDateRangeMigrated)} pvuThumbnailSizeMigrated={BoolText(pvuThumbnailSizeMigrated)} pvuThumbnailSizeClamped={BoolText(pvuThumbnailSizeClamped)} pvuSortModeMigrated={BoolText(pvuSortModeMigrated)} pvuRecentFoldersMigrated={BoolText(pvuRecentFoldersMigrated)} pvuRightPreviewMigrated={BoolText(pvuRightPreviewMigrated)} pvuHiddenFoldersMigrated={BoolText(pvuHiddenFoldersMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} recentMirrorStored={BoolText(recentMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} nativeDateRangePreserved={BoolText(nativeDateRangePreserved)} nativeThumbnailSizePreserved={BoolText(nativeThumbnailSizePreserved)} nativeSortModePreserved={BoolText(nativeSortModePreserved)} nativeRecentFolderSetPreserved={BoolText(nativeRecentFolderSetPreserved)} nativeRightPreviewPreserved={BoolText(nativeRightPreviewPreserved)} nativeHiddenFoldersPreserved={BoolText(nativeHiddenFoldersPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} malformedDateRangeWarning={BoolText(malformedDateRangeWarning)} malformedThumbnailSizeWarning={BoolText(malformedThumbnailSizeWarning)} unsupportedSortModeWarning={BoolText(unsupportedSortModeWarning)} malformedRecentDirsWarning={BoolText(malformedRecentDirsWarning)} malformedRightPreviewWarning={BoolText(malformedRightPreviewWarning)} malformedHiddenFoldersWarning={BoolText(malformedHiddenFoldersWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} nativeDateRangeStillPreserved={BoolText(nativeDateRangeStillPreserved)} nativeThumbnailSizeStillPreserved={BoolText(nativeThumbnailSizeStillPreserved)} nativeSortModeStillPreserved={BoolText(nativeSortModeStillPreserved)} nativeRecentFolderSetStillPreserved={BoolText(nativeRecentFolderSetStillPreserved)} nativeRightPreviewStillPreserved={BoolText(nativeRightPreviewStillPreserved)} nativeHiddenFoldersStillPreserved={BoolText(nativeHiddenFoldersStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return passed ? 0 : 2;
     }
 

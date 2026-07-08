@@ -118,6 +118,12 @@ semantics: `newest` to `Modified`, `created-newest` to `Created`, `name` to
 `oldest` / `created-oldest` and browser `randomSeed` remain deferred because
 the current native sort surface does not persist equivalent direction or seed
 state.
+The ninth accepted row maps explicit browser `pvu_view.hiddenFolders` into
+`native_settings.hidden_folder_buckets` by converting browser folder keys
+through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots. It writes
+only when native hidden-folder state does not exist yet. Malformed folder keys,
+non-array values, and hidden-folder exports without browser roots are skipped
+with recoverable warnings.
 
 The dedicated smoke is:
 
