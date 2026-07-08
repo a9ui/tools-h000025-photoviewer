@@ -98,6 +98,8 @@ internal static class NativeHeadlessRunner
                     rightPanelOpen = true,
                 },
                 ["pvu_enhanced_only"] = "1",
+                ["pvu_fav_only"] = "1",
+                ["pvu_unfav_only"] = "0",
             },
         };
         File.WriteAllText(
@@ -109,18 +111,24 @@ internal static class NativeHeadlessRunner
         var firstImport = store.ImportProjectState(exportPath);
         var pvuViewModeMigrated = string.Equals(store.GetSetting("view_mode", ""), "grid", StringComparison.OrdinalIgnoreCase);
         var pvuEnhancedOnlyMigrated = string.Equals(store.GetSetting("enhanced_only_filter", ""), "1", StringComparison.OrdinalIgnoreCase);
+        var pvuFavoriteFilterMigrated = string.Equals(store.GetSetting("favorite_filter", ""), "favorites", StringComparison.OrdinalIgnoreCase);
         var migrations = store.GetSetting("pvu_state_migrations", "");
-        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "2", StringComparison.OrdinalIgnoreCase) &&
+        var migrationRecorded = string.Equals(store.GetSetting("pvu_state_migration_count", ""), "3", StringComparison.OrdinalIgnoreCase) &&
             migrations.Contains("pvu_view.viewMode", StringComparison.OrdinalIgnoreCase) &&
-            migrations.Contains("pvu_enhanced_only", StringComparison.OrdinalIgnoreCase);
+            migrations.Contains("pvu_enhanced_only", StringComparison.OrdinalIgnoreCase) &&
+            migrations.Contains("pvu_fav_only/pvu_unfav_only", StringComparison.OrdinalIgnoreCase);
         var browserMirrorStored = store.GetSetting("browser_pvu_view", "").Contains("viewMode", StringComparison.OrdinalIgnoreCase);
         var enhancedMirrorStored = string.Equals(store.GetSetting("browser_pvu_enhanced_only", ""), "1", StringComparison.OrdinalIgnoreCase);
+        var favoriteMirrorStored = string.Equals(store.GetSetting("browser_pvu_fav_only", ""), "1", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(store.GetSetting("browser_pvu_unfav_only", ""), "0", StringComparison.OrdinalIgnoreCase);
 
         store.SaveSetting("view_mode", "details");
         store.SaveSetting("enhanced_only_filter", "0");
+        store.SaveSetting("favorite_filter", "unrated");
         var secondImport = store.ImportProjectState(exportPath);
         var nativeViewModePreserved = string.Equals(store.GetSetting("view_mode", ""), "details", StringComparison.OrdinalIgnoreCase);
         var nativeEnhancedOnlyPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
+        var nativeFavoriteFilterPreserved = string.Equals(store.GetSetting("favorite_filter", ""), "unrated", StringComparison.OrdinalIgnoreCase);
 
         var malformedExportPath = Path.Combine(smokeNative, "malformed-enhanced-only-export.json");
         var malformedPayload = new
@@ -129,6 +137,8 @@ internal static class NativeHeadlessRunner
             {
                 ["pvu_view"] = new { viewMode = "grid" },
                 ["pvu_enhanced_only"] = "maybe",
+                ["pvu_fav_only"] = "maybe",
+                ["pvu_unfav_only"] = "0",
             },
         };
         File.WriteAllText(
@@ -140,22 +150,31 @@ internal static class NativeHeadlessRunner
         var malformedEnhancedOnlyWarning = malformedImport.Warnings.Any(static warning =>
             string.Equals(warning.Source, "browser-state-export:pvu_enhanced_only", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(warning.Code, "malformed-boolean-value", StringComparison.OrdinalIgnoreCase));
+        var malformedFavoriteFilterWarning = malformedImport.Warnings.Any(static warning =>
+            string.Equals(warning.Source, "browser-state-export:pvu_fav_only", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(warning.Code, "malformed-boolean-value", StringComparison.OrdinalIgnoreCase));
         var nativeEnhancedOnlyStillPreserved = string.Equals(store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
+        var nativeFavoriteFilterStillPreserved = string.Equals(store.GetSetting("favorite_filter", ""), "unrated", StringComparison.OrdinalIgnoreCase);
         var passed = pvuViewModeMigrated &&
             pvuEnhancedOnlyMigrated &&
+            pvuFavoriteFilterMigrated &&
             migrationRecorded &&
             browserMirrorStored &&
             enhancedMirrorStored &&
+            favoriteMirrorStored &&
             nativeViewModePreserved &&
             nativeEnhancedOnlyPreserved &&
+            nativeFavoriteFilterPreserved &&
             malformedEnhancedOnlyWarning &&
+            malformedFavoriteFilterWarning &&
             nativeEnhancedOnlyStillPreserved &&
+            nativeFavoriteFilterStillPreserved &&
             firstImport.WarningCount == 0 &&
             secondImport.WarningCount == 0 &&
-            malformedImport.WarningCount == 1;
+            malformedImport.WarningCount == 2;
 
         Console.WriteLine(
-            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+            $"native-pvu-state-smoke complete pvuViewModeMigrated={BoolText(pvuViewModeMigrated)} pvuEnhancedOnlyMigrated={BoolText(pvuEnhancedOnlyMigrated)} pvuFavoriteFilterMigrated={BoolText(pvuFavoriteFilterMigrated)} migrationRecorded={BoolText(migrationRecorded)} browserMirrorStored={BoolText(browserMirrorStored)} enhancedMirrorStored={BoolText(enhancedMirrorStored)} favoriteMirrorStored={BoolText(favoriteMirrorStored)} nativeViewModePreserved={BoolText(nativeViewModePreserved)} nativeEnhancedOnlyPreserved={BoolText(nativeEnhancedOnlyPreserved)} nativeFavoriteFilterPreserved={BoolText(nativeFavoriteFilterPreserved)} malformedEnhancedOnlyWarning={BoolText(malformedEnhancedOnlyWarning)} malformedFavoriteFilterWarning={BoolText(malformedFavoriteFilterWarning)} nativeEnhancedOnlyStillPreserved={BoolText(nativeEnhancedOnlyStillPreserved)} nativeFavoriteFilterStillPreserved={BoolText(nativeFavoriteFilterStillPreserved)} browserStateKeys={store.CountBrowserStateKeys()} firstWarnings={firstImport.WarningCount} secondWarnings={secondImport.WarningCount} malformedWarnings={malformedImport.WarningCount} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return passed ? 0 : 2;
     }
 
