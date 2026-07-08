@@ -1676,7 +1676,8 @@ internal sealed class MainForm : Form
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
-        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
+        var warningText = report.WarningCount > 0 ? $" / warn {report.WarningCount:n0}" : "";
+        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}{warningText}";
     }
 
     private void ImportState()
@@ -1687,7 +1688,10 @@ internal sealed class MainForm : Form
         BuildFolderBuckets();
         ApplyFilter();
         ApplyStateSummary(report);
-        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.SeenImageCount:n0} seen images, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.");
+        var warningText = report.WarningCount > 0
+            ? $" Import warnings: {report.RecoverySummary}"
+            : "";
+        SetStatus($"Imported state: {report.FavoriteCount:n0} favorites, {report.SeenImageCount:n0} seen images, {report.AlbumCount:n0} albums, {report.AlbumImageCount:n0} album images, {report.BrowserStateKeyCount:n0} pvu keys, db {report.ImageCount:n0} images.{warningText}");
     }
 
     private void BrowseFolder()
@@ -3253,9 +3257,11 @@ internal sealed class MainForm : Form
     {
         return new NativeSettingsSnapshot(
             DatabasePath: _store.DatabasePath,
-            BrowserSettingsImported: _store.GetSetting("browser_settings_found", "0") == "1",
+            BrowserSettingsImported: _store.GetSetting("browser_settings_imported", _store.GetSetting("browser_settings_found", "0")) == "1",
             KeyBindingsJson: _store.GetSetting("keybindings_json", "{}"),
-            KeyBindingMode: "read-only in M9; editable keybinding recorder deferred");
+            KeyBindingMode: "read-only in M9; editable keybinding recorder deferred",
+            ImportWarningCount: ParseSettingInt("import_warning_count", 0),
+            ImportRecoverySummary: _store.GetSetting("import_recovery_summary", ""));
     }
 
     private void WarmNeighborPreviews(int index)
@@ -4018,6 +4024,8 @@ internal sealed class MainForm : Form
                 {
                     $"Native SQLite: {snapshot.DatabasePath}",
                     $"Browser settings imported: {(snapshot.BrowserSettingsImported ? "yes" : "no")}",
+                    $"Import warnings: {snapshot.ImportWarningCount:n0}",
+                    $"Recovery: {(string.IsNullOrWhiteSpace(snapshot.ImportRecoverySummary) ? "none" : snapshot.ImportRecoverySummary)}",
                     $"Keybinding mode: {snapshot.KeyBindingMode}",
                     "",
                     "Key bindings:",
@@ -4063,7 +4071,9 @@ internal sealed class MainForm : Form
         string DatabasePath,
         bool BrowserSettingsImported,
         string KeyBindingsJson,
-        string KeyBindingMode);
+        string KeyBindingMode,
+        int ImportWarningCount,
+        string ImportRecoverySummary);
 
     private sealed record FolderBucket(string Folder, string Label, int Count)
     {

@@ -14,9 +14,66 @@ internal static class NativeHeadlessRunner
         var store = new NativeImageStore(projectRoot);
         var import = store.ImportProjectState(browserStateExportPath);
 
+        WriteImportWarnings(import.Warnings);
         Console.WriteLine(
-            $"native-import complete favorites={import.FavoriteCount} albums={store.CountAlbums()} albumImages={store.CountAlbumImages()} browserStateKeys={store.CountBrowserStateKeys()} seenImages={import.SeenImageCount} settings={store.CountSettings()} images={import.ImageCount} db=\"{store.DatabasePath}\"");
+            $"native-import complete favorites={import.FavoriteCount} albums={store.CountAlbums()} albumImages={store.CountAlbumImages()} browserStateKeys={store.CountBrowserStateKeys()} seenImages={import.SeenImageCount} settings={store.CountSettings()} images={import.ImageCount} warnings={import.WarningCount} recovery=\"{EscapeConsoleValue(import.RecoverySummary)}\" db=\"{store.DatabasePath}\"");
         return 0;
+    }
+
+    public static int RunMalformedImportSmoke()
+    {
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var runId = $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}";
+        var smokeRoot = Path.Combine(projectRoot, ".cache", "native-malformed-import-smoke", runId);
+        var smokeCache = Path.Combine(smokeRoot, ".cache");
+        var smokeNative = Path.Combine(smokeCache, "native");
+        Directory.CreateDirectory(Path.Combine(smokeRoot, "src"));
+        Directory.CreateDirectory(smokeNative);
+        File.WriteAllText(Path.Combine(smokeRoot, "PROJECT.md"), "# Native malformed import smoke" + Environment.NewLine, Encoding.UTF8);
+
+        var store = new NativeImageStore(smokeRoot);
+        var validExportPath = Path.Combine(smokeNative, "valid-browser-localstorage-export.json");
+        File.WriteAllText(
+            validExportPath,
+            "{\"localStorage\":{\"pvu_view\":\"grid\"}}" + Environment.NewLine,
+            new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+        _ = store.ImportProjectState(validExportPath);
+        var previousBrowserStateKeys = store.CountBrowserStateKeys();
+
+        WriteMalformedJson(Path.Combine(smokeCache, "favorites.json"));
+        WriteMalformedJson(Path.Combine(smokeCache, "albums.json"));
+        WriteMalformedJson(Path.Combine(smokeCache, "settings.json"));
+        var exportPath = Path.Combine(smokeNative, "malformed-browser-localstorage-export.json");
+        WriteMalformedJson(exportPath);
+
+        var import = store.ImportProjectState(exportPath);
+        var warningSources = import.Warnings
+            .Select(static warning => warning.Source)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static source => source, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var hasExpectedWarnings =
+            warningSources.Contains("favorites", StringComparer.OrdinalIgnoreCase) &&
+            warningSources.Contains("albums", StringComparer.OrdinalIgnoreCase) &&
+            warningSources.Contains("settings", StringComparer.OrdinalIgnoreCase) &&
+            warningSources.Contains("browser-state-export", StringComparer.OrdinalIgnoreCase);
+        var recoveryStored = !string.IsNullOrWhiteSpace(store.GetSetting("import_recovery_summary", ""));
+        var warningsStored = store.GetSetting("import_warning_count", "0") == import.WarningCount.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var settingsFallback = store.GetSetting("browser_settings_found", "0") == "1" &&
+            store.GetSetting("browser_settings_imported", "1") == "0";
+        var browserExportSkipped = store.GetSetting("browser_state_export_found", "0") == "1" &&
+            store.GetSetting("browser_state_export_imported", "1") == "0";
+        var browserStatePreserved = previousBrowserStateKeys > 0 &&
+            store.CountBrowserStateKeys() == previousBrowserStateKeys;
+        var safeEmptyFallback = import.FavoriteCount == 0 &&
+            store.CountAlbums() == 0 &&
+            store.CountAlbumImages() == 0;
+        var passed = hasExpectedWarnings && recoveryStored && warningsStored && settingsFallback && browserExportSkipped && browserStatePreserved && safeEmptyFallback;
+
+        WriteImportWarnings(import.Warnings);
+        Console.WriteLine(
+            $"native-malformed-import-smoke complete warnings={import.WarningCount} sources=\"{string.Join(",", warningSources)}\" recoveryStored={BoolText(recoveryStored)} warningsStored={BoolText(warningsStored)} settingsFallback={BoolText(settingsFallback)} browserExportSkipped={BoolText(browserExportSkipped)} browserStatePreserved={BoolText(browserStatePreserved)} safeEmptyFallback={BoolText(safeEmptyFallback)} smokeRoot=\"{smokeRoot}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+        return passed ? 0 : 2;
     }
 
     public static async Task<int> RunScanAsync(string folder, CancellationToken cancellationToken, bool incremental = false)
@@ -222,6 +279,12 @@ internal static class NativeHeadlessRunner
         }
     }
 
+    private static void WriteMalformedJson(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, "{ malformed", new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+    }
+
     private static bool IsSeen(IEnumerable<NativeImageRecord> images, string path)
     {
         var normalized = Path.GetFullPath(path);
@@ -243,5 +306,19 @@ internal static class NativeHeadlessRunner
     private static string BoolText(bool value)
     {
         return value.ToString().ToLowerInvariant();
+    }
+
+    private static void WriteImportWarnings(IEnumerable<NativeImportWarning> warnings)
+    {
+        foreach (var warning in warnings)
+        {
+            Console.WriteLine(
+                $"native-import warning source={warning.Source} code={warning.Code} path=\"{EscapeConsoleValue(warning.Path)}\" recovery=\"{EscapeConsoleValue(warning.RecoveryAction)}\"");
+        }
+    }
+
+    private static string EscapeConsoleValue(string value)
+    {
+        return value.Replace("\\", "\\\\", StringComparison.Ordinal).Replace("\"", "\\\"", StringComparison.Ordinal);
     }
 }

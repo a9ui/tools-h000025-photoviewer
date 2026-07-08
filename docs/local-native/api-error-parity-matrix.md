@@ -115,3 +115,26 @@ Reject:
 - `REJECT`: Adding a browser HTTP compatibility layer to satisfy native parity.
 - `REJECT`: Treating browser E2E/API behavior as native acceptance by itself.
 
+## Post-v1 #115 Update
+
+Issue #115 advances the malformed import recovery row that #116 deferred.
+
+Outcome:
+
+- `ADOPT`: Native import now records recoverable warnings for malformed
+  favorites, albums, settings, and explicit browser localStorage export JSON.
+- `ADOPT`: Headless import prints warning lines plus `warnings=` and
+  `recovery=` fields.
+- `ADOPT`: Native UI surfaces warning count in the state summary and recovery
+  guidance in Import status / Settings.
+- `ADOPT`: Malformed browser export is skipped without clearing previous valid
+  `browser_state` rows.
+- `REJECT`: No browser HTTP compatibility layer and no `src/**` change.
+- `DEFER`: Complete `pvu_*` migration stays #117; UI polish/screenshot sweep
+  stays #118.
+
+Evidence:
+
+- `docs/local-native/malformed-import-recovery.md`
+- `tasks/local-native-post-v1-malformed-import-recovery/task.md`
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-malformed-import-smoke`

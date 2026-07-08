@@ -453,3 +453,21 @@ post-v1 issues #97-#118.
 
 See `docs/local-native/api-error-parity-matrix.md` and
 `tasks/local-native-post-v1-api-error-parity/task.md`.
+
+## Post-v1 #115 Notes
+
+#115 adds bounded native recovery for malformed imported state. Favorites,
+albums, settings, and explicit browser localStorage export JSON still fall back
+safely, but native now records recoverable warnings, stores a recovery summary
+in SQLite settings, prints headless warning lines, and shows warning/recovery
+text from the native Import/Settings surfaces.
+
+The dedicated smoke uses a synthetic project root under ignored `.cache/**` and
+does not overwrite real user state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-malformed-import-smoke
+```
+
+See `docs/local-native/malformed-import-recovery.md` and
+`tasks/local-native-post-v1-malformed-import-recovery/task.md`.
