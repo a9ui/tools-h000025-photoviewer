@@ -6,8 +6,9 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 
 ## Objective
 
-Build the #117 plan first, then advance only the smallest safe `pvu_*`
-persistence row under `local-native/**`.
+Build the #117 plan first, then either advance only the smallest safe `pvu_*`
+persistence row under `local-native/**` or, for Row25, close/defer the lane
+when every current browser key and `pvu_view` field is already classified.
 
 The previous slices migrated explicit browser `pvu_view.viewMode` into native
 `view_mode`, explicit browser `pvu_enhanced_only` into native
@@ -113,6 +114,15 @@ it is raw-mirrored for traceability inside `browser_pvu_view`, but it is
 deferred as a native migration target because queue panel visibility belongs
 with #97/#98 explicit enhancement queue/output UI. This row must not start
 workers or introduce broad enhancement settings.
+
+This Row25 continuation is a final inventory and close-or-defer audit after
+Row24. A read-only scan of current `src/**` browser state found no
+unclassified localStorage `pvu_*` key and no unclassified `pvu_view` /
+`ViewSettings` field. `pvu_job` matches are ComfyUI adapter filename prefixes,
+not browser state. `pvu_fav_levels` and `pvu_recent_albums` remain
+raw-mirror-only if explicit exports contain them, but current browser source
+does not persist those keys. Row25 should not add another native migration row
+unless live source evidence shows a specific unclassified key.
 
 ## Guardrails
 
@@ -679,11 +689,12 @@ Recorded on 2026-07-09 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #266 and create/update the next row if more #117 native
+2. Update SQLite job #267 and create/update the next row if more #117 native
    pvu-state work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.
-5. Create or hand off the next actual Codex thread if more native work remains.
+5. Create or hand off the next actual Codex thread only if more #117 native
+   pvu-state work remains.
 6. Do not call the Goal complete until GitHub, SQLite, Agmsg, advice
    classification, and thread handoff are reflected.
