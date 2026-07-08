@@ -94,6 +94,7 @@ internal static class NativeFixtureBuilder
                     {
                         viewMode = "grid",
                         thumbSize = 200,
+                        sidebarOpen = true,
                         sortBy = "newest",
                         folderSortBy = "name-asc",
                         rightPanelOpen = true,

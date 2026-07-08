@@ -1,19 +1,19 @@
 # Local Native Post-v1 #117 pvu State Persistence Migration
 
-Date: 2026-07-08
+Date: 2026-07-09
 
 Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 
 ## Decision
 
 Decision:
-`DEFER_BROWSER_SORT_DIRECTION_RANDOM_SEED_AFTER_LOCALSTORAGE_FAVORITES`.
+`DEFER_BROWSER_SIDEBAR_OPEN_AFTER_SORT_DIRECTION_RANDOM_SEED`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser ascending sort directions and
-  `randomSeed` after the localStorage favorites row.
+  explicit classification of browser `pvu_view.sidebarOpen` after the
+  sort-direction/random-seed row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -39,6 +39,12 @@ Meaning:
   or random seed contract yet. `randomSeed` remains only inside the raw
   `browser_pvu_view` mirror, and native does not create `sort_direction`,
   `sort_ascending`, `random_seed`, `randomSeed`, or `sort_seed` settings.
+- Browser `pvu_view.sidebarOpen` is Row 22 `DEFER`: current browser state
+  controls whether the left browser sidebar renders, while native has no
+  accepted collapsible left-sidebar persistence contract. The value remains
+  only inside the raw `browser_pvu_view` mirror, and native does not create
+  `sidebar_open`, `sidebarOpen`, `sidebar_visible`, `left_sidebar_open`, or
+  `left_panel_visible` settings.
 - Browser hidden folders are stored as browser folder keys, not native
   absolute folder paths. The previous accepted hidden-folders row converts only
   keys that can be mapped through the explicit exported `pvu_last_dir_set` /
@@ -145,6 +151,7 @@ Meaning:
 | Existing native `sort_mode` | Preserve native sort mode | `ADOPT`: import does not clobber a native user choice. |
 | `pvu_view.sortBy=oldest` / `created-oldest` | warning-only, no native sort overwrite | `DEFER`: formally covered by Row 21; current native sort surface has no persisted ascending direction. |
 | `pvu_view.randomSeed` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 21; native has no accepted seeded-random persistence contract. |
+| `pvu_view.sidebarOpen` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 22; native has no accepted collapsible left-sidebar persistence contract. |
 | Malformed / unsupported `pvu_view.sortBy` | warning-only, no native sort overwrite | `ADOPT`: invalid sort values are skipped with recovery guidance. |
 | `pvu_view.hiddenFolders` browser folder keys with exported roots | `native_settings.hidden_folder_buckets` absolute native folder paths | `ADOPT`: imported on first native import when hidden-folder state is absent. |
 | Existing native `hidden_folder_buckets` | Preserve native hidden-folder state | `ADOPT`: import does not clobber a native user choice. |
@@ -195,6 +202,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.thumbSize` | `ADOPT` | Native has `thumbnail_size`; this row imports only the scalar size, clamped to native 64-192, without adopting broader display-mode work. |
 | `pvu_view.sortBy` | `ADOPT` | Native has `sort_mode`; import only browser values with matching native semantics (`newest`, `created-newest`, `name`, `random`) and preserve existing native choices. |
 | `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Formally covered by Row 21: native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
+| `pvu_view.sidebarOpen` | `DEFER` | Formally covered by Row 22: browser hides/renders the left sidebar, while native currently has no accepted persisted left-sidebar collapse contract. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | Formally covered by Row 18; these map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
@@ -308,13 +316,15 @@ does not add non-evidenced browser favorite levels, Row 16 does not add
 browser pinned preview tabs, Row 17 does not add browser recent-album state,
 Row 18 does not add display-details fields, Row 19 does not add browser
 enhancement settings, and Row 20 does not add browser localStorage favorites.
-Row 21 does not add browser ascending sort directions or random seed settings.
+Row 21 does not add browser ascending sort directions or random seed settings,
+and Row 22 does not add browser sidebar-open settings.
 `markerMirrorStored=true`, `perfMirrorStored=true`,
 `scrollMemoryMirrorStored=true`, `favLevelsMirrorStored=true`,
 `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
 `pinnedTabsMirrorStored=true`, `recentAlbumsMirrorStored=true`,
-`displayDetailsMirrorStored=true`, `enhanceSettingsMirrorStored=true`, and
-`pvuSortDirectionSeedDeferred=true` are the raw-mirror/defer evidence. The
+`displayDetailsMirrorStored=true`, `sidebarOpenMirrorStored=true`,
+`enhanceSettingsMirrorStored=true`, `pvuSortDirectionSeedDeferred=true`, and
+`pvuSidebarOpenDeferred=true` are the raw-mirror/defer evidence. The
 final `browserStateKeys=13` count is measured
 after the malformed follow-up import, where PR #141 keeps `pvu_perf_enabled`
 in the malformed recovery path while Row 14 keeps `pvu_scroll_memory`, Row 15
@@ -325,10 +335,46 @@ raw mirror only, and Row 20 keeps `pvu_favorites` /
 `pvu_favorites_backup` as native settings raw mirrors only. Row 21 keeps
 `randomSeed` only inside raw `browser_pvu_view` and does not create
 `sort_direction`, `sort_ascending`, `random_seed`, `randomSeed`, or
-`sort_seed` native settings.
+`sort_seed` native settings. Row 22 keeps `sidebarOpen` only inside raw
+`browser_pvu_view` and does not create `sidebar_open`, `sidebarOpen`,
+`sidebar_visible`, `left_sidebar_open`, or `left_panel_visible` native
+settings.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 22 Sidebar-Open Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row22-sidebar-open-da64` based on `origin/main`
+`adc2789bd8f6a20266b922684079c72af5f2c563` after PR #153:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuSidebarOpenDeferred=true`,
+  `sidebarOpenMirrorStored=true`, `pvuSortDirectionSeedDeferred=true`,
+  `pvuLocalStorageFavoritesDeferred=true`,
+  `pvuEnhanceSettingsDeferred=true`, `pvuDisplayDetailsDeferred=true`,
+  `migrationRecorded=true`, `browserMirrorStored=true`,
+  `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`, and
+  `malformedWarnings=10`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed and wrote the explicit browser-shaped fixture export.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `browserStateKeys=7`, `settings=30`, and `warnings=0`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeSeenPersisted=true`,
+  `importedStillSeen=true`, and `enhancementStateUnchanged=true`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `settingsImported=true`, `previewToggle=true`,
+  `previewSplitter=true`, `folderSortMode=true`, `enhancedOnlyFilter=true`,
+  and `enhancementStateUnchanged=true`.
+- `corepack pnpm typecheck` passed.
+- Guards passed: `git diff --name-only -- src`,
+  `git diff --name-only -- scripts`, and `git diff --name-only -- H000033`
+  were empty; the conflict-marker scan returned no matches; `git diff --check`
+  passed.
 
 ## Current Row 21 Sort Direction And Random Seed Verification
 
@@ -884,6 +930,9 @@ after PR #131:
 - `DEFER`: browser ascending sort directions and `randomSeed` as native
   migration targets. Row 21 keeps `randomSeed` only inside raw
   `browser_pvu_view` and does not create direction or seed settings.
+- `DEFER`: browser `pvu_view.sidebarOpen` as a native migration target.
+  Row 22 keeps `sidebarOpen` only inside raw `browser_pvu_view` because native
+  has no accepted left-sidebar collapse persistence contract.
 - `DEFER`: #102 folder range selection, remaining display/aspect behavior
   beyond raw Row18 mirroring, and other broad browser-only state to their
   existing post-v1 issue rows.

@@ -98,6 +98,10 @@ are deferred until the native sort surface has an accepted direction/seed
 contract. Explicit exports keep `randomSeed` only in the raw
 `browser_pvu_view` mirror.
 
+This Row22 continuation formally records browser `pvu_view.sidebarOpen`:
+native has no accepted persisted left-sidebar collapse contract, so explicit
+exports keep `sidebarOpen` only inside the raw `browser_pvu_view` mirror.
+
 ## Guardrails
 
 - No Linear.
@@ -326,6 +330,13 @@ Read in full before planning or editing:
     `random_seed`, `randomSeed`, or `sort_seed` settings;
   - these fields are not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser sidebar-open state in #117:
+  - browser `pvu_view.sidebarOpen` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `sidebar_open`, `sidebarOpen`, `sidebar_visible`,
+    `left_sidebar_open`, or `left_panel_visible` settings;
+  - this field is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -361,6 +372,7 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+`pvuSidebarOpenDeferred=true`, `sidebarOpenMirrorStored=true`,
 `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
 `pvuSortDirectionSeedDeferred=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
@@ -369,6 +381,31 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 22 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row22-sidebar-open-da64` based on `origin/main`
+`adc2789bd8f6a20266b922684079c72af5f2c563` after PR #153:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuSidebarOpenDeferred=true`, `sidebarOpenMirrorStored=true`,
+  `pvuSortDirectionSeedDeferred=true`, `migrationRecorded=true`,
+  `browserMirrorStored=true`, `browserStateKeys=13`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=10`.
+- `-PrepareFixture` passed and kept the explicit browser-shaped fixture export.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `browserStateKeys=7`, `settings=30`, and `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeSeenPersisted=true`, and `enhancementStateUnchanged=true`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `settingsImported=true`, `folderSortMode=true`, `previewToggle=true`,
+  `previewSplitter=true`, and `enhancementStateUnchanged=true`.
+- `corepack pnpm typecheck` passed.
+- Guards passed: no `src/**`, `scripts/**`, or H000033 diffs; conflict-marker
+  scan found no matches; `git diff --check` passed.
 
 ## Current Row 21 Verification
 
