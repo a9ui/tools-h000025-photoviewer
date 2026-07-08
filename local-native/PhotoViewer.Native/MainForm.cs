@@ -58,6 +58,7 @@ internal sealed class MainForm : Form
     private readonly NativeCacheScheduler _cacheScheduler = new();
     private readonly NativeFolderWatcher _folderWatcher = new();
     private Dictionary<string, int> _favorites;
+    private readonly Dictionary<string, string> _dateSectionHeadersByPath = new(StringComparer.OrdinalIgnoreCase);
     private List<NativeImageRecord> _allImages = [];
     private List<NativeImageRecord> _visibleImages = [];
     private string _currentFolder = "";
@@ -274,6 +275,49 @@ internal sealed class MainForm : Form
             catch (Exception ex)
             {
                 Console.Error.WriteLine($"native-date-filter-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
+    public static Task<int> RunDateSectionSmokeAsync(string? folder)
+    {
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var resolvedFolder = string.IsNullOrWhiteSpace(folder)
+            ? PrepareDateFilterSmokeFolder(projectRoot)
+            : Path.GetFullPath(folder);
+        if (!Directory.Exists(resolvedFolder))
+        {
+            Console.Error.WriteLine($"native-date-section-smoke error=folder-not-found folder=\"{Quote(resolvedFolder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunDateSectionSmokeScenarioAsync(resolvedFolder);
+                Console.WriteLine(FormatDateSectionSmokeReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-date-section-smoke error={Quote(ex.Message)}");
                 exitCode = 2;
             }
             finally
@@ -621,6 +665,7 @@ internal sealed class MainForm : Form
         _list.HideSelection = false;
         _list.VirtualMode = true;
         _list.MultiSelect = true;
+        _list.ShowGroups = false;
         _gridImages.ColorDepth = ColorDepth.Depth32Bit;
         _list.SmallImageList = _gridImages;
         _list.LargeImageList = _gridImages;
@@ -1167,6 +1212,91 @@ internal sealed class MainForm : Form
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
+    private async Task<NativeDateSectionSmokeReport> RunDateSectionSmokeScenarioAsync(string folder)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+
+        _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        SelectFavoriteFilter("all");
+        SelectDateFilter("all");
+        ApplyViewMode("details");
+        ApplySortMode("Created");
+
+        await ScanCurrentFolderAsync(forceFullRefresh: true);
+        Require(_allImages.Count >= 4, "date section smoke needs at least four fixture images");
+        Require(_visibleImages.Count == _allImages.Count, "date section smoke did not show all fixture images");
+
+        var totalImages = _allImages.Count;
+        var initialVisible = _visibleImages.Count;
+        var expectedGroupKeys = _visibleImages
+            .Select(FormatDateSectionKey)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var expectedGroupLabels = expectedGroupKeys
+            .Select(key => FormatDateSectionLabel(_visibleImages.First(image => string.Equals(FormatDateSectionKey(image), key, StringComparison.Ordinal)).CreatedAtUtc))
+            .ToList();
+        var expectedFirstHeader = FormatDateSectionLabel(_visibleImages[0].CreatedAtUtc);
+        var firstItem = CreateListItem(_visibleImages[0]);
+        var headerLabels = _dateSectionHeadersByPath.Values.ToList();
+        var firstHeader = _dateSectionHeadersByPath.TryGetValue(_visibleImages[0].AbsolutePath, out var firstHeaderValue)
+            ? firstHeaderValue
+            : "";
+        var showGroups = _dateSectionHeadersByPath.Count > 0;
+        var headerGroups = _dateSectionHeadersByPath.Count;
+        var firstItemGrouped = string.Equals(firstHeader, expectedFirstHeader, StringComparison.Ordinal) &&
+            firstItem.Text.Contains(expectedFirstHeader, StringComparison.Ordinal);
+        var createdSortOrder = _visibleImages.SequenceEqual(
+            _visibleImages
+                .OrderByDescending(static item => item.CreatedAtUtc)
+                .ThenBy(static item => item.AbsolutePath, StringComparer.OrdinalIgnoreCase));
+        var headersMatchDates = headerGroups == expectedGroupKeys.Count &&
+            expectedGroupLabels.All(label => headerLabels.Contains(label, StringComparer.Ordinal));
+
+        Require(showGroups, "date section headers are not enabled for Created list view");
+        Require(
+            headersMatchDates,
+            $"date section headers do not match visible image dates expected={string.Join(",", expectedGroupLabels)} actual={string.Join(",", headerLabels)} keys={string.Join(",", expectedGroupKeys)} headers={headerGroups} sort={_sortMode.SelectedItem}");
+        Require(firstItemGrouped, "first date section item does not show its header label");
+        Require(createdSortOrder, "date section smoke is not sorted by Created descending");
+
+        SelectDateFilter("today");
+        ApplyFilter();
+        var filteredGroups = _dateSectionHeadersByPath.Count;
+        var filteredGroupHeaders = _dateSectionHeadersByPath.Values.ToList();
+        var todaySingleGroup = _visibleImages.Count == 1 &&
+            filteredGroups == 1 &&
+            _visibleImages.All(image => filteredGroupHeaders.Contains(FormatDateSectionLabel(image.CreatedAtUtc), StringComparer.Ordinal));
+        Require(todaySingleGroup, "date section headers did not follow the Today filter");
+
+        SelectDateFilter("all");
+        ApplyFilter();
+        ApplyViewMode("grid");
+        var gridGroupsSuppressed = _dateSectionHeadersByPath.Count == 0;
+        Require(gridGroupsSuppressed, "date section headers should stay disabled in native grid view for this slice");
+        ApplyViewMode("details");
+        ApplyFilter();
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during date section smoke");
+
+        return new NativeDateSectionSmokeReport(
+            Folder: folder,
+            TotalImages: totalImages,
+            InitialVisible: initialVisible,
+            HeaderGroups: headerGroups,
+            FirstHeader: firstHeader,
+            ShowDateHeaders: showGroups,
+            FirstItemGrouped: firstItemGrouped,
+            CreatedSortOrder: createdSortOrder,
+            FilteredGroups: filteredGroups,
+            TodaySingleGroup: todaySingleGroup,
+            GridGroupsSuppressed: gridGroupsSuppressed,
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+    }
+
     private async Task<NativeFolderSetSmokeReport> RunFolderSetSmokeScenarioAsync(IReadOnlyList<string> roots, string searchQuery)
     {
         var beforeEnhancementState = EnhancementStateFingerprint();
@@ -1534,8 +1664,7 @@ internal sealed class MainForm : Form
                 query,
                 ShouldPrefilterFavoritesForIndexedSearch(),
                 limit: 100_000))))).ToList();
-            _list.VirtualListSize = _visibleImages.Count;
-            _list.Invalidate();
+            RefreshVisibleList();
             RestoreGalleryStateSelection(preferredSelectionPath);
             UpdateSelectionActions();
             SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images (indexed search).");
@@ -1555,11 +1684,17 @@ internal sealed class MainForm : Form
         }
 
         _visibleImages = ApplySort(ApplyFolderBucketFilter(source)).ToList();
-        _list.VirtualListSize = _visibleImages.Count;
-        _list.Invalidate();
+        RefreshVisibleList();
         RestoreGalleryStateSelection(preferredSelectionPath);
         UpdateSelectionActions();
         SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images.");
+    }
+
+    private void RefreshVisibleList()
+    {
+        RefreshDateSectionHeaders();
+        _list.VirtualListSize = _visibleImages.Count;
+        _list.Invalidate();
     }
 
     private bool ShouldPrefilterFavoritesForIndexedSearch()
@@ -1732,12 +1867,19 @@ internal sealed class MainForm : Form
         return int.TryParse(key, out var level) && level is >= 1 and <= 5;
     }
 
-    private static ListViewItem CreateListItem(NativeImageRecord image)
+    private ListViewItem CreateListItem(NativeImageRecord image)
     {
         var favorite = image.FavoriteLevel > 0 ? image.FavoriteLevel.ToString() : "";
         var seenPrefix = image.IsSeen ? "" : "NEW ";
         var favoritePrefix = favorite.Length > 0 ? $"★{favorite} " : "";
-        var item = new ListViewItem($"{seenPrefix}{favoritePrefix}{image.Filename}")
+        var dateSectionHeader = GetDateSectionHeader(image);
+        var filenameText = $"{seenPrefix}{favoritePrefix}{image.Filename}";
+        if (dateSectionHeader.Length > 0)
+        {
+            filenameText = $"{dateSectionHeader}  {filenameText}";
+        }
+
+        var item = new ListViewItem(filenameText)
         {
             ImageIndex = 0,
         };
@@ -1747,6 +1889,53 @@ internal sealed class MainForm : Form
         item.SubItems.Add(image.ModifiedAtUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm"));
         item.SubItems.Add(FormatBytes(image.SizeBytes));
         return item;
+    }
+
+    private void RefreshDateSectionHeaders()
+    {
+        _dateSectionHeadersByPath.Clear();
+
+        if (!ShouldShowDateSectionHeaders())
+        {
+            return;
+        }
+
+        var seenKeys = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var image in _visibleImages)
+        {
+            var key = FormatDateSectionKey(image);
+            if (!seenKeys.Add(key))
+            {
+                continue;
+            }
+
+            _dateSectionHeadersByPath[image.AbsolutePath] = FormatDateSectionLabel(image.CreatedAtUtc);
+        }
+    }
+
+    private bool ShouldShowDateSectionHeaders()
+    {
+        return _visibleImages.Count > 0 &&
+            _list.View == View.Details &&
+            string.Equals(_sortMode.SelectedItem?.ToString(), "Created", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private string GetDateSectionHeader(NativeImageRecord image)
+    {
+        return _dateSectionHeadersByPath.TryGetValue(image.AbsolutePath, out var header)
+            ? header
+            : "";
+    }
+
+    private static string FormatDateSectionKey(NativeImageRecord image)
+    {
+        return image.CreatedAtUtc.ToLocalTime().Date.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture);
+    }
+
+    private static string FormatDateSectionLabel(DateTime createdAtUtc)
+    {
+        var localDate = createdAtUtc.ToLocalTime().Date;
+        return $"{localDate.Month}\u6708{localDate.Day}\u65e5";
     }
 
     private async Task LoadSelectedPreviewAsync()
@@ -2257,6 +2446,8 @@ internal sealed class MainForm : Form
         }
 
         _store.SaveSetting("view_mode", grid ? "grid" : "details");
+        RefreshDateSectionHeaders();
+        _list.Invalidate();
     }
 
     private void SaveViewState()
@@ -2891,6 +3082,30 @@ internal sealed class MainForm : Form
         });
     }
 
+    private static string FormatDateSectionSmokeReport(NativeDateSectionSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-date-section-smoke complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"totalImages={report.TotalImages}",
+            $"initialVisible={report.InitialVisible}",
+            $"headerGroups={report.HeaderGroups}",
+            $"firstHeader=\"{Quote(report.FirstHeader)}\"",
+            $"showDateHeaders={BoolText(report.ShowDateHeaders)}",
+            $"firstItemGrouped={BoolText(report.FirstItemGrouped)}",
+            $"createdSortOrder={BoolText(report.CreatedSortOrder)}",
+            $"filteredGroups={report.FilteredGroups}",
+            $"todaySingleGroup={BoolText(report.TodaySingleGroup)}",
+            $"gridGroupsSuppressed={BoolText(report.GridGroupsSuppressed)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
     private static string BoolText(bool value)
     {
         return value.ToString().ToLowerInvariant();
@@ -3474,5 +3689,19 @@ internal sealed class MainForm : Form
         bool ThisYearFilter,
         bool ClearFilter,
         bool DateFilterPersisted,
+        bool EnhancementStateUnchanged);
+
+    private sealed record NativeDateSectionSmokeReport(
+        string Folder,
+        int TotalImages,
+        int InitialVisible,
+        int HeaderGroups,
+        string FirstHeader,
+        bool ShowDateHeaders,
+        bool FirstItemGrouped,
+        bool CreatedSortOrder,
+        int FilteredGroups,
+        bool TodaySingleGroup,
+        bool GridGroupsSuppressed,
         bool EnhancementStateUnchanged);
 }
