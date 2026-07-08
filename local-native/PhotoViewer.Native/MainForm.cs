@@ -15,6 +15,7 @@ internal sealed class MainForm : Form
     private readonly TextBox _searchText = new();
     private readonly Button _clearSearchButton = new();
     private readonly CheckBox _favoritesOnly = new();
+    private readonly CheckBox _enhancedOnly = new();
     private readonly ComboBox _favoriteFilter = new();
     private readonly ComboBox _dateFilter = new();
     private readonly DateTimePicker _dateFromPicker = new();
@@ -103,6 +104,7 @@ internal sealed class MainForm : Form
 
         _searchText.Text = _store.GetSetting("search_text", "");
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
+        _enhancedOnly.Checked = _store.GetSetting("enhanced_only_filter", "0") == "1";
         RefreshFavoriteFilterOptions(_store.GetSetting("favorite_filter", "all"));
         var storedDateFilter = _store.GetSetting("date_filter", "all");
         RefreshDateFilterOptions(storedDateFilter);
@@ -338,6 +340,49 @@ internal sealed class MainForm : Form
         return Task.FromResult(exitCode);
     }
 
+    public static Task<int> RunEnhancedFilterSmokeAsync(string? folder)
+    {
+        var projectRoot = NativeStateBridge.ResolveProjectRoot();
+        var resolvedFolder = string.IsNullOrWhiteSpace(folder)
+            ? Path.Combine(projectRoot, ".cache", "native-fixture")
+            : Path.GetFullPath(folder);
+        if (!Directory.Exists(resolvedFolder))
+        {
+            Console.Error.WriteLine($"native-enhanced-filter-smoke error=folder-not-found folder=\"{Quote(resolvedFolder)}\"");
+            return Task.FromResult(2);
+        }
+
+        var exitCode = 2;
+        using var form = new MainForm(resolvedFolder)
+        {
+            StartPosition = FormStartPosition.Manual,
+            Location = new Point(24, 24),
+            ShowInTaskbar = false,
+        };
+
+        form.Shown += async (_, _) =>
+        {
+            try
+            {
+                var report = await form.RunEnhancedFilterSmokeScenarioAsync(resolvedFolder);
+                Console.WriteLine(FormatEnhancedFilterSmokeReport(report));
+                exitCode = 0;
+            }
+            catch (Exception ex)
+            {
+                Console.Error.WriteLine($"native-enhanced-filter-smoke error={Quote(ex.Message)}");
+                exitCode = 2;
+            }
+            finally
+            {
+                form.Close();
+            }
+        };
+
+        Application.Run(form);
+        return Task.FromResult(exitCode);
+    }
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -379,7 +424,7 @@ internal sealed class MainForm : Form
         var toolbar = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 11,
+            ColumnCount = 12,
             Padding = new Padding(8, 6, 8, 4),
         };
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -391,6 +436,7 @@ internal sealed class MainForm : Form
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 58));
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 84));
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 146));
+        toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 96));
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 8));
         toolbar.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 220));
 
@@ -434,6 +480,14 @@ internal sealed class MainForm : Form
             SaveViewState();
         };
 
+        _enhancedOnly.Text = "Enhanced";
+        _enhancedOnly.Dock = DockStyle.Fill;
+        _enhancedOnly.CheckedChanged += (_, _) =>
+        {
+            ApplyFilter();
+            SaveViewState();
+        };
+
         _favoriteFilter.DropDownStyle = ComboBoxStyle.DropDownList;
         _favoriteFilter.Dock = DockStyle.Fill;
         _favoriteFilter.SelectedIndexChanged += (_, _) =>
@@ -460,7 +514,8 @@ internal sealed class MainForm : Form
         toolbar.Controls.Add(_clearSearchButton, 6, 0);
         toolbar.Controls.Add(_favoritesOnly, 7, 0);
         toolbar.Controls.Add(_favoriteFilter, 8, 0);
-        toolbar.Controls.Add(_stateLabel, 10, 0);
+        toolbar.Controls.Add(_enhancedOnly, 9, 0);
+        toolbar.Controls.Add(_stateLabel, 11, 0);
 
         var actions = new FlowLayoutPanel
         {
@@ -869,6 +924,7 @@ internal sealed class MainForm : Form
         _store.SaveSetting("hidden_folder_buckets", "");
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
+        _enhancedOnly.Checked = false;
         SelectFavoriteFilter("all");
         ApplyManualDateRange(null, null);
         ImportState();
@@ -1044,6 +1100,14 @@ internal sealed class MainForm : Form
             .Any(item => string.Equals(item.Key, smokeFavoriteLevel.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.OrdinalIgnoreCase) && item.Label.Contains("(1)", StringComparison.Ordinal));
         Require(favoriteFilterCounts, "favorite filter count label failed");
         SelectFavoriteFilter("all");
+        _enhancedOnly.Checked = true;
+        ApplyFilter();
+        var enhancedSources = NativeEnhancementState.LoadSucceededSourceIds(_projectRoot);
+        var enhancedOnlyFilter = _visibleImages.Count > 0
+            && _visibleImages.Count < initialVisible
+            && _visibleImages.All(image => enhancedSources.Contains(image.AbsolutePath));
+        Require(enhancedOnlyFilter, "enhanced-only filter failed");
+        _enhancedOnly.Checked = false;
         _searchText.Text = "__native_ui_no_results__";
         ApplyFilter();
         var noResultsState = _visibleImages.Count == 0 && _statusLabel.Text.Contains("Showing 0", StringComparison.OrdinalIgnoreCase);
@@ -1057,6 +1121,7 @@ internal sealed class MainForm : Form
         _folderText.Text = folder;
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
+        _enhancedOnly.Checked = false;
         ApplyFilter();
 
         var afterEnhancementState = EnhancementStateFingerprint();
@@ -1085,6 +1150,7 @@ internal sealed class MainForm : Form
             FavoriteFilterCounts: favoriteFilterCounts,
             FavoriteLevelFilter: favoriteLevelFilter,
             UnratedFilter: unratedFilter,
+            EnhancedOnlyFilter: enhancedOnlyFilter,
             ClearSearch: clearSearch,
             FolderShowSelected: folderShowSelected,
             FolderHideSelected: folderHideSelected,
@@ -1106,6 +1172,80 @@ internal sealed class MainForm : Form
             AlbumImages: albumImages,
             BrowserStateKeys: browserStateKeys,
             SettingsImported: settingsImported,
+            EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
+    }
+
+    private async Task<NativeEnhancedFilterSmokeReport> RunEnhancedFilterSmokeScenarioAsync(string folder)
+    {
+        var beforeEnhancementState = EnhancementStateFingerprint();
+
+        _folderText.Text = folder;
+        _store.SaveSetting("hidden_folder_buckets", "");
+        _searchText.Text = "";
+        _favoritesOnly.Checked = false;
+        _enhancedOnly.Checked = false;
+        SelectFavoriteFilter("all");
+        ApplyManualDateRange(null, null);
+        ImportState();
+
+        await ScanCurrentFolderAsync();
+        Require(_allImages.Count > 0, "scan produced no images");
+        Require(_visibleImages.Count > 0, "scan produced no visible images");
+        var totalImages = _allImages.Count;
+        var initialVisible = _visibleImages.Count;
+        var enhancedSources = NativeEnhancementState.LoadSucceededSourceIds(_projectRoot);
+        Require(enhancedSources.Count > 0, "fixture has no succeeded enhancement source ids");
+
+        _enhancedOnly.Checked = true;
+        ApplyFilter();
+        var enhancedMatches = _visibleImages.Count;
+        var enhancedOnlyFilter = enhancedMatches > 0
+            && enhancedMatches < initialVisible
+            && _visibleImages.All(image => enhancedSources.Contains(image.AbsolutePath));
+        Require(enhancedOnlyFilter, "enhanced-only filter did not restrict visible images to succeeded jobs");
+
+        _searchText.Text = "fixture";
+        ApplyFilter();
+        var enhancedSearchMatches = _visibleImages.Count;
+        var enhancedSearchFilter = enhancedSearchMatches == enhancedMatches
+            && _visibleImages.All(image => enhancedSources.Contains(image.AbsolutePath));
+        Require(enhancedSearchFilter, "enhanced-only filter did not compose with search");
+
+        _favoritesOnly.Checked = true;
+        ApplyFilter();
+        var enhancedFavoriteMatches = _visibleImages.Count;
+        var enhancedFavoriteFilter = enhancedFavoriteMatches > 0
+            && _visibleImages.All(image => image.FavoriteLevel > 0 && enhancedSources.Contains(image.AbsolutePath));
+        Require(enhancedFavoriteFilter, "enhanced-only filter did not compose with favorites");
+
+        _favoritesOnly.Checked = false;
+        _searchText.Text = "";
+        _enhancedOnly.Checked = false;
+        ApplyFilter();
+        var clearMatches = _visibleImages.Count;
+        var clearFilter = clearMatches == initialVisible;
+        Require(clearFilter, "clearing enhanced-only did not restore visible images");
+
+        var enhancedFilterPersisted = string.Equals(_store.GetSetting("enhanced_only_filter", ""), "0", StringComparison.OrdinalIgnoreCase);
+        Require(enhancedFilterPersisted, "enhanced-only filter setting did not persist cleared state");
+
+        var afterEnhancementState = EnhancementStateFingerprint();
+        Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during enhanced-only filter smoke");
+
+        return new NativeEnhancedFilterSmokeReport(
+            Folder: folder,
+            TotalImages: totalImages,
+            InitialVisible: initialVisible,
+            EnhancedSources: enhancedSources.Count,
+            EnhancedMatches: enhancedMatches,
+            EnhancedSearchMatches: enhancedSearchMatches,
+            EnhancedFavoriteMatches: enhancedFavoriteMatches,
+            ClearMatches: clearMatches,
+            EnhancedOnlyFilter: enhancedOnlyFilter,
+            EnhancedSearchFilter: enhancedSearchFilter,
+            EnhancedFavoriteFilter: enhancedFavoriteFilter,
+            ClearFilter: clearFilter,
+            EnhancedFilterPersisted: enhancedFilterPersisted,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
@@ -1797,11 +1937,11 @@ internal sealed class MainForm : Form
         var query = _searchText.Text.Trim();
         if (_currentRoots.Count > 0 && _currentRoots.All(Directory.Exists) && _allImages.Count > 0)
         {
-            _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyDateFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
+            _visibleImages = ApplySort(ApplyFolderBucketFilter(ApplyEnhancedFilter(ApplyDateFilter(ApplyFavoriteFilter(_store.SearchImagesIndexed(
                 _currentRoots,
                 query,
                 ShouldPrefilterFavoritesForIndexedSearch(),
-                limit: 100_000))))).ToList();
+                limit: 100_000)))))).ToList();
             RefreshVisibleList();
             RestoreGalleryStateSelection(preferredSelectionPath);
             UpdateSelectionActions();
@@ -1812,6 +1952,7 @@ internal sealed class MainForm : Form
         IEnumerable<NativeImageRecord> source = _allImages;
         source = ApplyFavoriteFilter(source);
         source = ApplyDateFilter(source);
+        source = ApplyEnhancedFilter(source);
 
         if (query.Length > 0)
         {
@@ -1868,6 +2009,17 @@ internal sealed class MainForm : Form
         }
 
         return images.Where(image => IsImageWithinDateRange(image, from, to));
+    }
+
+    private IEnumerable<NativeImageRecord> ApplyEnhancedFilter(IEnumerable<NativeImageRecord> images)
+    {
+        if (!_enhancedOnly.Checked)
+        {
+            return images;
+        }
+
+        var enhancedSources = NativeEnhancementState.LoadSucceededSourceIds(_projectRoot);
+        return images.Where(image => enhancedSources.Contains(image.AbsolutePath));
     }
 
     private static bool IsImageWithinDateFilter(NativeImageRecord image, string key, DateTime today)
@@ -2744,6 +2896,7 @@ internal sealed class MainForm : Form
             _searchText.Text.Trim(),
             _favoritesOnly.Checked,
             CurrentFavoriteFilterKey(),
+            _enhancedOnly.Checked,
             CurrentDateFilterKey(),
             FormatDateInput(dateFrom),
             FormatDateInput(dateTo));
@@ -3275,6 +3428,7 @@ internal sealed class MainForm : Form
             $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
             $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
             $"unratedFilter={BoolText(report.UnratedFilter)}",
+            $"enhancedOnlyFilter={BoolText(report.EnhancedOnlyFilter)}",
             $"clearSearch={BoolText(report.ClearSearch)}",
             $"detailModal={BoolText(report.DetailModal)}",
             $"detailNavigation={BoolText(report.DetailNavigation)}",
@@ -3412,6 +3566,32 @@ internal sealed class MainForm : Form
             $"manualRangeListHeaders={BoolText(report.ManualRangeListHeaders)}",
             $"manualRangeGridHeaderGroups={report.ManualRangeGridHeaderGroups}",
             $"manualRangeGridHeaders={BoolText(report.ManualRangeGridHeaders)}",
+            $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
+            "browserRuntime=false",
+            "localHttpServer=false",
+            "nodeRuntime=false",
+        });
+    }
+
+    private static string FormatEnhancedFilterSmokeReport(NativeEnhancedFilterSmokeReport report)
+    {
+        return string.Join(" ", new[]
+        {
+            "native-enhanced-filter-smoke complete",
+            "runtime=winforms",
+            $"folder=\"{Quote(report.Folder)}\"",
+            $"totalImages={report.TotalImages}",
+            $"initialVisible={report.InitialVisible}",
+            $"enhancedSources={report.EnhancedSources}",
+            $"enhancedMatches={report.EnhancedMatches}",
+            $"enhancedSearchMatches={report.EnhancedSearchMatches}",
+            $"enhancedFavoriteMatches={report.EnhancedFavoriteMatches}",
+            $"clearMatches={report.ClearMatches}",
+            $"enhancedOnlyFilter={BoolText(report.EnhancedOnlyFilter)}",
+            $"enhancedSearchFilter={BoolText(report.EnhancedSearchFilter)}",
+            $"enhancedFavoriteFilter={BoolText(report.EnhancedFavoriteFilter)}",
+            $"clearFilter={BoolText(report.ClearFilter)}",
+            $"enhancedFilterPersisted={BoolText(report.EnhancedFilterPersisted)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -3933,6 +4113,7 @@ internal sealed class MainForm : Form
         bool FavoriteFilterCounts,
         bool FavoriteLevelFilter,
         bool UnratedFilter,
+        bool EnhancedOnlyFilter,
         bool ClearSearch,
         bool FolderShowSelected,
         bool FolderHideSelected,
@@ -4013,6 +4194,22 @@ internal sealed class MainForm : Form
         bool ManualRangePersisted,
         bool ClearFilter,
         bool DateFilterPersisted,
+        bool EnhancementStateUnchanged);
+
+    private sealed record NativeEnhancedFilterSmokeReport(
+        string Folder,
+        int TotalImages,
+        int InitialVisible,
+        int EnhancedSources,
+        int EnhancedMatches,
+        int EnhancedSearchMatches,
+        int EnhancedFavoriteMatches,
+        int ClearMatches,
+        bool EnhancedOnlyFilter,
+        bool EnhancedSearchFilter,
+        bool EnhancedFavoriteFilter,
+        bool ClearFilter,
+        bool EnhancedFilterPersisted,
         bool EnhancementStateUnchanged);
 
     private sealed record NativeDateSectionSmokeReport(

@@ -11,6 +11,7 @@ param(
   [switch]$HeadlessLargeScrollSmoke,
   [switch]$HeadlessDateFilterSmoke,
   [switch]$HeadlessDateSectionSmoke,
+  [switch]$HeadlessEnhancedFilterSmoke,
   [switch]$HeadlessSeenSmoke,
   [switch]$PrepareFixture,
   [string]$Search = "",
@@ -143,6 +144,12 @@ if ($PrepareFixture) {
 } elseif ($HeadlessDateSectionSmoke) {
   $arguments += "--"
   $arguments += "--headless-date-section-smoke"
+  if ($Folder.Trim().Length -gt 0) {
+    $arguments += $Folder
+  }
+} elseif ($HeadlessEnhancedFilterSmoke) {
+  $arguments += "--"
+  $arguments += "--headless-enhanced-filter-smoke"
   if ($Folder.Trim().Length -gt 0) {
     $arguments += $Folder
   }

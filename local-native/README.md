@@ -387,3 +387,31 @@ browser-mapped UI semantics. Enhanced-only filtering, drag/open parity,
 placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
 destructive actions, explicit enhancement UI, and screenshot polish also remain
 deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M19 Notes
+
+M19 maps the browser enhanced-only filter into native only where the existing
+browser behavior has a clean local source: succeeded enhancement jobs with
+non-empty output paths in `.cache/enhance/jobs.json`. Native now shows an
+`Enhanced` checkbox in the toolbar, reads that job file read-only, filters by
+`sourceId` / `sourcePath`, and persists `enhanced_only_filter` in native
+SQLite settings.
+
+M19 does not add broad explicit enhancement UI. It does not enqueue jobs,
+start workers, call browser enhancement APIs, manage outputs, or modify the
+browser app. Fixture preparation writes a minimal succeeded enhancement job
+only when no `.cache/enhance/jobs.json` exists.
+
+The enhanced-filter smoke verifies accepted behavior and passive isolation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessEnhancedFilterSmoke -Folder .\.cache\native-fixture
+```
+
+This remains a parity slice, not full native parity. Folder range selection
+stays deferred pending a replacement/custom folder bucket control and
+browser-mapped UI semantics. Explicit enhancement queue/settings/cancel/retry/
+open/delete output/source UI, original/enhanced preview toggles, drag/open
+parity, placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
+destructive actions, full browser API/error parity, and screenshot polish also
+remain deferred in `tasks/local-native-m5/browser-regression-matrix.md`.

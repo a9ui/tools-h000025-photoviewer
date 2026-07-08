@@ -29,6 +29,7 @@ internal static class NativeFixtureBuilder
         Directory.CreateDirectory(nativeRoot);
         Directory.CreateDirectory(Path.Combine(cacheRoot, "thumbs"));
         Directory.CreateDirectory(Path.Combine(cacheRoot, "display"));
+        Directory.CreateDirectory(Path.Combine(cacheRoot, "enhance"));
 
         var images = WriteFixtureImages(fixtureRoot);
         var extraImages = WriteFolderSetFixtureImages(fixtureExtraRoot);
@@ -100,6 +101,7 @@ internal static class NativeFixtureBuilder
             skipped);
 
         WriteFixtureCache(projectRoot, images);
+        WriteEnhancementFixture(cacheRoot, images[0], created, skipped);
 
         Console.WriteLine(
             $"native-fixture complete folder=\"{fixtureRoot}\" images={images.Count} extraFolder=\"{fixtureExtraRoot}\" extraImages={extraImages.Count} largeScrollFolder=\"{largeScrollRoot}\" largeScrollImages={largeScrollImages.Count} createdState={FormatList(created)} skippedExistingState={FormatList(skipped)} thumbCompatible=1 thumbMissing=2 thumbIncompatible=1 displayCompatible=1 displayMissing=3 displayIncompatible=0");
@@ -197,6 +199,74 @@ internal static class NativeFixtureBuilder
         WriteInvalidWebp(NativeCacheCompatibility.GetThumbnailCachePath(projectRoot, imagePaths[2]));
     }
 
+    private static void WriteEnhancementFixture(
+        string cacheRoot,
+        string sourcePath,
+        ICollection<string> created,
+        ICollection<string> skipped)
+    {
+        var enhanceRoot = Path.Combine(cacheRoot, "enhance");
+        var jobsPath = Path.Combine(enhanceRoot, "jobs.json");
+        if (File.Exists(jobsPath))
+        {
+            skipped.Add(Path.GetRelativePath(NativeStateBridge.ResolveProjectRoot(), jobsPath));
+            return;
+        }
+
+        var outputPath = Path.Combine(enhanceRoot, "outputs", "native-fixture", "m2-fixture-1__enhanced.webp");
+        WriteMinimalWebpIfMissing(outputPath, created, skipped);
+
+        var sourceInfo = new FileInfo(sourcePath);
+        var sourceMtimeMs = new DateTimeOffset(sourceInfo.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+        WriteJsonIfMissing(
+            jobsPath,
+            new
+            {
+                version = 1,
+                jobs = new object[]
+                {
+                    new
+                    {
+                        id = "native-fixture-enhanced-1",
+                        sourceId = sourcePath,
+                        sourcePath,
+                        sourceSignature = new
+                        {
+                            size = sourceInfo.Length,
+                            mtimeMs = sourceMtimeMs,
+                        },
+                        presetId = "anime-sharp-x2",
+                        presetHash = "native-fixture",
+                        preset = new
+                        {
+                            id = "anime-sharp-x2",
+                            label = "Native fixture enhanced output",
+                            modelFamily = "anime",
+                            modelName = "Native fixture",
+                            scale = 2,
+                            outputFormat = "webp",
+                            denoise = 0,
+                            sharpen = 0,
+                            detail = 0,
+                            smoothness = 0,
+                            colorBrightness = 0,
+                            colorContrast = 0,
+                            colorSaturation = 0,
+                        },
+                        adapterId = "sharp-test",
+                        status = "succeeded",
+                        progress = 100,
+                        outputPath,
+                        createdAt = FixtureTimestampUtc.ToString("O"),
+                        updatedAt = FixtureTimestampUtc.ToString("O"),
+                        finishedAt = FixtureTimestampUtc.ToString("O"),
+                    },
+                },
+            },
+            created,
+            skipped);
+    }
+
     private static void WriteJsonIfMissing(
         string path,
         object value,
@@ -226,6 +296,23 @@ internal static class NativeFixtureBuilder
         Encoding.ASCII.GetBytes("VP8X").CopyTo(bytes, 12);
         File.WriteAllBytes(path, bytes);
         TrySetStableTimes(path);
+    }
+
+    private static void WriteMinimalWebpIfMissing(
+        string path,
+        ICollection<string> created,
+        ICollection<string> skipped)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        var relativeName = Path.GetRelativePath(NativeStateBridge.ResolveProjectRoot(), path);
+        if (File.Exists(path))
+        {
+            skipped.Add(relativeName);
+            return;
+        }
+
+        WriteMinimalWebp(path);
+        created.Add(relativeName);
     }
 
     private static void WriteInvalidWebp(string path)

@@ -654,6 +654,56 @@ requirement.
 M18 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
+## M19 Native Enhanced-Only Filter Slice
+
+M19 advances only the browser-mapped enhanced-only filter row that can be
+proven from existing succeeded enhancement job state. It does not add browser
+helpers, a webview, a local server, enhancement queue UI, output management, or
+automatic workers.
+
+Browser evidence maps from:
+
+- `src/components/Sidebar.tsx`: `Enhanced only` checkbox;
+- `src/store/ImageContext.tsx`: `pvu_enhanced_only` persistence and
+  enhancement-state refresh through `GET /api/enhance/jobs`;
+- `src/components/ImageGrid.tsx`: client-side filtering by
+  `enhancedSourceIds`;
+- `src/app/api/enhance/jobs/route.ts`: job creation is a `POST` action and is
+  not used by the native M19 filter.
+
+M19 enhanced-filter smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessEnhancedFilterSmoke -Folder .\.cache\native-fixture
+```
+
+M19 enhanced-filter smoke result additions:
+
+- enhancedSources: 1
+- enhancedMatches: 1
+- enhancedSearchMatches: 1
+- enhancedFavoriteMatches: 1
+- clearMatches: 4
+- enhancedOnlyFilter: true
+- enhancedSearchFilter: true
+- enhancedFavoriteFilter: true
+- clearFilter: true
+- enhancedFilterPersisted: true
+- enhancementStateUnchanged: true
+
+| Area | M19 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sidebar quick search and filters | DEFERRED | Native `Enhanced` checkbox now maps browser enhanced-only behavior onto succeeded enhancement jobs with output paths. `-HeadlessEnhancedFilterSmoke` verifies enhanced-only filtering, search composition, favorites composition, clear behavior, and `enhanced_only_filter` persistence. | Richer count labels beyond favorite/date/enhanced state. | `cursor_impl` / `codex_pm` | Native UI/headless smoke or explicit product decision for remaining sidebar/count rows. |
+| Persistence keys | DEFERRED | Native SQLite now persists `enhanced_only_filter`; smoke verifies cleared-state persistence. | Full parity for pinned previews, browser-only enhancement settings, server legacy marker, and other `pvu_*` export details. | `codex_pm` | Expanded explicit `pvu_*` export fixture and native settings migration acceptance notes. |
+| Enhancement isolation | DEFERRED | Native reads `.cache/enhance/jobs.json` read-only and filters only existing `status=succeeded` jobs with non-empty `outputPath`; enhanced-filter and UI smokes verify the job-state fingerprint is unchanged. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source UI and original/enhanced preview toggle. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Browser APIs and errors | DEFERRED | No new browser API equivalents in M19; the enhanced-only filter is native UI/filter state only and does not call enhancement API routes. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors and malformed enhancement state handling. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
+| Native responsive/layout parity | DEFERRED | M19 adds one compact checkbox to the existing native toolbar and does not change the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
+Rows not listed above keep their latest recorded status, owner, and evidence
+requirement.
+M19 does not reclassify folder range selection; it remains `DEFERRED` pending a
+replacement/custom folder bucket control and browser-mapped UI semantics.
+
 ## Minimum M6 Verification
 
 M6 must run and record:
