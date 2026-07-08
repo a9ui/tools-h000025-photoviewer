@@ -103,6 +103,11 @@ raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred as
 a native migration target because the current native local surface has no
 accepted left-sidebar collapse persistence target.
 
+This Row23 continuation formally records browser `pvu_view.modalEdgeRatio`: it
+is raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred
+as a native migration target because the current native local surface has no
+accepted modal edge-zone persistence target.
+
 ## Guardrails
 
 - No Linear.
@@ -338,6 +343,14 @@ Read in full before planning or editing:
     `left_sidebar_open`, or `left_panel_visible` settings;
   - this field is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser modal edge-ratio state in #117:
+  - browser `pvu_view.modalEdgeRatio` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `modal_edge_ratio`, `modalEdgeRatio`,
+    `detail_modal_edge_ratio`, `modal_edge_zone_ratio`, or
+    `modal_click_edge_ratio` settings;
+  - this field is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -376,12 +389,51 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
 `pvuSortDirectionSeedDeferred=true`,
 `pvuSidebarOpenDeferred=true`,
+`pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 23 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row23-modal-edge-ratio` based on the Row22 merge commit
+`7b7863b7f64de33d8d9daec45fd7e9da3679aac1`:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
+  `pvuSidebarOpenDeferred=true`, `pvuSortDirectionSeedDeferred=true`,
+  `browserMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `settingsImported=true`, `browserStateKeys=7`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g "!node_modules/**" -g "!.next/**" -g "!.cache/**"`
+  returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 22 Verification
 
@@ -568,7 +620,7 @@ Recorded on 2026-07-09 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #262 and create/update the next row if more #117 native
+2. Update SQLite job #264 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
