@@ -443,3 +443,13 @@ line remain out of scope.
 See `docs/local-native/m20-verification.md` and
 `tasks/local-native-m20/task.md` for the v1 closeout gate, Japanese M1-M19
 inventory, and remaining-row classification.
+
+## Post-v1 #116 Notes
+
+#116 records the native browser API/error parity matrix after v1. It does not
+make the native app an HTTP API clone of the browser app. The accepted target is
+native UI/headless error equivalence, with broader implementation split into
+post-v1 issues #97-#118.
+
+See `docs/local-native/api-error-parity-matrix.md` and
+`tasks/local-native-post-v1-api-error-parity/task.md`.
