@@ -70,6 +70,7 @@ internal sealed class MainForm : Form
     private readonly Label _previewLabel = new();
     private readonly TabControl _previewTabs = new();
     private readonly Button _pinPreviewTabButton = new();
+    private readonly Button _restorePreviewTabButton = new();
     private readonly Button _closePreviewTabButton = new();
     private readonly ImageList _gridImages = new();
     private SplitContainer? _mainSplit;
@@ -99,9 +100,11 @@ internal sealed class MainForm : Form
     private bool _updatingAspectMode;
     private bool _updatingSearchSuggestions;
     private bool _updatingPreviewTabs;
+    private readonly List<PreviewTabState> _closedPreviewTabs = [];
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
+    private const int ClosedPreviewTabLimit = 20;
 
     public MainForm(string? initialFolder)
     {
@@ -1132,12 +1135,13 @@ internal sealed class MainForm : Form
         var previewTabActions = new TableLayoutPanel
         {
             Dock = DockStyle.Fill,
-            ColumnCount = 3,
+            ColumnCount = 4,
             RowCount = 1,
             Padding = new Padding(4, 2, 4, 2),
         };
         previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 64));
+        previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 78));
         previewTabActions.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 72));
 
         _previewTabs.Dock = DockStyle.Fill;
@@ -1149,6 +1153,11 @@ internal sealed class MainForm : Form
         ApplyTextFitSize(_pinPreviewTabButton, 54, 26);
         _pinPreviewTabButton.Click += (_, _) => ToggleActivePreviewTabPin();
 
+        _restorePreviewTabButton.Text = "Restore";
+        _restorePreviewTabButton.Dock = DockStyle.Fill;
+        ApplyTextFitSize(_restorePreviewTabButton, 70, 26);
+        _restorePreviewTabButton.Click += async (_, _) => await RestoreLastClosedPreviewTabAsync();
+
         _closePreviewTabButton.Text = "Close";
         _closePreviewTabButton.Dock = DockStyle.Fill;
         ApplyTextFitSize(_closePreviewTabButton, 64, 26);
@@ -1156,7 +1165,8 @@ internal sealed class MainForm : Form
 
         previewTabActions.Controls.Add(_previewTabs, 0, 0);
         previewTabActions.Controls.Add(_pinPreviewTabButton, 1, 0);
-        previewTabActions.Controls.Add(_closePreviewTabButton, 2, 0);
+        previewTabActions.Controls.Add(_restorePreviewTabButton, 2, 0);
+        previewTabActions.Controls.Add(_closePreviewTabButton, 3, 0);
 
         previewPanel.Controls.Add(_preview, 0, 0);
         previewPanel.Controls.Add(previewTabActions, 0, 1);
@@ -1432,6 +1442,14 @@ internal sealed class MainForm : Form
             activeAfterClose?.IsPinned == true &&
             string.Equals(activeAfterClose.Path, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         Require(previewTabClose, "preview tab close failed");
+        var previewTabRestoreAction = await RestoreLastClosedPreviewTabAsync();
+        await LoadSelectedPreviewAsync();
+        var activeAfterRestore = ActivePreviewTabState();
+        var previewTabRestore = previewTabRestoreAction &&
+            _previewTabs.TabPages.Count >= 2 &&
+            activeAfterRestore?.IsPinned == false &&
+            string.Equals(activeAfterRestore.Path, secondPreviewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Require(previewTabRestore, "preview tab restore failed");
         var metadataTarget = _visibleImages.FirstOrDefault(static image =>
             image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
             image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
@@ -1640,6 +1658,7 @@ internal sealed class MainForm : Form
             PreviewTabs: previewTabs,
             PreviewTabPin: previewTabPin,
             PreviewTabClose: previewTabClose,
+            PreviewTabRestore: previewTabRestore,
             NavigationButtons: navigationButtons,
             KeyboardNavigation: keyboardNavigation,
             KeyboardFavorite: keyboardFavorite,
@@ -3132,6 +3151,7 @@ internal sealed class MainForm : Form
         _updatingPreviewTabs = true;
         try
         {
+            RememberClosedPreviewTab(state);
             _previewTabs.TabPages.Remove(page);
             page.Dispose();
             if (_previewTabs.TabPages.Count > 0)
@@ -3156,6 +3176,70 @@ internal sealed class MainForm : Form
 
         SetStatus($"Closed preview tab: {state.Filename}");
         return true;
+    }
+
+    private async Task<bool> RestoreLastClosedPreviewTabAsync()
+    {
+        while (_closedPreviewTabs.Count > 0)
+        {
+            var lastIndex = _closedPreviewTabs.Count - 1;
+            var state = _closedPreviewTabs[lastIndex];
+            _closedPreviewTabs.RemoveAt(lastIndex);
+
+            var page = FindPreviewTabPage(state.Path);
+            if (page is null && !IsVisibleImagePath(state.Path))
+            {
+                SetStatus($"Closed preview tab outside current filter: {state.Filename}");
+                UpdatePreviewTabActions();
+                return false;
+            }
+
+            _updatingPreviewTabs = true;
+            try
+            {
+                if (page is null)
+                {
+                    page = new TabPage(FormatPreviewTabText(state))
+                    {
+                        Tag = state,
+                        ToolTipText = state.Path,
+                    };
+                    _previewTabs.TabPages.Add(page);
+                }
+                else
+                {
+                    page.Tag = state;
+                    page.Text = FormatPreviewTabText(state);
+                    page.ToolTipText = state.Path;
+                }
+
+                _previewTabs.SelectedTab = page;
+            }
+            finally
+            {
+                _updatingPreviewTabs = false;
+            }
+
+            UpdatePreviewTabActions();
+            SelectImage(state.Path);
+            await LoadSelectedPreviewAsync();
+            SetStatus($"Restored preview tab: {state.Filename}");
+            return true;
+        }
+
+        UpdatePreviewTabActions();
+        SetStatus("No closed preview tab to restore.");
+        return false;
+    }
+
+    private void RememberClosedPreviewTab(PreviewTabState state)
+    {
+        _closedPreviewTabs.RemoveAll(item => string.Equals(item.Path, state.Path, StringComparison.OrdinalIgnoreCase));
+        _closedPreviewTabs.Add(state);
+        if (_closedPreviewTabs.Count > ClosedPreviewTabLimit)
+        {
+            _closedPreviewTabs.RemoveRange(0, _closedPreviewTabs.Count - ClosedPreviewTabLimit);
+        }
     }
 
     private TabPage? FindPreviewTabPage(string absolutePath)
@@ -3186,6 +3270,7 @@ internal sealed class MainForm : Form
         var state = ActivePreviewTabState();
         _pinPreviewTabButton.Enabled = state is not null;
         _closePreviewTabButton.Enabled = state is not null;
+        _restorePreviewTabButton.Enabled = _closedPreviewTabs.Count > 0;
         _pinPreviewTabButton.Text = state?.IsPinned == true ? "Unpin" : "Pin";
     }
 
@@ -4907,6 +4992,7 @@ internal sealed class MainForm : Form
             $"previewTabs={BoolText(report.PreviewTabs)}",
             $"previewTabPin={BoolText(report.PreviewTabPin)}",
             $"previewTabClose={BoolText(report.PreviewTabClose)}",
+            $"previewTabRestore={BoolText(report.PreviewTabRestore)}",
             $"navigationButtons={BoolText(report.NavigationButtons)}",
             $"keyboardNavigation={BoolText(report.KeyboardNavigation)}",
             $"keyboardFavorite={BoolText(report.KeyboardFavorite)}",
@@ -5717,6 +5803,7 @@ internal sealed class MainForm : Form
         bool PreviewTabs,
         bool PreviewTabPin,
         bool PreviewTabClose,
+        bool PreviewTabRestore,
         bool NavigationButtons,
         bool KeyboardNavigation,
         bool KeyboardFavorite,
