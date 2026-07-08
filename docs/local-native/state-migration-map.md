@@ -196,6 +196,14 @@ Explicit exports keep those keys only as raw browser mirrors under
 `native_settings.browser_pvu_favorites` and
 `native_settings.browser_pvu_favorites_backup`; they do not increase
 `pvu_state_migration_count`.
+The twenty-first #117 row formally defers browser ascending sort directions
+and `randomSeed` as native migration targets. Native already imports
+`pvu_view.sortBy` values with matching native semantics, but `oldest`,
+`created-oldest`, and seeded random ordering need a separate native sort UI
+and persistence decision. Explicit exports keep `randomSeed` only inside the
+raw `native_settings.browser_pvu_view` mirror. Native does not create
+`sort_direction`, `sort_ascending`, `random_seed`, `randomSeed`, or
+`sort_seed` settings, and does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

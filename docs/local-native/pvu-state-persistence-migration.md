@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`DEFER_BROWSER_LOCAL_STORAGE_FAVORITES_AFTER_ENHANCE_SETTINGS`.
+`DEFER_BROWSER_SORT_DIRECTION_RANDOM_SEED_AFTER_LOCALSTORAGE_FAVORITES`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser localStorage `pvu_favorites` /
-  `pvu_favorites_backup` after the enhancement-settings row.
+  explicit classification of browser ascending sort directions and
+  `randomSeed` after the localStorage favorites row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -34,8 +34,11 @@ Meaning:
   has matching semantics: `newest` -> `Modified`, `created-newest` ->
   `Created`, `name` -> `Name`, and `random` -> `Random`.
 - Browser ascending directions `oldest` / `created-oldest` and browser
-  `randomSeed` remain deferred because the current native sort surface does
-  not persist equivalent direction or seed state.
+  `randomSeed` are Row 21 `DEFER`: native already imports matching
+  `sortBy` values, but it does not persist an equivalent ascending direction
+  or random seed contract yet. `randomSeed` remains only inside the raw
+  `browser_pvu_view` mirror, and native does not create `sort_direction`,
+  `sort_ascending`, `random_seed`, `randomSeed`, or `sort_seed` settings.
 - Browser hidden folders are stored as browser folder keys, not native
   absolute folder paths. The previous accepted hidden-folders row converts only
   keys that can be mapped through the explicit exported `pvu_last_dir_set` /
@@ -138,9 +141,10 @@ Meaning:
 | `pvu_view.sortBy=newest` | `native_settings.sort_mode=Modified` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
 | `pvu_view.sortBy=created-newest` | `native_settings.sort_mode=Created` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
 | `pvu_view.sortBy=name` | `native_settings.sort_mode=Name` | `ADOPT`: imported on first native import when `sort_mode` is absent. |
-| `pvu_view.sortBy=random` | `native_settings.sort_mode=Random` | `ADOPT`: imports only random mode; browser `randomSeed` remains deferred. |
+| `pvu_view.sortBy=random` | `native_settings.sort_mode=Random` | `ADOPT`: imports only random mode; browser `randomSeed` is formally deferred by Row 21. |
 | Existing native `sort_mode` | Preserve native sort mode | `ADOPT`: import does not clobber a native user choice. |
-| `pvu_view.sortBy=oldest` / `created-oldest` | warning-only, no native sort overwrite | `DEFER`: current native sort surface has no persisted ascending direction. |
+| `pvu_view.sortBy=oldest` / `created-oldest` | warning-only, no native sort overwrite | `DEFER`: formally covered by Row 21; current native sort surface has no persisted ascending direction. |
+| `pvu_view.randomSeed` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 21; native has no accepted seeded-random persistence contract. |
 | Malformed / unsupported `pvu_view.sortBy` | warning-only, no native sort overwrite | `ADOPT`: invalid sort values are skipped with recovery guidance. |
 | `pvu_view.hiddenFolders` browser folder keys with exported roots | `native_settings.hidden_folder_buckets` absolute native folder paths | `ADOPT`: imported on first native import when hidden-folder state is absent. |
 | Existing native `hidden_folder_buckets` | Preserve native hidden-folder state | `ADOPT`: import does not clobber a native user choice. |
@@ -190,7 +194,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | --- | --- | --- |
 | `pvu_view.thumbSize` | `ADOPT` | Native has `thumbnail_size`; this row imports only the scalar size, clamped to native 64-192, without adopting broader display-mode work. |
 | `pvu_view.sortBy` | `ADOPT` | Native has `sort_mode`; import only browser values with matching native semantics (`newest`, `created-newest`, `name`, `random`) and preserve existing native choices. |
-| `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
+| `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Formally covered by Row 21: native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | Formally covered by Row 18; these map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
@@ -236,6 +240,7 @@ Expected result:
 - `pvuScrollMemoryDeferred=true`
 - `pvuFavLevelsDeferred=true`
 - `pvuLocalStorageFavoritesDeferred=true`
+- `pvuSortDirectionSeedDeferred=true`
 - `pvuPinnedTabsDeferred=true`
 - `pvuRecentAlbumsDeferred=true`
 - `pvuEnhanceSettingsDeferred=true`
@@ -303,22 +308,78 @@ does not add non-evidenced browser favorite levels, Row 16 does not add
 browser pinned preview tabs, Row 17 does not add browser recent-album state,
 Row 18 does not add display-details fields, Row 19 does not add browser
 enhancement settings, and Row 20 does not add browser localStorage favorites.
+Row 21 does not add browser ascending sort directions or random seed settings.
 `markerMirrorStored=true`, `perfMirrorStored=true`,
 `scrollMemoryMirrorStored=true`, `favLevelsMirrorStored=true`,
 `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
 `pinnedTabsMirrorStored=true`, `recentAlbumsMirrorStored=true`,
-`displayDetailsMirrorStored=true`, and `enhanceSettingsMirrorStored=true` are
-the raw-mirror evidence. The final `browserStateKeys=13` count is measured
+`displayDetailsMirrorStored=true`, `enhanceSettingsMirrorStored=true`, and
+`pvuSortDirectionSeedDeferred=true` are the raw-mirror/defer evidence. The
+final `browserStateKeys=13` count is measured
 after the malformed follow-up import, where PR #141 keeps `pvu_perf_enabled`
 in the malformed recovery path while Row 14 keeps `pvu_scroll_memory`, Row 15
 keeps `pvu_fav_levels`, Row 16 keeps `pvu_pinned_tabs`, Row 17 keeps
 `pvu_recent_albums`, Row 18 keeps display details as raw `browser_pvu_view`
 mirror fields only, Row 19 keeps `pvu_enhance_settings` as a native settings
 raw mirror only, and Row 20 keeps `pvu_favorites` /
-`pvu_favorites_backup` as native settings raw mirrors only.
+`pvu_favorites_backup` as native settings raw mirrors only. Row 21 keeps
+`randomSeed` only inside raw `browser_pvu_view` and does not create
+`sort_direction`, `sort_ascending`, `random_seed`, `randomSeed`, or
+`sort_seed` native settings.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 21 Sort Direction And Random Seed Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row21-sort-direction-seed` based on `origin/main`
+`182269cc70644abe962fac14a3637afb99c36c58` after PR #151:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuSortDirectionSeedDeferred=true`,
+  `pvuLocalStorageFavoritesDeferred=true`,
+  `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
+  `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
+  `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
+  `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
+  `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
+  `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
+  `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+  `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
+  `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
+  `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
+  contract, `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed using ignored fixture/cache state while preserving existing
+  cache/state assets.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `gridToggle=true`, `folderSortMode=true`,
+  `thumbnailSize=true`, `enhancedOnlyFilter=true`,
+  `favoriteLevelFilter=true`, `sortName=true`, `randomReshuffle=true`,
+  `browserStateKeys=7`, `settingsImported=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g '!node_modules/**' -g '!.next/**' -g '!.cache/**'`
+  returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 20 LocalStorage Favorites Verification
 
@@ -820,7 +881,10 @@ after PR #131:
 - `PARTIAL_ADOPT` / `DEFER`: disk `.cache/favorites.json` remains the native
   favorites import path, while browser localStorage `pvu_favorites` /
   `pvu_favorites_backup` are raw-mirrored only until a conflict policy exists.
-- `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
-  selection, remaining display/aspect behavior beyond raw Row18 mirroring, and
-  other broad browser-only state to their existing post-v1 issue rows.
+- `DEFER`: browser ascending sort directions and `randomSeed` as native
+  migration targets. Row 21 keeps `randomSeed` only inside raw
+  `browser_pvu_view` and does not create direction or seed settings.
+- `DEFER`: #102 folder range selection, remaining display/aspect behavior
+  beyond raw Row18 mirroring, and other broad browser-only state to their
+  existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.

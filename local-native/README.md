@@ -566,6 +566,15 @@ not import browser localStorage favorites without an accepted conflict policy.
 Explicit exports keep those keys as `browser_pvu_favorites` and
 `browser_pvu_favorites_backup`; `pvu_state_migration_count` stays at the Row
 11 count of 11.
+The twenty-first #117 row formally defers browser ascending sort directions
+and `randomSeed` as native migration targets. Native already imports
+browser `pvu_view.sortBy` values with matching native semantics, but
+`oldest`, `created-oldest`, and seeded random ordering need a separate native
+sort-surface decision before persistence. Explicit exports keep `randomSeed`
+inside the raw `browser_pvu_view` mirror; native does not create
+`sort_direction`, `sort_ascending`, `random_seed`, `randomSeed`, or
+`sort_seed` settings, and `pvu_state_migration_count` stays at the Row 11
+count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
