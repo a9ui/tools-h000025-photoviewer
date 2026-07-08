@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`DEFER_BROWSER_PERF_FLAG_AFTER_MARKER_KEYS`.
+`DEFER_BROWSER_SCROLL_MEMORY_AFTER_PERF_FLAG`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser `pvu_perf_enabled` after the marker-key
-  row.
+  explicit classification of browser `pvu_scroll_memory` after the
+  performance-flag row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -57,6 +57,12 @@ Meaning:
   is raw-mirrored for traceability as `browser_pvu_perf_enabled`, but it does
   not create a native `perf_enabled` setting and is not recorded in
   `pvu_state_migrations`.
+- Browser `pvu_scroll_memory` is a browser virtual-scroll memory map keyed by
+  browser search/view state. Native already persists `last_selected_image` and
+  `last_visible_index`, but that is not equivalent to importing the browser
+  scroll map. `pvu_scroll_memory` is raw-mirrored for traceability as
+  `browser_pvu_scroll_memory`, but native does not create a `scroll_memory`
+  setting and does not record it in `pvu_state_migrations`.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -113,6 +119,7 @@ Meaning:
 | `pvu_legacy_imported=1` | `native_settings.browser_pvu_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
 | `pvu_server_legacy_imported=1` | `native_settings.browser_pvu_server_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
 | `pvu_perf_enabled=1` | `native_settings.browser_pvu_perf_enabled=1` raw mirror only | `DEFER`: browser instrumentation flag is preserved for traceability but has no accepted native user-facing migration target. |
+| `pvu_scroll_memory={...}` | `native_settings.browser_pvu_scroll_memory` raw mirror only | `DEFER`: browser scroll-memory map is preserved for traceability, but the native selected-image/index restore is not the same state contract. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -122,6 +129,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_last_dir_set` /
 `native_settings.browser_pvu_recent_dirs` /
 `native_settings.browser_pvu_seen_images` /
+`native_settings.browser_pvu_scroll_memory` /
 `native_settings.browser_pvu_perf_enabled` /
 `native_settings.browser_pvu_legacy_imported` /
 `native_settings.browser_pvu_server_legacy_imported` for traceability.
@@ -144,7 +152,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_fav_only` / `pvu_unfav_only` | `ADOPT` | Native favorite filters exist; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_fav_levels` | `DEFER` | Listed as possible browser-only state, but current browser code does not persist this key; keep deferred until there is source evidence and conflict policy. |
 | `pvu_enhanced_only` | `ADOPT` | Native enhanced-only state exists from M19; explicit browser import now maps first-import state without overwriting native choices. |
-| `pvu_scroll_memory` | `DEFER` | Native has selected-image/index restore, not browser scroll-memory parity. |
+| `pvu_scroll_memory` | `DEFER` | Formally covered by Row 14; native has selected-image/index restore, not browser scroll-memory parity, so the browser map is raw-mirrored only. |
 | `pvu_seen_images` | `ADOPT` | Formally covered by Row 10 pvu-state smoke/migration trace; explicit browser export imports additively into native `seen_images` and preserves native seen rows. |
 | `pvu_recent_albums` | `DEFER` | Albums import exists, but recent-album UI semantics are not native-accepted. |
 | `pvu_recent_dirs` / `pvu_last_dir_set` | `ADOPT` | Native folder-set persistence exists; explicit browser import now maps first-import state without overwriting native choices. |
@@ -175,6 +183,7 @@ Expected result:
 - `pvuSeenImagesMigrated=true`
 - `pvuFolderSortModeMigrated=true`
 - `pvuPerfFlagDeferred=true`
+- `pvuScrollMemoryDeferred=true`
 - `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
@@ -182,6 +191,7 @@ Expected result:
 - `favoriteMirrorStored=true`
 - `recentMirrorStored=true`
 - `seenMirrorStored=true`
+- `scrollMemoryMirrorStored=true`
 - `perfMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
@@ -222,14 +232,67 @@ Expected result:
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 `migrationRecorded=true` keeps `pvu_state_migration_count=11`; Row 12 does
-not add marker-only keys to `pvu_state_migrations`, and Row 13 does not add
-the browser perf flag to `pvu_state_migrations`. `markerMirrorStored=true`
-is the marker evidence, `perfMirrorStored=true` is the perf-flag raw mirror
-evidence, and the final `browserStateKeys=7` count is measured after the
-malformed follow-up import, matching the existing smoke shape.
+not add marker-only keys to `pvu_state_migrations`, Row 13 does not add the
+browser performance flag, and Row 14 does not add browser scroll memory.
+`markerMirrorStored=true`, `perfMirrorStored=true`, and
+`scrollMemoryMirrorStored=true` are the raw-mirror evidence. The final
+`browserStateKeys=7` count is measured after the malformed follow-up import,
+where PR #141 keeps `pvu_perf_enabled` in the malformed recovery path while
+Row 14 keeps `pvu_scroll_memory` as a native settings raw mirror only.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 14 Scroll-Memory Verification
+
+Recorded on 2026-07-08 in branch
+`codex/h25-117-row14-pvu-scroll-memory` based on `origin/main`
+`272d5c576d18b86ea1fa7342bb1a317f2018bab1` after PR #141:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuScrollMemoryDeferred=true`,
+  `scrollMemoryMirrorStored=true`, `pvuPerfFlagDeferred=true`,
+  `perfMirrorStored=true`, `pvuLegacyMarkersRejected=true`,
+  `markerMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `seenMirrorStored=true`, `nativeFolderSortModePreserved=true`,
+  `nativeSeenImagesPreserved=true`,
+  `nativeFolderSortModeStillPreserved=true`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=7`,
+  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed using ignored fixture/cache state while preserving existing cache/state
+  assets.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
+  `seenImages` / `settings` / `images` counts reflect existing ignored cache
+  state and may increase across repeated smoke runs.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large`
+  passed with `totalImages=240`, `targetIndex=180`,
+  `restoredIndex=180`, `statePersisted=true`, `restoreSelected=true`,
+  `ensureVisible=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `folderSortMode=true`, `sortName=true`,
+  `randomReshuffle=true`, `thumbnailSize=true`, `settingsImported=true`,
+  `browserStateKeys=6`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" .` returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 13 Perf-Flag Verification
 
@@ -417,9 +480,11 @@ after PR #131:
 - `DEFER`: browser `pvu_perf_enabled` as a native migration target. Row 13
   records `pvu_perf_enabled` as a raw mirror only and keeps the native
   migration count unchanged.
+- `DEFER`: browser `pvu_scroll_memory` as a native migration target. Row 14
+  records `pvu_scroll_memory` as a raw mirror only and keeps native
+  selected-image/index restore separate from browser scroll-map import.
 - `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
   selection, `pvu_fav_levels`, pinned tabs, enhancement settings, broader
-  display details, `pvu_recent_albums`, scroll memory, `pvu_perf_enabled`,
-  and browser
-  localStorage favorites to their existing post-v1 issue rows.
+  display details, `pvu_recent_albums`, and browser localStorage favorites to
+  their existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.
