@@ -34,14 +34,20 @@ which did not contain the local-native packet. The packet was read from
 
 ## Live State
 
-- GitHub milestone #26 `Local Native Post-v1 Backlog`: open, 20 open / 2
-  closed.
-- Closed in milestone #26: #115, #116.
-- Open in milestone #26: #97-#114, #117, #118.
+- GitHub milestone #26 `Local Native Post-v1 Backlog`: open. Initial triage
+  saw 20 open / 2 closed; final closeout observed #117 close during this
+  lane.
+- Closed in milestone #26 after final refresh: #115, #116, #117.
+- Open in milestone #26 after final refresh: #97-#114 and #118.
 - Open PRs: none.
-- Latest main CI: run #28915773995 passed for `main` at
-  `7d9b75f3cd7e0d4c60d6e33ecdd8d54204f6672f`.
-- SQLite: job #236 is `Post-v1 #117 continuation`, status `dispatched`.
+- Latest confirmed main CI before this triage PR: run #28915773995 passed for
+  `main` at `7d9b75f3cd7e0d4c60d6e33ecdd8d54204f6672f`.
+- During this lane, #117 PR #123 merged at
+  `bd1e07cd8eb53c228c8ad57c2349752404012d09`; PR CI #28920339041 passed.
+- This triage report first landed through PR #124 at
+  `b8a60e36bfc511a999ec3b131902ef8dbbdc42db`; PR CI #28920359011 passed.
+- SQLite: job #236 was initially `dispatched` for #117 continuation; final
+  closeout should update it to reflect PR #123 / #117 closed.
 - Agmsg: trace `h25-117-closeout-20260708` has three `required_reply=none`
   pointers to `cursor_impl`, `claude_ui`, and `grok_consult`.
 - Linear: not used.
@@ -70,7 +76,7 @@ which did not contain the local-native packet. The packet was read from
 | #114 Editable keybinding recorder | Open | Deferred late | Should wait until new shortcuts from display/zoom/preview decisions settle. |
 | #115 Malformed import recovery UI | Closed | Complete | PR #121 merged; no further parallel work needed unless regression appears. |
 | #116 Native browser API and error parity matrix | Closed | Complete | PR #120 merged; matrix-only result adopted; no HTTP compatibility layer. |
-| #117 Complete pvu state persistence migration | Open | Reserved / serialized | Parent thread owns continuation via SQLite job #236. Do not compete until parent explicitly hands it back. |
+| #117 Complete pvu state persistence migration | Closed during triage | Complete / no longer parallel work | Parent thread completed the continuation via PR #123. Do not reopen from this lane unless a new issue is created for residual pvu work. |
 | #118 Native UI polish and screenshot sweep | Open | Safe prep candidate now | Docs/review/screenshot-prep does not compete with #117 implementation. Actual UI fixes should be adopted individually after native evidence. |
 
 ## Recommended Parallel Work
@@ -87,7 +93,8 @@ thread.
 
 ## Advice Classification
 
-- `ADOPT`: Treat #117 as reserved for the parent continuation job #236.
+- `ADOPT`: Treat #117 as externally owned; after final refresh, treat it as
+  complete via PR #123 rather than parallelizable work.
 - `ADOPT`: Dispatch #118 as the next independent review/prep lane.
 - `PARTIAL_ADOPT`: #103 is a good future implementation candidate, but only
   after the active #117 branch is no longer competing.
