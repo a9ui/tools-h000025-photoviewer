@@ -1039,6 +1039,15 @@ internal sealed class NativeImageStore
             }
         }
 
+        if (TryReadBrowserRecentFolderSet(browserState, warnings, out var recentFolderSet) &&
+            recentFolderSet.Count > 0 &&
+            !HasNativeRecentFolderState(connection, transaction))
+        {
+            UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(recentFolderSet), importedAt);
+            UpsertSetting(connection, transaction, "recent_folder", recentFolderSet[0], importedAt);
+            migrations.Add("pvu_recent_dirs/pvu_last_dir_set->recent_folder_set");
+        }
+
         UpsertSetting(
             connection,
             transaction,
@@ -1117,6 +1126,146 @@ internal sealed class NativeImageStore
 
         favoriteFilter = favoriteOnly ? "favorites" : unratedOnly ? "unrated" : "all";
         return true;
+    }
+
+    private static bool TryReadBrowserRecentFolderSet(
+        IReadOnlyList<NativeBrowserStateRecord> browserState,
+        ICollection<NativeImportWarning> warnings,
+        out List<string> roots)
+    {
+        roots = [];
+
+        if (TryGetBrowserStateValue(browserState, "pvu_last_dir_set", out var lastDirSet))
+        {
+            if (!TryReadBrowserLastDirSet(lastDirSet, warnings, out roots))
+            {
+                roots = [];
+            }
+
+            if (roots.Count > 0)
+            {
+                return true;
+            }
+        }
+
+        if (!TryGetBrowserStateValue(browserState, "pvu_recent_dirs", out var recentDirs))
+        {
+            return false;
+        }
+
+        if (!TryReadBrowserRecentDirs(recentDirs, warnings, out roots))
+        {
+            roots = [];
+            return false;
+        }
+
+        return roots.Count > 0;
+    }
+
+    private static bool TryReadBrowserLastDirSet(
+        string value,
+        ICollection<NativeImportWarning> warnings,
+        out List<string> roots)
+    {
+        roots = [];
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return true;
+        }
+
+        if (trimmed.StartsWith("[", StringComparison.Ordinal) ||
+            trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warnings.Add(new NativeImportWarning(
+                "browser-state-export:pvu_last_dir_set",
+                "",
+                "malformed-folder-set-value",
+                "pvu_last_dir_set must be a folder-set string.",
+                "Browser recent-folder state was skipped; rerun the browser export or remove the malformed pvu_last_dir_set value, then run Import again."));
+            return false;
+        }
+
+        roots = NativeFolderSet.Parse(trimmed);
+        return true;
+    }
+
+    private static bool TryReadBrowserRecentDirs(
+        string value,
+        ICollection<NativeImportWarning> warnings,
+        out List<string> roots)
+    {
+        roots = [];
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return true;
+        }
+
+        if (trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warnings.Add(new NativeImportWarning(
+                "browser-state-export:pvu_recent_dirs",
+                "",
+                "malformed-recent-dirs-value",
+                "pvu_recent_dirs must be a JSON array of folder-set strings.",
+                "Browser recent-folder state was skipped; rerun the browser export or remove the malformed pvu_recent_dirs value, then run Import again."));
+            return false;
+        }
+
+        if (!trimmed.StartsWith("[", StringComparison.Ordinal))
+        {
+            roots = NativeFolderSet.Parse(trimmed);
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_recent_dirs",
+                    "",
+                    "malformed-recent-dirs-value",
+                    "pvu_recent_dirs must be a JSON array of folder-set strings.",
+                    "Browser recent-folder state was skipped; rerun the browser export or remove the malformed pvu_recent_dirs value, then run Import again."));
+                return false;
+            }
+
+            foreach (var element in document.RootElement.EnumerateArray())
+            {
+                if (element.ValueKind != JsonValueKind.String)
+                {
+                    warnings.Add(new NativeImportWarning(
+                        "browser-state-export:pvu_recent_dirs",
+                        "",
+                        "malformed-recent-dirs-value",
+                        "pvu_recent_dirs entries must be folder-set strings.",
+                        "Browser recent-folder state skipped the malformed entry; rerun the browser export or remove the malformed pvu_recent_dirs entry, then run Import again."));
+                    continue;
+                }
+
+                var candidate = NativeFolderSet.Parse(element.GetString());
+                if (candidate.Count > 0)
+                {
+                    roots = candidate;
+                    return true;
+                }
+            }
+
+            return true;
+        }
+        catch (JsonException ex)
+        {
+            warnings.Add(new NativeImportWarning(
+                "browser-state-export:pvu_recent_dirs",
+                "",
+                "malformed-json-value",
+                ex.Message,
+                "Browser recent-folder state was skipped; rerun the browser export or remove the malformed pvu_recent_dirs value, then run Import again."));
+            return false;
+        }
     }
 
     private static bool TryReadBrowserViewMode(string value, out string viewMode, out string? warningMessage)
@@ -1282,6 +1431,20 @@ internal sealed class NativeImageStore
         }
 
         return true;
+    }
+
+    private static bool HasNativeRecentFolderState(SqliteConnection connection, SqliteTransaction transaction)
+    {
+        if (GetSetting(connection, transaction, "recent_folder_set") is not null ||
+            GetSetting(connection, transaction, "recent_folder") is not null)
+        {
+            return true;
+        }
+
+        using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = "SELECT 1 FROM scan_roots LIMIT 1";
+        return command.ExecuteScalar() is not null;
     }
 
     private static bool TryReadBrowserBoolean(string value, out bool result, out string? warningMessage)

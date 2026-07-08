@@ -97,9 +97,12 @@ The third accepted row maps explicit browser `pvu_fav_only` /
 `favorites`, `unrated`, or `all`. The fourth accepted row maps explicit
 browser `pvu_view.dateFrom` / `dateTo` into native
 `native_settings.date_filter`, `native_settings.date_from`, and
-`native_settings.date_to`. These migrations write only when the native setting
-does not exist yet. This gives first-import continuity without clobbering later
-native user choices on every startup or Import action.
+`native_settings.date_to`. The fifth accepted row maps explicit browser
+`pvu_last_dir_set` / `pvu_recent_dirs` into
+`native_settings.recent_folder_set` and `native_settings.recent_folder`.
+These migrations write only when the target native state does not exist yet.
+This gives first-import continuity without clobbering later native user choices
+on every startup or Import action.
 
 The dedicated smoke is:
 
