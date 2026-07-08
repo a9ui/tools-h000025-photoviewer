@@ -9,6 +9,7 @@ internal sealed class MainForm : Form
 {
     private static readonly char[] PromptTagLeadingTrimChars = [' ', '\t', '\r', '\n', '(', '[', '{'];
     private static readonly char[] PromptTagTrailingTrimChars = [' ', '\t', '\r', '\n', ')', ']', '}'];
+    private const int MaxGridImageListDimension = 256;
 
     private readonly TextBox _folderText = new();
     private readonly Button _browseButton = new();
@@ -28,6 +29,7 @@ internal sealed class MainForm : Form
     private readonly DateTimePicker _dateToPicker = new();
     private readonly ComboBox _viewMode = new();
     private readonly ComboBox _displayStyle = new();
+    private readonly ComboBox _aspectMode = new();
     private readonly ComboBox _sortMode = new();
     private readonly ComboBox _folderSortMode = new();
     private readonly Button _reshuffleButton = new();
@@ -86,6 +88,7 @@ internal sealed class MainForm : Form
     private bool _updatingDateRange;
     private bool _updatingThumbnailSize;
     private bool _updatingDisplayStyle;
+    private bool _updatingAspectMode;
     private bool _updatingSearchSuggestions;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
@@ -128,8 +131,13 @@ internal sealed class MainForm : Form
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyFolderSortMode(_store.GetSetting("folder_sort_mode", "NameAsc"));
+        var storedDisplayStyle = _store.GetSetting("display_style", "standard");
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
-        ApplyDisplayStyle(_store.GetSetting("display_style", "standard"), persist: false);
+        ApplyDisplayStyle(storedDisplayStyle, persist: false);
+        var storedAspectMode = _store.GetSetting("aspect_mode", "");
+        ApplyAspectMode(
+            string.IsNullOrWhiteSpace(storedAspectMode) ? DefaultAspectModeForDisplayStyle(storedDisplayStyle) : storedAspectMode,
+            persist: false);
         _previewVisible.Checked = _store.GetSetting("preview_visible", "1") == "1";
         _detailsVisible.Checked = _store.GetSetting("preview_details_visible", "1") == "1";
         ApplyPreviewVisibility();
@@ -813,6 +821,27 @@ internal sealed class MainForm : Form
             ApplyDisplayStyle(_displayStyle.SelectedItem?.ToString() ?? "Standard");
         };
 
+        var aspectLabel = new Label
+        {
+            Text = "Aspect",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 6, 0, 0),
+        };
+
+        _aspectMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _aspectMode.Width = 76;
+        _aspectMode.Items.AddRange(["Original", "1:1", "2:3"]);
+        _aspectMode.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingAspectMode)
+            {
+                return;
+            }
+
+            ApplyAspectMode(_aspectMode.SelectedItem?.ToString() ?? "Original");
+        };
+
         var thumbLabel = new Label
         {
             Text = "Thumb",
@@ -865,6 +894,8 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(_dateToPicker);
         displayControls.Controls.Add(displayStyleLabel);
         displayControls.Controls.Add(_displayStyle);
+        displayControls.Controls.Add(aspectLabel);
+        displayControls.Controls.Add(_aspectMode);
         displayControls.Controls.Add(thumbLabel);
         displayControls.Controls.Add(_thumbnailSize);
         displayControls.Controls.Add(_previewVisible);
@@ -1132,22 +1163,47 @@ internal sealed class MainForm : Form
         _thumbnailSize.Value = oldThumbnailSize;
 
         var oldDisplayStyle = CurrentDisplayStyle();
+        var oldAspectMode = CurrentAspectMode();
         ApplyDisplayStyle("compact");
         var compactDisplayMode = string.Equals(CurrentDisplayStyle(), "compact", StringComparison.OrdinalIgnoreCase) &&
             _list.View == View.LargeIcon &&
             _gridImages.ImageSize.Width == 64 &&
+            _gridImages.ImageSize.Height == 64 &&
+            string.Equals(CurrentAspectMode(), "square", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(_store.GetSetting("display_style", ""), "compact", StringComparison.OrdinalIgnoreCase);
         Require(compactDisplayMode, "compact display mode failed");
         ApplyDisplayStyle("poster");
         var posterDisplayMode = string.Equals(CurrentDisplayStyle(), "poster", StringComparison.OrdinalIgnoreCase) &&
             _list.View == View.LargeIcon &&
             _gridImages.ImageSize.Width == 192 &&
+            _gridImages.ImageSize.Height > _gridImages.ImageSize.Width &&
+            string.Equals(CurrentAspectMode(), "portrait", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(_store.GetSetting("display_style", ""), "poster", StringComparison.OrdinalIgnoreCase);
         Require(posterDisplayMode, "poster display mode failed");
         var displayModes = compactDisplayMode && posterDisplayMode;
+
+        ApplyAspectMode("square");
+        var squareAspectMode = string.Equals(CurrentAspectMode(), "square", StringComparison.OrdinalIgnoreCase) &&
+            _gridImages.ImageSize.Height == _gridImages.ImageSize.Width &&
+            string.Equals(_store.GetSetting("aspect_mode", ""), "square", StringComparison.OrdinalIgnoreCase);
+        Require(squareAspectMode, "square aspect mode failed");
+        ApplyAspectMode("portrait");
+        var portraitAspectMode = string.Equals(CurrentAspectMode(), "portrait", StringComparison.OrdinalIgnoreCase) &&
+            _gridImages.ImageSize.Height > _gridImages.ImageSize.Width &&
+            string.Equals(_store.GetSetting("aspect_mode", ""), "portrait", StringComparison.OrdinalIgnoreCase);
+        Require(portraitAspectMode, "portrait aspect mode failed");
+        ApplyAspectMode("original");
+        var originalAspectMode = string.Equals(CurrentAspectMode(), "original", StringComparison.OrdinalIgnoreCase) &&
+            _gridImages.ImageSize.Height > _gridImages.ImageSize.Width &&
+            string.Equals(_store.GetSetting("aspect_mode", ""), "original", StringComparison.OrdinalIgnoreCase);
+        Require(originalAspectMode, "original aspect mode failed");
+        var aspectModes = squareAspectMode && portraitAspectMode && originalAspectMode;
+
         ApplyDisplayStyle(oldDisplayStyle);
+        ApplyAspectMode(oldAspectMode);
         ApplyThumbnailSize(oldThumbnailSize);
         _store.SaveSetting("thumbnail_size", oldThumbnailSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
+        _store.SaveSetting("aspect_mode", oldAspectMode);
 
         _previewVisible.Checked = false;
         var previewToggle = _mainSplit?.Panel2Collapsed == true;
@@ -1385,6 +1441,7 @@ internal sealed class MainForm : Form
             RandomReshuffle: randomReshuffle,
             ThumbnailSize: thumbnailSize,
             DisplayModes: displayModes,
+            AspectModes: aspectModes,
             PreviewToggle: previewToggle,
             DetailsToggle: detailsToggle,
             PreviewSplitter: previewSplitter,
@@ -3503,6 +3560,11 @@ internal sealed class MainForm : Form
         return NormalizeDisplayStyle(_displayStyle.SelectedItem?.ToString() ?? _store.GetSetting("display_style", "standard"));
     }
 
+    private string CurrentAspectMode()
+    {
+        return NormalizeAspectMode(_aspectMode.SelectedItem?.ToString() ?? _store.GetSetting("aspect_mode", "original"));
+    }
+
     private void ApplyDisplayStyle(string style, bool persist = true)
     {
         var normalized = NormalizeDisplayStyle(style);
@@ -3519,6 +3581,7 @@ internal sealed class MainForm : Form
         if (normalized == "compact")
         {
             ApplyViewMode("grid", persist);
+            ApplyAspectMode("square", persist);
             ApplyThumbnailSize(64);
             if (persist)
             {
@@ -3528,6 +3591,7 @@ internal sealed class MainForm : Form
         else if (normalized == "poster")
         {
             ApplyViewMode("grid", persist);
+            ApplyAspectMode("portrait", persist);
             ApplyThumbnailSize(192);
             if (persist)
             {
@@ -3538,6 +3602,28 @@ internal sealed class MainForm : Form
         if (persist)
         {
             _store.SaveSetting("display_style", normalized);
+        }
+
+        _list.Invalidate();
+    }
+
+    private void ApplyAspectMode(string mode, bool persist = true)
+    {
+        var normalized = NormalizeAspectMode(mode);
+        _updatingAspectMode = true;
+        try
+        {
+            _aspectMode.SelectedItem = AspectModeLabel(normalized);
+        }
+        finally
+        {
+            _updatingAspectMode = false;
+        }
+
+        ApplyThumbnailSize((int)_thumbnailSize.Value);
+        if (persist)
+        {
+            _store.SaveSetting("aspect_mode", normalized);
         }
 
         _list.Invalidate();
@@ -3560,6 +3646,38 @@ internal sealed class MainForm : Form
             "compact" => "Compact",
             "poster" => "Poster",
             _ => "Standard",
+        };
+    }
+
+    private static string DefaultAspectModeForDisplayStyle(string style)
+    {
+        return NormalizeDisplayStyle(style) switch
+        {
+            "compact" => "square",
+            "poster" => "portrait",
+            _ => "original",
+        };
+    }
+
+    private static string NormalizeAspectMode(string mode)
+    {
+        return mode.Trim().ToLowerInvariant() switch
+        {
+            "square" => "square",
+            "1:1" => "square",
+            "portrait" => "portrait",
+            "2:3" => "portrait",
+            _ => "original",
+        };
+    }
+
+    private static string AspectModeLabel(string mode)
+    {
+        return NormalizeAspectMode(mode) switch
+        {
+            "square" => "1:1",
+            "portrait" => "2:3",
+            _ => "Original",
         };
     }
 
@@ -3875,15 +3993,28 @@ internal sealed class MainForm : Form
             _updatingThumbnailSize = false;
         }
 
-        if (_gridImages.ImageSize.Width == clamped && _gridImages.Images.Count > 0)
+        var imageSize = GridImageSizeFor(clamped, CurrentAspectMode());
+        if (_gridImages.ImageSize == imageSize && _gridImages.Images.Count > 0)
         {
             return;
         }
 
         _gridImages.Images.Clear();
-        _gridImages.ImageSize = new Size(clamped, clamped);
-        _gridImages.Images.Add(CreateGridPlaceholder(clamped));
+        _gridImages.ImageSize = imageSize;
+        _gridImages.Images.Add(CreateGridPlaceholder(imageSize));
         _list.Invalidate();
+    }
+
+    private static Size GridImageSizeFor(int thumbnailSize, string aspectMode)
+    {
+        var width = Math.Clamp(thumbnailSize, 64, 192);
+        if (NormalizeAspectMode(aspectMode) == "square")
+        {
+            return new Size(width, width);
+        }
+
+        var height = Math.Min(MaxGridImageListDimension, Math.Max(width, (int)Math.Round(width * 1.5d)));
+        return new Size(width, height);
     }
 
     private void ApplyPreviewVisibility()
@@ -4157,14 +4288,19 @@ internal sealed class MainForm : Form
         return value[..Math.Max(1, maxLength - 3)] + "...";
     }
 
-    private static Bitmap CreateGridPlaceholder(int size)
+    private static Bitmap CreateGridPlaceholder(Size size)
     {
-        var bitmap = new Bitmap(size, size);
+        var bitmap = new Bitmap(size.Width, size.Height);
         using var graphics = Graphics.FromImage(bitmap);
         graphics.Clear(Color.FromArgb(38, 38, 38));
         using var border = new Pen(Color.FromArgb(80, 80, 80));
-        var inset = Math.Max(8, size / 12);
-        graphics.DrawRectangle(border, inset, inset, size - (inset * 2), size - (inset * 2));
+        var inset = Math.Max(8, Math.Min(size.Width, size.Height) / 12);
+        graphics.DrawRectangle(
+            border,
+            inset,
+            inset,
+            Math.Max(1, size.Width - (inset * 2)),
+            Math.Max(1, size.Height - (inset * 2)));
         return bitmap;
     }
 
@@ -4342,6 +4478,7 @@ internal sealed class MainForm : Form
             $"randomReshuffle={BoolText(report.RandomReshuffle)}",
             $"thumbnailSize={BoolText(report.ThumbnailSize)}",
             $"displayModes={BoolText(report.DisplayModes)}",
+            $"aspectModes={BoolText(report.AspectModes)}",
             $"previewToggle={BoolText(report.PreviewToggle)}",
             $"detailsToggle={BoolText(report.DetailsToggle)}",
             $"previewSplitter={BoolText(report.PreviewSplitter)}",
@@ -5141,6 +5278,7 @@ internal sealed class MainForm : Form
         bool RandomReshuffle,
         bool ThumbnailSize,
         bool DisplayModes,
+        bool AspectModes,
         bool PreviewToggle,
         bool DetailsToggle,
         bool PreviewSplitter,
