@@ -494,7 +494,11 @@ right-preview choices under the same first-import-only rule. The seventh
 accepted row imports
 explicit browser `pvu_view.thumbSize` into native `thumbnail_size`, clamped to
 the current native UI range, while preserving an existing native
-thumbnail-size choice.
+thumbnail-size choice. The eighth accepted row imports explicit browser
+`pvu_view.sortBy` values that have matching native sort modes into
+`sort_mode`, preserving an existing native sort choice. Browser ascending
+sort directions and `randomSeed` remain deferred because the current native
+sort surface does not persist equivalent direction or seed state.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

@@ -1072,6 +1072,24 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser thumbnail-size state was skipped; rerun the browser export or remove malformed pvu_view.thumbSize, then run Import again."));
             }
+
+            if (!pvuViewMalformed && TryReadBrowserSortMode(pvuView, out var sortMode, out var hasSortMode, out warningMessage))
+            {
+                if (hasSortMode && GetSetting(connection, transaction, "sort_mode") is null)
+                {
+                    UpsertSetting(connection, transaction, "sort_mode", sortMode, importedAt);
+                    migrations.Add("pvu_view.sortBy->sort_mode");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "unsupported-sort-mode-value",
+                    warningMessage,
+                    "Browser sort state was skipped; native ascending sort direction and random seed parity remain deferred."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1539,6 +1557,80 @@ internal sealed class NativeImageStore
 
             warningMessage = "pvu_view.thumbSize must be a positive integer.";
             return false;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserSortMode(
+        string value,
+        out string sortMode,
+        out bool present,
+        out string? warningMessage)
+    {
+        sortMode = "";
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("sortBy", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                warningMessage = "pvu_view.sortBy must be a string.";
+                return false;
+            }
+
+            var browserSort = element.GetString()?.Trim() ?? "";
+            switch (browserSort)
+            {
+                case "newest":
+                    sortMode = "Modified";
+                    warningMessage = null;
+                    return true;
+                case "created-newest":
+                    sortMode = "Created";
+                    warningMessage = null;
+                    return true;
+                case "name":
+                    sortMode = "Name";
+                    warningMessage = null;
+                    return true;
+                case "random":
+                    sortMode = "Random";
+                    warningMessage = null;
+                    return true;
+                case "oldest":
+                case "created-oldest":
+                    warningMessage = $"pvu_view.sortBy={browserSort} requires native ascending sort direction support.";
+                    return false;
+                default:
+                    warningMessage = $"Unsupported pvu_view.sortBy value: {browserSort}.";
+                    return false;
+            }
         }
         catch (JsonException ex)
         {

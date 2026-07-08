@@ -111,6 +111,13 @@ The seventh accepted row maps explicit browser `pvu_view.thumbSize` into
 64-192. These migrations write only when the target native state does not exist
 yet. This gives first-import continuity without clobbering later native user
 choices on every startup or Import action.
+The eighth accepted row maps explicit browser `pvu_view.sortBy` into
+`native_settings.sort_mode` only for browser values with matching native sort
+semantics: `newest` to `Modified`, `created-newest` to `Created`, `name` to
+`Name`, and `random` to `Random`. Browser ascending directions
+`oldest` / `created-oldest` and browser `randomSeed` remain deferred because
+the current native sort surface does not persist equivalent direction or seed
+state.
 
 The dedicated smoke is:
 
