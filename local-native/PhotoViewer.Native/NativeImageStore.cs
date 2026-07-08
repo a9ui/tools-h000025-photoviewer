@@ -691,6 +691,7 @@ internal sealed class NativeImageStore
         string searchText,
         bool favoritesOnly,
         string favoriteFilter,
+        bool enhancedOnly,
         string dateFilter,
         string dateFrom,
         string dateTo)
@@ -703,6 +704,7 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "search_text", searchText, now);
         UpsertSetting(connection, transaction, "favorites_only", favoritesOnly ? "1" : "0", now);
         UpsertSetting(connection, transaction, "favorite_filter", favoriteFilter, now);
+        UpsertSetting(connection, transaction, "enhanced_only_filter", enhancedOnly ? "1" : "0", now);
         UpsertSetting(connection, transaction, "date_filter", dateFilter, now);
         UpsertSetting(connection, transaction, "date_from", dateFrom, now);
         UpsertSetting(connection, transaction, "date_to", dateTo, now);
