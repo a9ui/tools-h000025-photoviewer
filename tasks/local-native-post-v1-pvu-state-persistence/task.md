@@ -108,6 +108,12 @@ is raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred
 as a native migration target because the current native local surface has no
 accepted modal edge-zone persistence target.
 
+This Row24 continuation formally records browser `pvu_view.enhanceQueueOpen`:
+it is raw-mirrored for traceability inside `browser_pvu_view`, but it is
+deferred as a native migration target because explicit native enhancement
+queue/settings UI remains owned by #97/#98 and ordinary native browsing must
+not start enhancement workers.
+
 ## Guardrails
 
 - No Linear.
@@ -351,6 +357,16 @@ Read in full before planning or editing:
     `modal_click_edge_ratio` settings;
   - this field is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser enhancement queue-open state in #117:
+  - browser `pvu_view.enhanceQueueOpen` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `enhance_queue_open`, `enhanceQueueOpen`,
+    `enhancement_queue_open`, `enhance_queue_visible`, or
+    `enhancement_queue_visible` settings;
+  - explicit native enhancement queue/settings UI remains owned by #97/#98;
+  - ordinary native browsing must not start enhancement workers;
+  - this field is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -387,6 +403,7 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuRecentAlbumsDeferred=true`, `recentAlbumsMirrorStored=true`,
 `pvuDisplayDetailsDeferred=true`, `displayDetailsMirrorStored=true`,
 `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
+`pvuEnhanceQueueOpenDeferred=true`, `enhanceQueueOpenMirrorStored=true`,
 `pvuSortDirectionSeedDeferred=true`,
 `pvuSidebarOpenDeferred=true`,
 `pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
@@ -396,6 +413,42 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 24 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row24-enhance-queue-open-5089` based on the Row23 merge commit
+`c4af4cf59bcee9f4306e2f718c5eed68b7f8f5a3`:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuEnhanceQueueOpenDeferred=true`, `enhanceQueueOpenMirrorStored=true`,
+  `pvuEnhanceSettingsDeferred=true`, `pvuModalEdgeRatioDeferred=true`,
+  `pvuSidebarOpenDeferred=true`, `pvuSortDirectionSeedDeferred=true`,
+  `browserMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `totalSeenImages=2`, and `enhancementStateUnchanged=true`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `browserStateKeys=7`, `settingsImported=true`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `git diff --check` passed.
 
 ## Current Row 23 Verification
 

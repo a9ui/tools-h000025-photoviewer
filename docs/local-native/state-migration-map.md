@@ -215,6 +215,13 @@ only inside the raw `native_settings.browser_pvu_view` mirror. Native does not
 create `modal_edge_ratio`, `modalEdgeRatio`, `detail_modal_edge_ratio`,
 `modal_edge_zone_ratio`, or `modal_click_edge_ratio` settings, and does not
 increase `pvu_state_migration_count`.
+The twenty-fourth #117 row formally defers browser
+`pvu_view.enhanceQueueOpen` as a native migration target. Explicit exports keep
+the enhancement queue panel open/closed flag only inside the raw
+`native_settings.browser_pvu_view` mirror. Native does not create
+`enhance_queue_open`, `enhanceQueueOpen`, `enhancement_queue_open`,
+`enhance_queue_visible`, or `enhancement_queue_visible` settings, and does not
+increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 
