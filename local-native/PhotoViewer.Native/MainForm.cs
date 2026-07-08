@@ -10,6 +10,11 @@ internal sealed class MainForm : Form
     private static readonly char[] PromptTagLeadingTrimChars = [' ', '\t', '\r', '\n', '(', '[', '{'];
     private static readonly char[] PromptTagTrailingTrimChars = [' ', '\t', '\r', '\n', ')', ']', '}'];
     private const int MaxGridImageListDimension = 256;
+    private const int GalleryThumbnailMin = 64;
+    private const int GalleryThumbnailMax = 192;
+    private const int GalleryThumbnailStep = 16;
+    private const int GalleryThumbnailDefault = 96;
+    private const int GalleryThumbnailReset = GalleryThumbnailMax;
 
     private readonly TextBox _folderText = new();
     private readonly Button _browseButton = new();
@@ -132,7 +137,7 @@ internal sealed class MainForm : Form
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyFolderSortMode(_store.GetSetting("folder_sort_mode", "NameAsc"));
         var storedDisplayStyle = _store.GetSetting("display_style", "standard");
-        ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
+        ApplyThumbnailSize(ParseSettingInt("thumbnail_size", GalleryThumbnailDefault));
         ApplyDisplayStyle(storedDisplayStyle, persist: false);
         var storedAspectMode = _store.GetSetting("aspect_mode", "");
         ApplyAspectMode(
@@ -850,9 +855,9 @@ internal sealed class MainForm : Form
             Padding = new Padding(12, 6, 0, 0),
         };
 
-        _thumbnailSize.Minimum = 64;
-        _thumbnailSize.Maximum = 192;
-        _thumbnailSize.Increment = 16;
+        _thumbnailSize.Minimum = GalleryThumbnailMin;
+        _thumbnailSize.Maximum = GalleryThumbnailMax;
+        _thumbnailSize.Increment = GalleryThumbnailStep;
         _thumbnailSize.Width = 58;
         _thumbnailSize.ValueChanged += (_, _) =>
         {
@@ -862,7 +867,7 @@ internal sealed class MainForm : Form
             }
 
             ApplyThumbnailSize((int)_thumbnailSize.Value);
-            _store.SaveSetting("thumbnail_size", ((int)_thumbnailSize.Value).ToString(System.Globalization.CultureInfo.InvariantCulture));
+            SaveThumbnailSize((int)_thumbnailSize.Value);
         };
 
         _previewVisible.Text = "Preview";
@@ -942,6 +947,18 @@ internal sealed class MainForm : Form
             if (_list.GetItemAt(args.X, args.Y) is null)
             {
                 ClearImageSelection();
+            }
+        };
+        _list.MouseWheel += (_, args) =>
+        {
+            if ((Control.ModifierKeys & (Keys.Control | Keys.Alt)) == Keys.None)
+            {
+                return;
+            }
+
+            if (HandleGalleryWheelZoom(args.Delta) && args is HandledMouseEventArgs handledArgs)
+            {
+                handledArgs.Handled = true;
             }
         };
         _list.DoubleClick += (_, _) => OpenSelectedFile();
@@ -1087,7 +1104,7 @@ internal sealed class MainForm : Form
         root.Controls.Add(split, 0, 4);
         root.Controls.Add(_statusLabel, 0, 5);
         Controls.Add(root);
-        ApplyThumbnailSize(96);
+        ApplyThumbnailSize(GalleryThumbnailDefault);
         RefreshSearchTagSuggestions();
         RefreshSearchChipControls();
         UpdateSelectionActions();
@@ -1161,6 +1178,31 @@ internal sealed class MainForm : Form
         var thumbnailSize = _gridImages.ImageSize.Width == (int)_thumbnailSize.Value;
         Require(thumbnailSize, "thumbnail size control failed");
         _thumbnailSize.Value = oldThumbnailSize;
+
+        var oldViewMode = _list.View == View.LargeIcon ? "grid" : "details";
+        ApplyViewMode("grid");
+        ApplyThumbnailSize(GalleryThumbnailDefault);
+        SaveThumbnailSize(GalleryThumbnailDefault);
+        var wheelHandled = HandleGalleryWheelZoom(120);
+        var wheelSize = GalleryThumbnailDefault + GalleryThumbnailStep;
+        var galleryWheelZoom = wheelHandled &&
+            (int)_thumbnailSize.Value == wheelSize &&
+            _gridImages.ImageSize.Width == wheelSize &&
+            string.Equals(_store.GetSetting("thumbnail_size", ""), wheelSize.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Require(galleryWheelZoom, "gallery wheel zoom failed");
+        var keyboardMinusHandled = HandleGalleryKeyboardZoom(Keys.Control | Keys.OemMinus);
+        var keyboardPlusHandled = HandleGalleryKeyboardZoom(Keys.Control | Keys.Oemplus);
+        var keyboardResetHandled = HandleGalleryKeyboardZoom(Keys.Control | Keys.D0);
+        var galleryKeyboardZoom = keyboardMinusHandled &&
+            keyboardPlusHandled &&
+            keyboardResetHandled &&
+            (int)_thumbnailSize.Value == GalleryThumbnailReset &&
+            _gridImages.ImageSize.Width == GalleryThumbnailReset &&
+            string.Equals(_store.GetSetting("thumbnail_size", ""), GalleryThumbnailReset.ToString(System.Globalization.CultureInfo.InvariantCulture), StringComparison.Ordinal);
+        Require(galleryKeyboardZoom, "gallery keyboard zoom failed");
+        ApplyViewMode(oldViewMode);
+        ApplyThumbnailSize(oldThumbnailSize);
+        SaveThumbnailSize(oldThumbnailSize);
 
         var oldDisplayStyle = CurrentDisplayStyle();
         var oldAspectMode = CurrentAspectMode();
@@ -1440,6 +1482,8 @@ internal sealed class MainForm : Form
             SortName: sortName,
             RandomReshuffle: randomReshuffle,
             ThumbnailSize: thumbnailSize,
+            GalleryWheelZoom: galleryWheelZoom,
+            GalleryKeyboardZoom: galleryKeyboardZoom,
             DisplayModes: displayModes,
             AspectModes: aspectModes,
             PreviewToggle: previewToggle,
@@ -3274,6 +3318,19 @@ internal sealed class MainForm : Form
             case Keys.Control | Keys.Down:
                 SetSelectedFavoriteLevel(Math.Max(0, (int)_favoriteLevel.Value - 1));
                 return true;
+            case Keys.Control | Keys.Oemplus:
+            case Keys.Control | Keys.Shift | Keys.Oemplus:
+            case Keys.Control | Keys.Add:
+            case Keys.Control | Keys.OemMinus:
+            case Keys.Control | Keys.Subtract:
+            case Keys.Control | Keys.D0:
+            case Keys.Control | Keys.NumPad0:
+                if (HandleGalleryKeyboardZoom(keyData))
+                {
+                    return true;
+                }
+
+                break;
             case Keys.Delete:
                 DeleteSelectedImage();
                 return true;
@@ -3302,6 +3359,61 @@ internal sealed class MainForm : Form
         }
 
         return base.ProcessCmdKey(ref msg, keyData);
+    }
+
+    private bool HandleGalleryKeyboardZoom(Keys keyData)
+    {
+        if (_list.View != View.LargeIcon)
+        {
+            return false;
+        }
+
+        switch (keyData)
+        {
+            case Keys.Control | Keys.Oemplus:
+            case Keys.Control | Keys.Shift | Keys.Oemplus:
+            case Keys.Control | Keys.Add:
+                return ApplyGalleryThumbnailSize((int)_thumbnailSize.Value + GalleryThumbnailStep);
+            case Keys.Control | Keys.OemMinus:
+            case Keys.Control | Keys.Subtract:
+                return ApplyGalleryThumbnailSize((int)_thumbnailSize.Value - GalleryThumbnailStep);
+            case Keys.Control | Keys.D0:
+            case Keys.Control | Keys.NumPad0:
+                return ApplyGalleryThumbnailSize(GalleryThumbnailReset);
+            default:
+                return false;
+        }
+    }
+
+    private bool HandleGalleryWheelZoom(int wheelDelta)
+    {
+        if (_list.View != View.LargeIcon || wheelDelta == 0)
+        {
+            return false;
+        }
+
+        var delta = wheelDelta > 0 ? GalleryThumbnailStep : -GalleryThumbnailStep;
+        return ApplyGalleryThumbnailSize((int)_thumbnailSize.Value + delta);
+    }
+
+    private bool ApplyGalleryThumbnailSize(int size)
+    {
+        if (_list.View != View.LargeIcon)
+        {
+            return false;
+        }
+
+        var selectedIndex = GetSelectedIndex();
+        var clamped = Math.Clamp(size, GalleryThumbnailMin, GalleryThumbnailMax);
+        ApplyThumbnailSize(clamped);
+        SaveThumbnailSize(clamped);
+        if (selectedIndex >= 0 && selectedIndex < _list.VirtualListSize)
+        {
+            _list.EnsureVisible(selectedIndex);
+        }
+
+        SetStatus($"Thumb {clamped}");
+        return true;
     }
 
     private int GetSelectedIndex()
@@ -3582,20 +3694,20 @@ internal sealed class MainForm : Form
         {
             ApplyViewMode("grid", persist);
             ApplyAspectMode("square", persist);
-            ApplyThumbnailSize(64);
+            ApplyThumbnailSize(GalleryThumbnailMin);
             if (persist)
             {
-                _store.SaveSetting("thumbnail_size", "64");
+                SaveThumbnailSize(GalleryThumbnailMin);
             }
         }
         else if (normalized == "poster")
         {
             ApplyViewMode("grid", persist);
             ApplyAspectMode("portrait", persist);
-            ApplyThumbnailSize(192);
+            ApplyThumbnailSize(GalleryThumbnailMax);
             if (persist)
             {
-                _store.SaveSetting("thumbnail_size", "192");
+                SaveThumbnailSize(GalleryThumbnailMax);
             }
         }
 
@@ -3979,7 +4091,7 @@ internal sealed class MainForm : Form
 
     private void ApplyThumbnailSize(int size)
     {
-        var clamped = Math.Clamp(size, 64, 192);
+        var clamped = Math.Clamp(size, GalleryThumbnailMin, GalleryThumbnailMax);
         _updatingThumbnailSize = true;
         try
         {
@@ -4005,9 +4117,14 @@ internal sealed class MainForm : Form
         _list.Invalidate();
     }
 
+    private void SaveThumbnailSize(int size)
+    {
+        _store.SaveSetting("thumbnail_size", size.ToString(System.Globalization.CultureInfo.InvariantCulture));
+    }
+
     private static Size GridImageSizeFor(int thumbnailSize, string aspectMode)
     {
-        var width = Math.Clamp(thumbnailSize, 64, 192);
+        var width = Math.Clamp(thumbnailSize, GalleryThumbnailMin, GalleryThumbnailMax);
         if (NormalizeAspectMode(aspectMode) == "square")
         {
             return new Size(width, width);
@@ -4477,6 +4594,8 @@ internal sealed class MainForm : Form
             $"sortName={BoolText(report.SortName)}",
             $"randomReshuffle={BoolText(report.RandomReshuffle)}",
             $"thumbnailSize={BoolText(report.ThumbnailSize)}",
+            $"galleryWheelZoom={BoolText(report.GalleryWheelZoom)}",
+            $"galleryKeyboardZoom={BoolText(report.GalleryKeyboardZoom)}",
             $"displayModes={BoolText(report.DisplayModes)}",
             $"aspectModes={BoolText(report.AspectModes)}",
             $"previewToggle={BoolText(report.PreviewToggle)}",
@@ -5277,6 +5396,8 @@ internal sealed class MainForm : Form
         bool SortName,
         bool RandomReshuffle,
         bool ThumbnailSize,
+        bool GalleryWheelZoom,
+        bool GalleryKeyboardZoom,
         bool DisplayModes,
         bool AspectModes,
         bool PreviewToggle,
