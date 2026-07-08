@@ -12,6 +12,8 @@ internal sealed class NativeImageStore
     private const int NativeThumbnailSizeMin = 64;
     private const int NativeThumbnailSizeMax = 192;
     private const string BrowserRootFolderKey = "__ROOT__";
+    private const string SearchIndexMetadataVersion = "2";
+    private static readonly char[] SearchTokenSeparators = [' ', '\t', '\r', '\n', ','];
 
     private readonly string _projectRoot;
     private readonly string _databasePath;
@@ -392,6 +394,7 @@ internal sealed class NativeImageStore
         ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE scan_root = $root", ("$root", resolvedRoot));
 
         UpsertImages(connection, transaction, images, resolvedRoot, indexedAt);
+        UpsertSetting(connection, transaction, SearchIndexMetadataVersionKey(resolvedRoot), SearchIndexMetadataVersion, finishedAt);
         transaction.Commit();
     }
 
@@ -434,6 +437,7 @@ internal sealed class NativeImageStore
             ExecuteNonQuery(connection, transaction, "DELETE FROM images WHERE scan_root = $root", ("$root", resolvedRoot));
             ExecuteNonQuery(connection, transaction, "DELETE FROM image_search_fts WHERE scan_root = $root", ("$root", resolvedRoot));
             UpsertImages(connection, transaction, result.AddedOrUpdated, resolvedRoot, indexedAt);
+            UpsertSetting(connection, transaction, SearchIndexMetadataVersionKey(resolvedRoot), SearchIndexMetadataVersion, finishedAt);
         }
         else
         {
@@ -606,7 +610,7 @@ internal sealed class NativeImageStore
     private static string BuildFtsQuery(string query)
     {
         var tokens = query
-            .Split([' ', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Split(SearchTokenSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Select(static token => $"\"{token.Replace("\"", "\"\"")}\"*");
         return string.Join(' ', tokens);
     }
@@ -631,6 +635,10 @@ internal sealed class NativeImageStore
                 OR filename LIKE $like COLLATE NOCASE
                 OR folder LIKE $like COLLATE NOCASE
                 OR absolute_path LIKE $like COLLATE NOCASE
+                OR prompt LIKE $like COLLATE NOCASE
+                OR negative_prompt LIKE $like COLLATE NOCASE
+                OR metadata_settings_summary LIKE $like COLLATE NOCASE
+                OR metadata_raw LIKE $like COLLATE NOCASE
               )
             ORDER BY favorite_level DESC, modified_at_utc DESC, absolute_path COLLATE NOCASE ASC
             LIMIT $limit
@@ -2465,7 +2473,16 @@ internal sealed class NativeImageStore
 
     private static string BuildSearchText(NativeImageRecord image)
     {
-        return $"{image.Filename} {image.Folder} {image.AbsolutePath}";
+        return string.Join(' ', new[]
+        {
+            image.Filename,
+            image.Folder,
+            image.AbsolutePath,
+            image.Prompt,
+            image.NegativePrompt,
+            image.MetadataSettingsSummary,
+            image.MetadataRaw,
+        }.Where(static value => !string.IsNullOrWhiteSpace(value)));
     }
 
     private static void EnsureSearchIndexForRoot(SqliteConnection connection, SqliteTransaction transaction, string resolvedRoot)
@@ -2483,7 +2500,8 @@ internal sealed class NativeImageStore
 
             var imageCount = Convert.ToInt32(countImages.ExecuteScalar());
             var searchCount = Convert.ToInt32(countSearch.ExecuteScalar());
-            if (imageCount == searchCount)
+            if (imageCount == searchCount &&
+                string.Equals(GetSetting(connection, transaction, SearchIndexMetadataVersionKey(resolvedRoot)), SearchIndexMetadataVersion, StringComparison.Ordinal))
             {
                 return;
             }
@@ -2494,7 +2512,7 @@ internal sealed class NativeImageStore
         {
             select.Transaction = transaction;
             select.CommandText = """
-                SELECT id, filename, folder, absolute_path
+                SELECT id, filename, folder, absolute_path, prompt, negative_prompt, metadata_settings_summary, metadata_raw
                 FROM images
                 WHERE scan_root = $root
                 """;
@@ -2504,7 +2522,16 @@ internal sealed class NativeImageStore
             {
                 rows.Add((
                     reader.GetString(0),
-                    $"{reader.GetString(1)} {reader.GetString(2)} {reader.GetString(3)}"));
+                    string.Join(' ', new[]
+                    {
+                        reader.GetString(1),
+                        reader.GetString(2),
+                        reader.GetString(3),
+                        reader.GetString(4),
+                        reader.GetString(5),
+                        reader.GetString(6),
+                        reader.GetString(7),
+                    }.Where(static value => !string.IsNullOrWhiteSpace(value)))));
             }
         }
 
@@ -2524,6 +2551,13 @@ internal sealed class NativeImageStore
             insert.Parameters.AddWithValue("$text", row.SearchText);
             insert.ExecuteNonQuery();
         }
+
+        UpsertSetting(connection, transaction, SearchIndexMetadataVersionKey(resolvedRoot), SearchIndexMetadataVersion, DateTime.UtcNow);
+    }
+
+    private static string SearchIndexMetadataVersionKey(string resolvedRoot)
+    {
+        return $"search_index_metadata_version:{resolvedRoot}";
     }
 
     private static void EnsureColumn(SqliteConnection connection, string table, string column, string type)

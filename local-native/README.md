@@ -647,6 +647,21 @@ desktop action still writes to the system clipboard.
 This is not prompt tag actions (#109), search chips (#110), bulk metadata
 editing, browser workflow parity, or any automatic enhancement worker path.
 
+## Post-v1 #109 Notes
+
+#109 adds the first bounded native prompt-tag action slice. The detail modal now
+shows prompt tag buttons derived from #107 prompt metadata. Clicking a tag adds
+it to the existing native search field as a comma-separated search token and
+closes the detail modal.
+
+Native indexed search now includes prompt, negative prompt, compact settings
+summary, and raw `parameters` metadata so the tag action can filter images
+without introducing #110 search chips or tag suggestion UI.
+
+The native UI smoke verifies this action path with `promptTagAction=true` while
+keeping browser app changes, `scripts/**` changes, destructive flows, and
+automatic enhancement workers out of scope.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
