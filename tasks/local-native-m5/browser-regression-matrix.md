@@ -704,6 +704,42 @@ requirement.
 M19 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
+## M20 Native Filter Count Label Slice
+
+M20 advances only the browser-mapped sidebar result-count label row. It does
+not add browser helpers, a webview, a local server, tag-count UI, folder range
+replacement, broad enhancement queue/output UI, or automatic workers.
+
+Browser evidence maps from:
+
+- `src/lib/viewerUi.ts`: `getResultCountLabel` renders `<count> indexed` when
+  no search/date/hidden-folder count filter is active and `<visible> filtered /
+  <indexed> indexed` when one is active;
+- `src/components/Sidebar.tsx`: the result-count label is rendered as
+  sidebar metadata below the current folder path;
+- `src/lib/viewerUi.test.ts`: browser tests cover unfiltered, search-filtered,
+  and date-filtered count labels.
+
+M20 native smoke result additions:
+
+- `-HeadlessUiSmoke`: `filterCountLabel=true` for initial indexed count,
+  hidden-folder filtered count, restored indexed count, and search filtered
+  count;
+- `-HeadlessDateFilterSmoke`: `filterCountLabel=true` for Today date filtered
+  count and cleared indexed count.
+
+| Area | M20 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sidebar quick search and filters | DEFERRED | Native top status now maps the browser result-count label with `<count> indexed` and `<visible> filtered / <indexed> indexed`. `-HeadlessUiSmoke` verifies indexed, hidden-folder-filtered, restored, and search-filtered labels; `-HeadlessDateFilterSmoke` verifies date-filtered and cleared labels. | Search tag suggestion count parity and richer per-filter counts beyond the browser result-count label. | `codex_pm` / `cursor_impl` | Adopt only after a future native UI/headless smoke proves a specific browser-mapped count source without `src/**`, browser runtime, or new product concepts; otherwise keep explicit `DEFER`. |
+| Folder visibility | DEFERRED | Hidden folder buckets now feed the browser-mapped result-count label, and the UI smoke verifies the filtered label after hiding folders. | Folder range selection remains explicitly deferred pending replacement/custom folder bucket control and browser-mapped UI semantics. | `codex_pm` / `claude_ui` / `cursor_impl` | Decide the custom control and keyboard/mouse semantics before implementing range selection. |
+| Enhancement isolation | DEFERRED | M20 changes no enhancement queue/output behavior; UI/date/enhanced smokes verify enhancement state remains unchanged. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source UI and original/enhanced preview toggle. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Native responsive/layout parity | DEFERRED | M20 reuses the existing compact native top status label and does not add a new control or alter the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
+Rows not listed above keep their latest recorded status, owner, and evidence
+requirement.
+M20 does not reclassify folder range selection or broad explicit enhancement
+UI; both remain `DEFERRED`.
+
 ## Minimum M6 Verification
 
 M6 must run and record:

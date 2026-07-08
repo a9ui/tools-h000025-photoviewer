@@ -415,3 +415,32 @@ open/delete output/source UI, original/enhanced preview toggles, drag/open
 parity, placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
 destructive actions, full browser API/error parity, and screenshot polish also
 remain deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M20 Notes
+
+M20 maps the browser sidebar result-count label into native where the existing
+browser behavior and existing native state line up cleanly. The browser
+behavior is `indexed` when no search/date/folder-hidden count filter is active
+and `filtered / indexed` when search text, date filters, or hidden folder
+buckets are active.
+
+Native now updates the existing top status label from `_allImages`,
+`_visibleImages`, search text, date range, and folder bucket visibility:
+`<count> indexed` or `<visible> filtered / <indexed> indexed`. This does not
+add new browser helpers, tag-count UI, folder range replacement, broad
+enhancement UI, automatic workers, or browser app changes.
+
+The M20 evidence is added to existing native smokes:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke
+```
+
+This remains a parity slice, not full native parity. Search tag suggestion
+counts, richer per-filter counts beyond the browser result-count label, folder
+range selection, explicit enhancement queue/output UI, original/enhanced
+preview toggles, drag/open parity, placeholder behavior, native thumbnail
+warmup UI, preview tabs, bulk destructive actions, full browser API/error
+parity, and screenshot polish remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.

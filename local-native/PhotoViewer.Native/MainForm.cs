@@ -77,6 +77,7 @@ internal sealed class MainForm : Form
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
+    private string _stateSummaryLabel = "";
 
     public MainForm(string? initialFolder)
     {
@@ -938,14 +939,17 @@ internal sealed class MainForm : Form
         Require(_visibleImages.Count > 0, "scan produced no visible images");
         var scannedImages = _allImages.Count;
         var initialVisible = _visibleImages.Count;
+        var indexedCountLabel = string.Equals(_stateLabel.Text, $"{scannedImages:n0} indexed", StringComparison.Ordinal);
         var folderBuckets = _folderBuckets.Items.Count;
         Require(folderBuckets > 0, "folder buckets were not built");
         Require(folderBuckets >= 2, "folder buckets did not include nested fixture folders");
         SetAllFolderBuckets(visible: false);
         var folderHideAll = _visibleImages.Count == 0;
+        var hiddenFolderCountLabel = string.Equals(_stateLabel.Text, $"{_visibleImages.Count:n0} filtered / {scannedImages:n0} indexed", StringComparison.Ordinal);
         Require(folderHideAll, "folder hide-all did not filter visible images");
         SetAllFolderBuckets(visible: true);
         Require(_visibleImages.Count == initialVisible, "folder show-all did not restore visible images");
+        var restoredCountLabel = string.Equals(_stateLabel.Text, $"{scannedImages:n0} indexed", StringComparison.Ordinal);
         _folderBuckets.ClearSelected();
         _folderBuckets.SelectedIndex = 0;
         Application.DoEvents();
@@ -1072,9 +1076,12 @@ internal sealed class MainForm : Form
         ApplyFilter();
         var searchMatches = _visibleImages.Count;
         Require(searchMatches > 0, "search produced no fixture matches");
+        var searchCountLabel = string.Equals(_stateLabel.Text, $"{searchMatches:n0} filtered / {scannedImages:n0} indexed", StringComparison.Ordinal);
         _clearSearchButton.PerformClick();
         var clearSearch = _searchText.Text.Length == 0 && _visibleImages.Count == initialVisible;
         Require(clearSearch, "clear search control failed");
+        var filterCountLabel = indexedCountLabel && hiddenFolderCountLabel && restoredCountLabel && searchCountLabel;
+        Require(filterCountLabel, "filter count label failed");
 
         _searchText.Text = searchQuery;
         ApplyFilter();
@@ -1148,6 +1155,7 @@ internal sealed class MainForm : Form
             MultiSelection: multiSelection,
             BackgroundClear: backgroundClear,
             FavoriteFilterCounts: favoriteFilterCounts,
+            FilterCountLabel: filterCountLabel,
             FavoriteLevelFilter: favoriteLevelFilter,
             UnratedFilter: unratedFilter,
             EnhancedOnlyFilter: enhancedOnlyFilter,
@@ -1336,6 +1344,7 @@ internal sealed class MainForm : Form
         ApplyFilter();
         var todayMatches = _visibleImages.Count;
         var todayFilter = todayMatches == 1 && _visibleImages.All(image => IsImageWithinDateFilter(image, "today", today));
+        var todayCountLabel = string.Equals(_stateLabel.Text, $"{todayMatches:n0} filtered / {totalImages:n0} indexed", StringComparison.Ordinal);
         Require(todayFilter, "today date filter failed");
         var dateFilterPersisted = string.Equals(_store.GetSetting("date_filter", ""), "today", StringComparison.OrdinalIgnoreCase);
         Require(dateFilterPersisted, "date filter setting did not persist");
@@ -1411,7 +1420,10 @@ internal sealed class MainForm : Form
         ApplyFilter();
         var clearMatches = _visibleImages.Count;
         var clearFilter = clearMatches == totalImages;
+        var clearCountLabel = string.Equals(_stateLabel.Text, $"{totalImages:n0} indexed", StringComparison.Ordinal);
         Require(clearFilter, "clear date filter failed");
+        var filterCountLabel = todayCountLabel && clearCountLabel;
+        Require(filterCountLabel, "date filter count label failed");
 
         var afterEnhancementState = EnhancementStateFingerprint();
         Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during date filter smoke");
@@ -1440,6 +1452,7 @@ internal sealed class MainForm : Form
             ManualSearchFilter: manualSearchFilter,
             ManualFavoriteFilter: manualFavoriteFilter,
             ManualRangePersisted: manualRangePersisted,
+            FilterCountLabel: filterCountLabel,
             ClearFilter: clearFilter,
             DateFilterPersisted: dateFilterPersisted,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
@@ -1676,7 +1689,8 @@ internal sealed class MainForm : Form
     private void ApplyStateSummary(NativeImportReport? report = null)
     {
         report ??= _store.ImportProjectState();
-        _stateLabel.Text = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
+        _stateSummaryLabel = $"db {report.ImageCount:n0} / fav {report.FavoriteCount:n0} / seen {report.SeenImageCount:n0} / albums {report.AlbumCount:n0}/{report.AlbumImageCount:n0} / pvu {report.BrowserStateKeyCount:n0}";
+        RefreshResultCountLabel();
     }
 
     private void ImportState()
@@ -1945,6 +1959,7 @@ internal sealed class MainForm : Form
             RefreshVisibleList();
             RestoreGalleryStateSelection(preferredSelectionPath);
             UpdateSelectionActions();
+            RefreshResultCountLabel();
             SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images (indexed search).");
             return;
         }
@@ -1966,7 +1981,33 @@ internal sealed class MainForm : Form
         RefreshVisibleList();
         RestoreGalleryStateSelection(preferredSelectionPath);
         UpdateSelectionActions();
+        RefreshResultCountLabel();
         SetStatus($"Showing {_visibleImages.Count:n0} / {_allImages.Count:n0} images.");
+    }
+
+    private void RefreshResultCountLabel()
+    {
+        if (_allImages.Count <= 0)
+        {
+            _stateLabel.Text = _stateSummaryLabel;
+            return;
+        }
+
+        _stateLabel.Text = HasBrowserMappedCountFilter()
+            ? $"{_visibleImages.Count:n0} filtered / {_allImages.Count:n0} indexed"
+            : $"{_allImages.Count:n0} indexed";
+    }
+
+    private bool HasBrowserMappedCountFilter()
+    {
+        var hasSearch = _searchText.Text.Trim().Length > 0;
+        var (dateFrom, dateTo) = CurrentDateRange();
+        return hasSearch || dateFrom.HasValue || dateTo.HasValue || HasHiddenFolderBuckets();
+    }
+
+    private bool HasHiddenFolderBuckets()
+    {
+        return _folderBuckets.Items.Count > 0 && _folderBuckets.CheckedItems.Count < _folderBuckets.Items.Count;
     }
 
     private void RefreshVisibleList()
@@ -3426,6 +3467,7 @@ internal sealed class MainForm : Form
             $"multiSelection={BoolText(report.MultiSelection)}",
             $"backgroundClear={BoolText(report.BackgroundClear)}",
             $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
+            $"filterCountLabel={BoolText(report.FilterCountLabel)}",
             $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
             $"unratedFilter={BoolText(report.UnratedFilter)}",
             $"enhancedOnlyFilter={BoolText(report.EnhancedOnlyFilter)}",
@@ -3534,6 +3576,7 @@ internal sealed class MainForm : Form
             $"manualSearchFilter={BoolText(report.ManualSearchFilter)}",
             $"manualFavoriteFilter={BoolText(report.ManualFavoriteFilter)}",
             $"manualRangePersisted={BoolText(report.ManualRangePersisted)}",
+            $"filterCountLabel={BoolText(report.FilterCountLabel)}",
             $"clearFilter={BoolText(report.ClearFilter)}",
             $"dateFilterPersisted={BoolText(report.DateFilterPersisted)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
@@ -4111,6 +4154,7 @@ internal sealed class MainForm : Form
         bool MultiSelection,
         bool BackgroundClear,
         bool FavoriteFilterCounts,
+        bool FilterCountLabel,
         bool FavoriteLevelFilter,
         bool UnratedFilter,
         bool EnhancedOnlyFilter,
@@ -4192,6 +4236,7 @@ internal sealed class MainForm : Form
         bool ManualSearchFilter,
         bool ManualFavoriteFilter,
         bool ManualRangePersisted,
+        bool FilterCountLabel,
         bool ClearFilter,
         bool DateFilterPersisted,
         bool EnhancementStateUnchanged);
