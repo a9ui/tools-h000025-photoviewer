@@ -18,11 +18,14 @@ browser `pvu_view.dateFrom` / `dateTo` into native `date_filter`, `date_from`,
 and `date_to` on first import. The fifth slice migrated explicit browser
 `pvu_last_dir_set` / `pvu_recent_dirs` into native `recent_folder_set` and
 `recent_folder`, while preserving later native scan/user choices.
-
-This continuation migrates explicit browser `pvu_view.rightPanelOpen` /
+The sixth slice migrated explicit browser `pvu_view.rightPanelOpen` /
 `rightPanelWidth` into native `preview_visible` and
 `preview_splitter_distance` on first import, while preserving later native
 right-preview choices.
+
+This continuation migrates explicit browser `pvu_view.thumbSize` into native
+`thumbnail_size` on first import, clamped to the current native UI range, while
+preserving later native thumbnail-size choices.
 
 ## Guardrails
 
@@ -112,7 +115,8 @@ Read in full before planning or editing:
   - existing native `recent_folder_set`, `recent_folder`, or scan roots are
     not overwritten;
   - malformed recent-dirs values are recoverable warnings.
-- Add a bounded migration for `pvu_view.rightPanelOpen` / `rightPanelWidth`:
+- Keep the existing bounded migration for `pvu_view.rightPanelOpen` /
+  `rightPanelWidth`:
   - browser `rightPanelOpen=true` / `false` -> native
     `preview_visible=1` / `0`;
   - browser `rightPanelWidth=N` -> native `preview_splitter_distance` using
@@ -121,6 +125,13 @@ Read in full before planning or editing:
   - malformed right-preview values are recoverable warnings;
   - existing native `preview_visible` or `preview_splitter_distance` is not
     overwritten.
+- Add a bounded migration for `pvu_view.thumbSize`:
+  - browser positive integer `thumbSize` -> native `thumbnail_size`;
+  - imported values are clamped to the current native UI range `64..192`;
+  - existing native `thumbnail_size` is not overwritten;
+  - malformed thumbnail-size values are recoverable warnings;
+  - broader display-style, aspect, columns, and pinned-tab state remains
+    deferred to the existing post-v1 rows.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -136,7 +147,6 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
 dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
-powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessFolderSetSmoke -FolderSet .\.cache\native-fixture,.\.cache\native-fixture-extra -Search fixture
 corepack pnpm typecheck
 git diff --name-only -- src
 git diff --name-only -- scripts
@@ -150,41 +160,43 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-row5-pvu-state` after
-rebasing PR #131 onto PR #132 / `origin/main`
-`13710ebc86d3247f54027c190b30e3b77eab9e1b`:
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row6-thumb-size`
+rebased onto `origin/main` `10dbf1245a40e35509516e7f26ffb7a254f05d70`
+after PR #131:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuViewModeMigrated=true`, `pvuEnhancedOnlyMigrated=true`,
   `pvuFavoriteFilterMigrated=true`, `pvuDateRangeMigrated=true`,
+  `pvuThumbnailSizeMigrated=true`, `pvuThumbnailSizeClamped=true`,
   `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
-  `migrationRecorded=true`,
-  `browserMirrorStored=true`, `enhancedMirrorStored=true`,
-  `favoriteMirrorStored=true`, `recentMirrorStored=true`,
+  `migrationRecorded=true`, `browserMirrorStored=true`,
+  `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
+  `recentMirrorStored=true`,
   `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
   `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
-  `nativeRecentFolderSetPreserved=true`,
+  `nativeThumbnailSizePreserved=true`, `nativeRecentFolderSetPreserved=true`,
   `nativeRightPreviewPreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
-  `malformedDateRangeWarning=true`, `malformedRecentDirsWarning=true`,
-  `malformedRightPreviewWarning=true`,
+  `malformedDateRangeWarning=true`, `malformedThumbnailSizeWarning=true`,
+  `malformedRecentDirsWarning=true`, `malformedRightPreviewWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
+  `nativeThumbnailSizeStillPreserved=true`,
   `nativeRecentFolderSetStillPreserved=true`,
   `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=5`.
-- `-PrepareFixture` passed with existing fixture/cache state preserved.
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=6`.
+- `-PrepareFixture` passed and created only ignored fixture/cache state in this
+  clean worktree.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
-  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `seenImages=4`, `settings=37`, `images=4`,
+  `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
-  with `gridToggle=true`, `enhancedOnlyFilter=true`,
+  with `gridToggle=true`, `thumbnailSize=true`, `enhancedOnlyFilter=true`,
   `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
-- `-HeadlessFolderSetSmoke -FolderSet .\.cache\native-fixture,.\.cache\native-fixture-extra -Search fixture`
-  passed with `recentSetPersisted=true`, `openRecentSet=true`,
-  `watcherRoots=true`, and `enhancementStateUnchanged=true`.
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.
 - `git diff --name-only -- H000033` returned no files.
@@ -196,7 +208,7 @@ rebasing PR #131 onto PR #132 / `origin/main`
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #242.
+2. Update SQLite job #245.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.

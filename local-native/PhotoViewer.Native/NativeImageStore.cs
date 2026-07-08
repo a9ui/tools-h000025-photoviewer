@@ -9,6 +9,8 @@ internal sealed class NativeImageStore
     private const int MinimumPreviewSplitterDistance = 120;
     private const int MinimumBrowserRightPanelWidth = 240;
     private const int MaximumBrowserRightPanelWidth = 900;
+    private const int NativeThumbnailSizeMin = 64;
+    private const int NativeThumbnailSizeMax = 192;
 
     private readonly string _projectRoot;
     private readonly string _databasePath;
@@ -1051,6 +1053,25 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser right-preview state was skipped; rerun the browser export or remove malformed pvu_view rightPanelOpen/rightPanelWidth values, then run Import again."));
             }
+
+            if (!pvuViewMalformed && TryReadBrowserThumbnailSize(pvuView, out var thumbnailSize, out var hasThumbnailSize, out warningMessage))
+            {
+                if (hasThumbnailSize && GetSetting(connection, transaction, "thumbnail_size") is null)
+                {
+                    var clamped = Math.Clamp(thumbnailSize, NativeThumbnailSizeMin, NativeThumbnailSizeMax);
+                    UpsertSetting(connection, transaction, "thumbnail_size", clamped.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
+                    migrations.Add("pvu_view.thumbSize->thumbnail_size");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "malformed-thumbnail-size-value",
+                    warningMessage,
+                    "Browser thumbnail-size state was skipped; rerun the browser export or remove malformed pvu_view.thumbSize, then run Import again."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1475,6 +1496,79 @@ internal sealed class NativeImageStore
         }
 
         return true;
+    }
+
+    private static bool TryReadBrowserThumbnailSize(
+        string value,
+        out int thumbnailSize,
+        out bool present,
+        out string? warningMessage)
+    {
+        thumbnailSize = 0;
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("thumbSize", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (TryReadPositiveInteger(element, out thumbnailSize))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            warningMessage = "pvu_view.thumbSize must be a positive integer.";
+            return false;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadPositiveInteger(JsonElement element, out int value)
+    {
+        if (element.ValueKind == JsonValueKind.Number &&
+            element.TryGetInt32(out value) &&
+            value > 0)
+        {
+            return true;
+        }
+
+        if (element.ValueKind == JsonValueKind.String &&
+            int.TryParse(
+                element.GetString()?.Trim(),
+                System.Globalization.NumberStyles.Integer,
+                System.Globalization.CultureInfo.InvariantCulture,
+                out value) &&
+            value > 0)
+        {
+            return true;
+        }
+
+        value = 0;
+        return false;
     }
 
     private static bool HasNativeRecentFolderState(SqliteConnection connection, SqliteTransaction transaction)
