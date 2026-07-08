@@ -415,3 +415,31 @@ open/delete output/source UI, original/enhanced preview toggles, drag/open
 parity, placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
 destructive actions, full browser API/error parity, and screenshot polish also
 remain deferred in `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M20 Notes
+
+M20 changes the milestone shape from another small filter-count-label slice to
+`Local Native Migration v1 Closeout Gate`. The local-native v1 finish line is:
+the native viewer is usable for normal local browsing without Node, browser
+runtime, webview, localhost server, automatic enhancement workers, deployment,
+H000033, or `src/**` changes.
+
+M1-M19 already cover the core local viewer path: folder/folder-set scan,
+SQLite state, explicit browser-state import, search, favorites, albums,
+folder visibility, sorting/display controls, selection, preview, detail modal,
+gallery restore, large virtual scroll, seen/unseen state, date filters/date
+headers, and read-only enhanced-only filtering from succeeded jobs.
+
+M20 therefore does not add a new implementation slice unless verification
+finds a true v1 blocker. Remaining richer count labels, API/error parity,
+desktop UI polish, drag/open/placeholder/thumb-warmup details, preview tabs,
+bulk destructive confirmations, and full `pvu_*` coverage move to post-v1
+optimization. Folder range selection and explicit enhancement queue/output UI
+are also tracked in milestone #26 `Local Native Post-v1 Backlog` and do not
+block M20 unless explicitly reclassified as v1-required. Automatic enhancement
+workers, deployment, H000033 work, and full browser parity as the M20 finish
+line remain out of scope.
+
+See `docs/local-native/m20-verification.md` and
+`tasks/local-native-m20/task.md` for the v1 closeout gate, Japanese M1-M19
+inventory, and remaining-row classification.

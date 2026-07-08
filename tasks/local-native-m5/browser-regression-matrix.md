@@ -704,6 +704,77 @@ requirement.
 M19 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
+## M20 Local Native Migration v1 Closeout Gate
+
+M20 changes the milestone objective from a narrow filter-count-label slice to
+the `Local Native Migration v1 Closeout Gate`.
+
+Decision:
+`LOCAL_NATIVE_MIGRATION_V1_GATE_DEFINED_WITH_NO_EXTRA_MICRO_PARITY_BLOCKER`.
+
+This is not a full browser-parity claim. It is the finish line for saying the
+native viewer has migrated enough for normal local use:
+
+- native normal-use viewing does not require Node, a browser runtime, a
+  webview, or a localhost HTTP server;
+- M1-M19 core workflows remain verified through native build/headless/UI
+  evidence;
+- the browser app remains preserved with no M20 `src/**` diff;
+- ordinary browsing/search/preview/detail/date/enhanced filtering does not
+  start enhancement workers or mutate enhancement job state;
+- remaining rows are classified as v1 required, post-v1 optimization, or
+  explicit defer before the milestone closes.
+
+M20 v1-required rows:
+
+| Area | M20 classification | Native evidence / closeout requirement |
+| --- | --- | --- |
+| v1 finish-line definition | v1 closeout 必須 | `docs/local-native/m20-verification.md` and `tasks/local-native-m20/task.md` fix the local-native v1 complete conditions and M1-M19 Japanese inventory. |
+| Core native workflows | v1 closeout 必須 | Re-run native build plus import/scan/incremental/search/perf/cache/UI/folder-set/large-scroll/seen/date-filter/date-section/enhanced-filter smokes. |
+| Browser baseline preservation | v1 closeout 必須 | Re-run `corepack pnpm typecheck`, `corepack pnpm test:unit`, `corepack pnpm test:e2e`, `.\scripts\verify-project.ps1 -Full`, and `git diff --name-only -- src`. |
+| Passive enhancement isolation | v1 closeout 必須 | Native UI/date/section/enhanced smokes must keep enhancement state unchanged. No automatic workers. |
+| Closeout operations | v1 closeout 必須 | Update GitHub issue/PR/milestone, SQLite job, Agmsg pointer/trace and advice classification, and hand off the next actual Codex thread if post-v1 work remains. |
+
+M20 post-v1 optimization rows are now tracked in GitHub milestone #26
+`Local Native Post-v1 Backlog`. They do not block M20 unless explicitly
+reclassified as v1-required with evidence:
+
+| Area | M20 classification | Owner | Evidence requirement |
+| --- | --- | --- | --- |
+| Remaining richer count labels | v1 後の最善化 | `cursor_impl` / `codex_pm` | Native UI/headless smoke or explicit product decision if adopted after v1. Existing selected/favorite/date/enhanced state is enough for v1. |
+| #97 Native enhancement queue management | v1 後の最善化 | `codex_pm` / `cursor_impl` | Explicit-action-only queue operation smoke. |
+| #98 Original/enhanced image toggle | v1 後の最善化 | `codex_pm` / `cursor_impl` | Native output/toggle evidence without passive workers. |
+| #99 Preview tabs and pinned previews | v1 後の最善化 | `cursor_impl` | Product-scoped native interaction evidence. |
+| #100 Restore recently closed preview tabs | v1 後の最善化 | `cursor_impl` | Native tab restore evidence. |
+| #101 Hover quick preview | v1 後の最善化 | `cursor_impl` | Native UI/manual evidence. |
+| #102 Folder bucket range selection | v1 後の最善化 | `human` / `codex_pm` / `cursor_impl` | Replacement/custom folder bucket control decision plus smoke. |
+| #103 Bulk favorite actions | v1 後の最善化 | `cursor_impl` | Multi-selection favorite smoke. |
+| #104 Bulk open actions | v1 後の最善化 | `cursor_impl` | Multi-selection open smoke or product decision. |
+| #105 Bulk recycle/delete actions | v1 後の最善化 | `codex_pm` / `cursor_impl` | Disposable fixture destructive-flow evidence. |
+| #106 Delete confirmation and do-not-ask settings | v1 後の最善化 | `codex_pm` / `cursor_impl` | Confirmation/cancel/do-not-ask settings smoke. |
+| #107 Prompt and negative prompt metadata display | v1 後の最善化 | `cursor_impl` | Metadata fixture and native display evidence. |
+| #108 Copy PNG info and prompt metadata | v1 後の最善化 | `cursor_impl` | Clipboard/action smoke. |
+| #109 Prompt tag actions | v1 後の最善化 | `cursor_impl` | Tag action smoke. |
+| #110 Search chips and tag-style search UI | v1 後の最善化 | `cursor_impl` | Search chip/tag-style UI smoke. |
+| #111 Compact and poster display modes | v1 後の最善化 | `cursor_impl` | Native display-mode smoke. |
+| #112 Aspect ratio display controls | v1 後の最善化 | `cursor_impl` | Native aspect control smoke. |
+| #113 Gallery wheel and keyboard zoom | v1 後の最善化 | `cursor_impl` | Native zoom interaction evidence. |
+| #114 Editable keybinding recorder | v1 後の最善化 | `cursor_impl` | Recorder UI and persistence smoke. |
+| #115 Malformed import recovery UI | v1 後の最善化 | `codex_pm` / `cursor_impl` | Malformed export fixture and recovery state evidence. |
+| #116 Native browser API and error parity matrix | v1 後の最善化 | `codex_pm` | Split native UI/headless error matrix; not an HTTP API compatibility v1 gate. |
+| #117 Complete pvu state persistence migration | v1 後の最善化 | `codex_pm` / `cursor_impl` | Expanded explicit export fixture and persistence evidence. |
+| #118 Native UI polish and screenshot sweep | v1 後の最善化 | `claude_ui` / `codex_pm` | Desktop screenshot/Human Surface review for overlap, text fit, focus, and polish. |
+| Drag/open parity, placeholder behavior, native thumbnail warmup UI | v1 後の最善化 | `cursor_impl` / `codex_pm` | Core browse/preview/open paths are covered; refine these details after v1 unless separately issued and reclassified. |
+
+M20 explicit defer rows:
+
+| Area | M20 classification | Reason |
+| --- | --- | --- |
+| Automatic enhancement workers | 明示的に延期 | Ordinary native browsing must not start workers or enqueue jobs. |
+| Deployment | 明示的に延期 | H project deployment requires explicit request and approval. |
+| H000033 route | 明示的に延期 | M20 remains in the H000025 local-native lane. |
+| Full browser parity as the M20 finish line | 明示的に延期 | M20 closes local-native migration v1; complete browser parity moves to post-v1 optimization work. |
+
 ## Minimum M6 Verification
 
 M6 must run and record:
