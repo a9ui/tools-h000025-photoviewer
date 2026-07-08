@@ -27,6 +27,7 @@ internal sealed class MainForm : Form
     private readonly DateTimePicker _dateFromPicker = new();
     private readonly DateTimePicker _dateToPicker = new();
     private readonly ComboBox _viewMode = new();
+    private readonly ComboBox _displayStyle = new();
     private readonly ComboBox _sortMode = new();
     private readonly ComboBox _folderSortMode = new();
     private readonly Button _reshuffleButton = new();
@@ -84,6 +85,7 @@ internal sealed class MainForm : Form
     private bool _updatingDateFilter;
     private bool _updatingDateRange;
     private bool _updatingThumbnailSize;
+    private bool _updatingDisplayStyle;
     private bool _updatingSearchSuggestions;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
@@ -127,6 +129,7 @@ internal sealed class MainForm : Form
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyFolderSortMode(_store.GetSetting("folder_sort_mode", "NameAsc"));
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
+        ApplyDisplayStyle(_store.GetSetting("display_style", "standard"), persist: false);
         _previewVisible.Checked = _store.GetSetting("preview_visible", "1") == "1";
         _detailsVisible.Checked = _store.GetSetting("preview_details_visible", "1") == "1";
         ApplyPreviewVisibility();
@@ -789,6 +792,27 @@ internal sealed class MainForm : Form
 
         ConfigureDateRangePicker(_dateToPicker);
 
+        var displayStyleLabel = new Label
+        {
+            Text = "Display",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(12, 6, 0, 0),
+        };
+
+        _displayStyle.DropDownStyle = ComboBoxStyle.DropDownList;
+        _displayStyle.Width = 96;
+        _displayStyle.Items.AddRange(["Standard", "Compact", "Poster"]);
+        _displayStyle.SelectedIndexChanged += (_, _) =>
+        {
+            if (_updatingDisplayStyle)
+            {
+                return;
+            }
+
+            ApplyDisplayStyle(_displayStyle.SelectedItem?.ToString() ?? "Standard");
+        };
+
         var thumbLabel = new Label
         {
             Text = "Thumb",
@@ -839,6 +863,8 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(_dateFromPicker);
         displayControls.Controls.Add(dateToLabel);
         displayControls.Controls.Add(_dateToPicker);
+        displayControls.Controls.Add(displayStyleLabel);
+        displayControls.Controls.Add(_displayStyle);
         displayControls.Controls.Add(thumbLabel);
         displayControls.Controls.Add(_thumbnailSize);
         displayControls.Controls.Add(_previewVisible);
@@ -1105,6 +1131,24 @@ internal sealed class MainForm : Form
         Require(thumbnailSize, "thumbnail size control failed");
         _thumbnailSize.Value = oldThumbnailSize;
 
+        var oldDisplayStyle = CurrentDisplayStyle();
+        ApplyDisplayStyle("compact");
+        var compactDisplayMode = string.Equals(CurrentDisplayStyle(), "compact", StringComparison.OrdinalIgnoreCase) &&
+            _list.View == View.LargeIcon &&
+            _gridImages.ImageSize.Width == 64 &&
+            string.Equals(_store.GetSetting("display_style", ""), "compact", StringComparison.OrdinalIgnoreCase);
+        Require(compactDisplayMode, "compact display mode failed");
+        ApplyDisplayStyle("poster");
+        var posterDisplayMode = string.Equals(CurrentDisplayStyle(), "poster", StringComparison.OrdinalIgnoreCase) &&
+            _list.View == View.LargeIcon &&
+            _gridImages.ImageSize.Width == 192 &&
+            string.Equals(_store.GetSetting("display_style", ""), "poster", StringComparison.OrdinalIgnoreCase);
+        Require(posterDisplayMode, "poster display mode failed");
+        var displayModes = compactDisplayMode && posterDisplayMode;
+        ApplyDisplayStyle(oldDisplayStyle);
+        ApplyThumbnailSize(oldThumbnailSize);
+        _store.SaveSetting("thumbnail_size", oldThumbnailSize.ToString(System.Globalization.CultureInfo.InvariantCulture));
+
         _previewVisible.Checked = false;
         var previewToggle = _mainSplit?.Panel2Collapsed == true;
         Require(previewToggle, "preview visibility toggle failed");
@@ -1340,6 +1384,7 @@ internal sealed class MainForm : Form
             SortName: sortName,
             RandomReshuffle: randomReshuffle,
             ThumbnailSize: thumbnailSize,
+            DisplayModes: displayModes,
             PreviewToggle: previewToggle,
             DetailsToggle: detailsToggle,
             PreviewSplitter: previewSplitter,
@@ -3453,7 +3498,72 @@ internal sealed class MainForm : Form
         }
     }
 
-    private void ApplyViewMode(string mode)
+    private string CurrentDisplayStyle()
+    {
+        return NormalizeDisplayStyle(_displayStyle.SelectedItem?.ToString() ?? _store.GetSetting("display_style", "standard"));
+    }
+
+    private void ApplyDisplayStyle(string style, bool persist = true)
+    {
+        var normalized = NormalizeDisplayStyle(style);
+        _updatingDisplayStyle = true;
+        try
+        {
+            _displayStyle.SelectedItem = DisplayStyleLabel(normalized);
+        }
+        finally
+        {
+            _updatingDisplayStyle = false;
+        }
+
+        if (normalized == "compact")
+        {
+            ApplyViewMode("grid", persist);
+            ApplyThumbnailSize(64);
+            if (persist)
+            {
+                _store.SaveSetting("thumbnail_size", "64");
+            }
+        }
+        else if (normalized == "poster")
+        {
+            ApplyViewMode("grid", persist);
+            ApplyThumbnailSize(192);
+            if (persist)
+            {
+                _store.SaveSetting("thumbnail_size", "192");
+            }
+        }
+
+        if (persist)
+        {
+            _store.SaveSetting("display_style", normalized);
+        }
+
+        _list.Invalidate();
+    }
+
+    private static string NormalizeDisplayStyle(string style)
+    {
+        return style.Trim().ToLowerInvariant() switch
+        {
+            "compact" => "compact",
+            "poster" => "poster",
+            _ => "standard",
+        };
+    }
+
+    private static string DisplayStyleLabel(string style)
+    {
+        return NormalizeDisplayStyle(style) switch
+        {
+            "compact" => "Compact",
+            "poster" => "Poster",
+            _ => "Standard",
+        };
+    }
+
+    private void ApplyViewMode(string mode, bool persist = true)
     {
         var grid = string.Equals(mode, "grid", StringComparison.OrdinalIgnoreCase);
         _list.View = grid ? View.LargeIcon : View.Details;
@@ -3463,7 +3573,11 @@ internal sealed class MainForm : Form
             _viewMode.SelectedItem = grid ? "Grid" : "List";
         }
 
-        _store.SaveSetting("view_mode", grid ? "grid" : "details");
+        if (persist)
+        {
+            _store.SaveSetting("view_mode", grid ? "grid" : "details");
+        }
+
         RefreshDateSectionHeaders();
         _list.Invalidate();
     }
@@ -4227,6 +4341,7 @@ internal sealed class MainForm : Form
             $"sortName={BoolText(report.SortName)}",
             $"randomReshuffle={BoolText(report.RandomReshuffle)}",
             $"thumbnailSize={BoolText(report.ThumbnailSize)}",
+            $"displayModes={BoolText(report.DisplayModes)}",
             $"previewToggle={BoolText(report.PreviewToggle)}",
             $"detailsToggle={BoolText(report.DetailsToggle)}",
             $"previewSplitter={BoolText(report.PreviewSplitter)}",
@@ -5025,6 +5140,7 @@ internal sealed class MainForm : Form
         bool SortName,
         bool RandomReshuffle,
         bool ThumbnailSize,
+        bool DisplayModes,
         bool PreviewToggle,
         bool DetailsToggle,
         bool PreviewSplitter,

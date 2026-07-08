@@ -679,6 +679,20 @@ The native UI smoke verifies this path with `searchChips=true` and
 This does not change `src/**`, `scripts/**`, enhancement queues, destructive
 flows, or cache/state deletion behavior.
 
+## Post-v1 #111 Notes
+
+#111 adds the first bounded native compact/poster display-mode slice. Native now
+has a `Display` preset control with `Standard`, `Compact`, and `Poster`.
+Compact maps to the existing native grid surface with smaller thumbnails, and
+Poster maps to the existing native grid surface with the current largest
+accepted thumbnails.
+
+This intentionally does not adopt #112 aspect/crop controls, fixed columns,
+browser `pvu_view` display persistence migration, wheel/keyboard zoom, preview
+tabs, or broader visual polish. The native UI smoke verifies this first slice
+with `displayModes=true` while preserving `searchChips=true`,
+`searchSuggestion=true`, metadata checks, and passive enhancement isolation.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
