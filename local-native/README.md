@@ -693,6 +693,25 @@ tabs, or broader visual polish. The native UI smoke verifies this first slice
 with `displayModes=true` while preserving `searchChips=true`,
 `searchSuggestion=true`, metadata checks, and passive enhancement isolation.
 
+## Post-v1 #112 Notes
+
+#112 adds the first bounded native aspect-ratio control slice. Native now has
+an `Aspect` selector with `Original`, `1:1`, and `2:3` beside the accepted
+`Display` and `Thumb` controls. `1:1` uses square native grid frames, while
+`Original` and `2:3` use a portrait native grid frame on the existing WinForms
+`ListView` grid surface.
+
+Compact display mode now selects `1:1`, and Poster display mode now selects
+`2:3`. This is native UI setting persistence, not browser `pvu_view` migration:
+browser `pvu_view.aspectMode` import remains deferred until a separate
+migration contract is accepted.
+
+The native UI smoke verifies this first slice with `aspectModes=true` alongside
+the existing `displayModes=true`, search-chip, metadata, and passive
+enhancement-isolation checks. Exact browser thumbnail crop/object-fit parity,
+fixed columns, broader display-model persistence, and richer visual polish
+remain deferred.
+
 ## Post-v1 #118 Notes
 
 #118 starts native desktop UI polish and screenshot sweep evidence as a
