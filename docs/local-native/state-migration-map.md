@@ -153,6 +153,12 @@ native migration target. It is still stored as a raw browser mirror under
 Native `last_selected_image` / `last_visible_index` restore remains separate
 because it is not the same contract as the browser's per-view scroll-memory
 map.
+The fifteenth #117 row formally defers browser `pvu_fav_levels` as a native
+migration target. Current browser code does not persist this key, so explicit
+exports keep it only as a raw browser mirror under
+`native_settings.browser_pvu_fav_levels`; native does not create
+`fav_levels` or `favorite_filter_level` settings and does not increase
+`pvu_state_migration_count`.
 
 The dedicated smoke is:
 

@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`DEFER_BROWSER_SCROLL_MEMORY_AFTER_PERF_FLAG`.
+`DEFER_BROWSER_FAV_LEVELS_AFTER_SCROLL_MEMORY`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser `pvu_scroll_memory` after the
-  performance-flag row.
+  explicit classification of browser `pvu_fav_levels` after the
+  scroll-memory row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -63,6 +63,12 @@ Meaning:
   scroll map. `pvu_scroll_memory` is raw-mirrored for traceability as
   `browser_pvu_scroll_memory`, but native does not create a `scroll_memory`
   setting and does not record it in `pvu_state_migrations`.
+- Browser `pvu_fav_levels` is listed as a possible browser-only key in older
+  state maps, but current browser code does not persist this key. It is
+  raw-mirrored for traceability as `browser_pvu_fav_levels` if an explicit
+  export contains it, but it does not create native `fav_levels` or
+  `favorite_filter_level` settings and is not recorded in
+  `pvu_state_migrations`.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -120,6 +126,7 @@ Meaning:
 | `pvu_server_legacy_imported=1` | `native_settings.browser_pvu_server_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
 | `pvu_perf_enabled=1` | `native_settings.browser_pvu_perf_enabled=1` raw mirror only | `DEFER`: browser instrumentation flag is preserved for traceability but has no accepted native user-facing migration target. |
 | `pvu_scroll_memory={...}` | `native_settings.browser_pvu_scroll_memory` raw mirror only | `DEFER`: browser scroll-memory map is preserved for traceability, but the native selected-image/index restore is not the same state contract. |
+| `pvu_fav_levels` if present in explicit export | `native_settings.browser_pvu_fav_levels` raw mirror only | `DEFER`: current browser code does not persist this key, so there is no evidenced native migration target or conflict policy. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -130,6 +137,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_recent_dirs` /
 `native_settings.browser_pvu_seen_images` /
 `native_settings.browser_pvu_scroll_memory` /
+`native_settings.browser_pvu_fav_levels` /
 `native_settings.browser_pvu_perf_enabled` /
 `native_settings.browser_pvu_legacy_imported` /
 `native_settings.browser_pvu_server_legacy_imported` for traceability.
@@ -150,7 +158,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
 | `pvu_perf_enabled` | `DEFER` | Formally covered by Row 13; raw mirror is retained, but there is no accepted native `perf_enabled` user setting or migration target. |
 | `pvu_fav_only` / `pvu_unfav_only` | `ADOPT` | Native favorite filters exist; explicit browser import now maps first-import state without overwriting native choices. |
-| `pvu_fav_levels` | `DEFER` | Listed as possible browser-only state, but current browser code does not persist this key; keep deferred until there is source evidence and conflict policy. |
+| `pvu_fav_levels` | `DEFER` | Formally covered by Row 15; current browser code does not persist this key, so explicit exports are raw-mirrored only until source evidence and conflict policy exist. |
 | `pvu_enhanced_only` | `ADOPT` | Native enhanced-only state exists from M19; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_scroll_memory` | `DEFER` | Formally covered by Row 14; native has selected-image/index restore, not browser scroll-memory parity, so the browser map is raw-mirrored only. |
 | `pvu_seen_images` | `ADOPT` | Formally covered by Row 10 pvu-state smoke/migration trace; explicit browser export imports additively into native `seen_images` and preserves native seen rows. |
@@ -184,6 +192,7 @@ Expected result:
 - `pvuFolderSortModeMigrated=true`
 - `pvuPerfFlagDeferred=true`
 - `pvuScrollMemoryDeferred=true`
+- `pvuFavLevelsDeferred=true`
 - `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
@@ -192,6 +201,7 @@ Expected result:
 - `recentMirrorStored=true`
 - `seenMirrorStored=true`
 - `scrollMemoryMirrorStored=true`
+- `favLevelsMirrorStored=true`
 - `perfMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
@@ -225,7 +235,7 @@ Expected result:
 - `nativeHiddenFoldersStillPreserved=true`
 - `nativeSeenImagesStillPreserved=true`
 - `nativeFolderSortModeStillPreserved=true`
-- `browserStateKeys=7`
+- `browserStateKeys=8`
 - `firstWarnings=0`
 - `secondWarnings=0`
 - `malformedWarnings=10`
@@ -233,15 +243,36 @@ Expected result:
 
 `migrationRecorded=true` keeps `pvu_state_migration_count=11`; Row 12 does
 not add marker-only keys to `pvu_state_migrations`, Row 13 does not add the
-browser performance flag, and Row 14 does not add browser scroll memory.
-`markerMirrorStored=true`, `perfMirrorStored=true`, and
-`scrollMemoryMirrorStored=true` are the raw-mirror evidence. The final
-`browserStateKeys=7` count is measured after the malformed follow-up import,
+browser performance flag, Row 14 does not add browser scroll memory, and Row
+15 does not add non-evidenced browser favorite levels.
+`markerMirrorStored=true`, `perfMirrorStored=true`,
+`scrollMemoryMirrorStored=true`, and `favLevelsMirrorStored=true` are the
+raw-mirror evidence. The final `browserStateKeys=8` count is measured after
+the malformed follow-up import,
 where PR #141 keeps `pvu_perf_enabled` in the malformed recovery path while
-Row 14 keeps `pvu_scroll_memory` as a native settings raw mirror only.
+Row 14 keeps `pvu_scroll_memory` and Row 15 keeps `pvu_fav_levels` as native
+settings raw mirrors only.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 15 Favorite-Levels Verification
+
+Recorded on 2026-07-08 in branch
+`codex/h25-117-row14-pvu-fav-levels` rebased on `origin/main`
+`4433182a7fd1d84142eac920187fea3f88410c55` after PR #142:
+
+- Verification is pending after the Row 15 rebase resolution.
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuFavLevelsDeferred=true`,
+  `favLevelsMirrorStored=true`, `pvuScrollMemoryDeferred=true`,
+  `scrollMemoryMirrorStored=true`, `pvuPerfFlagDeferred=true`,
+  `perfMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract, `browserStateKeys=8`,
+  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Row 14 Scroll-Memory Verification
 
