@@ -166,6 +166,12 @@ restore-tab state contract yet. Explicit exports keep the key only as a raw
 browser mirror under `native_settings.browser_pvu_pinned_tabs`; native does
 not create `pinned_tabs`, `pinned_preview_tabs`, or `preview_tabs` settings and
 does not increase `pvu_state_migration_count`.
+The seventeenth #117 row formally defers browser `pvu_recent_albums` as a
+native migration target. Album import exists, but native has no accepted
+recent-album UI selection/restore contract yet. Explicit exports keep the key
+only as a raw browser mirror under `native_settings.browser_pvu_recent_albums`;
+native does not create `recent_albums`, `recent_album`, or
+`recent_album_ids` settings and does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

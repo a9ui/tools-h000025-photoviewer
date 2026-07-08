@@ -537,6 +537,12 @@ yet. Explicit exports keep it only as a raw browser mirror as
 `browser_pvu_pinned_tabs`; native does not create `pinned_tabs`,
 `pinned_preview_tabs`, or `preview_tabs` settings and
 `pvu_state_migration_count` stays at the Row 11 count of 11.
+The seventeenth #117 row formally defers browser `pvu_recent_albums` as a
+native migration target. Album import exists, but native has no accepted
+recent-album UI selection/restore contract yet. Explicit exports keep it only
+as a raw browser mirror as `browser_pvu_recent_albums`; native does not create
+`recent_albums`, `recent_album`, or `recent_album_ids` settings and
+`pvu_state_migration_count` stays at the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
