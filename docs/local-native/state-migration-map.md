@@ -204,6 +204,11 @@ and persistence decision. Explicit exports keep `randomSeed` only inside the
 raw `native_settings.browser_pvu_view` mirror. Native does not create
 `sort_direction`, `sort_ascending`, `random_seed`, `randomSeed`, or
 `sort_seed` settings, and does not increase `pvu_state_migration_count`.
+The twenty-second #117 row formally defers browser `pvu_view.sidebarOpen` as a
+native migration target. Explicit exports keep the flag only inside the raw
+`native_settings.browser_pvu_view` mirror. Native does not create
+`sidebar_open`, `sidebar_visible`, `left_sidebar_open`, or `left_panel_visible`
+settings, and does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

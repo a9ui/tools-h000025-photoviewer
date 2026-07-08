@@ -96,6 +96,7 @@ internal static class NativeFixtureBuilder
                         thumbSize = 200,
                         sortBy = "newest",
                         folderSortBy = "name-asc",
+                        sidebarOpen = true,
                         rightPanelOpen = true,
                         rightPanelWidth = 320,
                         dateFrom = "",
