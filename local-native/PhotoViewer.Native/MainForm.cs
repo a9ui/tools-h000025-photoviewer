@@ -101,6 +101,7 @@ internal sealed class MainForm : Form
     private bool _updatingSearchSuggestions;
     private bool _updatingPreviewTabs;
     private readonly List<PreviewTabState> _closedPreviewTabs = [];
+    private string _hoverPreviewPath = "";
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
     private int _randomSortSeed = Environment.TickCount;
@@ -985,6 +986,23 @@ internal sealed class MainForm : Form
             args.Item = CreateListItem(_visibleImages[args.ItemIndex]);
         };
         _list.SelectedIndexChanged += async (_, _) => await LoadSelectedPreviewAsync();
+        _list.MouseMove += async (_, args) =>
+        {
+            if (args.Button != MouseButtons.None)
+            {
+                return;
+            }
+
+            var item = _list.GetItemAt(args.X, args.Y);
+            if (item is null)
+            {
+                await EndHoverQuickPreviewAsync();
+                return;
+            }
+
+            await ShowHoverQuickPreviewAsync(item.Index);
+        };
+        _list.MouseLeave += async (_, _) => await EndHoverQuickPreviewAsync();
         _list.MouseDown += (_, args) =>
         {
             if (_list.GetItemAt(args.X, args.Y) is null)
@@ -1450,6 +1468,31 @@ internal sealed class MainForm : Form
             activeAfterRestore?.IsPinned == false &&
             string.Equals(activeAfterRestore.Path, secondPreviewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         Require(previewTabRestore, "preview tab restore failed");
+        var hoverPreviewTargetIndex = _visibleImages.FindIndex(image =>
+            !string.Equals(image.AbsolutePath, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase) &&
+            !string.Equals(image.AbsolutePath, secondPreviewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
+        Require(hoverPreviewTargetIndex >= 0, "hover quick preview smoke needs a third fixture image");
+        var hoverPreviewTarget = _visibleImages[hoverPreviewTargetIndex];
+        var selectedBeforeHover = GetSelectedImage();
+        var activeBeforeHover = ActivePreviewTabState();
+        Require(selectedBeforeHover is not null && activeBeforeHover is not null, "hover quick preview needs an active selected preview");
+        var tabCountBeforeHover = _previewTabs.TabPages.Count;
+        var hoverPreviewAction = await ShowHoverQuickPreviewAsync(hoverPreviewTargetIndex);
+        var hoverPreviewLoaded = await WaitForPreviewAsync(hoverPreviewTarget.Filename);
+        var hoverQuickPreviewTransient = hoverPreviewAction &&
+            hoverPreviewLoaded &&
+            _previewLabel.Text.Contains("Hover preview:", StringComparison.OrdinalIgnoreCase) &&
+            _previewTabs.TabPages.Count == tabCountBeforeHover &&
+            string.Equals(ActivePreviewTabState()?.Path, activeBeforeHover?.Path, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(GetSelectedImage()?.AbsolutePath, selectedBeforeHover?.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        await EndHoverQuickPreviewAsync();
+        var hoverQuickPreview = hoverQuickPreviewTransient &&
+            await WaitForPreviewAsync(selectedBeforeHover!.Filename) &&
+            !_previewLabel.Text.Contains("Hover preview:", StringComparison.OrdinalIgnoreCase) &&
+            _previewTabs.TabPages.Count == tabCountBeforeHover &&
+            string.Equals(ActivePreviewTabState()?.Path, activeBeforeHover?.Path, StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(GetSelectedImage()?.AbsolutePath, selectedBeforeHover?.AbsolutePath, StringComparison.OrdinalIgnoreCase);
+        Require(hoverQuickPreview, "hover quick preview changed tabs or selection");
         var metadataTarget = _visibleImages.FirstOrDefault(static image =>
             image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
             image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
@@ -1659,6 +1702,7 @@ internal sealed class MainForm : Form
             PreviewTabPin: previewTabPin,
             PreviewTabClose: previewTabClose,
             PreviewTabRestore: previewTabRestore,
+            HoverQuickPreview: hoverQuickPreview,
             NavigationButtons: navigationButtons,
             KeyboardNavigation: keyboardNavigation,
             KeyboardFavorite: keyboardFavorite,
@@ -3002,6 +3046,7 @@ internal sealed class MainForm : Form
 
     private async Task LoadSelectedPreviewAsync()
     {
+        _hoverPreviewPath = "";
         if (_list.SelectedIndices.Count == 0)
         {
             ClearPreview("Select an image.");
@@ -3278,6 +3323,86 @@ internal sealed class MainForm : Form
     {
         var text = state.IsPinned ? $"P {state.Filename}" : state.Filename;
         return text.Length <= 32 ? text : $"{text[..29]}...";
+    }
+
+    private async Task<bool> ShowHoverQuickPreviewAsync(int index)
+    {
+        if (index < 0 || index >= _visibleImages.Count)
+        {
+            return false;
+        }
+
+        var image = _visibleImages[index];
+        if (string.Equals(_hoverPreviewPath, image.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        _hoverPreviewPath = image.AbsolutePath;
+        var version = Interlocked.Increment(ref _previewVersion);
+        var dimensionHint = FormatDimensions(image);
+        _previewLabel.Text = dimensionHint.Length > 0
+            ? $"Hover preview {image.Filename} ({dimensionHint})"
+            : $"Hover preview {image.Filename}";
+
+        try
+        {
+            Image loaded;
+            if (_previewRing.TryGet(image.AbsolutePath, out var cached) && cached is not null)
+            {
+                loaded = new Bitmap(cached);
+            }
+            else
+            {
+                var decoded = await _cacheScheduler.ScheduleAsync(
+                    NativeCacheJobKind.PreviewDecode,
+                    image.AbsolutePath,
+                    _ => LoadImageCopy(image.AbsolutePath));
+                _previewRing.Store(image.AbsolutePath, decoded);
+                loaded = new Bitmap(decoded);
+            }
+
+            if (version != Interlocked.Read(ref _previewVersion) ||
+                !string.Equals(_hoverPreviewPath, image.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+            {
+                loaded.Dispose();
+                return false;
+            }
+
+            var previous = _preview.Image;
+            _preview.Image = loaded;
+            previous?.Dispose();
+            _previewLabel.Text = $"Hover preview: {FormatPreviewDetails(image, dimensionHint)}";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (version == Interlocked.Read(ref _previewVersion) &&
+                string.Equals(_hoverPreviewPath, image.AbsolutePath, StringComparison.OrdinalIgnoreCase))
+            {
+                _hoverPreviewPath = "";
+                ClearPreview($"Hover preview failed: {ex.Message}");
+            }
+
+            return false;
+        }
+    }
+
+    private async Task EndHoverQuickPreviewAsync()
+    {
+        if (_hoverPreviewPath.Length == 0)
+        {
+            return;
+        }
+
+        _hoverPreviewPath = "";
+        if (GetSelectedIndex() >= 0)
+        {
+            await LoadSelectedPreviewAsync();
+            return;
+        }
+
+        ClearPreview("Select an image.");
     }
 
     private async Task<bool> WaitForPreviewAsync(string expectedFilename, int timeoutMs = 2000)
@@ -3684,6 +3809,7 @@ internal sealed class MainForm : Form
 
     private void ClearPreview(string message)
     {
+        _hoverPreviewPath = "";
         Interlocked.Increment(ref _previewVersion);
         var previous = _preview.Image;
         _preview.Image = null;
@@ -4993,6 +5119,7 @@ internal sealed class MainForm : Form
             $"previewTabPin={BoolText(report.PreviewTabPin)}",
             $"previewTabClose={BoolText(report.PreviewTabClose)}",
             $"previewTabRestore={BoolText(report.PreviewTabRestore)}",
+            $"hoverQuickPreview={BoolText(report.HoverQuickPreview)}",
             $"navigationButtons={BoolText(report.NavigationButtons)}",
             $"keyboardNavigation={BoolText(report.KeyboardNavigation)}",
             $"keyboardFavorite={BoolText(report.KeyboardFavorite)}",
@@ -5804,6 +5931,7 @@ internal sealed class MainForm : Form
         bool PreviewTabPin,
         bool PreviewTabClose,
         bool PreviewTabRestore,
+        bool HoverQuickPreview,
         bool NavigationButtons,
         bool KeyboardNavigation,
         bool KeyboardFavorite,
