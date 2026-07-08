@@ -17,6 +17,8 @@ internal sealed class MainForm : Form
     private readonly CheckBox _favoritesOnly = new();
     private readonly ComboBox _favoriteFilter = new();
     private readonly ComboBox _dateFilter = new();
+    private readonly DateTimePicker _dateFromPicker = new();
+    private readonly DateTimePicker _dateToPicker = new();
     private readonly ComboBox _viewMode = new();
     private readonly ComboBox _sortMode = new();
     private readonly Button _reshuffleButton = new();
@@ -69,6 +71,7 @@ internal sealed class MainForm : Form
     private bool _updatingFolderBuckets;
     private bool _updatingFavoriteFilter;
     private bool _updatingDateFilter;
+    private bool _updatingDateRange;
     private bool _updatingThumbnailSize;
     private string _lastSavedSelectedPath = "";
     private int _lastSavedVisibleIndex = -1;
@@ -101,7 +104,12 @@ internal sealed class MainForm : Form
         _searchText.Text = _store.GetSetting("search_text", "");
         _favoritesOnly.Checked = _store.GetSetting("favorites_only", "0") == "1";
         RefreshFavoriteFilterOptions(_store.GetSetting("favorite_filter", "all"));
-        RefreshDateFilterOptions(_store.GetSetting("date_filter", "all"));
+        var storedDateFilter = _store.GetSetting("date_filter", "all");
+        RefreshDateFilterOptions(storedDateFilter);
+        ApplyStoredDateRange(
+            _store.GetSetting("date_from", ""),
+            _store.GetSetting("date_to", ""),
+            storedDateFilter);
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
@@ -595,9 +603,30 @@ internal sealed class MainForm : Form
                 return;
             }
 
+            ApplyDateRangeForSelectedFilter();
             ApplyFilter();
             SaveViewState();
         };
+
+        var dateFromLabel = new Label
+        {
+            Text = "From",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(8, 6, 0, 0),
+        };
+
+        ConfigureDateRangePicker(_dateFromPicker);
+
+        var dateToLabel = new Label
+        {
+            Text = "To",
+            AutoSize = true,
+            TextAlign = ContentAlignment.MiddleCenter,
+            Padding = new Padding(4, 6, 0, 0),
+        };
+
+        ConfigureDateRangePicker(_dateToPicker);
 
         var thumbLabel = new Label
         {
@@ -645,6 +674,10 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(_reshuffleButton);
         displayControls.Controls.Add(dateLabel);
         displayControls.Controls.Add(_dateFilter);
+        displayControls.Controls.Add(dateFromLabel);
+        displayControls.Controls.Add(_dateFromPicker);
+        displayControls.Controls.Add(dateToLabel);
+        displayControls.Controls.Add(_dateToPicker);
         displayControls.Controls.Add(thumbLabel);
         displayControls.Controls.Add(_thumbnailSize);
         displayControls.Controls.Add(_previewVisible);
@@ -837,6 +870,7 @@ internal sealed class MainForm : Form
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
+        ApplyManualDateRange(null, null);
         ImportState();
         var albums = _store.CountAlbums();
         var albumImages = _store.CountAlbumImages();
@@ -1085,6 +1119,7 @@ internal sealed class MainForm : Form
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
+        ApplyManualDateRange(null, null);
         ApplyViewMode("details");
         ApplySortMode("Name");
 
@@ -1149,7 +1184,7 @@ internal sealed class MainForm : Form
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
-        SelectDateFilter("all");
+        ApplyManualDateRange(null, null);
         ApplySortMode("Created");
 
         await ScanCurrentFolderAsync(forceFullRefresh: true);
@@ -1185,6 +1220,53 @@ internal sealed class MainForm : Form
             _visibleImages.All(image => !image.Filename.Contains("last-year", StringComparison.OrdinalIgnoreCase));
         Require(thisYearFilter, "this-year date filter failed");
 
+        ApplyManualDateRange(today.AddDays(-20), today.AddDays(-6));
+        var manualRangeMatches = _visibleImages.Count;
+        var manualRangeFilter = manualRangeMatches == 2 &&
+            _visibleImages.All(image => IsImageWithinDateRange(image, today.AddDays(-20), today.AddDays(-6)));
+        Require(manualRangeFilter, "manual date range filter failed");
+        var manualRangePersisted =
+            string.Equals(_store.GetSetting("date_filter", ""), "custom", StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_store.GetSetting("date_from", ""), FormatDateInput(today.AddDays(-20)), StringComparison.OrdinalIgnoreCase) &&
+            string.Equals(_store.GetSetting("date_to", ""), FormatDateInput(today.AddDays(-6)), StringComparison.OrdinalIgnoreCase);
+        Require(manualRangePersisted, "manual date range setting did not persist");
+
+        _searchText.Text = "last";
+        ApplyFilter();
+        var manualSearchMatches = _visibleImages.Count;
+        var manualSearchFilter = manualSearchMatches == 2 &&
+            _visibleImages.All(image => image.Filename.Contains("last", StringComparison.OrdinalIgnoreCase)) &&
+            _visibleImages.All(image => IsImageWithinDateRange(image, today.AddDays(-20), today.AddDays(-6)));
+        Require(manualSearchFilter, "manual date range did not compose with search");
+
+        _searchText.Text = "";
+        ApplyManualDateRange(today.AddDays(-20), today.AddDays(-6));
+        var favoriteTarget = _visibleImages.First(image => image.Filename.Contains("last-7d", StringComparison.OrdinalIgnoreCase));
+        _store.SetFavoriteLevel(favoriteTarget.AbsolutePath, 5);
+        _favorites = _store.LoadFavorites();
+        _allImages = ReapplyFavorites(_allImages);
+        RefreshFavoriteFilterOptions("5");
+        SelectFavoriteFilter("5");
+        ApplyManualDateRange(today.AddDays(-20), today.AddDays(-6));
+        var manualFavoriteMatches = _visibleImages.Count;
+        var manualFavoriteFilter = manualFavoriteMatches == 1 &&
+            _visibleImages.All(image => image.FavoriteLevel == 5) &&
+            _visibleImages.All(image => IsImageWithinDateRange(image, today.AddDays(-20), today.AddDays(-6)));
+        Require(manualFavoriteFilter, "manual date range did not compose with favorite filter");
+        SelectFavoriteFilter("all");
+
+        ApplyManualDateRange(today.AddDays(-6), null);
+        var manualFromOnlyMatches = _visibleImages.Count;
+        var manualFromOnlyFilter = manualFromOnlyMatches == 2 &&
+            _visibleImages.All(image => IsImageWithinDateRange(image, today.AddDays(-6), null));
+        Require(manualFromOnlyFilter, "manual date-from-only filter failed");
+
+        ApplyManualDateRange(null, today.AddDays(-20));
+        var manualToOnlyMatches = _visibleImages.Count;
+        var manualToOnlyFilter = manualToOnlyMatches == 2 &&
+            _visibleImages.All(image => IsImageWithinDateRange(image, null, today.AddDays(-20)));
+        Require(manualToOnlyFilter, "manual date-to-only filter failed");
+
         SelectDateFilter("all");
         ApplyFilter();
         var clearMatches = _visibleImages.Count;
@@ -1202,11 +1284,22 @@ internal sealed class MainForm : Form
             Last7Matches: last7Matches,
             Last30Matches: last30Matches,
             ThisYearMatches: thisYearMatches,
+            ManualRangeMatches: manualRangeMatches,
+            ManualFromOnlyMatches: manualFromOnlyMatches,
+            ManualToOnlyMatches: manualToOnlyMatches,
+            ManualSearchMatches: manualSearchMatches,
+            ManualFavoriteMatches: manualFavoriteMatches,
             ClearMatches: clearMatches,
             TodayFilter: todayFilter,
             Last7Filter: last7Filter,
             Last30Filter: last30Filter,
             ThisYearFilter: thisYearFilter,
+            ManualRangeFilter: manualRangeFilter,
+            ManualFromOnlyFilter: manualFromOnlyFilter,
+            ManualToOnlyFilter: manualToOnlyFilter,
+            ManualSearchFilter: manualSearchFilter,
+            ManualFavoriteFilter: manualFavoriteFilter,
+            ManualRangePersisted: manualRangePersisted,
             ClearFilter: clearFilter,
             DateFilterPersisted: dateFilterPersisted,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
@@ -1215,13 +1308,14 @@ internal sealed class MainForm : Form
     private async Task<NativeDateSectionSmokeReport> RunDateSectionSmokeScenarioAsync(string folder)
     {
         var beforeEnhancementState = EnhancementStateFingerprint();
+        var today = DateTime.Today;
 
         _folderText.Text = folder;
         _store.SaveSetting("hidden_folder_buckets", "");
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
-        SelectDateFilter("all");
+        ApplyManualDateRange(null, null);
         ApplyViewMode("details");
         ApplySortMode("Created");
 
@@ -1291,6 +1385,28 @@ internal sealed class MainForm : Form
         var gridHeadersMatchDates = gridHeaderGroups == expectedGroupKeys.Count &&
             expectedGroupLabels.All(label => gridHeaderLabels.Contains(label, StringComparer.Ordinal));
         Require(gridHeadersMatchDates, "grid date section headers do not match visible image dates");
+
+        ApplyViewMode("details");
+        ApplyManualDateRange(today.AddDays(-20), today.AddDays(-6));
+        var manualRangeHeaderGroups = _dateSectionHeadersByPath.Count;
+        var manualRangeExpectedLabels = _visibleImages
+            .Select(image => FormatDateSectionLabel(image.CreatedAtUtc))
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var manualRangeListHeaders = _visibleImages.Count == 2 &&
+            manualRangeHeaderGroups == manualRangeExpectedLabels.Count &&
+            manualRangeExpectedLabels.All(label => _dateSectionHeadersByPath.Values.Contains(label, StringComparer.Ordinal));
+        Require(manualRangeListHeaders, "manual date range did not compose with list date headers");
+
+        ApplyViewMode("grid");
+        var manualRangeGridHeaderGroups = _dateSectionHeadersByPath.Count;
+        var manualRangeGridHeaders = _visibleImages.Count == 2 &&
+            manualRangeGridHeaderGroups == manualRangeExpectedLabels.Count &&
+            manualRangeExpectedLabels.All(label => _dateSectionHeadersByPath.Values.Contains(label, StringComparer.Ordinal));
+        Require(manualRangeGridHeaders, "manual date range did not compose with grid date headers");
+
+        SelectDateFilter("all");
+        ApplyFilter();
         ApplyViewMode("details");
         ApplyFilter();
 
@@ -1311,6 +1427,10 @@ internal sealed class MainForm : Form
             GridHeaderGroups: gridHeaderGroups,
             GridFirstItemGrouped: gridFirstItemGrouped,
             GridTodaySingleGroup: gridTodaySingleGroup,
+            ManualRangeHeaderGroups: manualRangeHeaderGroups,
+            ManualRangeListHeaders: manualRangeListHeaders,
+            ManualRangeGridHeaderGroups: manualRangeGridHeaderGroups,
+            ManualRangeGridHeaders: manualRangeGridHeaders,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
@@ -1323,6 +1443,7 @@ internal sealed class MainForm : Form
         _searchText.Text = "";
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
+        ApplyManualDateRange(null, null);
 
         await ScanCurrentFolderAsync();
         Require(_currentRoots.Count >= 2, "folder set did not retain multiple roots");
@@ -1740,40 +1861,60 @@ internal sealed class MainForm : Form
 
     private IEnumerable<NativeImageRecord> ApplyDateFilter(IEnumerable<NativeImageRecord> images)
     {
-        var key = CurrentDateFilterKey();
-        if (string.Equals(key, "all", StringComparison.OrdinalIgnoreCase))
+        var (from, to) = CurrentDateRange();
+        if (!from.HasValue && !to.HasValue)
         {
             return images;
         }
 
-        var today = DateTime.Today;
-        return images.Where(image => IsImageWithinDateFilter(image, key, today));
+        return images.Where(image => IsImageWithinDateRange(image, from, to));
     }
 
     private static bool IsImageWithinDateFilter(NativeImageRecord image, string key, DateTime today)
     {
+        var (from, to) = DateRangeForFilterKey(key, today);
+        return IsImageWithinDateRange(image, from, to);
+    }
+
+    private static bool IsImageWithinDateRange(NativeImageRecord image, DateTime? from, DateTime? to)
+    {
         var imageDate = image.CreatedAtUtc.ToLocalTime().Date;
+        if (from.HasValue && imageDate < from.Value.Date)
+        {
+            return false;
+        }
+
+        if (to.HasValue && imageDate > to.Value.Date)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private static (DateTime? From, DateTime? To) DateRangeForFilterKey(string key, DateTime today)
+    {
         if (string.Equals(key, "today", StringComparison.OrdinalIgnoreCase))
         {
-            return imageDate == today;
+            return (today, today);
         }
 
         if (string.Equals(key, "7d", StringComparison.OrdinalIgnoreCase))
         {
-            return imageDate >= today.AddDays(-6) && imageDate <= today;
+            return (today.AddDays(-6), today);
         }
 
         if (string.Equals(key, "30d", StringComparison.OrdinalIgnoreCase))
         {
-            return imageDate >= today.AddDays(-29) && imageDate <= today;
+            return (today.AddDays(-29), today);
         }
 
         if (string.Equals(key, "year", StringComparison.OrdinalIgnoreCase))
         {
-            return imageDate >= new DateTime(today.Year, 1, 1) && imageDate <= today;
+            return (new DateTime(today.Year, 1, 1), today);
         }
 
-        return true;
+        return (null, null);
     }
 
     private string CurrentDateFilterKey()
@@ -1788,7 +1929,12 @@ internal sealed class MainForm : Form
             .FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
         if (match is not null)
         {
+            var changed = !Equals(_dateFilter.SelectedItem, match);
             _dateFilter.SelectedItem = match;
+            if (!changed)
+            {
+                ApplyDateRangeForSelectedFilter();
+            }
         }
     }
 
@@ -1802,6 +1948,7 @@ internal sealed class MainForm : Form
             new("7d", "7d"),
             new("30d", "30d"),
             new("year", "This year"),
+            new("custom", "Custom range"),
         };
 
         _updatingDateFilter = true;
@@ -1814,6 +1961,128 @@ internal sealed class MainForm : Form
             }
 
             _dateFilter.SelectedItem = options.FirstOrDefault(item => string.Equals(item.Key, selectedKey, StringComparison.OrdinalIgnoreCase)) ?? options[0];
+        }
+        finally
+        {
+            _updatingDateFilter = false;
+        }
+    }
+
+    private void ConfigureDateRangePicker(DateTimePicker picker)
+    {
+        picker.Format = DateTimePickerFormat.Custom;
+        picker.CustomFormat = "yyyy-MM-dd";
+        picker.ShowCheckBox = true;
+        picker.Width = 124;
+        picker.Value = DateTime.Today;
+        picker.Checked = false;
+        picker.ValueChanged += (_, _) => ManualDateRangeChanged();
+    }
+
+    private void ManualDateRangeChanged()
+    {
+        if (_updatingDateRange)
+        {
+            return;
+        }
+
+        var (from, to) = CurrentDateRange();
+        SelectDateFilterSilently(from.HasValue || to.HasValue ? "custom" : "all");
+        ApplyFilter();
+        SaveViewState();
+    }
+
+    private (DateTime? From, DateTime? To) CurrentDateRange()
+    {
+        return (
+            _dateFromPicker.Checked ? _dateFromPicker.Value.Date : null,
+            _dateToPicker.Checked ? _dateToPicker.Value.Date : null);
+    }
+
+    private void ApplyDateRangeForSelectedFilter()
+    {
+        var key = CurrentDateFilterKey();
+        if (string.Equals(key, "custom", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        ApplyDateRange(DateRangeForFilterKey(key, DateTime.Today));
+    }
+
+    private void ApplyDateRange((DateTime? From, DateTime? To) range)
+    {
+        _updatingDateRange = true;
+        try
+        {
+            ApplyDatePickerValue(_dateFromPicker, range.From);
+            ApplyDatePickerValue(_dateToPicker, range.To);
+        }
+        finally
+        {
+            _updatingDateRange = false;
+        }
+    }
+
+    private void ApplyManualDateRange(DateTime? from, DateTime? to)
+    {
+        ApplyDateRange((from, to));
+        SelectDateFilterSilently(from.HasValue || to.HasValue ? "custom" : "all");
+        ApplyFilter();
+        SaveViewState();
+    }
+
+    private static void ApplyDatePickerValue(DateTimePicker picker, DateTime? value)
+    {
+        picker.Checked = value.HasValue;
+        if (value.HasValue)
+        {
+            picker.Value = value.Value.Date;
+        }
+    }
+
+    private void ApplyStoredDateRange(string fromValue, string toValue, string dateFilterKey)
+    {
+        var hasFrom = TryParseDateInput(fromValue, out var from);
+        var hasTo = TryParseDateInput(toValue, out var to);
+        if (hasFrom || hasTo)
+        {
+            ApplyDateRange((hasFrom ? from : null, hasTo ? to : null));
+            if (string.Equals(dateFilterKey, "all", StringComparison.OrdinalIgnoreCase))
+            {
+                SelectDateFilterSilently("custom");
+            }
+
+            return;
+        }
+
+        ApplyDateRange(DateRangeForFilterKey(dateFilterKey, DateTime.Today));
+    }
+
+    private static bool TryParseDateInput(string value, out DateTime date)
+    {
+        return DateTime.TryParseExact(
+            value,
+            "yyyy-MM-dd",
+            System.Globalization.CultureInfo.InvariantCulture,
+            System.Globalization.DateTimeStyles.None,
+            out date);
+    }
+
+    private void SelectDateFilterSilently(string key)
+    {
+        var match = _dateFilter.Items
+            .Cast<DateFilterOption>()
+            .FirstOrDefault(item => string.Equals(item.Key, key, StringComparison.OrdinalIgnoreCase));
+        if (match is null)
+        {
+            return;
+        }
+
+        _updatingDateFilter = true;
+        try
+        {
+            _dateFilter.SelectedItem = match;
         }
         finally
         {
@@ -2469,12 +2738,22 @@ internal sealed class MainForm : Form
 
     private void SaveViewState()
     {
+        var (dateFrom, dateTo) = CurrentDateRange();
         _store.SaveViewState(
             _list.View == View.LargeIcon ? "grid" : "details",
             _searchText.Text.Trim(),
             _favoritesOnly.Checked,
             CurrentFavoriteFilterKey(),
-            CurrentDateFilterKey());
+            CurrentDateFilterKey(),
+            FormatDateInput(dateFrom),
+            FormatDateInput(dateTo));
+    }
+
+    private static string FormatDateInput(DateTime? date)
+    {
+        return date.HasValue
+            ? date.Value.ToString("yyyy-MM-dd", System.Globalization.CultureInfo.InvariantCulture)
+            : "";
     }
 
     private void ApplySortMode(string mode)
@@ -3085,11 +3364,22 @@ internal sealed class MainForm : Form
             $"last7Matches={report.Last7Matches}",
             $"last30Matches={report.Last30Matches}",
             $"thisYearMatches={report.ThisYearMatches}",
+            $"manualRangeMatches={report.ManualRangeMatches}",
+            $"manualFromOnlyMatches={report.ManualFromOnlyMatches}",
+            $"manualToOnlyMatches={report.ManualToOnlyMatches}",
+            $"manualSearchMatches={report.ManualSearchMatches}",
+            $"manualFavoriteMatches={report.ManualFavoriteMatches}",
             $"clearMatches={report.ClearMatches}",
             $"todayFilter={BoolText(report.TodayFilter)}",
             $"last7Filter={BoolText(report.Last7Filter)}",
             $"last30Filter={BoolText(report.Last30Filter)}",
             $"thisYearFilter={BoolText(report.ThisYearFilter)}",
+            $"manualRangeFilter={BoolText(report.ManualRangeFilter)}",
+            $"manualFromOnlyFilter={BoolText(report.ManualFromOnlyFilter)}",
+            $"manualToOnlyFilter={BoolText(report.ManualToOnlyFilter)}",
+            $"manualSearchFilter={BoolText(report.ManualSearchFilter)}",
+            $"manualFavoriteFilter={BoolText(report.ManualFavoriteFilter)}",
+            $"manualRangePersisted={BoolText(report.ManualRangePersisted)}",
             $"clearFilter={BoolText(report.ClearFilter)}",
             $"dateFilterPersisted={BoolText(report.DateFilterPersisted)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
@@ -3118,6 +3408,10 @@ internal sealed class MainForm : Form
             $"gridHeaderGroups={report.GridHeaderGroups}",
             $"gridFirstItemGrouped={BoolText(report.GridFirstItemGrouped)}",
             $"gridTodaySingleGroup={BoolText(report.GridTodaySingleGroup)}",
+            $"manualRangeHeaderGroups={report.ManualRangeHeaderGroups}",
+            $"manualRangeListHeaders={BoolText(report.ManualRangeListHeaders)}",
+            $"manualRangeGridHeaderGroups={report.ManualRangeGridHeaderGroups}",
+            $"manualRangeGridHeaders={BoolText(report.ManualRangeGridHeaders)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -3701,11 +3995,22 @@ internal sealed class MainForm : Form
         int Last7Matches,
         int Last30Matches,
         int ThisYearMatches,
+        int ManualRangeMatches,
+        int ManualFromOnlyMatches,
+        int ManualToOnlyMatches,
+        int ManualSearchMatches,
+        int ManualFavoriteMatches,
         int ClearMatches,
         bool TodayFilter,
         bool Last7Filter,
         bool Last30Filter,
         bool ThisYearFilter,
+        bool ManualRangeFilter,
+        bool ManualFromOnlyFilter,
+        bool ManualToOnlyFilter,
+        bool ManualSearchFilter,
+        bool ManualFavoriteFilter,
+        bool ManualRangePersisted,
         bool ClearFilter,
         bool DateFilterPersisted,
         bool EnhancementStateUnchanged);
@@ -3724,5 +4029,9 @@ internal sealed class MainForm : Form
         int GridHeaderGroups,
         bool GridFirstItemGrouped,
         bool GridTodaySingleGroup,
+        int ManualRangeHeaderGroups,
+        bool ManualRangeListHeaders,
+        int ManualRangeGridHeaderGroups,
+        bool ManualRangeGridHeaders,
         bool EnhancementStateUnchanged);
 }

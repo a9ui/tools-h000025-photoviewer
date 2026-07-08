@@ -686,7 +686,14 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
-    public void SaveViewState(string viewMode, string searchText, bool favoritesOnly, string favoriteFilter, string dateFilter)
+    public void SaveViewState(
+        string viewMode,
+        string searchText,
+        bool favoritesOnly,
+        string favoriteFilter,
+        string dateFilter,
+        string dateFrom,
+        string dateTo)
     {
         Initialize();
         using var connection = OpenConnection();
@@ -697,6 +704,8 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "favorites_only", favoritesOnly ? "1" : "0", now);
         UpsertSetting(connection, transaction, "favorite_filter", favoriteFilter, now);
         UpsertSetting(connection, transaction, "date_filter", dateFilter, now);
+        UpsertSetting(connection, transaction, "date_from", dateFrom, now);
+        UpsertSetting(connection, transaction, "date_to", dateTo, now);
         transaction.Commit();
     }
 
