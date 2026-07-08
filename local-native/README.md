@@ -515,6 +515,10 @@ The twelfth #117 row formally rejects browser marker-only
 `pvu_legacy_imported` / `pvu_server_legacy_imported` as native migration
 targets. They remain raw browser mirrors for traceability, but they do not
 create native settings or increase the pvu migration count.
+The thirteenth #117 row formally defers browser `pvu_perf_enabled` as a
+native migration target. It remains a raw browser mirror as
+`browser_pvu_perf_enabled`, but native does not create a `perf_enabled`
+setting and `pvu_state_migration_count` stays at the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

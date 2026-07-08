@@ -142,6 +142,10 @@ targets. They are still stored as raw browser mirrors under
 `native_settings.browser_pvu_server_legacy_imported`, but they do not create
 native `legacy_imported` settings and do not increase
 `pvu_state_migration_count`.
+The thirteenth #117 row formally defers browser `pvu_perf_enabled` as a
+native migration target. It is still stored as a raw browser mirror under
+`native_settings.browser_pvu_perf_enabled`, but native does not create a
+`perf_enabled` setting and does not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

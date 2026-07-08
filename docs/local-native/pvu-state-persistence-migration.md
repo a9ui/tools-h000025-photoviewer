@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`REJECT_BROWSER_LEGACY_MARKER_KEYS_AFTER_FOLDER_SORT_ROW`.
+`DEFER_BROWSER_PERF_FLAG_AFTER_MARKER_KEYS`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser marker-only `pvu_*` keys after the
-  accepted `pvu_view.folderSortBy` row.
+  explicit classification of browser `pvu_perf_enabled` after the marker-key
+  row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -53,6 +53,10 @@ Meaning:
   as `browser_pvu_legacy_imported` and
   `browser_pvu_server_legacy_imported`, but they do not create native
   `legacy_imported` settings and are not recorded in `pvu_state_migrations`.
+- Browser `pvu_perf_enabled` is a browser performance instrumentation flag. It
+  is raw-mirrored for traceability as `browser_pvu_perf_enabled`, but it does
+  not create a native `perf_enabled` setting and is not recorded in
+  `pvu_state_migrations`.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -108,6 +112,7 @@ Meaning:
 | Malformed / unsupported `pvu_view.folderSortBy` | recoverable warning, no native folder-sort overwrite | `ADOPT`: invalid folder-sort values are skipped with recovery guidance. |
 | `pvu_legacy_imported=1` | `native_settings.browser_pvu_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
 | `pvu_server_legacy_imported=1` | `native_settings.browser_pvu_server_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
+| `pvu_perf_enabled=1` | `native_settings.browser_pvu_perf_enabled=1` raw mirror only | `DEFER`: browser instrumentation flag is preserved for traceability but has no accepted native user-facing migration target. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -118,7 +123,8 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_recent_dirs` /
 `native_settings.browser_pvu_seen_images` /
 `native_settings.browser_pvu_legacy_imported` /
-`native_settings.browser_pvu_server_legacy_imported` for traceability.
+`native_settings.browser_pvu_server_legacy_imported` /
+`native_settings.browser_pvu_perf_enabled` for traceability.
 
 ## Split Plan For Remaining pvu Keys
 
@@ -134,7 +140,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.folderSortBy` | `ADOPT` | Native now has `folder_sort_mode`; import only browser values with matching folder-bucket semantics (`name-asc`, `name-desc`, `count-desc`, `count-asc`) and preserve existing native choices. |
 | #102 folder range-selection semantics | `DEFER` | This row only persists bucket sort mode; range selection and broader folder workflows remain separate. |
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
-| `pvu_perf_enabled` | `DEFER` | Browser performance instrumentation flag has no native user-facing equivalent yet. |
+| `pvu_perf_enabled` | `DEFER` | Formally covered by Row 13; raw mirror is retained, but there is no accepted native `perf_enabled` user setting or migration target. |
 | `pvu_fav_only` / `pvu_unfav_only` | `ADOPT` | Native favorite filters exist; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_fav_levels` | `DEFER` | Listed as possible browser-only state, but current browser code does not persist this key; keep deferred until there is source evidence and conflict policy. |
 | `pvu_enhanced_only` | `ADOPT` | Native enhanced-only state exists from M19; explicit browser import now maps first-import state without overwriting native choices. |
@@ -168,6 +174,7 @@ Expected result:
 - `pvuHiddenFoldersMigrated=true`
 - `pvuSeenImagesMigrated=true`
 - `pvuFolderSortModeMigrated=true`
+- `pvuPerfFlagDeferred=true`
 - `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
@@ -175,6 +182,7 @@ Expected result:
 - `favoriteMirrorStored=true`
 - `recentMirrorStored=true`
 - `seenMirrorStored=true`
+- `perfMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
 - `nativeEnhancedOnlyPreserved=true`
@@ -214,12 +222,56 @@ Expected result:
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 `migrationRecorded=true` keeps `pvu_state_migration_count=11`; Row 12 does
-not add marker-only keys to `pvu_state_migrations`. `markerMirrorStored=true`
-is the marker evidence; the final `browserStateKeys=6` count is measured after
-the malformed follow-up import, matching the existing smoke shape.
+not add marker-only keys to `pvu_state_migrations`, and Row 13 does not add
+the browser performance flag to `pvu_state_migrations`.
+`markerMirrorStored=true` and `perfMirrorStored=true` are the raw-mirror
+evidence; the final `browserStateKeys=6` count is measured after the malformed
+follow-up import, matching the existing smoke shape.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 13 Performance-Flag Verification
+
+Recorded on 2026-07-08 in branch
+`codex/h25-117-row13-pvu-perf-flag` based on `origin/main`
+`01ac9dc612789ba8ec444e959f4af66bb8714aa3` after PR #139:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
+  passed with `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
+  `pvuLegacyMarkersRejected=true`, `migrationRecorded=true`,
+  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `markerMirrorStored=true`, `seenMirrorStored=true`,
+  `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
+  `nativeFolderSortModeStillPreserved=true`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=6`,
+  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
+  passed using ignored fixture/cache state while preserving existing cache/state
+  assets.
+- `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `seenImages=0`, `settings=29`, `images=0`, and
+  `warnings=0`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `totalSeenImages=2`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
+  passed with `folderSortMode=true`, `sortName=true`,
+  `randomReshuffle=true`, `thumbnailSize=true`, `settingsImported=true`,
+  `browserStateKeys=6`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" .` returned no conflict markers.
+- `git diff --check` passed.
 
 ## Verification On 2026-07-08
 
@@ -364,6 +416,9 @@ after PR #131:
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and
   browser marker-only keys as native migration targets. Row 12 records
   `pvu_legacy_imported` / `pvu_server_legacy_imported` as raw mirrors only.
+- `DEFER`: browser `pvu_perf_enabled` as a native migration target. Row 13
+  records `pvu_perf_enabled` as a raw mirror only and keeps the native
+  migration count unchanged.
 - `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
   selection, `pvu_fav_levels`, pinned tabs, enhancement settings, broader
   display details, `pvu_recent_albums`, scroll memory, and browser
