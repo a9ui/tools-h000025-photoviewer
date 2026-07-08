@@ -129,6 +129,12 @@ The tenth accepted row records explicit browser `pvu_seen_images` as part of
 browser-export seen rows are upserted with source `browser_export`, existing
 native seen rows are preserved, and malformed seen-image JSON is skipped with
 a recoverable warning.
+The eleventh accepted row maps explicit browser `pvu_view.folderSortBy` into
+`native_settings.folder_sort_mode` for browser values with matching native
+folder-bucket sort semantics: `name-asc` to `NameAsc`, `name-desc` to
+`NameDesc`, `count-desc` to `CountDesc`, and `count-asc` to `CountAsc`. It
+writes only when native folder-sort state does not exist yet. #102 folder
+range-selection behavior stays separate.
 
 The dedicated smoke is:
 

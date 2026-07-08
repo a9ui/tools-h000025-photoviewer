@@ -32,11 +32,15 @@ or seed state. The ninth slice migrated explicit browser
 `pvu_view.hiddenFolders` into native `hidden_folder_buckets` on first import,
 mapping browser folder keys through the exported `pvu_last_dir_set` /
 `pvu_recent_dirs` roots while preserving later native hidden-folder choices.
+The tenth slice recorded explicit browser `pvu_seen_images` in #117: native
+import upserts browser seen-image rows into `seen_images`, and the row added
+pvu-state smoke/migration trace coverage while preserving existing native seen
+rows.
 
-This continuation formally records explicit browser `pvu_seen_images` in #117:
-the native import already upserts browser seen-image rows into `seen_images`, and
-this row adds pvu-state smoke/migration trace coverage while preserving existing
-native seen rows.
+This continuation migrates explicit browser `pvu_view.folderSortBy` into
+native `folder_sort_mode` on first import for matching folder-bucket sort
+semantics, while preserving later native folder-sort choices. #102 folder
+range-selection behavior stays separate.
 
 ## Guardrails
 
@@ -166,15 +170,21 @@ Read in full before planning or editing:
   - existing native `hidden_folder_buckets` is not overwritten;
   - malformed folder keys, non-array values, and hidden-folder exports without
     roots are recoverable warnings;
-  - `pvu_view.folderSortBy` remains deferred because native folder bucket sort
-    state and #102 folder range semantics are separate rows.
-- Record the existing bounded import for `pvu_seen_images` in #117:
+- Keep the existing bounded import for `pvu_seen_images` in #117:
   - explicit browser seen-image entries are upserted into native `seen_images`
     with source `browser_export`;
   - existing native `seen_images` rows are preserved;
   - malformed seen-image JSON is a recoverable warning;
   - no broader scroll-memory, pinned-tab, enhancement, or display state is
     adopted in this row.
+- Add a bounded migration for `pvu_view.folderSortBy`:
+  - browser `name-asc` -> native `folder_sort_mode=NameAsc`;
+  - browser `name-desc` -> native `folder_sort_mode=NameDesc`;
+  - browser `count-desc` -> native `folder_sort_mode=CountDesc`;
+  - browser `count-asc` -> native `folder_sort_mode=CountAsc`;
+  - existing native `folder_sort_mode` is not overwritten;
+  - malformed or unsupported folder sort values are recoverable warnings;
+  - #102 folder range-selection behavior remains separate.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -189,6 +199,7 @@ dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj
 dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
 dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
 corepack pnpm typecheck
 git diff --name-only -- src
@@ -201,14 +212,16 @@ Browser commands are baseline preservation only. Native acceptance for #117 is
 the dedicated pvu-state smoke plus existing import/UI smoke. The new smoke must
 report `pvuSeenImagesMigrated=true`, `seenMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
-`nativeSeenImagesStillPreserved=true`, `malformedWarnings=9`, and
+`nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
+`nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
+`nativeFolderSortModeStillPreserved=true`, `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row10-state-persistence` based on `origin/main`
-`61b01837ba6a73238cbc33ffe983e829cc4e4ea4` after PR #136:
+`codex/h25-117-next-pvu-state-row` based on `origin/main`
+`df0c4df335c4484d7fab39e1573c828f615d70bb` after PR #137:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
@@ -219,6 +232,7 @@ Recorded on 2026-07-08 in branch
   `pvuSortModeMigrated=true`,
   `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
   `pvuHiddenFoldersMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `pvuFolderSortModeMigrated=true`,
   `migrationRecorded=true`, `browserMirrorStored=true`,
   `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
   `recentMirrorStored=true`, `seenMirrorStored=true`,
@@ -228,11 +242,13 @@ Recorded on 2026-07-08 in branch
   `nativeRecentFolderSetPreserved=true`,
   `nativeRightPreviewPreserved=true`,
   `nativeHiddenFoldersPreserved=true`, `nativeSeenImagesPreserved=true`,
+  `nativeFolderSortModePreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
   `malformedDateRangeWarning=true`, `malformedThumbnailSizeWarning=true`,
   `unsupportedSortModeWarning=true`,
   `malformedRecentDirsWarning=true`, `malformedRightPreviewWarning=true`,
   `malformedHiddenFoldersWarning=true`, `malformedSeenImagesWarning=true`,
+  `unsupportedFolderSortWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
@@ -241,23 +257,25 @@ Recorded on 2026-07-08 in branch
   `nativeRecentFolderSetStillPreserved=true`,
   `nativeRightPreviewStillPreserved=true`,
   `nativeHiddenFoldersStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=6`,
-  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=9`, and
+  `nativeSeenImagesStillPreserved=true`,
+  `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=6`,
+  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
-- `-PrepareFixture` passed and created only ignored fixture/cache state in this
-  worktree while preserving existing cache/state assets.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
+  `browserStateKeys=6`, `seenImages=4`, `settings=38`, `images=4`,
   `warnings=0`, and no browser runtime.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
-  `importedStillSeen=true`, `totalSeenImages=2`, and
+  `importedStillSeen=true`, `totalSeenImages=6`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
-  with `gridToggle=true`, `thumbnailSize=true`, `enhancedOnlyFilter=true`,
-  `sortName=true`, `randomReshuffle=true`, `browserStateKeys=6`,
-  `settingsImported=true`, `enhancementStateUnchanged=true`, and
+  with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
+  `enhancedOnlyFilter=true`, `sortName=true`, `randomReshuffle=true`,
+  `browserStateKeys=6`, `settingsImported=true`,
+  `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.

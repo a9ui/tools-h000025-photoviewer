@@ -1117,6 +1117,24 @@ internal sealed class NativeImageStore
                     warningMessage,
                     "Browser hidden-folder state was skipped; rerun the browser export with pvu_recent_dirs/pvu_last_dir_set or remove malformed pvu_view.hiddenFolders, then run Import again."));
             }
+
+            if (!pvuViewMalformed && TryReadBrowserFolderSortMode(pvuView, out var folderSortMode, out var hasFolderSortMode, out warningMessage))
+            {
+                if (hasFolderSortMode && GetSetting(connection, transaction, "folder_sort_mode") is null)
+                {
+                    UpsertSetting(connection, transaction, "folder_sort_mode", folderSortMode, importedAt);
+                    migrations.Add("pvu_view.folderSortBy->folder_sort_mode");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "unsupported-folder-sort-value",
+                    warningMessage,
+                    "Browser folder-sort state was skipped; rerun the browser export or remove unsupported pvu_view.folderSortBy, then run Import again."));
+            }
         }
 
         if (TryGetBrowserStateValue(browserState, "pvu_enhanced_only", out var pvuEnhancedOnly))
@@ -1739,6 +1757,76 @@ internal sealed class NativeImageStore
             hiddenFolderBuckets = string.Join('\n', hidden.Distinct(StringComparer.OrdinalIgnoreCase));
             warningMessage = null;
             return true;
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserFolderSortMode(
+        string value,
+        out string folderSortMode,
+        out bool present,
+        out string? warningMessage)
+    {
+        folderSortMode = "";
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("folderSortBy", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                warningMessage = "pvu_view.folderSortBy must be a string.";
+                return false;
+            }
+
+            var browserSort = element.GetString()?.Trim() ?? "";
+            switch (browserSort)
+            {
+                case "name-asc":
+                    folderSortMode = "NameAsc";
+                    warningMessage = null;
+                    return true;
+                case "name-desc":
+                    folderSortMode = "NameDesc";
+                    warningMessage = null;
+                    return true;
+                case "count-desc":
+                    folderSortMode = "CountDesc";
+                    warningMessage = null;
+                    return true;
+                case "count-asc":
+                    folderSortMode = "CountAsc";
+                    warningMessage = null;
+                    return true;
+                default:
+                    warningMessage = $"Unsupported pvu_view.folderSortBy value: {browserSort}.";
+                    return false;
+            }
         }
         catch (JsonException ex)
         {

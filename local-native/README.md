@@ -505,7 +505,12 @@ folder keys through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots
 and preserving an existing native hidden-folder choice. The tenth accepted row
 records explicit browser `pvu_seen_images` in the #117 pvu-state smoke and
 verifies import into native `seen_images`, while preserving existing native
-seen rows.
+seen rows. The eleventh accepted row imports explicit browser
+`pvu_view.folderSortBy` into native
+`folder_sort_mode`, mapping `name-asc`, `name-desc`, `count-desc`, and
+`count-asc` to matching native folder-bucket sort modes while preserving an
+existing native folder-sort choice. #102 folder range-selection behavior stays
+separate.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

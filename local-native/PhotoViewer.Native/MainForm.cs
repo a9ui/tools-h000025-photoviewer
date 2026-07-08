@@ -22,6 +22,7 @@ internal sealed class MainForm : Form
     private readonly DateTimePicker _dateToPicker = new();
     private readonly ComboBox _viewMode = new();
     private readonly ComboBox _sortMode = new();
+    private readonly ComboBox _folderSortMode = new();
     private readonly Button _reshuffleButton = new();
     private readonly NumericUpDown _thumbnailSize = new();
     private readonly CheckBox _previewVisible = new();
@@ -114,6 +115,7 @@ internal sealed class MainForm : Form
             storedDateFilter);
         ApplyViewMode(_store.GetSetting("view_mode", "details"));
         ApplySortMode(_store.GetSetting("sort_mode", "Modified"));
+        ApplyFolderSortMode(_store.GetSetting("folder_sort_mode", "NameAsc"));
         ApplyThumbnailSize(ParseSettingInt("thumbnail_size", 96));
         _previewVisible.Checked = _store.GetSetting("preview_visible", "1") == "1";
         _detailsVisible.Checked = _store.GetSetting("preview_details_visible", "1") == "1";
@@ -866,6 +868,16 @@ internal sealed class MainForm : Form
             });
         };
 
+        _folderSortMode.DropDownStyle = ComboBoxStyle.DropDownList;
+        _folderSortMode.Width = 94;
+        _folderSortMode.Items.AddRange(["NameAsc", "NameDesc", "CountDesc", "CountAsc"]);
+        _folderSortMode.SelectedIndexChanged += (_, _) =>
+        {
+            SaveFolderSortState();
+            BuildFolderBuckets();
+            ApplyFilter();
+        };
+
         var folderActions = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -897,6 +909,7 @@ internal sealed class MainForm : Form
         _clearFolderSelectionButton.Width = 76;
         _clearFolderSelectionButton.Click += (_, _) => ClearFolderBucketSelection();
 
+        folderActions.Controls.Add(_folderSortMode);
         folderActions.Controls.Add(_showAllFoldersButton);
         folderActions.Controls.Add(_hideAllFoldersButton);
         folderActions.Controls.Add(_invertFoldersButton);
@@ -987,6 +1000,11 @@ internal sealed class MainForm : Form
         Require(folderHideAll, "folder hide-all did not filter visible images");
         SetAllFolderBuckets(visible: true);
         Require(_visibleImages.Count == initialVisible, "folder show-all did not restore visible images");
+        ApplyFolderSortMode("CountDesc");
+        var folderSortMode = string.Equals(_store.GetSetting("folder_sort_mode", ""), "CountDesc", StringComparison.OrdinalIgnoreCase) &&
+            _folderBuckets.Items.Count >= 2 &&
+            _folderBuckets.Items.Cast<FolderBucket>().First().Count >= _folderBuckets.Items.Cast<FolderBucket>().Last().Count;
+        Require(folderSortMode, "folder sort mode did not persist and sort buckets by count");
         _folderBuckets.ClearSelected();
         _folderBuckets.SelectedIndex = 0;
         Application.DoEvents();
@@ -1179,6 +1197,7 @@ internal sealed class MainForm : Form
             GridToggle: gridToggle,
             FolderBuckets: folderBuckets,
             FolderHideAll: folderHideAll,
+            FolderSortMode: folderSortMode,
             SortName: sortName,
             RandomReshuffle: randomReshuffle,
             ThumbnailSize: thumbnailSize,
@@ -3110,11 +3129,10 @@ internal sealed class MainForm : Form
             _store.GetSetting("hidden_folder_buckets", "")
                 .Split(['\n'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             StringComparer.OrdinalIgnoreCase);
-        var buckets = _allImages
+        var unsortedBuckets = _allImages
             .GroupBy(static item => item.Folder, StringComparer.OrdinalIgnoreCase)
-            .Select(group => new FolderBucket(group.Key, FormatFolderBucketLabel(group.Key), group.Count()))
-            .OrderBy(static item => item.Label, StringComparer.OrdinalIgnoreCase)
-            .ToList();
+            .Select(group => new FolderBucket(group.Key, FormatFolderBucketLabel(group.Key), group.Count()));
+        var buckets = SortFolderBuckets(unsortedBuckets, _folderSortMode.SelectedItem?.ToString() ?? "NameAsc").ToList();
 
         _updatingFolderBuckets = true;
         try
@@ -3132,6 +3150,38 @@ internal sealed class MainForm : Form
 
         _folderBucketLabel.Text = $"Folders ({buckets.Count:n0})";
         UpdateFolderBucketButtons();
+    }
+
+    private void ApplyFolderSortMode(string mode)
+    {
+        var normalized = _folderSortMode.Items.Cast<object>()
+            .Select(static item => item.ToString() ?? "")
+            .FirstOrDefault(item => string.Equals(item, mode, StringComparison.OrdinalIgnoreCase));
+        _folderSortMode.SelectedItem = string.IsNullOrWhiteSpace(normalized) ? "NameAsc" : normalized;
+    }
+
+    private void SaveFolderSortState()
+    {
+        _store.SaveSetting("folder_sort_mode", _folderSortMode.SelectedItem?.ToString() ?? "NameAsc");
+    }
+
+    private static IEnumerable<FolderBucket> SortFolderBuckets(IEnumerable<FolderBucket> buckets, string mode)
+    {
+        return mode switch
+        {
+            "NameDesc" => buckets
+                .OrderByDescending(static item => item.Label, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static item => item.Folder, StringComparer.OrdinalIgnoreCase),
+            "CountDesc" => buckets
+                .OrderByDescending(static item => item.Count)
+                .ThenBy(static item => item.Label, StringComparer.OrdinalIgnoreCase),
+            "CountAsc" => buckets
+                .OrderBy(static item => item.Count)
+                .ThenBy(static item => item.Label, StringComparer.OrdinalIgnoreCase),
+            _ => buckets
+                .OrderBy(static item => item.Label, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static item => item.Folder, StringComparer.OrdinalIgnoreCase),
+        };
     }
 
     private IEnumerable<NativeImageRecord> ApplyFolderBucketFilter(IEnumerable<NativeImageRecord> images)
@@ -3601,6 +3651,7 @@ internal sealed class MainForm : Form
             $"folderShowSelected={BoolText(report.FolderShowSelected)}",
             $"folderHideSelected={BoolText(report.FolderHideSelected)}",
             $"folderClearSelection={BoolText(report.FolderClearSelection)}",
+            $"folderSortMode={BoolText(report.FolderSortMode)}",
             $"sortName={BoolText(report.SortName)}",
             $"randomReshuffle={BoolText(report.RandomReshuffle)}",
             $"thumbnailSize={BoolText(report.ThumbnailSize)}",
@@ -4326,6 +4377,7 @@ internal sealed class MainForm : Form
         bool GridToggle,
         int FolderBuckets,
         bool FolderHideAll,
+        bool FolderSortMode,
         bool SortName,
         bool RandomReshuffle,
         bool ThumbnailSize,
