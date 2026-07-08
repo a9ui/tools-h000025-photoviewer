@@ -55,6 +55,7 @@ internal static class NativeImageScanner
                 var absolutePath = info.FullName;
                 favorites.TryGetValue(absolutePath, out var favoriteLevel);
                 var dimensions = NativeImageHeaderReader.ReadDimensions(absolutePath);
+                var metadata = NativePngMetadataReader.Read(absolutePath);
 
                 records.Add(new NativeImageRecord(
                     Id: absolutePath,
@@ -66,7 +67,12 @@ internal static class NativeImageScanner
                     ModifiedAtUtc: info.LastWriteTimeUtc,
                     FavoriteLevel: favoriteLevel,
                     Width: dimensions.Found ? dimensions.Width : null,
-                    Height: dimensions.Found ? dimensions.Height : null
+                    Height: dimensions.Found ? dimensions.Height : null,
+                    Prompt: metadata?.Prompt ?? "",
+                    NegativePrompt: metadata?.NegativePrompt ?? "",
+                    MetadataSettingsSummary: metadata?.SettingsSummary ?? "",
+                    MetadataRaw: metadata?.Raw ?? "",
+                    MetadataChecked: true
                 ));
 
                 count++;

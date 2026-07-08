@@ -58,17 +58,21 @@ internal static class NativeIncrementalScanner
                 count++;
 
                 var dimensions = NativeImageHeaderReader.ReadDimensions(absolutePath);
-                if (existingByPath.TryGetValue(absolutePath, out var existing) &&
-                    existing.SizeBytes == info.Length &&
-                    existing.ModifiedAtUtc == info.LastWriteTimeUtc &&
-                    (existing.Width.HasValue || !dimensions.Found) &&
-                    (existing.Height.HasValue || !dimensions.Found))
+                var hasExisting = existingByPath.TryGetValue(absolutePath, out var existing);
+                var existingImage = hasExisting ? existing : null;
+                var fileUnchanged = existingImage is not null &&
+                    existingImage.SizeBytes == info.Length &&
+                    existingImage.ModifiedAtUtc == info.LastWriteTimeUtc &&
+                    (existingImage.Width.HasValue || !dimensions.Found) &&
+                    (existingImage.Height.HasValue || !dimensions.Found);
+                if (fileUnchanged && existingImage is not null && existingImage.MetadataChecked)
                 {
                     unchanged++;
                 }
                 else
                 {
                     favorites.TryGetValue(absolutePath, out var favoriteLevel);
+                    var metadata = NativePngMetadataReader.Read(absolutePath);
                     addedOrUpdated.Add(new NativeImageRecord(
                         Id: absolutePath,
                         AbsolutePath: absolutePath,
@@ -78,8 +82,13 @@ internal static class NativeIncrementalScanner
                         CreatedAtUtc: info.CreationTimeUtc,
                         ModifiedAtUtc: info.LastWriteTimeUtc,
                         FavoriteLevel: favoriteLevel,
-                        Width: dimensions.Found ? dimensions.Width : existing?.Width,
-                        Height: dimensions.Found ? dimensions.Height : existing?.Height
+                        Width: dimensions.Found ? dimensions.Width : existingImage?.Width,
+                        Height: dimensions.Found ? dimensions.Height : existingImage?.Height,
+                        Prompt: metadata?.Prompt ?? existingImage?.Prompt ?? "",
+                        NegativePrompt: metadata?.NegativePrompt ?? existingImage?.NegativePrompt ?? "",
+                        MetadataSettingsSummary: metadata?.SettingsSummary ?? existingImage?.MetadataSettingsSummary ?? "",
+                        MetadataRaw: metadata?.Raw ?? existingImage?.MetadataRaw ?? "",
+                        MetadataChecked: true
                     ));
                 }
 

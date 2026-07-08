@@ -53,7 +53,12 @@ internal sealed class NativeImageStore
               scan_root TEXT NOT NULL,
               indexed_at_utc TEXT NOT NULL,
               width INTEGER,
-              height INTEGER
+              height INTEGER,
+              prompt TEXT NOT NULL DEFAULT '',
+              negative_prompt TEXT NOT NULL DEFAULT '',
+              metadata_settings_summary TEXT NOT NULL DEFAULT '',
+              metadata_raw TEXT NOT NULL DEFAULT '',
+              metadata_checked INTEGER NOT NULL DEFAULT 0
             );
 
             CREATE INDEX IF NOT EXISTS idx_images_scan_root ON images(scan_root);
@@ -149,6 +154,11 @@ internal sealed class NativeImageStore
         command.ExecuteNonQuery();
         EnsureColumn(connection, "images", "width", "INTEGER");
         EnsureColumn(connection, "images", "height", "INTEGER");
+        EnsureColumn(connection, "images", "prompt", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "images", "negative_prompt", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "images", "metadata_settings_summary", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "images", "metadata_raw", "TEXT NOT NULL DEFAULT ''");
+        EnsureColumn(connection, "images", "metadata_checked", "INTEGER NOT NULL DEFAULT 0");
     }
 
     public NativeImportReport ImportProjectState(string? browserStateExportPath = null)
@@ -451,6 +461,7 @@ internal sealed class NativeImageStore
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                   prompt, negative_prompt, metadata_settings_summary, metadata_raw, metadata_checked,
                    CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
             FROM images
             WHERE scan_root = $root
@@ -518,6 +529,7 @@ internal sealed class NativeImageStore
         {
             command.CommandText = """
                 SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                       prompt, negative_prompt, metadata_settings_summary, metadata_raw, metadata_checked,
                        CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
                 FROM images
                 WHERE scan_root = $root
@@ -535,6 +547,7 @@ internal sealed class NativeImageStore
             {
                 command.CommandText = """
                     SELECT i.id, i.absolute_path, i.filename, i.folder, i.size_bytes, i.created_at_utc, i.modified_at_utc, i.favorite_level, i.width, i.height,
+                           i.prompt, i.negative_prompt, i.metadata_settings_summary, i.metadata_raw, i.metadata_checked,
                            CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = i.id OR seen.absolute_path = i.absolute_path) THEN 1 ELSE 0 END AS is_seen
                     FROM image_search_fts fts
                     JOIN images i ON i.id = fts.image_id
@@ -608,6 +621,7 @@ internal sealed class NativeImageStore
         using var command = connection.CreateCommand();
         command.CommandText = """
             SELECT id, absolute_path, filename, folder, size_bytes, created_at_utc, modified_at_utc, favorite_level, width, height,
+                   prompt, negative_prompt, metadata_settings_summary, metadata_raw, metadata_checked,
                    CASE WHEN EXISTS (SELECT 1 FROM seen_images seen WHERE seen.image_id = images.id OR seen.absolute_path = images.absolute_path) THEN 1 ELSE 0 END AS is_seen
             FROM images
             WHERE scan_root = $root
@@ -2307,7 +2321,12 @@ internal sealed class NativeImageStore
             FavoriteLevel: reader.GetInt32(7),
             Width: reader.IsDBNull(8) ? null : reader.GetInt32(8),
             Height: reader.IsDBNull(9) ? null : reader.GetInt32(9),
-            IsSeen: !reader.IsDBNull(10) && reader.GetInt32(10) != 0
+            Prompt: reader.IsDBNull(10) ? "" : reader.GetString(10),
+            NegativePrompt: reader.IsDBNull(11) ? "" : reader.GetString(11),
+            MetadataSettingsSummary: reader.IsDBNull(12) ? "" : reader.GetString(12),
+            MetadataRaw: reader.IsDBNull(13) ? "" : reader.GetString(13),
+            MetadataChecked: !reader.IsDBNull(14) && reader.GetInt32(14) != 0,
+            IsSeen: !reader.IsDBNull(15) && reader.GetInt32(15) != 0
         );
     }
 
@@ -2334,7 +2353,12 @@ internal sealed class NativeImageStore
               scan_root,
               indexed_at_utc,
               width,
-              height
+              height,
+              prompt,
+              negative_prompt,
+              metadata_settings_summary,
+              metadata_raw,
+              metadata_checked
             )
             VALUES (
               $id,
@@ -2349,7 +2373,12 @@ internal sealed class NativeImageStore
               $root,
               $indexed,
               $width,
-              $height
+              $height,
+              $prompt,
+              $negativePrompt,
+              $metadataSettingsSummary,
+              $metadataRaw,
+              $metadataChecked
             )
             ON CONFLICT(id) DO UPDATE SET
               absolute_path = excluded.absolute_path,
@@ -2363,7 +2392,12 @@ internal sealed class NativeImageStore
               scan_root = excluded.scan_root,
               indexed_at_utc = excluded.indexed_at_utc,
               width = excluded.width,
-              height = excluded.height
+              height = excluded.height,
+              prompt = excluded.prompt,
+              negative_prompt = excluded.negative_prompt,
+              metadata_settings_summary = excluded.metadata_settings_summary,
+              metadata_raw = excluded.metadata_raw,
+              metadata_checked = excluded.metadata_checked
             """;
         var id = upsert.Parameters.Add("$id", SqliteType.Text);
         var path = upsert.Parameters.Add("$path", SqliteType.Text);
@@ -2378,6 +2412,11 @@ internal sealed class NativeImageStore
         var indexed = upsert.Parameters.Add("$indexed", SqliteType.Text);
         var width = upsert.Parameters.Add("$width", SqliteType.Integer);
         var height = upsert.Parameters.Add("$height", SqliteType.Integer);
+        var prompt = upsert.Parameters.Add("$prompt", SqliteType.Text);
+        var negativePrompt = upsert.Parameters.Add("$negativePrompt", SqliteType.Text);
+        var metadataSettingsSummary = upsert.Parameters.Add("$metadataSettingsSummary", SqliteType.Text);
+        var metadataRaw = upsert.Parameters.Add("$metadataRaw", SqliteType.Text);
+        var metadataChecked = upsert.Parameters.Add("$metadataChecked", SqliteType.Integer);
 
         using var ftsDelete = connection.CreateCommand();
         ftsDelete.Transaction = transaction;
@@ -2405,6 +2444,11 @@ internal sealed class NativeImageStore
             indexed.Value = indexedAt;
             width.Value = image.Width.HasValue ? image.Width.Value : DBNull.Value;
             height.Value = image.Height.HasValue ? image.Height.Value : DBNull.Value;
+            prompt.Value = image.Prompt;
+            negativePrompt.Value = image.NegativePrompt;
+            metadataSettingsSummary.Value = image.MetadataSettingsSummary;
+            metadataRaw.Value = image.MetadataRaw;
+            metadataChecked.Value = image.MetadataChecked ? 1 : 0;
             upsert.ExecuteNonQuery();
 
             ftsDelete.Parameters.Clear();

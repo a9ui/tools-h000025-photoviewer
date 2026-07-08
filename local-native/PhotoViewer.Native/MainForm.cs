@@ -1059,6 +1059,10 @@ internal sealed class MainForm : Form
         await LoadSelectedPreviewAsync();
         var previewLoaded = await WaitForPreviewAsync(previewTarget.Filename);
         Require(previewLoaded, "preview did not load fixture image");
+        var metadataTarget = _visibleImages.FirstOrDefault(static image =>
+            image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
+            image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
+        Require(metadataTarget is not null, "metadata fixture was not scanned");
 
         var selectedCount = _selectionLabel.Text.Contains("Selected 1", StringComparison.OrdinalIgnoreCase);
         Require(selectedCount, "selected count label failed");
@@ -1092,8 +1096,11 @@ internal sealed class MainForm : Form
         ClearImageSelection();
         var backgroundClear = _list.SelectedIndices.Count == 0 && _selectionLabel.Text.Contains("Selected 0", StringComparison.OrdinalIgnoreCase);
         Require(backgroundClear, "background clear selection failed");
-        _list.SelectedIndices.Add(0);
+        SelectImage(metadataTarget!.AbsolutePath);
         await LoadSelectedPreviewAsync();
+        var metadataPreview = _previewLabel.Text.Contains("Prompt:", StringComparison.OrdinalIgnoreCase) &&
+            _previewLabel.Text.Contains("Negative prompt:", StringComparison.OrdinalIgnoreCase);
+        Require(metadataPreview, "preview metadata display failed");
 
         var detailReport = RunDetailModalSmoke();
         Require(detailReport.ModalOpened, "detail modal did not load image");
@@ -1104,6 +1111,8 @@ internal sealed class MainForm : Form
         Require(detailReport.Flip, "detail modal flip failed");
         Require(detailReport.Favorite, "detail modal favorite control failed");
         Require(detailReport.OpenExternal, "detail modal open-external target failed");
+        Require(detailReport.MetadataDisplay, "detail modal metadata display failed");
+        var metadataDisplay = metadataPreview && detailReport.MetadataDisplay;
 
         var settingsSnapshot = BuildNativeSettingsSnapshot();
         var settingsReadOnly = settingsSnapshot.KeyBindingMode.Contains("read-only", StringComparison.OrdinalIgnoreCase)
@@ -1236,6 +1245,7 @@ internal sealed class MainForm : Form
             DetailFlip: detailReport.Flip,
             DetailFavorite: detailReport.Favorite,
             DetailOpenExternal: detailReport.OpenExternal,
+            MetadataDisplay: metadataDisplay,
             SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
@@ -1290,7 +1300,7 @@ internal sealed class MainForm : Form
             var previous = _preview.Image;
             _preview.Image = LoadImageCopy(screenshotTarget.AbsolutePath);
             previous?.Dispose();
-            _previewLabel.Text = $"{screenshotTarget.Filename}  {FormatBytes(screenshotTarget.SizeBytes)}  {FormatDimensions(screenshotTarget)}  fav {screenshotTarget.FavoriteLevel}";
+            _previewLabel.Text = FormatPreviewDetails(screenshotTarget, FormatDimensions(screenshotTarget));
             UpdateSelectionActions();
             previewLoaded = true;
         }
@@ -2577,7 +2587,7 @@ internal sealed class MainForm : Form
             _preview.Image = loaded;
             previous?.Dispose();
 
-            _previewLabel.Text = $"{image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensionHint}  fav {image.FavoriteLevel}";
+            _previewLabel.Text = FormatPreviewDetails(image, dimensionHint);
             UpdateSelectionActions();
             WarmNeighborPreviews(index);
         }
@@ -2654,7 +2664,7 @@ internal sealed class MainForm : Form
         var index = GetSelectedIndex();
         if (index < 0)
         {
-            return new DetailSmokeReport(false, false, false, false, false, false, false, false);
+            return new DetailSmokeReport(false, false, false, false, false, false, false, false, false);
         }
 
         using var detail = CreateDetailModal(index);
@@ -3548,6 +3558,58 @@ internal sealed class MainForm : Form
         return image.Width is > 0 && image.Height is > 0 ? $"{image.Width}x{image.Height}" : "";
     }
 
+    private static string FormatPreviewDetails(NativeImageRecord image, string dimensionHint)
+    {
+        var details = string.IsNullOrWhiteSpace(dimensionHint)
+            ? $"{image.Filename}  {FormatBytes(image.SizeBytes)}  fav {image.FavoriteLevel}"
+            : $"{image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensionHint}  fav {image.FavoriteLevel}";
+        var metadata = FormatMetadataDisplay(image, maxValueLength: 72);
+        return string.IsNullOrWhiteSpace(metadata) ? details : $"{details}  {metadata}";
+    }
+
+    private static string FormatMetadataDisplay(NativeImageRecord image, int maxValueLength)
+    {
+        var parts = new List<string>();
+        AddMetadataPart(parts, "Prompt", image.Prompt, maxValueLength);
+        AddMetadataPart(parts, "Negative prompt", image.NegativePrompt, maxValueLength);
+        AddMetadataPart(parts, "Settings", image.MetadataSettingsSummary, maxValueLength);
+        return string.Join("  ", parts);
+    }
+
+    private static bool HasMetadata(NativeImageRecord image)
+    {
+        return !string.IsNullOrWhiteSpace(image.Prompt) ||
+            !string.IsNullOrWhiteSpace(image.NegativePrompt) ||
+            !string.IsNullOrWhiteSpace(image.MetadataSettingsSummary) ||
+            !string.IsNullOrWhiteSpace(image.MetadataRaw);
+    }
+
+    private static void AddMetadataPart(ICollection<string> parts, string label, string value, int maxValueLength)
+    {
+        var normalized = NormalizeInlineText(value);
+        if (normalized.Length == 0)
+        {
+            return;
+        }
+
+        parts.Add($"{label}: {TrimForInlineDisplay(normalized, maxValueLength)}");
+    }
+
+    private static string NormalizeInlineText(string value)
+    {
+        return string.Join(" ", value.Split(['\r', '\n', '\t'], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)).Trim();
+    }
+
+    private static string TrimForInlineDisplay(string value, int maxLength)
+    {
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..Math.Max(1, maxLength - 3)] + "...";
+    }
+
     private static Bitmap CreateGridPlaceholder(int size)
     {
         var bitmap = new Bitmap(size, size);
@@ -3754,6 +3816,7 @@ internal sealed class MainForm : Form
             $"detailFlip={BoolText(report.DetailFlip)}",
             $"detailFavorite={BoolText(report.DetailFavorite)}",
             $"detailOpenExternal={BoolText(report.DetailOpenExternal)}",
+            $"metadataDisplay={BoolText(report.MetadataDisplay)}",
             $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
             $"searchMatches={report.SearchMatches}",
             $"favoriteMatches={report.FavoriteMatches}",
@@ -4037,7 +4100,10 @@ internal sealed class MainForm : Form
             SetCurrentFavoriteLevel(favoriteBefore);
 
             var openExternal = File.Exists(GetOpenExternalPathForSmoke());
-            return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal);
+            var metadataDisplay = !HasMetadata(CurrentImage) ||
+                (_metaLabel.Text.Contains("Prompt:", StringComparison.OrdinalIgnoreCase) &&
+                    _metaLabel.Text.Contains("Negative prompt:", StringComparison.OrdinalIgnoreCase));
+            return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal, metadataDisplay);
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -4103,7 +4169,7 @@ internal sealed class MainForm : Form
             };
             root.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
             root.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 58));
+            root.RowStyles.Add(new RowStyle(SizeType.Absolute, 78));
 
             _toolbar.Dock = DockStyle.Fill;
             _toolbar.FlowDirection = FlowDirection.LeftToRight;
@@ -4133,7 +4199,7 @@ internal sealed class MainForm : Form
 
             _metaLabel.Dock = DockStyle.Fill;
             _metaLabel.Padding = new Padding(8, 4, 8, 4);
-            _metaLabel.AutoEllipsis = true;
+            _metaLabel.AutoEllipsis = false;
             _metaLabel.TextAlign = ContentAlignment.MiddleLeft;
 
             root.Controls.Add(_toolbar, 0, 0);
@@ -4297,7 +4363,9 @@ internal sealed class MainForm : Form
             var dimensions = FormatDimensions(image);
             var zoomText = $"{_zoom * 100f:0}%";
             var flipText = _flipped ? "flipped" : "normal";
-            _metaLabel.Text = $"{_index + 1:n0}/{_images.Count:n0}  {image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensions}  fav {image.FavoriteLevel}  zoom {zoomText}  {flipText}";
+            var baseText = $"{_index + 1:n0}/{_images.Count:n0}  {image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensions}  fav {image.FavoriteLevel}  zoom {zoomText}  {flipText}";
+            var metadata = FormatMetadataDisplay(image, maxValueLength: 96);
+            _metaLabel.Text = string.IsNullOrWhiteSpace(metadata) ? baseText : $"{baseText}\r\n{metadata}";
         }
 
         private void ImageBoxMouseDown(object? sender, MouseEventArgs e)
@@ -4398,7 +4466,8 @@ internal sealed class MainForm : Form
         bool Pan,
         bool Flip,
         bool Favorite,
-        bool OpenExternal);
+        bool OpenExternal,
+        bool MetadataDisplay);
 
     private sealed record NativeSettingsSnapshot(
         string DatabasePath,
@@ -4485,6 +4554,7 @@ internal sealed class MainForm : Form
         bool DetailFlip,
         bool DetailFavorite,
         bool DetailOpenExternal,
+        bool MetadataDisplay,
         bool SettingsReadOnly,
         int SearchMatches,
         int FavoriteMatches,
