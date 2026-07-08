@@ -288,3 +288,27 @@ controls, folder range selection, drag/open parity, placeholder behavior,
 native thumbnail warmup UI, preview tabs, bulk destructive actions, and
 explicit enhancement UI remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M15 Notes
+
+M15 first slice adds a browser-mapped native date filter preset row without
+touching the browser app. Browser evidence maps from the existing Sidebar date
+filter controls: `Today`, `7d`, `30d`, `This year`, and `Clear` update
+`dateFrom` / `dateTo` and the search route filters by image `createdAt`.
+
+Native now adds a `Date` preset selector with `All dates`, `Today`, `7d`,
+`30d`, and `This year`. The filter uses `NativeImageRecord.CreatedAtUtc` as a
+local calendar date, composes with the existing search, favorite, folder, and
+sort controls, and persists `date_filter` in native SQLite settings. The M15
+date-filter smoke creates relative-date fixture images and verifies each
+browser-mapped preset without browser runtime, local HTTP server, or Node:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke
+```
+
+This remains a parity slice, not full native parity. Date section headers,
+manual date range inputs, folder range selection, drag/open parity, placeholder
+behavior, native thumbnail warmup UI, preview tabs, bulk destructive actions,
+and explicit enhancement UI remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.

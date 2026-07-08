@@ -109,6 +109,13 @@ internal static class Program
             return await MainForm.RunLargeScrollSmokeAsync(args[1]);
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-date-filter-smoke")
+        {
+            ApplicationConfiguration.Initialize();
+            var folder = args.Length >= 2 ? args[1] : null;
+            return await MainForm.RunDateFilterSmokeAsync(folder);
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();
