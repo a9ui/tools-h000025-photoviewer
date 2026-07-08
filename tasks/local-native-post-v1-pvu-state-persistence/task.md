@@ -56,6 +56,11 @@ it is raw-mirrored for traceability but deferred as a native migration target
 because the browser per-view scroll map is not equivalent to native
 `last_selected_image` / `last_visible_index` restore.
 
+This continuation formally records Row 15 for browser `pvu_fav_levels`: it is
+raw-mirrored for traceability if an explicit export contains it, but it is
+deferred as a native migration target because current browser code does not
+persist this key and there is no accepted native conflict policy.
+
 ## Guardrails
 
 - No Linear.
@@ -224,6 +229,13 @@ Read in full before planning or editing:
     `pvu_state_migration_count` remains at the Row 11 count;
   - native gallery-state restore through `last_selected_image` and
     `last_visible_index` remains separate from browser scroll-memory import.
+- Formally defer browser favorite-level state in #117:
+  - `pvu_fav_levels` is kept as a raw browser mirror under
+    `browser_pvu_fav_levels` when an explicit export contains it;
+  - it does not create native `fav_levels` or `favorite_filter_level`
+    settings;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -253,32 +265,33 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `seenMirrorStored=true`, `markerMirrorStored=true`,
 `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+`pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=7`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=8`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row14-pvu-scroll-memory` based on `origin/main`
-`272d5c576d18b86ea1fa7342bb1a317f2018bab1` after PR #141:
+`codex/h25-117-row14-pvu-fav-levels` rebased on `origin/main`
+`4433182a7fd1d84142eac920187fea3f88410c55` after PR #142:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
-- `--headless-pvu-state-smoke` passed with
+- `--headless-pvu-state-smoke` passed with `pvuFavLevelsDeferred=true`,
+  `favLevelsMirrorStored=true`,
   `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
   `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
   `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
-  contract,
-  `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
-  `seenMirrorStored=true`,
-  `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
+  contract, `pvuFolderSortModeMigrated=true`, `pvuSeenImagesMigrated=true`,
+  `seenMirrorStored=true`, `nativeFolderSortModePreserved=true`,
+  `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=7`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=8`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
