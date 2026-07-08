@@ -502,7 +502,10 @@ sort surface does not persist equivalent direction or seed state. The ninth
 accepted row imports explicit browser
 `pvu_view.hiddenFolders` into native `hidden_folder_buckets`, mapping browser
 folder keys through the exported `pvu_last_dir_set` / `pvu_recent_dirs` roots
-and preserving an existing native hidden-folder choice.
+and preserving an existing native hidden-folder choice. The tenth accepted row
+records explicit browser `pvu_seen_images` in the #117 pvu-state smoke and
+verifies import into native `seen_images`, while preserving existing native
+seen rows.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

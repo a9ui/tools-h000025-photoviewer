@@ -7,20 +7,21 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_HIDDEN_FOLDERS_MIGRATION_AFTER_SORT_MODE_ROW`.
+`ADOPT_BOUNDED_PVU_SEEN_IMAGES_TRACE_AFTER_HIDDEN_FOLDERS_ROW`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_view.hiddenFolders` from an explicit browser localStorage export.
+  explicit browser `pvu_seen_images` from a localStorage export.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
   `pvu_view.dateFrom` / `dateTo` into native date settings, and
   `pvu_last_dir_set` / `pvu_recent_dirs` into native recent-folder settings,
   and `pvu_view.rightPanelOpen` / `rightPanelWidth` into native right-preview
-  settings, `pvu_view.thumbSize` into native `thumbnail_size`, and
-  `pvu_view.sortBy` into native `sort_mode`.
+  settings, `pvu_view.thumbSize` into native `thumbnail_size`,
+  `pvu_view.sortBy` into native `sort_mode`, and `pvu_view.hiddenFolders` into
+  native `hidden_folder_buckets`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
@@ -35,6 +36,11 @@ Meaning:
 - Browser hidden folders are stored as browser folder keys, not native
   absolute folder paths. This row converts only keys that can be mapped through
   the explicit exported `pvu_last_dir_set` / `pvu_recent_dirs` roots.
+- Browser `pvu_seen_images` is additive. Explicit browser-export rows are
+  upserted into native `seen_images` with source `browser_export`; existing
+  native seen rows are preserved.
+- Malformed `pvu_seen_images` is warning-only and does not overwrite or delete
+  native seen state.
 - Browser `folderSortBy` remains deferred because native folder bucket sorting
   is not a separate accepted setting yet, and folder range-selection semantics
   remain owned by #102.
@@ -82,6 +88,9 @@ Meaning:
 | `pvu_view.hiddenFolders` browser folder keys with exported roots | `native_settings.hidden_folder_buckets` absolute native folder paths | `ADOPT`: imported on first native import when hidden-folder state is absent. |
 | Existing native `hidden_folder_buckets` | Preserve native hidden-folder state | `ADOPT`: import does not clobber a native user choice. |
 | Malformed/rootless `pvu_view.hiddenFolders` | recoverable warning, no native hidden-folder overwrite | `ADOPT`: invalid folder keys, non-array values, and exports without roots are skipped with recovery guidance. |
+| `pvu_seen_images` truthy entries | `seen_images` rows with source `browser_export` | `ADOPT`: explicit browser seen rows are imported additively. |
+| Existing native `seen_images` | Preserve native seen rows | `ADOPT`: import does not delete or replace native seen state. |
+| Malformed `pvu_seen_images` | recoverable warning, no native seen-row deletion | `ADOPT`: invalid seen-image JSON is skipped with recovery guidance. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -89,7 +98,8 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_fav_only` /
 `native_settings.browser_pvu_unfav_only` /
 `native_settings.browser_pvu_last_dir_set` /
-`native_settings.browser_pvu_recent_dirs` for traceability.
+`native_settings.browser_pvu_recent_dirs` /
+`native_settings.browser_pvu_seen_images` for traceability.
 
 ## Split Plan For Remaining pvu Keys
 
@@ -109,7 +119,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_fav_levels` | `DEFER` | Listed as possible browser-only state, but current browser code does not persist this key; keep deferred until there is source evidence and conflict policy. |
 | `pvu_enhanced_only` | `ADOPT` | Native enhanced-only state exists from M19; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_scroll_memory` | `DEFER` | Native has selected-image/index restore, not browser scroll-memory parity. |
-| `pvu_seen_images` | `ADOPT` | Already imported into native `seen_images` by M14. |
+| `pvu_seen_images` | `ADOPT` | Formally covered by Row 10 pvu-state smoke/migration trace; explicit browser export imports additively into native `seen_images` and preserves native seen rows. |
 | `pvu_recent_albums` | `DEFER` | Albums import exists, but recent-album UI semantics are not native-accepted. |
 | `pvu_recent_dirs` / `pvu_last_dir_set` | `ADOPT` | Native folder-set persistence exists; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_enhance_settings` | `DEFER` | Owned by #97/#98 explicit enhancement UI; no automatic workers. |
@@ -136,11 +146,13 @@ Expected result:
 - `pvuRecentFoldersMigrated=true`
 - `pvuRightPreviewMigrated=true`
 - `pvuHiddenFoldersMigrated=true`
+- `pvuSeenImagesMigrated=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
 - `enhancedMirrorStored=true`
 - `favoriteMirrorStored=true`
 - `recentMirrorStored=true`
+- `seenMirrorStored=true`
 - `nativeViewModePreserved=true`
 - `nativeEnhancedOnlyPreserved=true`
 - `nativeFavoriteFilterPreserved=true`
@@ -150,6 +162,7 @@ Expected result:
 - `nativeRecentFolderSetPreserved=true`
 - `nativeRightPreviewPreserved=true`
 - `nativeHiddenFoldersPreserved=true`
+- `nativeSeenImagesPreserved=true`
 - `malformedEnhancedOnlyWarning=true`
 - `malformedFavoriteFilterWarning=true`
 - `malformedDateRangeWarning=true`
@@ -158,6 +171,7 @@ Expected result:
 - `malformedRecentDirsWarning=true`
 - `malformedRightPreviewWarning=true`
 - `malformedHiddenFoldersWarning=true`
+- `malformedSeenImagesWarning=true`
 - `nativeEnhancedOnlyStillPreserved=true`
 - `nativeFavoriteFilterStillPreserved=true`
 - `nativeDateRangeStillPreserved=true`
@@ -166,9 +180,10 @@ Expected result:
 - `nativeRecentFolderSetStillPreserved=true`
 - `nativeRightPreviewStillPreserved=true`
 - `nativeHiddenFoldersStillPreserved=true`
+- `nativeSeenImagesStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
-- `malformedWarnings=8`
+- `malformedWarnings=9`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
@@ -221,32 +236,37 @@ PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
 
-## Current Hidden-Folders Verification
+## Current Row 10 Seen-Images Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row8-state-persistence` rebased onto `origin/main`
-`8afe881ffeeaadd0a7618038244bd8dde6039a21` after PR #135:
+`codex/h25-117-row10-state-persistence` based on `origin/main`
+`61b01837ba6a73238cbc33ffe983e829cc4e4ea4` after PR #136:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
-  passed with `pvuSortModeMigrated=true`,
-  `nativeSortModePreserved=true`, `unsupportedSortModeWarning=true`,
-  `nativeSortModeStillPreserved=true`, `pvuHiddenFoldersMigrated=true`,
-  `nativeHiddenFoldersPreserved=true`,
-  `malformedHiddenFoldersWarning=true`,
-  `nativeHiddenFoldersStillPreserved=true`, `pvuThumbnailSizeMigrated=true`,
-  `pvuRightPreviewMigrated=true`, `migrationRecorded=true`,
-  `browserStateKeys=5`, `firstWarnings=0`, `secondWarnings=0`, and
-  `malformedWarnings=8`.
+  passed with `pvuSeenImagesMigrated=true`,
+  `migrationRecorded=true`, `seenMirrorStored=true`,
+  `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=6`,
+  `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=9`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
-  passed and created only ignored fixture/cache state in this clean worktree.
+  passed and created only ignored fixture/cache state in this worktree.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
-  passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=6`, `seenImages=0`, `settings=28`, `images=0`,
+  `warnings=0`, and no browser runtime.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
+  passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`,
+  `totalSeenImages=2`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
   passed with `sortName=true`, `randomReshuffle=true`,
-  `thumbnailSize=true`, `settingsImported=true`, `browserStateKeys=6`, and
-  `enhancementStateUnchanged=true`.
+  `thumbnailSize=true`, `settingsImported=true`, `browserStateKeys=6`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `corepack pnpm typecheck` passed.
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.
@@ -298,6 +318,8 @@ after PR #131:
   browser values with matching native semantics.
 - `ADOPT`: bounded `pvu_view.hiddenFolders` migration into native
   `hidden_folder_buckets`, mapped through explicit browser folder roots.
+- `ADOPT`: bounded `pvu_seen_images` import trace into native `seen_images`,
+  preserving existing native seen rows.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and

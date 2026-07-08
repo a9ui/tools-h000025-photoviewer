@@ -256,7 +256,7 @@ internal sealed class NativeImageStore
             }
 
             importedSeenCount = ImportBrowserSeenImages(connection, transaction, browserState, importedAt, warnings);
-            ApplyBrowserStateMigrations(connection, transaction, browserState, importedAt, warnings);
+            ApplyBrowserStateMigrations(connection, transaction, browserState, importedAt, warnings, importedSeenCount);
         }
 
         UpsertSetting(connection, transaction, "browser_settings_found", settingsFound ? "1" : "0", importedAt);
@@ -967,10 +967,16 @@ internal sealed class NativeImageStore
         SqliteTransaction transaction,
         IReadOnlyList<NativeBrowserStateRecord> browserState,
         DateTime importedAt,
-        ICollection<NativeImportWarning> warnings)
+        ICollection<NativeImportWarning> warnings,
+        int importedSeenCount)
     {
         var migrations = new List<string>();
         var hasBrowserRecentFolderSet = TryReadBrowserRecentFolderSet(browserState, warnings, out var browserRecentFolderSet);
+
+        if (importedSeenCount > 0)
+        {
+            migrations.Add("pvu_seen_images->seen_images");
+        }
 
         if (TryGetBrowserStateValue(browserState, "pvu_view", out var pvuView))
         {
