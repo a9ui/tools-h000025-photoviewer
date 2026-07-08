@@ -90,7 +90,12 @@ internal static class NativeFixtureBuilder
             {
                 localStorage = new Dictionary<string, object>
                 {
-                    ["pvu_view"] = "grid",
+                    ["pvu_view"] = new
+                    {
+                        viewMode = "grid",
+                        thumbSize = 200,
+                        rightPanelOpen = true,
+                    },
                     ["pvu_fav_only"] = "false",
                     ["pvu_recent_dirs"] = new[] { fixtureRoot, fixtureExtraRoot },
                     ["pvu_recent_albums"] = new[] { "native-fixture-picks" },

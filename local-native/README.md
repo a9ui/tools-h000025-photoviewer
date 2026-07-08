@@ -471,3 +471,19 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 
 See `docs/local-native/malformed-import-recovery.md` and
 `tasks/local-native-post-v1-malformed-import-recovery/task.md`.
+
+## Post-v1 #117 Notes
+
+#117 starts complete `pvu_*` state persistence migration as a bounded
+key-by-key lane. The first accepted row imports explicit browser
+`pvu_view.viewMode` into native `view_mode` when native has no saved view mode
+yet, while preserving later native choices.
+
+The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke
+```
+
+See `docs/local-native/pvu-state-persistence-migration.md` and
+`tasks/local-native-post-v1-pvu-state-persistence/task.md`.

@@ -86,6 +86,20 @@ Browser `pvu_*` state is imported only from an explicit JSON export file. The
 native app records raw imported keys under `browser_state` and mirrors them as
 `native_settings` entries prefixed with `browser_`.
 
+## Post-v1 #117 Native Store
+
+#117 starts the full `pvu_*` migration as a key-by-key post-v1 lane. The first
+accepted row maps explicit browser `pvu_view.viewMode` into native
+`native_settings.view_mode` only when the native setting does not exist yet.
+This gives first-import continuity without clobbering later native user
+choices on every startup or Import action.
+
+The dedicated smoke is:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke
+```
+
 Thumbnail/display reuse is read-only until compatibility is proven. The native
 check uses the browser formula from `src/lib/thumbnailCache.ts`:
 
