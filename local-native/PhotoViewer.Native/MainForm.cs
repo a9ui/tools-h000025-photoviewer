@@ -1271,11 +1271,26 @@ internal sealed class MainForm : Form
             _visibleImages.All(image => filteredGroupHeaders.Contains(FormatDateSectionLabel(image.CreatedAtUtc), StringComparer.Ordinal));
         Require(todaySingleGroup, "date section headers did not follow the Today filter");
 
+        ApplyViewMode("grid");
+        var gridFilteredGroups = _dateSectionHeadersByPath.Count;
+        var gridFirstItem = CreateListItem(_visibleImages[0]);
+        var gridFirstHeader = _dateSectionHeadersByPath.TryGetValue(_visibleImages[0].AbsolutePath, out var gridFirstHeaderValue)
+            ? gridFirstHeaderValue
+            : "";
+        var gridFirstItemGrouped = string.Equals(gridFirstHeader, FormatDateSectionLabel(_visibleImages[0].CreatedAtUtc), StringComparison.Ordinal) &&
+            gridFirstItem.Text.Contains(gridFirstHeader, StringComparison.Ordinal);
+        var gridTodaySingleGroup = _visibleImages.Count == 1 &&
+            gridFilteredGroups == 1 &&
+            gridFirstItemGrouped;
+        Require(gridTodaySingleGroup, "grid date section headers did not follow the Today filter");
+
         SelectDateFilter("all");
         ApplyFilter();
-        ApplyViewMode("grid");
-        var gridGroupsSuppressed = _dateSectionHeadersByPath.Count == 0;
-        Require(gridGroupsSuppressed, "date section headers should stay disabled in native grid view for this slice");
+        var gridHeaderGroups = _dateSectionHeadersByPath.Count;
+        var gridHeaderLabels = _dateSectionHeadersByPath.Values.ToList();
+        var gridHeadersMatchDates = gridHeaderGroups == expectedGroupKeys.Count &&
+            expectedGroupLabels.All(label => gridHeaderLabels.Contains(label, StringComparer.Ordinal));
+        Require(gridHeadersMatchDates, "grid date section headers do not match visible image dates");
         ApplyViewMode("details");
         ApplyFilter();
 
@@ -1293,7 +1308,9 @@ internal sealed class MainForm : Form
             CreatedSortOrder: createdSortOrder,
             FilteredGroups: filteredGroups,
             TodaySingleGroup: todaySingleGroup,
-            GridGroupsSuppressed: gridGroupsSuppressed,
+            GridHeaderGroups: gridHeaderGroups,
+            GridFirstItemGrouped: gridFirstItemGrouped,
+            GridTodaySingleGroup: gridTodaySingleGroup,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
@@ -1916,7 +1933,7 @@ internal sealed class MainForm : Form
     private bool ShouldShowDateSectionHeaders()
     {
         return _visibleImages.Count > 0 &&
-            _list.View == View.Details &&
+            (_list.View == View.Details || _list.View == View.LargeIcon) &&
             string.Equals(_sortMode.SelectedItem?.ToString(), "Created", StringComparison.OrdinalIgnoreCase);
     }
 
@@ -3098,7 +3115,9 @@ internal sealed class MainForm : Form
             $"createdSortOrder={BoolText(report.CreatedSortOrder)}",
             $"filteredGroups={report.FilteredGroups}",
             $"todaySingleGroup={BoolText(report.TodaySingleGroup)}",
-            $"gridGroupsSuppressed={BoolText(report.GridGroupsSuppressed)}",
+            $"gridHeaderGroups={report.GridHeaderGroups}",
+            $"gridFirstItemGrouped={BoolText(report.GridFirstItemGrouped)}",
+            $"gridTodaySingleGroup={BoolText(report.GridTodaySingleGroup)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -3702,6 +3721,8 @@ internal sealed class MainForm : Form
         bool CreatedSortOrder,
         int FilteredGroups,
         bool TodaySingleGroup,
-        bool GridGroupsSuppressed,
+        int GridHeaderGroups,
+        bool GridFirstItemGrouped,
+        bool GridTodaySingleGroup,
         bool EnhancementStateUnchanged);
 }
