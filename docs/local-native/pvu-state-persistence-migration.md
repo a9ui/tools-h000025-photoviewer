@@ -7,15 +7,15 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_FAVORITE_FILTER_MIGRATION_AFTER_VIEW_AND_ENHANCED_ROWS`.
+`ADOPT_BOUNDED_PVU_DATE_RANGE_MIGRATION_AFTER_VIEW_ENHANCED_AND_FAVORITE_ROWS`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_fav_only` / `pvu_unfav_only` from an explicit browser localStorage
-  export.
+  `pvu_view.dateFrom` / `dateTo` from an explicit browser localStorage export.
 - The previous accepted rows remain `pvu_view.viewMode` into native
-  `view_mode` and `pvu_enhanced_only` into native `enhanced_only_filter`.
+  `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
+  `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
@@ -40,6 +40,10 @@ Meaning:
 | `pvu_fav_only=0` and `pvu_unfav_only=0` | `native_settings.favorite_filter=all` | `ADOPT`: browser cleared state maps to no favorite filter. |
 | Both favorite-only and unrated-only truthy | `native_settings.favorite_filter=favorites` | `ADOPT`: matches browser conflict behavior where favorite-only wins and unrated-only is cleared. |
 | Existing native `favorite_filter` | Preserve native setting | `ADOPT`: import does not clobber a native user choice. |
+| `pvu_view.dateFrom=YYYY-MM-DD` / `dateTo=YYYY-MM-DD` | `native_settings.date_filter=custom`, `date_from`, `date_to` | `ADOPT`: imported on first native import when native date settings are absent. |
+| `pvu_view.dateFrom` only or `dateTo` only | matching one-sided native `date_from` / `date_to` with `date_filter=custom` | `ADOPT`: native manual date range already supports from-only and to-only filtering. |
+| Existing native `date_filter` / `date_from` / `date_to` | Preserve native date settings | `ADOPT`: import does not clobber a native user choice. |
+| Malformed `pvu_view.dateFrom` / `dateTo` | recoverable warning, no native date overwrite | `ADOPT`: invalid date strings are skipped with recovery guidance. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -54,7 +58,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.thumbSize` | `DEFER` | Native has `thumbnail_size`, but broader display mapping belongs with #111/#112 display-mode work. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | These map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `DEFER` | Native preview visibility/splitter exists; migrate with UI polish or right-panel parity evidence. |
-| `pvu_view.dateFrom` / `dateTo` | `PARTIAL_ADOPT` | Native manual date settings already persist; browser import mapping needs a dedicated fixture if adopted. |
+| `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_view.hiddenFolders` / `folderSortBy` | `DEFER` | Folder bucket behavior and range semantics remain tied to #102/folder UI decisions. |
 | `pvu_pinned_tabs` | `DEFER` | Owned by #99/#100 preview tab/pinned/restore work. |
 | `pvu_perf_enabled` | `DEFER` | Browser performance instrumentation flag has no native user-facing equivalent yet. |
@@ -82,6 +86,7 @@ Expected result:
 - `pvuViewModeMigrated=true`
 - `pvuEnhancedOnlyMigrated=true`
 - `pvuFavoriteFilterMigrated=true`
+- `pvuDateRangeMigrated=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
 - `enhancedMirrorStored=true`
@@ -89,13 +94,16 @@ Expected result:
 - `nativeViewModePreserved=true`
 - `nativeEnhancedOnlyPreserved=true`
 - `nativeFavoriteFilterPreserved=true`
+- `nativeDateRangePreserved=true`
 - `malformedEnhancedOnlyWarning=true`
 - `malformedFavoriteFilterWarning=true`
+- `malformedDateRangeWarning=true`
 - `nativeEnhancedOnlyStillPreserved=true`
 - `nativeFavoriteFilterStillPreserved=true`
+- `nativeDateRangeStillPreserved=true`
 - `firstWarnings=0`
 - `secondWarnings=0`
-- `malformedWarnings=2`
+- `malformedWarnings=3`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
 
 The smoke uses a synthetic project root under ignored
@@ -108,21 +116,26 @@ The smoke uses a synthetic project root under ignored
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
   passed with `pvuViewModeMigrated=true`,
   `pvuEnhancedOnlyMigrated=true`, `pvuFavoriteFilterMigrated=true`,
-  `migrationRecorded=true`, `browserMirrorStored=true`,
-  `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
-  `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
-  `nativeFavoriteFilterPreserved=true`, `malformedEnhancedOnlyWarning=true`,
-  `malformedFavoriteFilterWarning=true`,
+  `pvuDateRangeMigrated=true`, `migrationRecorded=true`,
+  `browserMirrorStored=true`, `enhancedMirrorStored=true`,
+  `favoriteMirrorStored=true`, `nativeViewModePreserved=true`,
+  `nativeEnhancedOnlyPreserved=true`, `nativeFavoriteFilterPreserved=true`,
+  `nativeDateRangePreserved=true`, `malformedEnhancedOnlyWarning=true`,
+  `malformedFavoriteFilterWarning=true`, `malformedDateRangeWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
-  `nativeFavoriteFilterStillPreserved=true`, `browserStateKeys=4`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=2`.
+  `nativeFavoriteFilterStillPreserved=true`,
+  `nativeDateRangeStillPreserved=true`, `browserStateKeys=4`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=3`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture`
-  passed and created only ignored fixture/cache state in this clean worktree.
+  passed with existing fixture/cache state preserved.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
   passed with `gridToggle=true`, `enhancedOnlyFilter=true`,
   `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
+- `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateFilterSmoke`
+  passed with `dateFilterPersisted=true`, `manualRangePersisted=true`, and
+  `enhancementStateUnchanged=true`.
 - `git diff --name-only -- src` returned no files.
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
@@ -132,10 +145,12 @@ The smoke uses a synthetic project root under ignored
 - `ADOPT`: bounded `pvu_view.viewMode` migration.
 - `ADOPT`: bounded `pvu_enhanced_only` migration.
 - `ADOPT`: bounded `pvu_fav_only` / `pvu_unfav_only` migration.
+- `ADOPT`: bounded `pvu_view.dateFrom` / `dateTo` migration.
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and
   browser marker-only keys as native migration targets.
-- `DEFER`: `pvu_fav_levels`, pinned tabs, enhancement settings, date/display
-  details to their existing post-v1 issue rows.
+- `DEFER`: `pvu_fav_levels`, pinned tabs, enhancement settings, display
+  details, folder/recent state, and browser localStorage favorites to their
+  existing post-v1 issue rows.
 - `NEEDS_HUMAN`: none for this slice.

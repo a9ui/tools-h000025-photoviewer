@@ -10,13 +10,14 @@ Build the #117 plan first, then advance only the smallest safe `pvu_*`
 persistence row under `local-native/**`.
 
 The previous slices migrated explicit browser `pvu_view.viewMode` into native
-`view_mode` and explicit browser `pvu_enhanced_only` into native
-`enhanced_only_filter` on first import, while preserving later native user
-choices.
+`view_mode`, explicit browser `pvu_enhanced_only` into native
+`enhanced_only_filter`, and explicit browser `pvu_fav_only` /
+`pvu_unfav_only` into native `favorite_filter` on first import, while
+preserving later native user choices.
 
-This continuation migrates explicit browser `pvu_fav_only` / `pvu_unfav_only`
-into native `favorite_filter` on first import, while preserving later native
-user choices.
+This continuation migrates explicit browser `pvu_view.dateFrom` / `dateTo`
+into native `date_filter`, `date_from`, and `date_to` on first import, while
+preserving later native user choices.
 
 ## Guardrails
 
@@ -56,6 +57,7 @@ Read in full before planning or editing:
 - GitHub issue #117
 - GitHub issue #115
 - GitHub issue #116
+- GitHub PR #127
 - GitHub PR #123
 - GitHub PR #122
 - GitHub PR #120
@@ -86,6 +88,14 @@ Read in full before planning or editing:
   - if both are truthy, favorite-only wins to match browser conflict behavior;
   - malformed boolean values are recoverable warnings;
   - existing native `favorite_filter` is not overwritten.
+- Add a bounded migration for `pvu_view.dateFrom` / `dateTo`:
+  - browser `YYYY-MM-DD` strings -> native `date_from` / `date_to`;
+  - one-sided browser date ranges are preserved as one-sided native ranges;
+  - native `date_filter` is set to `custom` when a non-empty browser date
+    range is imported;
+  - malformed date strings are recoverable warnings;
+  - existing native `date_filter`, `date_from`, or `date_to` is not
+    overwritten.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -101,6 +111,7 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -PrepareFixture
 dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json
 powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+corepack pnpm typecheck
 git diff --name-only -- src
 git diff --check
 ```
@@ -111,26 +122,31 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row3`:
+Recorded on 2026-07-08 in branch `codex/h25-117-pvu-state-row4` after
+fast-forwarding to PR #129 / `origin/main` `7a43517e3e1f2338af949c4da9f16c44bf2e666b`:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuViewModeMigrated=true`, `pvuEnhancedOnlyMigrated=true`,
-  `pvuFavoriteFilterMigrated=true`, `migrationRecorded=true`,
-  `browserMirrorStored=true`, `enhancedMirrorStored=true`,
-  `favoriteMirrorStored=true`, `nativeViewModePreserved=true`,
-  `nativeEnhancedOnlyPreserved=true`, `nativeFavoriteFilterPreserved=true`,
+  `pvuFavoriteFilterMigrated=true`, `pvuDateRangeMigrated=true`,
+  `migrationRecorded=true`, `browserMirrorStored=true`,
+  `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
+  `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
+  `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
-  `nativeEnhancedOnlyStillPreserved=true`,
-  `nativeFavoriteFilterStillPreserved=true`, `browserStateKeys=4`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=2`.
-- `-PrepareFixture` passed and generated ignored fixture/cache state.
+  `malformedDateRangeWarning=true`, `nativeEnhancedOnlyStillPreserved=true`,
+  `nativeFavoriteFilterStillPreserved=true`,
+  `nativeDateRangeStillPreserved=true`, `browserStateKeys=4`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=3`.
+- `-PrepareFixture` passed with existing fixture/cache state preserved.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `enhancedOnlyFilter=true`,
   `browserStateKeys=6`, and `enhancementStateUnchanged=true`.
+- `-HeadlessDateFilterSmoke` passed with `dateFilterPersisted=true`,
+  `manualRangePersisted=true`, and `enhancementStateUnchanged=true`.
 - `git diff --name-only -- src` returned no files.
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
@@ -140,7 +156,7 @@ Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row3`:
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #237.
+2. Update SQLite job #240.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
    `NEEDS_HUMAN`.

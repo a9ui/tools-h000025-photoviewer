@@ -95,6 +95,8 @@ internal static class NativeFixtureBuilder
                         viewMode = "grid",
                         thumbSize = 200,
                         rightPanelOpen = true,
+                        dateFrom = "",
+                        dateTo = "",
                     },
                     ["pvu_fav_only"] = "false",
                     ["pvu_enhanced_only"] = "false",

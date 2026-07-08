@@ -94,9 +94,12 @@ accepted row maps explicit browser `pvu_view.viewMode` into native
 `pvu_enhanced_only` into native `native_settings.enhanced_only_filter`.
 The third accepted row maps explicit browser `pvu_fav_only` /
 `pvu_unfav_only` into native `native_settings.favorite_filter` as
-`favorites`, `unrated`, or `all`. These migrations write only when the native
-setting does not exist yet. This gives first-import continuity without
-clobbering later native user choices on every startup or Import action.
+`favorites`, `unrated`, or `all`. The fourth accepted row maps explicit
+browser `pvu_view.dateFrom` / `dateTo` into native
+`native_settings.date_filter`, `native_settings.date_from`, and
+`native_settings.date_to`. These migrations write only when the native setting
+does not exist yet. This gives first-import continuity without clobbering later
+native user choices on every startup or Import action.
 
 The dedicated smoke is:
 
