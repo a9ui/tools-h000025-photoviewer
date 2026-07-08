@@ -7,13 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`DEFER_BROWSER_MODAL_EDGE_RATIO_AFTER_SIDEBAR_OPEN`.
+`DEFER_BROWSER_ENHANCE_QUEUE_OPEN_AFTER_MODAL_EDGE_RATIO`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  explicit classification of browser `pvu_view.modalEdgeRatio` after the
-  sidebar-open row.
+  explicit classification of browser `pvu_view.enhanceQueueOpen` after the
+  modal edge-ratio row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -51,6 +51,13 @@ Meaning:
   `browser_pvu_view` mirror, and native does not create `modal_edge_ratio`,
   `modalEdgeRatio`, `detail_modal_edge_ratio`, `modal_edge_zone_ratio`, or
   `modal_click_edge_ratio` settings.
+- Browser `pvu_view.enhanceQueueOpen` is Row 24 `DEFER`: browser persists
+  enhancement queue panel visibility, but native explicit enhancement queue
+  and output/toggle UI remains owned by #97/#98 and must stay
+  explicit-action-only. The value remains only inside the raw
+  `browser_pvu_view` mirror, and native does not create
+  `enhance_queue_open`, `enhanceQueueOpen`, `enhancement_queue_open`,
+  `enhancement_queue_visible`, or `enhancement_queue_panel_open` settings.
 - Browser hidden folders are stored as browser folder keys, not native
   absolute folder paths. The previous accepted hidden-folders row converts only
   keys that can be mapped through the explicit exported `pvu_last_dir_set` /
@@ -159,6 +166,7 @@ Meaning:
 | `pvu_view.randomSeed` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 21; native has no accepted seeded-random persistence contract. |
 | `pvu_view.sidebarOpen` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 22; native has no accepted left-sidebar collapse persistence target. |
 | `pvu_view.modalEdgeRatio` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: formally covered by Row 23; native has no accepted modal edge-zone persistence target. |
+| `pvu_view.enhanceQueueOpen` | `native_settings.browser_pvu_view` raw mirror only | `DEFER`: browser enhancement queue visibility belongs with #97/#98 explicit enhancement queue/output UI, not this persistence row. |
 | Malformed / unsupported `pvu_view.sortBy` | warning-only, no native sort overwrite | `ADOPT`: invalid sort values are skipped with recovery guidance. |
 | `pvu_view.hiddenFolders` browser folder keys with exported roots | `native_settings.hidden_folder_buckets` absolute native folder paths | `ADOPT`: imported on first native import when hidden-folder state is absent. |
 | Existing native `hidden_folder_buckets` | Preserve native hidden-folder state | `ADOPT`: import does not clobber a native user choice. |
@@ -211,6 +219,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_view.sortBy=oldest` / `created-oldest` and `randomSeed` | `DEFER` | Formally covered by Row 21: native currently lacks persisted ascending sort direction and browser random seed parity; adopting them needs a separate sort-surface decision. |
 | `pvu_view.sidebarOpen` | `DEFER` | Formally covered by Row 22: browser left-sidebar open/collapse state has no accepted native persistence target, so it remains raw-mirrored only. |
 | `pvu_view.modalEdgeRatio` | `DEFER` | Formally covered by Row 23: browser modal edge-click ratio has no accepted native modal edge-zone persistence target, so it remains raw-mirrored only. |
+| `pvu_view.enhanceQueueOpen` | `DEFER` | Formally covered by Row 24: browser enhancement queue panel visibility has no accepted native queue-panel persistence target separate from #97/#98 explicit enhancement UI, so it remains raw-mirrored only. |
 | `pvu_view.aspectMode` / `displayStyle` / `columns` | `DEFER` | Formally covered by Row 18; these map to compact/poster/aspect controls in #111/#112, not this tiny persistence row. |
 | `pvu_view.rightPanelOpen` / `rightPanelWidth` | `ADOPT` | Native preview visibility/splitter exists; M8/M9 UI smoke covers preview toggle and splitter persistence, so this row now maps first-import browser right-preview state without overwriting native choices. |
 | `pvu_view.dateFrom` / `dateTo` | `ADOPT` | Native manual date settings already persist; explicit browser import now maps first-import state without overwriting native choices. |
@@ -259,11 +268,11 @@ Expected result:
 - `pvuSortDirectionSeedDeferred=true`
 - `pvuSidebarOpenDeferred=true`
 - `pvuModalEdgeRatioDeferred=true`
+- `pvuEnhanceQueueOpenDeferred=true`
 - `pvuPinnedTabsDeferred=true`
 - `pvuRecentAlbumsDeferred=true`
 - `pvuEnhanceSettingsDeferred=true`
 - `pvuDisplayDetailsDeferred=true`
-- `pvuEnhanceSettingsDeferred=true`
 - `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
@@ -280,7 +289,7 @@ Expected result:
 - `enhanceSettingsMirrorStored=true`
 - `displayDetailsMirrorStored=true`
 - `modalEdgeRatioMirrorStored=true`
-- `enhanceSettingsMirrorStored=true`
+- `enhanceQueueOpenMirrorStored=true`
 - `perfMirrorStored=true`
 - `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
@@ -329,14 +338,16 @@ Row 18 does not add display-details fields, Row 19 does not add browser
 enhancement settings, and Row 20 does not add browser localStorage favorites.
 Row 21 does not add browser ascending sort directions or random seed settings.
 Row 22 does not add browser sidebar-open settings. Row 23 does not add browser
-modal edge-ratio settings.
+modal edge-ratio settings. Row 24 does not add browser enhancement queue-open
+settings.
 `markerMirrorStored=true`, `perfMirrorStored=true`,
 `scrollMemoryMirrorStored=true`, `favLevelsMirrorStored=true`,
 `favoriteStorageMirrorStored=true`, `favoriteBackupMirrorStored=true`,
 `pinnedTabsMirrorStored=true`, `recentAlbumsMirrorStored=true`,
 `displayDetailsMirrorStored=true`, `modalEdgeRatioMirrorStored=true`,
-`enhanceSettingsMirrorStored=true`, `pvuSortDirectionSeedDeferred=true`,
-`pvuSidebarOpenDeferred=true`, and `pvuModalEdgeRatioDeferred=true` are the
+`enhanceQueueOpenMirrorStored=true`, `enhanceSettingsMirrorStored=true`,
+`pvuSortDirectionSeedDeferred=true`, `pvuSidebarOpenDeferred=true`,
+`pvuModalEdgeRatioDeferred=true`, and `pvuEnhanceQueueOpenDeferred=true` are the
 raw-mirror/defer evidence. The
 final `browserStateKeys=13` count is measured
 after the malformed follow-up import, where PR #141 keeps `pvu_perf_enabled`
@@ -354,9 +365,52 @@ raw mirror only, and Row 20 keeps `pvu_favorites` /
 `modalEdgeRatio` only inside raw `browser_pvu_view` and does not create
 `modal_edge_ratio`, `modalEdgeRatio`, `detail_modal_edge_ratio`,
 `modal_edge_zone_ratio`, or `modal_click_edge_ratio` native settings.
+Row 24 keeps `enhanceQueueOpen` only inside raw `browser_pvu_view` and does
+not create `enhance_queue_open`, `enhanceQueueOpen`,
+`enhancement_queue_open`, `enhancement_queue_visible`, or
+`enhancement_queue_panel_open` native settings.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
+
+## Current Row 24 Enhancement Queue Open Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row24-enhance-queue-open` based on the Row23 merge commit
+`c4af4cf59bcee9f4306e2f718c5eed68b7f8f5a3`:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuEnhanceQueueOpenDeferred=true`, `enhanceQueueOpenMirrorStored=true`,
+  `pvuModalEdgeRatioDeferred=true`, `modalEdgeRatioMirrorStored=true`,
+  `pvuSidebarOpenDeferred=true`, `pvuSortDirectionSeedDeferred=true`,
+  `browserMirrorStored=true`, `migrationRecorded=true`,
+  `pvu_state_migration_count=11` by smoke contract,
+  `browserStateKeys=13`, `firstWarnings=0`, `secondWarnings=0`,
+  `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-PrepareFixture` passed using ignored fixture/cache state while preserving
+  existing cache/state assets.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `seenImages=0`, `settings=30`, `images=0`, and
+  `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `settingsImported=true`, `browserStateKeys=7`,
+  `enhancementStateUnchanged=true`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck` passed.
+- `git diff --name-only -- src` returned no files.
+- `git diff --name-only -- scripts` returned no files.
+- `git diff --name-only -- H000033` returned no files.
+- `rg -n "^(<<<<<<<|=======|>>>>>>>)" . -g "!node_modules/**" -g "!.next/**" -g "!.cache/**"`
+  returned no conflict markers.
+- `git diff --check` passed.
 
 ## Current Row 23 Modal Edge Ratio Verification
 
@@ -993,6 +1047,10 @@ after PR #131:
 - `DEFER`: browser `pvu_view.modalEdgeRatio` as a native migration target.
   Row 23 keeps `modalEdgeRatio` only inside raw `browser_pvu_view` and does
   not create native modal edge-ratio settings.
+- `DEFER`: browser `pvu_view.enhanceQueueOpen` as a native migration target.
+  Row 24 keeps `enhanceQueueOpen` only inside raw `browser_pvu_view` and does
+  not create native enhancement queue-open settings; #97/#98 remain the
+  explicit enhancement queue/output UI owners.
 - `DEFER`: #102 folder range selection, remaining display/aspect behavior
   beyond raw Row18 mirroring, and other broad browser-only state to their
   existing post-v1 issue rows.
