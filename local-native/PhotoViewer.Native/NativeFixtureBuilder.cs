@@ -104,6 +104,7 @@ internal static class NativeFixtureBuilder
                     ["pvu_fav_only"] = "false",
                     ["pvu_enhanced_only"] = "false",
                     ["pvu_recent_dirs"] = new[] { fixtureRoot, fixtureExtraRoot },
+                    ["pvu_pinned_tabs"] = new[] { "native-fixture-preview-a", "native-fixture-preview-b" },
                     ["pvu_recent_albums"] = new[] { "native-fixture-picks" },
                     ["pvu_enhance_settings"] = new { enabled = false },
                 },

@@ -62,6 +62,12 @@ export contains it, but it is deferred as a native migration target because
 current browser code does not persist this key and there is no accepted native
 conflict policy.
 
+This continuation formally records Row 16 for browser `pvu_pinned_tabs`: it is
+raw-mirrored for traceability if an explicit export contains it, but it is
+deferred as a native migration target because current browser pinned preview
+tabs belong to #99/#100 and native has no accepted tab/pin/restore state
+contract yet.
+
 ## Guardrails
 
 - No Linear.
@@ -99,10 +105,15 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
-- GitHub PR #142
 - GitHub PR #144
+- GitHub PR #142
 - GitHub PR #141
 - GitHub PR #140
+- GitHub PR #139
+- GitHub PR #138
+- GitHub PR #137
+- GitHub issue #115
+- GitHub issue #116
 - GitHub PR #134
 - GitHub PR #133
 - GitHub PR #131
@@ -233,6 +244,13 @@ Read in full before planning or editing:
     settings;
   - it is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser pinned-tab state in #117:
+  - `pvu_pinned_tabs` is kept as a raw browser mirror under
+    `browser_pvu_pinned_tabs` when an explicit export contains it;
+  - it does not create native `pinned_tabs`, `pinned_preview_tabs`, or
+    `preview_tabs` settings;
+  - it is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -263,24 +281,27 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
 `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
 `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
+`pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=8`,
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=9`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-row14-pvu-fav-levels` rebased on `origin/main`
-`4433182a7fd1d84142eac920187fea3f88410c55` after PR #142:
+`codex/h25-117-row16-pvu-state` based on `origin/main`
+`d7348766f950575f987e2606fab78b240bc94e9e` after PR #144 and the Row15
+verification commit:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
-  `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
+  `pvuPinnedTabsDeferred=true`, `pinnedTabsMirrorStored=true`,
   `pvuFavLevelsDeferred=true`, `favLevelsMirrorStored=true`,
+  `pvuScrollMemoryDeferred=true`, `scrollMemoryMirrorStored=true`,
   `pvuPerfFlagDeferred=true`, `perfMirrorStored=true`,
   `pvuLegacyMarkersRejected=true`, `markerMirrorStored=true`,
   `migrationRecorded=true`, `pvu_state_migration_count=11` by smoke
@@ -289,30 +310,22 @@ Recorded on 2026-07-08 in branch
   `seenMirrorStored=true`,
   `nativeFolderSortModePreserved=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`,
-  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=8`,
+  `nativeSeenImagesStillPreserved=true`, `browserStateKeys=9`,
   `firstWarnings=0`, `secondWarnings=0`, `malformedWarnings=10`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-PrepareFixture` passed using ignored fixture/cache state while preserving
   existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `warnings=0`, and no browser runtime. Persisted
-  `seenImages` / `settings` / `images` counts reflect existing ignored cache
-  state and may increase across repeated smoke runs.
-- `-HeadlessLargeScrollSmoke -Folder .\.cache\native-fixture-large` passed
-  with `totalImages=240`, `targetIndex=180`, `restoredIndex=180`,
-  `statePersisted=true`, `restoreSelected=true`, `ensureVisible=true`,
-  `enhancementStateUnchanged=true`, and
-  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+  `browserStateKeys=7`, `warnings=0`, and no browser runtime.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
-  `importedStillSeen=true`,
-  `enhancementStateUnchanged=true`, and
+  `importedStillSeen=true`, `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
-  `enhancedOnlyFilter=true`, `sortName=true`, `randomReshuffle=true`,
-  `browserStateKeys=6`, `settingsImported=true`,
+  `enhancedOnlyFilter=true`, `favoriteLevelFilter=true`, `sortName=true`,
+  `randomReshuffle=true`, `browserStateKeys=7`, `settingsImported=true`,
   `enhancementStateUnchanged=true`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `corepack pnpm typecheck` passed.
@@ -327,7 +340,7 @@ Recorded on 2026-07-08 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #255 and create/update the next row if more #117 native
+2. Update SQLite job #256 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or
