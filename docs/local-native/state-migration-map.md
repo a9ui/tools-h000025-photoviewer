@@ -209,6 +209,12 @@ native migration target. Explicit exports keep the flag only inside the raw
 `native_settings.browser_pvu_view` mirror. Native does not create
 `sidebar_open`, `sidebar_visible`, `left_sidebar_open`, or `left_panel_visible`
 settings, and does not increase `pvu_state_migration_count`.
+The twenty-third #117 row formally defers browser `pvu_view.modalEdgeRatio` as
+a native migration target. Explicit exports keep the modal click-edge ratio
+only inside the raw `native_settings.browser_pvu_view` mirror. Native does not
+create `modal_edge_ratio`, `modalEdgeRatio`,
+`modal_navigation_edge_ratio`, or `modal_click_edge_ratio` settings, and does
+not increase `pvu_state_migration_count`.
 
 The dedicated smoke is:
 

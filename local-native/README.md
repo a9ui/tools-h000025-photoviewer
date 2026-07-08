@@ -580,6 +580,12 @@ native migration target. Browser sidebar open/collapse state stays inside the
 raw `browser_pvu_view` mirror; native does not create `sidebar_open`,
 `sidebar_visible`, `left_sidebar_open`, or `left_panel_visible` settings, and
 `pvu_state_migration_count` stays at the Row 11 count of 11.
+The twenty-third #117 row formally defers browser `pvu_view.modalEdgeRatio` as
+a native migration target. Browser modal click-edge navigation width stays
+inside the raw `browser_pvu_view` mirror; native does not create
+`modal_edge_ratio`, `modalEdgeRatio`, `modal_navigation_edge_ratio`, or
+`modal_click_edge_ratio` settings, and `pvu_state_migration_count` stays at
+the Row 11 count of 11.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

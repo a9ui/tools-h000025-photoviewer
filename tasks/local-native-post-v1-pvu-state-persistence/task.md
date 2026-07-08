@@ -103,6 +103,13 @@ raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred as
 a native migration target because the current native local surface has no
 accepted left-sidebar collapse persistence target.
 
+This Row23 continuation formally records browser `pvu_view.modalEdgeRatio`: it
+is raw-mirrored for traceability inside `browser_pvu_view`, but it is deferred
+as a native migration target because the current native local surface has no
+accepted modal edge-zone persistence target. `enhanceQueueOpen` remains
+unselected for this slice because it is tied to the explicit enhancement queue
+UI owned by #97/#98.
+
 ## Guardrails
 
 - No Linear.
@@ -338,6 +345,13 @@ Read in full before planning or editing:
     `left_sidebar_open`, or `left_panel_visible` settings;
   - this field is not recorded in `pvu_state_migrations`, so
     `pvu_state_migration_count` remains at the Row 11 count.
+- Formally defer browser modal edge-ratio state in #117:
+  - browser `pvu_view.modalEdgeRatio` is kept only inside the raw
+    `browser_pvu_view` mirror;
+  - native does not create `modal_edge_ratio`, `modalEdgeRatio`,
+    `modal_navigation_edge_ratio`, or `modal_click_edge_ratio` settings;
+  - this field is not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -376,12 +390,45 @@ report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
 `pvuEnhanceSettingsDeferred=true`, `enhanceSettingsMirrorStored=true`,
 `pvuSortDirectionSeedDeferred=true`,
 `pvuSidebarOpenDeferred=true`,
+`pvuModalEdgeRatioDeferred=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
 `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=13`,
 `malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+
+## Current Row 23 Verification
+
+Recorded on 2026-07-09 in branch
+`codex/h25-117-row23-modal-edge-ratio-5da7` based on `origin/main`
+`7b7863b7f64de33d8d9daec45fd7e9da3679aac1` after PR #155:
+
+- `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
+  passed with 0 warnings and 0 errors.
+- `--headless-pvu-state-smoke` passed with
+  `pvuModalEdgeRatioDeferred=true`, `pvuSidebarOpenDeferred=true`,
+  `pvuSortDirectionSeedDeferred=true`, `browserMirrorStored=true`,
+  `migrationRecorded=true`, `browserStateKeys=13`, `firstWarnings=0`,
+  `secondWarnings=0`, `malformedWarnings=10`, and
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `scripts\verify-project.ps1 -PrepareFixture` passed the browser baseline:
+  94 unit tests passed, `tsc --noEmit` passed, and `next build` passed.
+  ESLint reported only the existing two `CachedImage.tsx` `<img>` warnings.
+- `scripts\start-local-native.ps1 -PrepareFixture` passed and generated
+  `.cache\native\browser-localstorage-export.json`.
+- `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
+  passed with `favorites=1`, `albums=2`, `albumImages=4`,
+  `browserStateKeys=7`, `settings=30`, and `warnings=0`.
+- `-HeadlessSeenSmoke` passed with `importedSeen=true`,
+  `nativeSeenPersisted=true`, `importedStillSeen=true`, and
+  `enhancementStateUnchanged=true`.
+- `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
+  with `settingsImported=true`, `enhancementStateUnchanged=true`,
+  `browserRuntime=false localHttpServer=false nodeRuntime=false`.
+- `corepack pnpm typecheck`, `git diff --check`, no-`src/**` diff,
+  no-`scripts/**` diff, no H000033 diff-name match, and conflict-marker
+  search passed.
 
 ## Current Row 22 Verification
 
