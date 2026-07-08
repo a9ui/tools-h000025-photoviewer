@@ -7,12 +7,13 @@ Issue: https://github.com/a9ui/tools-h000025-photoviewer/issues/117
 ## Decision
 
 Decision:
-`ADOPT_BOUNDED_PVU_FOLDER_SORT_MIGRATION_AFTER_SEEN_IMAGES_ROW`.
+`REJECT_BROWSER_LEGACY_MARKER_KEYS_AFTER_FOLDER_SORT_ROW`.
 
 Meaning:
 
 - #117 is broad by default, so this slice advances only one safe row:
-  `pvu_view.folderSortBy` from an explicit browser localStorage export.
+  explicit classification of browser marker-only `pvu_*` keys after the
+  accepted `pvu_view.folderSortBy` row.
 - The previous accepted rows remain `pvu_view.viewMode` into native
   `view_mode`, `pvu_enhanced_only` into native `enhanced_only_filter`, and
   `pvu_fav_only` / `pvu_unfav_only` into native `favorite_filter`, and
@@ -20,9 +21,10 @@ Meaning:
   `pvu_last_dir_set` / `pvu_recent_dirs` into native recent-folder settings,
   and `pvu_view.rightPanelOpen` / `rightPanelWidth` into native right-preview
   settings, `pvu_view.thumbSize` into native `thumbnail_size`,
-  `pvu_view.sortBy` into native `sort_mode`, and `pvu_view.hiddenFolders` into
-  native `hidden_folder_buckets`, and `pvu_seen_images` into native
-  `seen_images`.
+  `pvu_view.sortBy` into native `sort_mode`, `pvu_view.hiddenFolders` into
+  native `hidden_folder_buckets`, explicit browser `pvu_seen_images` into
+  native `seen_images`, and `pvu_view.folderSortBy` into native
+  `folder_sort_mode`.
 - Native still reads browser `pvu_*` state only from an explicit JSON export
   file. It never reads Chrome profile storage directly.
 - The migrations write native settings only when the target native setting
@@ -46,6 +48,11 @@ Meaning:
 - Browser `folderSortBy` is now imported only for the existing folder-bucket
   sort semantics: `name-asc`, `name-desc`, `count-desc`, and `count-asc`.
   Folder range-selection semantics remain owned by #102.
+- Browser `pvu_legacy_imported` and `pvu_server_legacy_imported` are
+  one-time browser migration markers. They are raw-mirrored for traceability
+  as `browser_pvu_legacy_imported` and
+  `browser_pvu_server_legacy_imported`, but they do not create native
+  `legacy_imported` settings and are not recorded in `pvu_state_migrations`.
 - Existing browser PhotoViewer workflows remain untouched.
 - No `src/**`, `scripts/**`, deployment, H000033, automatic enhancement worker,
   or cache/state deletion is part of this slice.
@@ -99,6 +106,8 @@ Meaning:
 | `pvu_view.folderSortBy=count-asc` | `native_settings.folder_sort_mode=CountAsc` | `ADOPT`: imported on first native import when folder-sort state is absent. |
 | Existing native `folder_sort_mode` | Preserve native folder-sort state | `ADOPT`: import does not clobber a native user choice. |
 | Malformed / unsupported `pvu_view.folderSortBy` | recoverable warning, no native folder-sort overwrite | `ADOPT`: invalid folder-sort values are skipped with recovery guidance. |
+| `pvu_legacy_imported=1` | `native_settings.browser_pvu_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
+| `pvu_server_legacy_imported=1` | `native_settings.browser_pvu_server_legacy_imported=1` raw mirror only | `REJECT`: marker-only key is preserved for traceability but has no native migration target. |
 
 The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_view` /
@@ -107,7 +116,9 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 `native_settings.browser_pvu_unfav_only` /
 `native_settings.browser_pvu_last_dir_set` /
 `native_settings.browser_pvu_recent_dirs` /
-`native_settings.browser_pvu_seen_images` for traceability.
+`native_settings.browser_pvu_seen_images` /
+`native_settings.browser_pvu_legacy_imported` /
+`native_settings.browser_pvu_server_legacy_imported` for traceability.
 
 ## Split Plan For Remaining pvu Keys
 
@@ -132,7 +143,7 @@ The raw browser keys are still stored under `browser_state` and mirrored as
 | `pvu_recent_albums` | `DEFER` | Albums import exists, but recent-album UI semantics are not native-accepted. |
 | `pvu_recent_dirs` / `pvu_last_dir_set` | `ADOPT` | Native folder-set persistence exists; explicit browser import now maps first-import state without overwriting native choices. |
 | `pvu_enhance_settings` | `DEFER` | Owned by #97/#98 explicit enhancement UI; no automatic workers. |
-| `pvu_server_legacy_imported` / `pvu_legacy_imported` | `REJECT` | Browser migration marker only; no native user workflow to migrate. |
+| `pvu_server_legacy_imported` / `pvu_legacy_imported` | `REJECT` | Formally covered by Row 12 marker-key smoke evidence; raw mirrors are retained, but there is no native user workflow or migration target. |
 | `pvu_favorites` / `pvu_favorites_backup` | `PARTIAL_ADOPT` | Native imports disk `.cache/favorites.json`; browser localStorage favorites need a separate conflict policy before import. |
 
 ## Native Evidence
@@ -157,12 +168,14 @@ Expected result:
 - `pvuHiddenFoldersMigrated=true`
 - `pvuSeenImagesMigrated=true`
 - `pvuFolderSortModeMigrated=true`
+- `pvuLegacyMarkersRejected=true`
 - `migrationRecorded=true`
 - `browserMirrorStored=true`
 - `enhancedMirrorStored=true`
 - `favoriteMirrorStored=true`
 - `recentMirrorStored=true`
 - `seenMirrorStored=true`
+- `markerMirrorStored=true`
 - `nativeViewModePreserved=true`
 - `nativeEnhancedOnlyPreserved=true`
 - `nativeFavoriteFilterPreserved=true`
@@ -194,10 +207,16 @@ Expected result:
 - `nativeHiddenFoldersStillPreserved=true`
 - `nativeSeenImagesStillPreserved=true`
 - `nativeFolderSortModeStillPreserved=true`
+- `browserStateKeys=6`
 - `firstWarnings=0`
 - `secondWarnings=0`
 - `malformedWarnings=10`
 - `browserRuntime=false localHttpServer=false nodeRuntime=false`
+
+`migrationRecorded=true` keeps `pvu_state_migration_count=11`; Row 12 does
+not add marker-only keys to `pvu_state_migrations`. `markerMirrorStored=true`
+is the marker evidence; the final `browserStateKeys=6` count is measured after
+the malformed follow-up import, matching the existing smoke shape.
 
 The smoke uses a synthetic project root under ignored
 `.cache/native-pvu-state-smoke/**` and does not overwrite real user state.
@@ -249,18 +268,19 @@ PR #132 / `origin/main` `13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
 
-## Current Folder-Sort Verification
+## Current Row 12 Marker-Key Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-next-pvu-state-row` based on `origin/main`
-`df0c4df335c4484d7fab39e1573c828f615d70bb` after PR #137:
+`codex/h25-117-row12-marker-keys` based on `origin/main`
+`abdeb59581f0fa5d1a7658e0a8fae7ccb914f35a` after PR #138:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-pvu-state-smoke`
   passed with `pvuSeenImagesMigrated=true`,
-  `pvuFolderSortModeMigrated=true`, `migrationRecorded=true`,
-  `seenMirrorStored=true`, `nativeSeenImagesPreserved=true`,
+  `pvuFolderSortModeMigrated=true`, `pvuLegacyMarkersRejected=true`,
+  `migrationRecorded=true`, `seenMirrorStored=true`,
+  `markerMirrorStored=true`, `nativeSeenImagesPreserved=true`,
   `nativeFolderSortModePreserved=true`, `malformedSeenImagesWarning=true`,
   `unsupportedFolderSortWarning=true`, `nativeSeenImagesStillPreserved=true`,
   `nativeFolderSortModeStillPreserved=true`, `browserStateKeys=6`,
@@ -271,12 +291,12 @@ Recorded on 2026-07-08 in branch
   assets.
 - `dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=4`, `settings=38`, `images=4`,
+  `browserStateKeys=6`, `seenImages=6`, `settings=38`, `images=6`,
   `warnings=0`, and no browser runtime.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessSeenSmoke`
   passed with `importedSeen=true`, `nativeInitiallyUnseen=true`,
   `nativeSeenPersisted=true`, `importedStillSeen=true`,
-  `totalSeenImages=6`, and
+  `totalSeenImages=8`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture`
   passed with `folderSortMode=true`, `sortName=true`,
@@ -287,6 +307,7 @@ Recorded on 2026-07-08 in branch
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.
 - `git diff --name-only -- H000033` returned no files.
+- `rg -n "<<<<<<<|=======|>>>>>>>" .` returned no conflict markers.
 - `git diff --check` passed.
 
 ## Current Row 7 Verification
@@ -341,7 +362,8 @@ after PR #131:
 - `PARTIAL_ADOPT`: use #117 as a key-by-key migration lane, not a broad
   one-pass state rewrite.
 - `REJECT`: direct Chrome profile reads, browser HTTP compatibility, and
-  browser marker-only keys as native migration targets.
+  browser marker-only keys as native migration targets. Row 12 records
+  `pvu_legacy_imported` / `pvu_server_legacy_imported` as raw mirrors only.
 - `DEFER`: browser ascending sort directions, `randomSeed`, #102 folder range
   selection, `pvu_fav_levels`, pinned tabs, enhancement settings, broader
   display details, `pvu_recent_albums`, scroll memory, and browser

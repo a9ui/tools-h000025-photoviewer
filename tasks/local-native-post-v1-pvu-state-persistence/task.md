@@ -37,10 +37,14 @@ import upserts browser seen-image rows into `seen_images`, and the row added
 pvu-state smoke/migration trace coverage while preserving existing native seen
 rows.
 
-This continuation migrates explicit browser `pvu_view.folderSortBy` into
+The eleventh slice migrated explicit browser `pvu_view.folderSortBy` into
 native `folder_sort_mode` on first import for matching folder-bucket sort
 semantics, while preserving later native folder-sort choices. #102 folder
 range-selection behavior stays separate.
+
+This continuation formally records Row 12 for browser marker-only keys:
+`pvu_legacy_imported` and `pvu_server_legacy_imported` are raw-mirrored for
+traceability but rejected as native migration targets.
 
 ## Guardrails
 
@@ -79,6 +83,7 @@ Read in full before planning or editing:
 - `tasks/local-native-m20/task.md`
 - `tasks/local-native-m5/browser-regression-matrix.md`
 - GitHub issue #117
+- GitHub PR #137
 - GitHub PR #136
 - GitHub PR #135
 - GitHub issue #115
@@ -185,6 +190,13 @@ Read in full before planning or editing:
   - existing native `folder_sort_mode` is not overwritten;
   - malformed or unsupported folder sort values are recoverable warnings;
   - #102 folder range-selection behavior remains separate.
+- Formally reject marker-only browser migration keys in #117:
+  - `pvu_legacy_imported` and `pvu_server_legacy_imported` are kept as raw
+    browser mirrors under `browser_pvu_legacy_imported` and
+    `browser_pvu_server_legacy_imported`;
+  - they do not create native `legacy_imported` settings;
+  - they are not recorded in `pvu_state_migrations`, so
+    `pvu_state_migration_count` remains at the Row 11 count.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -210,18 +222,20 @@ git diff --check
 
 Browser commands are baseline preservation only. Native acceptance for #117 is
 the dedicated pvu-state smoke plus existing import/UI smoke. The new smoke must
-report `pvuSeenImagesMigrated=true`, `seenMirrorStored=true`,
+report `pvuSeenImagesMigrated=true`, `pvuLegacyMarkersRejected=true`,
+`seenMirrorStored=true`, `markerMirrorStored=true`,
 `nativeSeenImagesPreserved=true`, `malformedSeenImagesWarning=true`,
 `nativeSeenImagesStillPreserved=true`, `pvuFolderSortModeMigrated=true`,
 `nativeFolderSortModePreserved=true`, `unsupportedFolderSortWarning=true`,
-`nativeFolderSortModeStillPreserved=true`, `malformedWarnings=10`, and
+`nativeFolderSortModeStillPreserved=true`, `browserStateKeys=6`,
+`malformedWarnings=10`, and
 `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
 Recorded on 2026-07-08 in branch
-`codex/h25-117-next-pvu-state-row` based on `origin/main`
-`df0c4df335c4484d7fab39e1573c828f615d70bb` after PR #137:
+`codex/h25-117-row12-marker-keys` based on `origin/main`
+`abdeb59581f0fa5d1a7658e0a8fae7ccb914f35a` after PR #138:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
@@ -233,9 +247,11 @@ Recorded on 2026-07-08 in branch
   `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
   `pvuHiddenFoldersMigrated=true`, `pvuSeenImagesMigrated=true`,
   `pvuFolderSortModeMigrated=true`,
+  `pvuLegacyMarkersRejected=true`,
   `migrationRecorded=true`, `browserMirrorStored=true`,
   `enhancedMirrorStored=true`, `favoriteMirrorStored=true`,
   `recentMirrorStored=true`, `seenMirrorStored=true`,
+  `markerMirrorStored=true`,
   `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
   `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
   `nativeThumbnailSizePreserved=true`, `nativeSortModePreserved=true`,
@@ -265,11 +281,11 @@ Recorded on 2026-07-08 in branch
   existing cache/state assets.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `favorites=1`, `albums=2`, `albumImages=4`,
-  `browserStateKeys=6`, `seenImages=4`, `settings=38`, `images=4`,
+  `browserStateKeys=6`, `seenImages=6`, `settings=38`, `images=6`,
   `warnings=0`, and no browser runtime.
 - `-HeadlessSeenSmoke` passed with `importedSeen=true`,
   `nativeInitiallyUnseen=true`, `nativeSeenPersisted=true`,
-  `importedStillSeen=true`, `totalSeenImages=6`, and
+  `importedStillSeen=true`, `totalSeenImages=8`, and
   `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed
   with `gridToggle=true`, `folderSortMode=true`, `thumbnailSize=true`,
@@ -280,6 +296,7 @@ Recorded on 2026-07-08 in branch
 - `git diff --name-only -- src` returned no files.
 - `git diff --name-only -- scripts` returned no files.
 - `git diff --name-only -- H000033` returned no files.
+- `rg -n "<<<<<<<|=======|>>>>>>>" .` returned no conflict markers.
 - `git diff --check` passed.
 - `corepack pnpm typecheck` passed.
 
@@ -288,7 +305,7 @@ Recorded on 2026-07-08 in branch
 Before this Goal can close:
 
 1. Record the #117 outcome in GitHub.
-2. Update SQLite job #249 and create/update the next row if more #117 native
+2. Update SQLite job #250 and create/update the next row if more #117 native
    queue work remains.
 3. Send Agmsg pointers and inspect the trace.
 4. Classify advice as `ADOPT`, `PARTIAL_ADOPT`, `REJECT`, `DEFER`, or

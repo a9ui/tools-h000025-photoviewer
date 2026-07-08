@@ -135,6 +135,13 @@ folder-bucket sort semantics: `name-asc` to `NameAsc`, `name-desc` to
 `NameDesc`, `count-desc` to `CountDesc`, and `count-asc` to `CountAsc`. It
 writes only when native folder-sort state does not exist yet. #102 folder
 range-selection behavior stays separate.
+The twelfth #117 row formally rejects browser marker-only keys
+`pvu_legacy_imported` and `pvu_server_legacy_imported` as native migration
+targets. They are still stored as raw browser mirrors under
+`native_settings.browser_pvu_legacy_imported` and
+`native_settings.browser_pvu_server_legacy_imported`, but they do not create
+native `legacy_imported` settings and do not increase
+`pvu_state_migration_count`.
 
 The dedicated smoke is:
 

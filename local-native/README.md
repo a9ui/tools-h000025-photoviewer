@@ -511,6 +511,10 @@ seen rows. The eleventh accepted row imports explicit browser
 `count-asc` to matching native folder-bucket sort modes while preserving an
 existing native folder-sort choice. #102 folder range-selection behavior stays
 separate.
+The twelfth #117 row formally rejects browser marker-only
+`pvu_legacy_imported` / `pvu_server_legacy_imported` as native migration
+targets. They remain raw browser mirrors for traceability, but they do not
+create native settings or increase the pvu migration count.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 
