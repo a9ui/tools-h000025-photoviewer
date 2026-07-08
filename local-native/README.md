@@ -492,3 +492,26 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Na
 
 See `docs/local-native/pvu-state-persistence-migration.md` and
 `tasks/local-native-post-v1-pvu-state-persistence/task.md`.
+
+## Post-v1 #118 Notes
+
+#118 starts native desktop UI polish and screenshot sweep evidence as a
+post-v1 prep lane. It does not start a broad UI rewrite, does not touch the
+browser app, and does not add preview-tab, enhancement-queue, display-mode,
+destructive-flow, metadata, or keybinding-recorder work.
+
+The native screenshot helper captures the current WinForms desktop layout after
+fixture scan/search/preview setup and reports conservative layout counters:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj -- --headless-ui-screenshot .\.cache\native-fixture .\tasks\local-native-post-v1-ui-polish-screenshot-prep\artifacts\native-ui-screenshot.png --search fixture
+```
+
+The #118 first slice also shortens the top-right state summary so it stays on
+one line in the 1280x820 desktop capture. Existing native UI smoke remains the
+acceptance evidence for keyboard operation, detail modal controls, focusable
+controls, and passive enhancement isolation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture
+```
