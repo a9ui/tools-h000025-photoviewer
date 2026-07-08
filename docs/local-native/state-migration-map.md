@@ -180,6 +180,14 @@ native row. Explicit exports keep the fields only in the raw
 `native_settings.browser_pvu_view` mirror; native does not create
 `aspect_mode`, `display_style`, `columns`, or `display_columns` settings and
 does not increase `pvu_state_migration_count`.
+The nineteenth #117 row formally defers browser `pvu_enhance_settings` as a
+native migration target. Browser enhancement request settings belong to the
+explicit enhancement queue/settings work in #97/#98, and ordinary native
+browsing must not start enhancement workers. Explicit exports keep the key only
+as a raw browser mirror under `native_settings.browser_pvu_enhance_settings`;
+native does not create `enhance_settings`, `enhancement_settings`, or
+`enhancement_queue_settings` settings and does not increase
+`pvu_state_migration_count`.
 
 The dedicated smoke is:
 
