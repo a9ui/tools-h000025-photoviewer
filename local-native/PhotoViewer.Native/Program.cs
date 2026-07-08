@@ -116,6 +116,13 @@ internal static class Program
             return await MainForm.RunDateFilterSmokeAsync(folder);
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-date-section-smoke")
+        {
+            ApplicationConfiguration.Initialize();
+            var folder = args.Length >= 2 ? args[1] : null;
+            return await MainForm.RunDateSectionSmokeAsync(folder);
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();

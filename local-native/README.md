@@ -312,3 +312,30 @@ manual date range inputs, folder range selection, drag/open parity, placeholder
 behavior, native thumbnail warmup UI, preview tabs, bulk destructive actions,
 and explicit enhancement UI remain deferred in
 `tasks/local-native-m5/browser-regression-matrix.md`.
+
+## M16 Notes
+
+M16 first slice adds browser-mapped native date header behavior for the Created
+sort list view without touching the browser app. Browser evidence maps from
+the existing date section layout and fallback date separators: date groups are
+based on local `createdAt` day, labels render as `M月D日`, and date separators
+are tied to created-date sorting.
+
+Native now marks the first visible image for each local `CreatedAtUtc` date in
+Created-sort list view with a `M月D日` header label. The header map is rebuilt
+from the same filtered visible list used by search, favorite, folder, sort,
+and date preset controls. Native grid date headers remain explicitly deferred
+for a later layout decision.
+
+The M16 date-section smoke verifies header labels, Created sort order,
+Today-filter regrouping, grid suppression, and passive enhancement isolation:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateSectionSmoke
+```
+
+This remains a parity slice, not full native parity. Native grid date section
+layout, manual date range inputs, folder range selection, drag/open parity,
+placeholder behavior, native thumbnail warmup UI, preview tabs, bulk
+destructive actions, and explicit enhancement UI remain deferred in
+`tasks/local-native-m5/browser-regression-matrix.md`.

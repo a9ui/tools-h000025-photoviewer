@@ -516,8 +516,52 @@ M15 date-filter smoke result additions:
 | Browser APIs and errors | DEFERRED | No new browser API equivalents in M15; the date preset is native UI/filter state only. | Full native equivalents for tags/folders/settings/image/thumb/display/open/delete/legacy-state/enhancement errors and malformed date input handling. | `codex_pm` | Split native headless/API-equivalent error matrix with one fixture per error class. |
 | Native responsive/layout parity | DEFERRED | M15 adds one compact native `Date` selector to the existing display controls row. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
 
-Rows not listed above keep their M14 status, owner, and evidence requirement.
-M15 does not reclassify folder range selection; it remains `DEFERRED` pending a
+## M16 Native Date Section Header Slice
+
+M16 advances one browser-mapped date section/header row. It does not add native
+grid date section layout, manual date range fields, a browser helper, a
+webview, or a local server.
+
+Browser evidence maps from:
+
+- `src/lib/dateSectionLayout.ts`: groups by local `createdAt` day and formats
+  section labels as `M月D日`;
+- `src/components/ImageGrid.tsx`: enables date separators only for created
+  sort modes;
+- browser fallback list/grid separators mark the first item for each date when
+  full section layout is unavailable.
+
+M16 date-section smoke command:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local-native.ps1 -HeadlessDateSectionSmoke
+```
+
+M16 date-section smoke result additions:
+
+- totalImages: 4
+- initialVisible: 4
+- headerGroups: 4
+- firstHeader: `7月8日`
+- showDateHeaders: true
+- firstItemGrouped: true
+- createdSortOrder: true
+- filteredGroups: 1
+- todaySingleGroup: true
+- gridGroupsSuppressed: true
+- enhancementStateUnchanged: true
+
+| Area | M16 status | Native evidence added | Still deferred | Owner | Evidence requirement |
+| --- | --- | --- | --- | --- | --- |
+| Sorting and display | DEFERRED | Native Created-sort list view now marks the first visible image for each local created date with a browser-mapped `M月D日` date header label. `-HeadlessDateSectionSmoke` verifies header labels and Created descending order. | Native grid date section layout/header behavior, manual date ranges, compact/poster equivalents, aspect controls, and wheel zoom equivalents. | `cursor_impl` / `codex_pm` | Native UI/headless smoke or product decision for grid date section layout and any accepted manual range controls. |
+| Virtual gallery | DEFERRED | Date headers are rebuilt from the filtered visible native list, so the Today date preset collapses to one header group in the smoke while preserving the existing virtual list path. | Drag/open parity, placeholder behavior, native thumbnail warmup UI, and full grid section layout remain pending. | `codex_pm` / `cursor_impl` | Add native UI/headless evidence for any adopted virtual-gallery row without using browser/runtime evidence as native acceptance. |
+| Sidebar quick search and filters | DEFERRED | Existing M15 date presets now have native list header evidence after filtering. | Manual date range inputs, enhanced-only filter, and richer count labels beyond favorite/date state. | `cursor_impl` / `codex_pm` | Native UI/headless filter smoke for manual from/to date fields and enhanced/date buckets, or explicit product decision to keep manual ranges deferred. |
+| Enhancement isolation | DEFERRED | M16 date-section smoke verifies passive date grouping did not change `.cache/enhance/jobs.json`. | Explicit enhancement queue/settings/cancel/retry/open/delete output/source/original-enhanced toggle/enhanced-only filter. | `codex_pm` | Explicit-action-only native enhancement milestone with zero passive enqueue proof and queue operation smoke. |
+| Native responsive/layout parity | DEFERRED | M16 adds a compact text header marker inside existing Created-sort list rows and does not change the browser app. | Screenshot/manual layout sweep for overlap, text fit, keyboard focus, and polish. | `claude_ui` / `codex_pm` | Native desktop screenshot or Human Surface review after smoke, with accepted findings reflected before parity claim. |
+
+Rows not listed above keep their latest recorded status, owner, and evidence
+requirement.
+M16 does not reclassify folder range selection; it remains `DEFERRED` pending a
 replacement/custom folder bucket control and browser-mapped UI semantics.
 
 ## Minimum M6 Verification
