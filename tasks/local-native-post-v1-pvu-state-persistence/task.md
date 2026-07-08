@@ -14,12 +14,15 @@ The previous slices migrated explicit browser `pvu_view.viewMode` into native
 `enhanced_only_filter`, and explicit browser `pvu_fav_only` /
 `pvu_unfav_only` into native `favorite_filter` on first import, while
 preserving later native user choices. The fourth slice migrated explicit
-browser `pvu_view.dateFrom` / `dateTo` into native `date_filter`,
-`date_from`, and `date_to` on first import.
+browser `pvu_view.dateFrom` / `dateTo` into native `date_filter`, `date_from`,
+and `date_to` on first import. The fifth slice migrated explicit browser
+`pvu_last_dir_set` / `pvu_recent_dirs` into native `recent_folder_set` and
+`recent_folder`, while preserving later native scan/user choices.
 
-This continuation migrates explicit browser `pvu_last_dir_set` /
-`pvu_recent_dirs` into native `recent_folder_set` and `recent_folder` on first
-import, while preserving later native scan/user choices.
+This continuation migrates explicit browser `pvu_view.rightPanelOpen` /
+`rightPanelWidth` into native `preview_visible` and
+`preview_splitter_distance` on first import, while preserving later native
+right-preview choices.
 
 ## Guardrails
 
@@ -59,6 +62,7 @@ Read in full before planning or editing:
 - GitHub issue #117
 - GitHub issue #115
 - GitHub issue #116
+- GitHub PR #132
 - GitHub PR #130
 - GitHub PR #129
 - GitHub PR #127
@@ -100,7 +104,7 @@ Read in full before planning or editing:
   - malformed date strings are recoverable warnings;
   - existing native `date_filter`, `date_from`, or `date_to` is not
     overwritten.
-- Add a bounded migration for `pvu_last_dir_set` / `pvu_recent_dirs`:
+- Keep the existing bounded migration for `pvu_last_dir_set` / `pvu_recent_dirs`:
   - browser `pvu_last_dir_set` folder-set string -> native
     `recent_folder_set` and `recent_folder`;
   - browser `pvu_recent_dirs` JSON array is a fallback when
@@ -108,6 +112,15 @@ Read in full before planning or editing:
   - existing native `recent_folder_set`, `recent_folder`, or scan roots are
     not overwritten;
   - malformed recent-dirs values are recoverable warnings.
+- Add a bounded migration for `pvu_view.rightPanelOpen` / `rightPanelWidth`:
+  - browser `rightPanelOpen=true` / `false` -> native
+    `preview_visible=1` / `0`;
+  - browser `rightPanelWidth=N` -> native `preview_splitter_distance` using
+    the existing 1280px desktop layout conversion
+    `1280 - clamp(N, 240, 900)`;
+  - malformed right-preview values are recoverable warnings;
+  - existing native `preview_visible` or `preview_splitter_distance` is not
+    overwritten.
 - Extend `--headless-pvu-state-smoke` using a synthetic project root under
   ignored `.cache/native-pvu-state-smoke/**`.
 - Keep `NativeFixtureBuilder` browser export fixtures explicit and
@@ -137,29 +150,33 @@ must report `browserRuntime=false localHttpServer=false nodeRuntime=false`.
 
 ## Current Verification
 
-Recorded on 2026-07-08 in branch `codex/h25-117-pvu-row5` from
-`origin/main` `e5fcf8e9f87c8e91ecb974893f6fc101ce7877d5`:
+Recorded on 2026-07-08 in branch `codex/h25-117-row5-pvu-state` after
+rebasing PR #131 onto PR #132 / `origin/main`
+`13710ebc86d3247f54027c190b30e3b77eab9e1b`:
 
 - `dotnet build .\local-native\PhotoViewer.Native\PhotoViewer.Native.csproj`
   passed with 0 warnings and 0 errors.
 - `--headless-pvu-state-smoke` passed with
   `pvuViewModeMigrated=true`, `pvuEnhancedOnlyMigrated=true`,
   `pvuFavoriteFilterMigrated=true`, `pvuDateRangeMigrated=true`,
-  `pvuRecentFoldersMigrated=true`, `migrationRecorded=true`,
+  `pvuRecentFoldersMigrated=true`, `pvuRightPreviewMigrated=true`,
+  `migrationRecorded=true`,
   `browserMirrorStored=true`, `enhancedMirrorStored=true`,
   `favoriteMirrorStored=true`, `recentMirrorStored=true`,
   `nativeViewModePreserved=true`, `nativeEnhancedOnlyPreserved=true`,
   `nativeFavoriteFilterPreserved=true`, `nativeDateRangePreserved=true`,
   `nativeRecentFolderSetPreserved=true`,
+  `nativeRightPreviewPreserved=true`,
   `malformedEnhancedOnlyWarning=true`, `malformedFavoriteFilterWarning=true`,
   `malformedDateRangeWarning=true`, `malformedRecentDirsWarning=true`,
+  `malformedRightPreviewWarning=true`,
   `nativeEnhancedOnlyStillPreserved=true`,
   `nativeFavoriteFilterStillPreserved=true`,
   `nativeDateRangeStillPreserved=true`,
-  `nativeRecentFolderSetStillPreserved=true`, `browserStateKeys=5`,
-  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=4`.
-- `-PrepareFixture` passed and created only ignored fixture/cache state in this
-  clean worktree.
+  `nativeRecentFolderSetStillPreserved=true`,
+  `nativeRightPreviewStillPreserved=true`, `browserStateKeys=5`,
+  `firstWarnings=0`, `secondWarnings=0`, and `malformedWarnings=5`.
+- `-PrepareFixture` passed with existing fixture/cache state preserved.
 - `--headless-import --browser-state-export .\.cache\native\browser-localstorage-export.json`
   passed with `browserStateKeys=6`, `warnings=0`, and no browser runtime.
 - `-HeadlessUiSmoke -Folder .\.cache\native-fixture -Search fixture` passed

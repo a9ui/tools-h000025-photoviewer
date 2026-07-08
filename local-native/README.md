@@ -487,7 +487,10 @@ filter yet. The fourth accepted row imports explicit browser
 `date_to` under the same first-import-only rule. The fifth accepted row imports
 explicit browser `pvu_last_dir_set` / `pvu_recent_dirs` into native
 `recent_folder_set` / `recent_folder`, while preserving existing native recent
-folder state after scan or user changes.
+folder state after scan or user changes. The sixth accepted row imports explicit
+browser `pvu_view.rightPanelOpen` / `rightPanelWidth` into native
+`preview_visible` and `preview_splitter_distance`, preserving later native
+right-preview choices under the same first-import-only rule.
 
 The dedicated smoke uses a synthetic project root under ignored `.cache/**`:
 

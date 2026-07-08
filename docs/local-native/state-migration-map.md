@@ -100,9 +100,12 @@ browser `pvu_view.dateFrom` / `dateTo` into native
 `native_settings.date_to`. The fifth accepted row maps explicit browser
 `pvu_last_dir_set` / `pvu_recent_dirs` into
 `native_settings.recent_folder_set` and `native_settings.recent_folder`.
-These migrations write only when the target native state does not exist yet.
-This gives first-import continuity without clobbering later native user choices
-on every startup or Import action.
+The sixth accepted row maps explicit browser `pvu_view.rightPanelOpen` /
+`rightPanelWidth` into native
+`native_settings.preview_visible` and
+`native_settings.preview_splitter_distance`. These migrations write only when
+the target native state does not exist yet. This gives first-import continuity
+without clobbering later native user choices on every startup or Import action.
 
 The dedicated smoke is:
 
