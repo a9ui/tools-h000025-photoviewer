@@ -1375,22 +1375,28 @@ internal sealed class MainForm : Form
         var oldDisplayStyle = CurrentDisplayStyle();
         var oldAspectMode = CurrentAspectMode();
         ApplyDisplayStyle("compact");
+        var compactGridImageSize = _gridImages.ImageSize;
         var compactDisplayMode = string.Equals(CurrentDisplayStyle(), "compact", StringComparison.OrdinalIgnoreCase) &&
             _list.View == View.LargeIcon &&
-            _gridImages.ImageSize.Width == 64 &&
-            _gridImages.ImageSize.Height == 64 &&
+            compactGridImageSize.Width == 64 &&
+            compactGridImageSize.Height == 64 &&
             string.Equals(CurrentAspectMode(), "square", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(_store.GetSetting("display_style", ""), "compact", StringComparison.OrdinalIgnoreCase);
         Require(compactDisplayMode, "compact display mode failed");
         ApplyDisplayStyle("poster");
+        var posterGridImageSize = _gridImages.ImageSize;
         var posterDisplayMode = string.Equals(CurrentDisplayStyle(), "poster", StringComparison.OrdinalIgnoreCase) &&
             _list.View == View.LargeIcon &&
-            _gridImages.ImageSize.Width == 192 &&
-            _gridImages.ImageSize.Height > _gridImages.ImageSize.Width &&
+            posterGridImageSize.Width == 192 &&
+            posterGridImageSize.Height > posterGridImageSize.Width &&
             string.Equals(CurrentAspectMode(), "portrait", StringComparison.OrdinalIgnoreCase) &&
             string.Equals(_store.GetSetting("display_style", ""), "poster", StringComparison.OrdinalIgnoreCase);
         Require(posterDisplayMode, "poster display mode failed");
         var displayModes = compactDisplayMode && posterDisplayMode;
+        var displayModeVisuals = displayModes &&
+            compactGridImageSize.Width == compactGridImageSize.Height &&
+            posterGridImageSize.Height > posterGridImageSize.Width;
+        Require(displayModeVisuals, "display mode visual sizing failed");
 
         ApplyAspectMode("square");
         var squareAspectMode = string.Equals(CurrentAspectMode(), "square", StringComparison.OrdinalIgnoreCase) &&
@@ -1765,6 +1771,9 @@ internal sealed class MainForm : Form
             GalleryWheelZoom: galleryWheelZoom,
             GalleryKeyboardZoom: galleryKeyboardZoom,
             DisplayModes: displayModes,
+            DisplayModeVisuals: displayModeVisuals,
+            CompactGridImageSize: FormatSize(compactGridImageSize),
+            PosterGridImageSize: FormatSize(posterGridImageSize),
             AspectModes: aspectModes,
             PreviewToggle: previewToggle,
             DetailsToggle: detailsToggle,
@@ -5146,6 +5155,11 @@ internal sealed class MainForm : Form
         return image.Width is > 0 && image.Height is > 0 ? $"{image.Width}x{image.Height}" : "";
     }
 
+    private static string FormatSize(Size size)
+    {
+        return $"{size.Width}x{size.Height}";
+    }
+
     private static string FormatPreviewDetails(NativeImageRecord image, string dimensionHint)
     {
         var details = string.IsNullOrWhiteSpace(dimensionHint)
@@ -5491,6 +5505,9 @@ internal sealed class MainForm : Form
             $"galleryWheelZoom={BoolText(report.GalleryWheelZoom)}",
             $"galleryKeyboardZoom={BoolText(report.GalleryKeyboardZoom)}",
             $"displayModes={BoolText(report.DisplayModes)}",
+            $"displayModeVisuals={BoolText(report.DisplayModeVisuals)}",
+            $"compactGridImageSize={report.CompactGridImageSize}",
+            $"posterGridImageSize={report.PosterGridImageSize}",
             $"aspectModes={BoolText(report.AspectModes)}",
             $"previewToggle={BoolText(report.PreviewToggle)}",
             $"detailsToggle={BoolText(report.DetailsToggle)}",
@@ -6305,6 +6322,9 @@ internal sealed class MainForm : Form
         bool GalleryWheelZoom,
         bool GalleryKeyboardZoom,
         bool DisplayModes,
+        bool DisplayModeVisuals,
+        string CompactGridImageSize,
+        string PosterGridImageSize,
         bool AspectModes,
         bool PreviewToggle,
         bool DetailsToggle,
