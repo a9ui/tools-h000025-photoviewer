@@ -34,6 +34,7 @@ public partial class App : Application
             Height = 820,
         };
         win.Show();
+        win.SuppressStatePersistence();
 
         var args = Environment.GetCommandLineArgs();
         int sIdx = Array.IndexOf(args, "--screen");
@@ -45,6 +46,12 @@ public partial class App : Application
             int folderIdx = Array.IndexOf(args, "--folder");
             if (folderIdx >= 0 && folderIdx + 1 < args.Length)
                 await win.LoadFolderAsync(args[folderIdx + 1]);
+
+            int queryIdx = Array.IndexOf(args, "--query");
+            if (queryIdx >= 0 && queryIdx + 1 < args.Length)
+                win.SetSearchQuery(args[queryIdx + 1], persist: false);
+            else
+                win.SetSearchQuery("", persist: false);
 
             win.ShowScreen(screen);
             win.UpdateLayout();

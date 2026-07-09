@@ -4,7 +4,7 @@ Native WPF (.NET 8) PhotoViewer surface. It uses native controls only: no server
 Node, Chrome, localhost, webview, or WebView2.
 
 This project started as the Claude WPF UI shell and now includes the first real
-browse slice:
+browse and practical viewer slice:
 
 - folder picker
 - recursive image file scan
@@ -12,8 +12,14 @@ browse slice:
 - grid/list display using real image thumbnails
 - right preview using the selected real image
 - modal preview using the selected real image
+- search across filename, path, prompt, group, size, and modified date
+- favorites-only and unseen-only filters
+- refresh active folder
+- open the selected real image with the OS default app
+- lightweight WPF state for last folder, search query, and card size
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
+- `--shot --query <text>` filtered search smoke capture
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -40,6 +46,7 @@ Real-folder smoke:
 
 ```powershell
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-folder-smoke.png" --screen viewer --folder .\local-native\ui-mockup
+dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-query-smoke.png" --screen viewer --folder .\local-native\ui-mockup --query wpf-preview
 ```
 
 ## Files
@@ -48,9 +55,9 @@ dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --
 | --- | --- |
 | `PhotoViewer.Wpf.csproj` | net8.0-windows WPF project |
 | `App.xaml` | design tokens, control styles, card/list templates |
-| `App.xaml.cs` | startup and `--shot` capture path |
+| `App.xaml.cs` | startup and `--shot` / `--query` capture path |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
-| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, sample shell data, selection wiring |
+| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
 
 ## Current Limits
@@ -58,8 +65,9 @@ dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --
 - Folder scan is bounded to the first 1,200 images sorted by modified time.
 - The grid still uses the shell `WrapPanel`; virtualized layout is the next
   performance step.
-- Favorites, albums, delete, search, persistent state, and browser-state import
-  are not wired in this WPF surface yet.
+- Favorites are currently read-only counts on imported/sample tiles; album
+  mutation, delete, and browser-state import are not wired in this WPF surface yet.
+- Broader speed work is intentionally deferred to the WPF M2 performance pass.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
 

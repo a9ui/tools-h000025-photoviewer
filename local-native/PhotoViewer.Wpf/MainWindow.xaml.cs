@@ -1,9 +1,12 @@
 using System.Collections.ObjectModel;
 using System.ComponentModel;
+using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using Microsoft.Win32;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Controls.Primitives;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -21,17 +24,25 @@ public partial class MainWindow : Window
 
     private const int MaxLoadedImages = 1200;
     private readonly ObservableCollection<Tile> _tiles = new();
+    private readonly List<Tile> _allTiles = new();
     private Rect _restoreBounds;
     private bool _fakeMaximized;
+    private bool _initializing = true;
+    private bool _suppressStateSave;
+    private string? _currentFolder;
     private CancellationTokenSource? _loadCts;
 
     public MainWindow()
     {
         InitializeComponent();
+        RestoreState();
         BuildSampleTiles();
+        _allTiles.AddRange(_tiles);
+        _tiles.Clear();
 
         CardsList.ItemsSource = BuildGroupedView();
         RowsList.ItemsSource = BuildGroupedView();
+        ApplyFilters(selectFirst: false);
 
         Loaded += (_, _) =>
         {
@@ -40,6 +51,7 @@ public partial class MainWindow : Window
         };
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
+        _initializing = false;
     }
 
     private System.ComponentModel.ICollectionView BuildGroupedView()
@@ -106,16 +118,17 @@ public partial class MainWindow : Window
         if (cts.IsCancellationRequested)
             return;
 
+        _currentFolder = resolvedFolder;
+        _allTiles.Clear();
         _tiles.Clear();
         double width = SizeSlider?.Value ?? 190;
         foreach (var file in files)
-            _tiles.Add(MakeFileTile(file, width));
+            _allTiles.Add(MakeFileTile(file, width));
 
         FolderPathText.Text = resolvedFolder;
-        FolderCountText.Text = files.Count == MaxLoadedImages
-            ? $"{files.Count:N0}+ images loaded"
-            : $"{files.Count:N0} images loaded";
-        HeaderStats.Text = $"0 selected - {files.Count:N0} images - 1 folder";
+        ApplyFilters(selectFirst: false);
+        UpdateFolderStats();
+        SaveState();
 
         if (files.Count == 0)
         {
@@ -128,15 +141,14 @@ public partial class MainWindow : Window
         }
 
         SetPhase(landing: false);
-        CardsList.SelectedIndex = 0;
-        RowsList.SelectedIndex = 0;
+        SelectFirstAvailable();
 
         await LoadThumbnailsAsync(cts.Token);
     }
 
     private async Task LoadThumbnailsAsync(CancellationToken token)
     {
-        var snapshot = _tiles.Where(static tile => tile.IsRealFile).ToList();
+        var snapshot = _allTiles.Where(static tile => tile.IsRealFile).ToList();
         int total = Math.Max(1, snapshot.Count);
         int done = 0;
 
@@ -421,15 +433,171 @@ public partial class MainWindow : Window
             : "animagineXL_v31";
         PreviewDateText.Text = t.ModifiedText;
         PreviewPromptText.Text = string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt;
-        HeaderStats.Text = $"{(CardsList.SelectedItems?.Count ?? 0):N0} selected - {_tiles.Count:N0} images - 1 folder";
+        UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
+    }
+
+    private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_initializing) return;
+        ApplyFilters();
+        SaveState();
+    }
+
+    private void Filter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing) return;
+        ApplyFilters();
+    }
+
+    private void QuickSearch_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not ToggleButton button) return;
+
+        var token = button.Tag?.ToString() ?? button.Content?.ToString() ?? "";
+        SearchInput.Text = string.Equals(token, "clear", StringComparison.OrdinalIgnoreCase) ? "" : token;
+        SearchInput.Focus();
+        SearchInput.CaretIndex = SearchInput.Text.Length;
+    }
+
+    public void SetSearchQuery(string query, bool persist = true)
+    {
+        bool previous = _suppressStateSave;
+        _suppressStateSave = !persist;
+        try
+        {
+            SearchInput.Text = query;
+            ApplyFilters();
+        }
+        finally
+        {
+            _suppressStateSave = previous;
+        }
+
+        if (persist)
+            SaveState();
+    }
+
+    public void SuppressStatePersistence()
+    {
+        _suppressStateSave = true;
+    }
+
+    private void ApplyFilters(bool selectFirst = true)
+    {
+        if (CardsList is null || RowsList is null) return;
+
+        var previous = SelectedTile();
+        string query = SearchInput?.Text?.Trim() ?? "";
+        bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
+        bool unseenOnly = UnseenOnlyFilter?.IsChecked == true;
+
+        var filtered = _allTiles
+            .Where(tile => MatchesSearch(tile, query))
+            .Where(tile => !favoritesOnly || tile.Fav > 0)
+            .Where(tile => !unseenOnly || tile.Unseen)
+            .ToList();
+
+        _tiles.Clear();
+        foreach (var tile in filtered)
+            _tiles.Add(tile);
+
+        UpdateFolderStats();
+
+        if (previous is not null && filtered.Contains(previous))
+            SelectTile(previous);
+        else if (selectFirst)
+            SelectFirstAvailable();
+        else if (filtered.Count == 0)
+            SelectTile(null);
+    }
+
+    private static bool MatchesSearch(Tile tile, string query)
+    {
+        if (string.IsNullOrWhiteSpace(query)) return true;
+
+        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        foreach (var token in tokens)
+        {
+            if (ContainsText(tile.FileName, token)
+                || ContainsText(tile.Path, token)
+                || ContainsText(tile.Prompt, token)
+                || ContainsText(tile.Group, token)
+                || ContainsText(tile.SizeText, token)
+                || ContainsText(tile.ModifiedText, token))
+            {
+                continue;
+            }
+
+            return false;
+        }
+
+        return true;
+    }
+
+    private static bool ContainsText(string? value, string token)
+        => !string.IsNullOrEmpty(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    private void SelectFirstAvailable()
+    {
+        SelectTile(_tiles.Count > 0 ? _tiles[0] : null);
+    }
+
+    private void SelectTile(Tile? tile)
+    {
+        CardsList.SelectedItem = tile;
+        RowsList.SelectedItem = tile;
+        if (tile is null)
+            ClearPreview();
+    }
+
+    private void ClearPreview()
+    {
+        PreviewBitmap.Source = null;
+        PreviewBitmap.Visibility = Visibility.Collapsed;
+        PreviewArtBase.Visibility = Visibility.Visible;
+        PreviewArtGlow.Visibility = Visibility.Visible;
+        PreviewFileName.Text = "No matching image";
+        PreviewTabName.Text = "No selection";
+        BottomSelectedTabName.Text = "No selection";
+        PreviewSizeText.Text = "-";
+        PreviewModelText.Text = "-";
+        PreviewDateText.Text = "-";
+        PreviewPromptText.Text = "";
+        ModalTitle.Text = "No selection";
+        UpdateHeaderStats();
+    }
+
+    private void UpdateFolderStats()
+    {
+        if (FolderCountText is null) return;
+
+        int total = _allTiles.Count;
+        int visible = _tiles.Count;
+        string loaded = total == MaxLoadedImages ? $"{total:N0}+ images loaded" : $"{total:N0} images loaded";
+        FolderCountText.Text = visible == total ? loaded : $"{visible:N0} shown / {loaded}";
+        UpdateHeaderStats();
+    }
+
+    private void UpdateHeaderStats()
+    {
+        if (HeaderStats is null) return;
+
+        int selected = SelectedTile() is null ? 0 : 1;
+        int visible = _tiles.Count;
+        int total = _allTiles.Count;
+        string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
+        string folderText = string.IsNullOrWhiteSpace(_currentFolder) ? "sample" : "1 folder";
+        HeaderStats.Text = $"{selected:N0} selected - {imageText} - {folderText}";
     }
 
     // ─────────── Size slider ───────────
     private void SizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        foreach (var t in _tiles)
+        foreach (var t in _allTiles)
             t.CardWidth = e.NewValue;
+        if (!_initializing)
+            SaveState();
     }
 
     // ─────────── Panel toggles ───────────
@@ -479,6 +647,22 @@ public partial class MainWindow : Window
 
     private async void StartScan_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
 
+    private async void RefreshActiveFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder))
+            await LoadFolderAsync(_currentFolder);
+        else
+            await ChooseAndLoadFolderAsync();
+    }
+
+    private async void OpenLastFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder))
+            await LoadFolderAsync(_currentFolder);
+        else
+            await ChooseAndLoadFolderAsync();
+    }
+
     // ─────────── Screen router (used by --shot and normal flow) ───────────
     public void ShowScreen(string screen)
     {
@@ -522,6 +706,73 @@ public partial class MainWindow : Window
     }
 
     private Tile? SelectedTile() => CardsList.SelectedItem as Tile ?? RowsList.SelectedItem as Tile;
+
+    private void OpenSelectedExternally_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedTile() is not { IsRealFile: true } tile || !File.Exists(tile.Path))
+            return;
+
+        Process.Start(new ProcessStartInfo(tile.Path) { UseShellExecute = true });
+    }
+
+    private static string StatePath => Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+        "PhotoViewer.Wpf",
+        "state.json");
+
+    private void RestoreState()
+    {
+        var state = ReadState();
+        if (state is null) return;
+
+        if (!string.IsNullOrWhiteSpace(state.LastFolder))
+        {
+            _currentFolder = state.LastFolder;
+            FolderPathText.Text = state.LastFolder;
+            FolderCountText.Text = Directory.Exists(state.LastFolder) ? "Last folder saved" : "Last folder unavailable";
+        }
+
+        if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
+            SizeSlider.Value = state.CardWidth;
+
+        if (!string.IsNullOrWhiteSpace(state.SearchQuery))
+            SearchInput.Text = state.SearchQuery;
+    }
+
+    private static ViewerState? ReadState()
+    {
+        try
+        {
+            if (!File.Exists(StatePath)) return null;
+            return JsonSerializer.Deserialize<ViewerState>(File.ReadAllText(StatePath));
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private void SaveState()
+    {
+        if (_initializing || _suppressStateSave) return;
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
+            var state = new ViewerState
+            {
+                LastFolder = _currentFolder,
+                SearchQuery = SearchInput.Text,
+                CardWidth = SizeSlider.Value,
+            };
+            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(StatePath, json);
+        }
+        catch
+        {
+            // State persistence should never block passive browsing.
+        }
+    }
 
     // ─────────── Overlays (settings / album / enhance / confirm) ───────────
     private void OpenSettings_Click(object sender, RoutedEventArgs e) => SettingsOverlay.Visibility = Visibility.Visible;
@@ -581,6 +832,14 @@ public partial class MainWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+}
+
+// Lightweight persisted shell state.
+public sealed class ViewerState
+{
+    public string? LastFolder { get; set; }
+    public string? SearchQuery { get; set; }
+    public double CardWidth { get; set; } = 190;
 }
 
 // ─────────── Tile view model ───────────
