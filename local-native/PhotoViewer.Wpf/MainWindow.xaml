@@ -1,0 +1,839 @@
+<Window x:Class="PhotoViewer.Wpf.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:local="clr-namespace:PhotoViewer.Wpf"
+        Title="PhotoViewer" Height="820" Width="1280" MinHeight="560" MinWidth="900"
+        WindowStartupLocation="CenterScreen" WindowStyle="None" ResizeMode="CanResize"
+        Background="{StaticResource BgPrimary}" Foreground="{StaticResource TextPrimary}"
+        FontFamily="Segoe UI" TextOptions.TextFormattingMode="Ideal" UseLayoutRounding="True">
+
+  <WindowChrome.WindowChrome>
+    <WindowChrome CaptionHeight="52" ResizeBorderThickness="6" CornerRadius="0" GlassFrameThickness="0" UseAeroCaptionButtons="False"/>
+  </WindowChrome.WindowChrome>
+
+  <Grid>
+    <Grid.RowDefinitions>
+      <RowDefinition Height="52"/>
+      <RowDefinition Height="*"/>
+      <RowDefinition Height="40"/>
+    </Grid.RowDefinitions>
+
+    <!-- ═══════════════ Header ═══════════════ -->
+    <Border Grid.Row="0" Background="{StaticResource HeaderBg}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,0,1">
+      <Grid Margin="14,0">
+        <Grid.ColumnDefinitions>
+          <ColumnDefinition Width="Auto"/>
+          <ColumnDefinition Width="*"/>
+          <ColumnDefinition Width="Auto"/>
+        </Grid.ColumnDefinitions>
+
+        <!-- left cluster -->
+        <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button x:Name="ToggleSidebar" Style="{StaticResource IconButtonActive}" Click="ToggleSidebar_Click"
+                  ToolTip="Hide sidebar" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M3,4 h18 v16 h-18 z M9,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
+          </Button>
+          <TextBlock Text="PhotoViewer" FontSize="18.5" FontWeight="Bold" Margin="8,0,4,0" VerticalAlignment="Center" Cursor="Hand"
+                     Foreground="{StaticResource LogoBrush}" WindowChrome.IsHitTestVisibleInChrome="True"
+                     MouseLeftButtonUp="Logo_Click" ToolTip="Back to folder selection"/>
+          <Button Style="{StaticResource IconButton}" ToolTip="Refresh active folder (Shift-click: full verify)" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M22,11 a10,10 0 1 1 -3,-7 M22,4 v5 h-5" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="17" Height="17"/>
+          </Button>
+        </StackPanel>
+
+        <!-- search -->
+        <Border Grid.Column="1" Height="40" MaxWidth="720" HorizontalAlignment="Stretch" Margin="10,0"
+                CornerRadius="999" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1"
+                WindowChrome.IsHitTestVisibleInChrome="True">
+          <DockPanel Margin="12,0,10,0" LastChildFill="True">
+            <Path DockPanel.Dock="Left" Data="M11,11 m-8,0 a8,8 0 1 0 16,0 a8,8 0 1 0 -16,0 M21,21 l-4.3,-4.3" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.8" Stretch="Uniform" Width="15" Height="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
+            <Border DockPanel.Dock="Left" CornerRadius="999" Background="{StaticResource AccentSoft}" BorderBrush="#806366F1" BorderThickness="1" Padding="9,2,4,2" Margin="0,0,8,0" VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal">
+                <TextBlock Text="1girl, portrait" Foreground="{StaticResource AccentLight}" FontSize="12"/>
+                <TextBlock Text="✕" Foreground="{StaticResource AccentLight}" FontSize="11" Margin="6,0,0,0" Opacity="0.8"/>
+              </StackPanel>
+            </Border>
+            <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center"/>
+          </DockPanel>
+        </Border>
+
+        <!-- right cluster -->
+        <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+          <Button Style="{StaticResource IconButton}" Foreground="#6EE7B7" ToolTip="Add selected to album (A)" Click="OpenAlbum_Click" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M12,5 v14 M5,12 h14" Stroke="#6EE7B7" StrokeThickness="2" Stretch="Uniform" Width="17" Height="17"/>
+          </Button>
+          <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>
+          <Button x:Name="ToggleRight" Style="{StaticResource IconButtonActive}" Click="ToggleRight_Click" ToolTip="Hide right panel" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M3,4 h18 v16 h-18 z M15,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Enhance queue" Click="OpenEnhance_Click" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M12,2 l1.9,6.1 L20,10 l-6.1,1.9 L12,18 l-1.9,-6.1 L4,10 l6.1,-1.9 z" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" Stretch="Uniform" Width="17" Height="17"/>
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Settings" Click="OpenSettings_Click" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M4,21 v-7 M4,10 V3 M12,21 v-9 M12,8 V3 M20,21 v-5 M20,12 V3 M1,14 h6 M9,8 h6 M17,16 h6" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.7" Stretch="Uniform" Width="17" Height="17"/>
+          </Button>
+
+          <Rectangle Width="1" Height="22" Fill="{StaticResource GlassBorder}" Margin="8,0"/>
+
+          <!-- window caption buttons -->
+          <Button Style="{StaticResource CaptionButton}" Click="Minimize_Click" ToolTip="Minimize" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Rectangle Width="11" Height="1.4" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
+          </Button>
+          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="Maximize_Click" ToolTip="Maximize" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Rectangle Width="11" Height="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Fill="Transparent"/>
+          </Button>
+          <Button Style="{StaticResource CloseButton}" Click="Close_Click" ToolTip="Close" WindowChrome.IsHitTestVisibleInChrome="True">
+            <Path Data="M2,2 L12,12 M12,2 L2,12" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Width="12" Height="12" Stretch="Uniform"/>
+          </Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <!-- ═══════════════ Body ═══════════════ -->
+    <Grid Grid.Row="1">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition x:Name="SidebarCol" Width="240"/>
+        <ColumnDefinition Width="*"/>
+        <ColumnDefinition x:Name="RightCol" Width="340"/>
+      </Grid.ColumnDefinitions>
+
+      <!-- ─────── Sidebar ─────── -->
+      <Border Grid.Column="0" x:Name="Sidebar" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+          <StackPanel>
+
+            <!-- Folder -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                  <Path Data="M22,19 a2,2 0 0 1 -2,2 H4 a2,2 0 0 1 -2,-2 V5 a2,2 0 0 1 2,-2 h5 l2,3 h9 a2,2 0 0 1 2,2 z" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.8" Stretch="Uniform" Width="14" Height="14" Margin="0,0,6,0"/>
+                  <TextBlock Text="FOLDER" Style="{StaticResource SectionHeader}"/>
+                </StackPanel>
+                <TextBlock x:Name="FolderPathText" Text="D:\SD\outputs  (+3)" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" Margin="0,0,0,3"/>
+                <TextBlock x:Name="FolderCountText" Text="12,480 images indexed" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,7"/>
+                <StackPanel Orientation="Horizontal">
+                  <Button Style="{StaticResource SidebarLink}" Content="Add folder" Margin="0,0,14,0" Click="OpenFolder_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Change folder" Click="OpenFolder_Click"/>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Albums -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <TextBlock Text="ALBUMS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
+                <Button Style="{StaticResource SidebarLink}" Content="Album library" Margin="0,0,0,8"/>
+                <Border CornerRadius="8" Background="{StaticResource SuccessSoft}" BorderBrush="{StaticResource SuccessBorder}" BorderThickness="1" Padding="10,7" Margin="0,0,0,8">
+                  <Grid>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel Grid.Column="0">
+                      <TextBlock Text="Viewing" Foreground="{StaticResource TextTertiary}" FontSize="10.5"/>
+                      <TextBlock Text="Best of 2026" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+                    <TextBlock Grid.Column="1" Text="842" Foreground="{StaticResource TextTertiary}" FontSize="10.5" VerticalAlignment="Bottom"/>
+                  </Grid>
+                </Border>
+                <TextBlock Text="PINNED" Foreground="{StaticResource TextTertiary}" FontSize="10" FontWeight="Bold" Margin="0,2,0,5"/>
+                <Border CornerRadius="8" Background="{StaticResource SuccessSoft}" BorderBrush="{StaticResource SuccessBorder}" BorderThickness="1" Padding="9,6" Margin="0,0,0,5">
+                  <DockPanel>
+                    <Path DockPanel.Dock="Left" Data="M12,2 l3,7 l7,0.3 l-5.5,4.7 l2,7 l-6.5,-4 l-6.5,4 l2,-7 l-5.5,-4.7 l7,-0.3 z" Fill="#FACC15" Stretch="Uniform" Width="12" Height="12" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock DockPanel.Dock="Right" Text="842" Foreground="{StaticResource TextTertiary}" FontSize="10.5" VerticalAlignment="Center"/>
+                    <TextBlock Text="Best of 2026" Foreground="{StaticResource TextPrimary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                  </DockPanel>
+                </Border>
+                <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="9,6">
+                  <DockPanel>
+                    <Path DockPanel.Dock="Left" Data="M12,2 l3,7 l7,0.3 l-5.5,4.7 l2,7 l-6.5,-4 l-6.5,4 l2,-7 l-5.5,-4.7 l7,-0.3 z" Fill="#FACC15" Stretch="Uniform" Width="12" Height="12" Margin="0,0,8,0" VerticalAlignment="Center"/>
+                    <TextBlock DockPanel.Dock="Right" Text="318" Foreground="{StaticResource TextTertiary}" FontSize="10.5" VerticalAlignment="Center"/>
+                    <TextBlock Text="Character refs" Foreground="{StaticResource TextSecondary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                  </DockPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <!-- Quick Search -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <TextBlock Text="QUICK SEARCH" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
+                <WrapPanel>
+                  <WrapPanel.Resources>
+                    <Style TargetType="ToggleButton" BasedOn="{StaticResource Pill}">
+                      <Setter Property="Margin" Value="0,0,6,6"/>
+                    </Style>
+                  </WrapPanel.Resources>
+                  <ToggleButton Content="Portrait" IsChecked="True"/>
+                  <ToggleButton Content="Landscape"/>
+                  <ToggleButton Content="Anime"/>
+                  <ToggleButton Content="Photoreal"/>
+                  <ToggleButton Content="Clear"/>
+                </WrapPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Filters -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <TextBlock Text="FILTERS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
+                <CheckBox Content="Favorites only" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6"/>
+                <WrapPanel Margin="0,0,0,6">
+                  <WrapPanel.Resources>
+                    <Style TargetType="ToggleButton" BasedOn="{StaticResource Pill}"><Setter Property="Margin" Value="0,0,6,0"/></Style>
+                  </WrapPanel.Resources>
+                  <ToggleButton Content="★ 1+" IsChecked="True"/>
+                  <ToggleButton Content="★ 2+"/>
+                  <ToggleButton Content="★ 3+"/>
+                </WrapPanel>
+                <CheckBox Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6"/>
+                <CheckBox Content="Unseen only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8"/>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <StackPanel Grid.Column="0">
+                    <TextBlock Text="FROM" Foreground="{StaticResource TextTertiary}" FontSize="9.5" Margin="0,0,0,3"/>
+                    <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="8,6">
+                      <TextBlock Text="2026-01-01" Foreground="{StaticResource TextSecondary}" FontSize="12" FontFamily="{StaticResource MonoFont}"/>
+                    </Border>
+                  </StackPanel>
+                  <StackPanel Grid.Column="2">
+                    <TextBlock Text="TO" Foreground="{StaticResource TextTertiary}" FontSize="9.5" Margin="0,0,0,3"/>
+                    <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="8,6">
+                      <TextBlock Text="2026-07-08" Foreground="{StaticResource TextSecondary}" FontSize="12" FontFamily="{StaticResource MonoFont}"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+            <!-- Folders -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
+                <StackPanel>
+                  <StackPanel.Resources>
+                    <Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/></Style>
+                  </StackPanel.Resources>
+                  <!-- item -->
+                  <Border CornerRadius="8" Background="{StaticResource AccentSoft}" Padding="6,5" Margin="0,0,0,3">
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <CheckBox Grid.Column="0" IsChecked="True" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                      <TextBlock Grid.Column="1" Text="outputs\txt2img" Foreground="{StaticResource TextPrimary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="2" Text="6,204" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
+                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource AccentLight}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
+                    </Grid>
+                  </Border>
+                  <Border CornerRadius="8" Background="{StaticResource AccentSoft}" Padding="6,5" Margin="0,0,0,3">
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <CheckBox Grid.Column="0" IsChecked="True" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                      <TextBlock Grid.Column="1" Text="outputs\img2img" Foreground="{StaticResource TextPrimary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="2" Text="3,118" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
+                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource AccentLight}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
+                    </Grid>
+                  </Border>
+                  <Border CornerRadius="8" Padding="6,5" Margin="0,0,0,3">
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                      <TextBlock Grid.Column="1" Text="outputs\extras" Foreground="{StaticResource TextSecondary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
+                      <TextBlock Grid.Column="2" Text="1,942" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
+                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
+                    </Grid>
+                  </Border>
+                  <Border CornerRadius="8" Padding="6,5">
+                    <Grid>
+                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                      <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,7,0"/>
+                      <TextBlock Grid.Column="1" Text="archive\2025" Foreground="{StaticResource TextTertiary}" FontSize="12.5" TextTrimming="CharacterEllipsis" TextDecorations="Strikethrough"/>
+                      <TextBlock Grid.Column="2" Text="1,216" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
+                      <Path Grid.Column="3" Data="M17.9,17.9 A10,10 0 0 1 12,20 C5,20 1,12 1,12 a18,18 0 0 1 5,-5.9 M9.9,4.2 A9,9 0 0 1 12,4 c7,0 11,8 11,8 a18,18 0 0 1 -2.2,3.2 M1,1 l22,22" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
+                    </Grid>
+                  </Border>
+                </StackPanel>
+              </StackPanel>
+            </Border>
+
+            <!-- Sort -->
+            <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
+              <StackPanel>
+                <TextBlock Text="SORT" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
+                <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,7">
+                  <DockPanel>
+                    <Path DockPanel.Dock="Right" Data="M6,9 l6,6 l6,-6" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="11" Height="11" VerticalAlignment="Center"/>
+                    <TextBlock Text="Date · Newest first" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
+                  </DockPanel>
+                </Border>
+              </StackPanel>
+            </Border>
+
+            <!-- Display -->
+            <Border Padding="16,14,16,16">
+              <StackPanel>
+                <TextBlock Text="DISPLAY" Style="{StaticResource SectionHeader}" Margin="0,0,0,10"/>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="Mode" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
+                  <Border Grid.Column="1" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
+                    <UniformGrid Rows="1">
+                      <RadioButton x:Name="ModeGrid" Style="{StaticResource Seg}" GroupName="mode" Content="Grid" IsChecked="True" Checked="ModeGrid_Checked"/>
+                      <RadioButton x:Name="ModeList" Style="{StaticResource Seg}" GroupName="mode" Content="List" Checked="ModeList_Checked"/>
+                    </UniformGrid>
+                  </Border>
+                </Grid>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="Style" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
+                  <Border Grid.Column="1" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
+                    <UniformGrid Rows="1">
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Standard" IsChecked="True"/>
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Compact"/>
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Poster"/>
+                    </UniformGrid>
+                  </Border>
+                </Grid>
+                <Grid>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="Size" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
+                  <Slider Grid.Column="1" x:Name="SizeSlider" Minimum="130" Maximum="280" Value="190" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
+                </Grid>
+              </StackPanel>
+            </Border>
+
+          </StackPanel>
+        </ScrollViewer>
+      </Border>
+
+      <!-- ─────── Main grid ─────── -->
+      <Border Grid.Column="1" Background="{StaticResource BgPrimary}">
+       <Grid>
+        <ListBox x:Name="CardsList" Background="Transparent" BorderThickness="0" Padding="20,16,12,24"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
+                 ItemContainerStyle="{StaticResource CardItem}" SelectionChanged="CardsList_SelectionChanged">
+          <ListBox.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+          </ListBox.ItemsPanel>
+          <ListBox.GroupStyle>
+            <GroupStyle>
+              <GroupStyle.HeaderTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="2,16,10,10">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" Foreground="#D1FFFFFF" FontSize="14.5" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding ItemCount, StringFormat=' ·  {0} images'}" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center" Margin="4,0,0,0"/>
+                    <Rectangle Height="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                      <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                          <GradientStop Color="#57FFFFFF" Offset="0"/>
+                          <GradientStop Color="#0AFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                      </Rectangle.Fill>
+                    </Rectangle>
+                  </DockPanel>
+                </DataTemplate>
+              </GroupStyle.HeaderTemplate>
+            </GroupStyle>
+          </ListBox.GroupStyle>
+        </ListBox>
+
+        <!-- List mode -->
+        <ListBox x:Name="RowsList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="8,8,4,24"
+                 ItemContainerStyle="{StaticResource ListRowItem}" SelectionChanged="CardsList_SelectionChanged"
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
+          <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
+          <ListBox.GroupStyle>
+            <GroupStyle>
+              <GroupStyle.HeaderTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="14,14,14,4">
+                    <TextBlock DockPanel.Dock="Left" Text="{Binding Name}" Foreground="#B8FFFFFF" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+                    <Rectangle Height="1" VerticalAlignment="Center" Margin="12,0,0,0">
+                      <Rectangle.Fill>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
+                          <GradientStop Color="#3CFFFFFF" Offset="0"/>
+                          <GradientStop Color="#0AFFFFFF" Offset="1"/>
+                        </LinearGradientBrush>
+                      </Rectangle.Fill>
+                    </Rectangle>
+                  </DockPanel>
+                </DataTemplate>
+              </GroupStyle.HeaderTemplate>
+            </GroupStyle>
+          </ListBox.GroupStyle>
+        </ListBox>
+       </Grid>
+      </Border>
+
+      <!-- ─────── Right preview ─────── -->
+      <Border Grid.Column="2" x:Name="RightPanel" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1,0,0,0">
+        <Grid>
+          <Grid.RowDefinitions>
+            <RowDefinition Height="38"/>
+            <RowDefinition Height="*"/>
+          </Grid.RowDefinitions>
+
+          <!-- tabs -->
+          <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Border Background="{StaticResource AccentGlass}" Padding="12,0" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
+              <TextBlock x:Name="PreviewTabName" Text="00427-portrait.png" Foreground="{StaticResource TextPrimary}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="150"/>
+            </Border>
+            <Border Padding="12,0" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
+              <TextBlock Text="00391-elf.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
+            </Border>
+          </StackPanel>
+
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <StackPanel Margin="14">
+              <!-- image -->
+              <Border CornerRadius="12" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="PreviewImage_Click" Margin="0,0,0,12">
+                <Border.Effect><DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="0.5" Color="Black"/></Border.Effect>
+                <Grid Height="380">
+                  <Rectangle x:Name="PreviewArtBase"/>
+                  <Rectangle x:Name="PreviewArtGlow"/>
+                  <Image x:Name="PreviewBitmap" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                </Grid>
+              </Border>
+
+              <!-- actions -->
+              <Grid Margin="0,0,0,14">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
+                  <StackPanel Orientation="Horizontal">
+                    <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (X)"/>
+                    <Border Width="38" Background="#1AF43F5E">
+                      <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
+                        <TextBlock Text="3" Foreground="{StaticResource FavoriteText}" FontWeight="Bold" FontSize="13"/>
+                        <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="11" Height="11" Margin="2,0,0,0"/>
+                      </StackPanel>
+                    </Border>
+                    <Button Style="{StaticResource StepButton}" Content="+" ToolTip="Increase (F)"/>
+                  </StackPanel>
+                </Border>
+                <Button Grid.Column="1" Style="{StaticResource GhostButton}" Margin="0,0,8,0">
+                  <StackPanel Orientation="Horizontal">
+                    <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14" Margin="0,0,5,0"/>
+                    <TextBlock Text="Open"/>
+                  </StackPanel>
+                </Button>
+                <Button Grid.Column="2" Style="{StaticResource DangerButton}" Width="40" ToolTip="Move to Recycle Bin (Del)" Click="OpenConfirm_Click">
+                  <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
+                </Button>
+              </Grid>
+
+              <!-- metadata -->
+              <TextBlock x:Name="PreviewFileName" Text="00427-portrait.png" Foreground="{StaticResource TextPrimary}" FontSize="13.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" Margin="0,0,0,8"/>
+              <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                <Grid.RowDefinitions>
+                  <RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/><RowDefinition/>
+                </Grid.RowDefinitions>
+                <Grid.Resources>
+                  <Style TargetType="TextBlock">
+                    <Setter Property="Margin" Value="0,2"/>
+                    <Setter Property="FontSize" Value="12.5"/>
+                  </Style>
+                </Grid.Resources>
+                <TextBlock Grid.Row="0" Grid.Column="0" Text="SIZE" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewSizeText" Grid.Row="0" Grid.Column="1" Text="832 x 1216" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="1" Grid.Column="0" Text="MODEL" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewModelText" Grid.Row="1" Grid.Column="1" Text="animagineXL_v31" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="2" Grid.Column="0" Text="SAMPLER" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock Grid.Row="2" Grid.Column="1" Text="Euler a" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="3" Grid.Column="0" Text="STEPS" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock Grid.Row="3" Grid.Column="1" Text="28" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="4" Grid.Column="0" Text="CFG" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock Grid.Row="4" Grid.Column="1" Text="6.5" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="5" Grid.Column="0" Text="SEED" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock Grid.Row="5" Grid.Column="1" Text="3874219055" Foreground="{StaticResource TextSecondary}" FontFamily="{StaticResource MonoFont}" FontSize="12" Margin="12,2,0,2"/>
+                <TextBlock Grid.Row="6" Grid.Column="0" Text="DATE" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewDateText" Grid.Row="6" Grid.Column="1" Text="2026-07-08 14:22" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+              </Grid>
+
+              <TextBlock Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,12,0,4"/>
+              <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
+                <TextBlock x:Name="PreviewPromptText" Text="masterpiece, best quality, 1girl, portrait, silver hair, intricate detail, soft rim lighting, cinematic, depth of field, looking at viewer, ornate jacket, snowy background" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
+              </Border>
+
+              <TextBlock Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,10,0,4"/>
+              <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
+                <TextBlock Text="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, worst quality, jpeg artifacts, watermark, signature" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- ═══════════════ Bottom preview tabs ═══════════════ -->
+    <Border Grid.Row="2" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,1,0,0">
+      <DockPanel LastChildFill="True">
+        <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
+          <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)"/>
+          <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all"/>
+        </StackPanel>
+        <StackPanel Orientation="Horizontal">
+          <Border Background="{StaticResource AccentGlass}" Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <Path Data="M12,2 l2.4,7.4 H22 l-6,4.4 l2.3,7.2 l-6.3,-4.6 l-6.3,4.6 L8,13.8 L2,9.4 h7.6 z" Fill="#FACC15" Stretch="Uniform" Width="12" Height="12" Margin="0,0,6,0"/>
+              <TextBlock x:Name="BottomSelectedTabName" Text="00427-portrait.png" Foreground="{StaticResource TextPrimary}" FontSize="12" VerticalAlignment="Center"/>
+              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="00391-elf.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
+              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
+            </StackPanel>
+          </Border>
+          <Border Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="00355-castle.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
+              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </DockPanel>
+    </Border>
+
+    <!-- ═══════════════ Landing / scanning ═══════════════ -->
+    <Grid x:Name="Landing" Grid.RowSpan="3" Visibility="Collapsed" Background="{StaticResource BgPrimary}">
+      <Rectangle HorizontalAlignment="Left" Width="700" Height="520" VerticalAlignment="Center" Margin="-160,0,0,0">
+        <Rectangle.Fill>
+          <RadialGradientBrush><GradientStop Color="#1A6366F1" Offset="0"/><GradientStop Color="#006366F1" Offset="1"/></RadialGradientBrush>
+        </Rectangle.Fill>
+      </Rectangle>
+      <Rectangle HorizontalAlignment="Right" Width="720" Height="520" VerticalAlignment="Center" Margin="0,0,-180,0">
+        <Rectangle.Fill>
+          <RadialGradientBrush><GradientStop Color="#14A855F7" Offset="0"/><GradientStop Color="#00A855F7" Offset="1"/></RadialGradientBrush>
+        </Rectangle.Fill>
+      </Rectangle>
+
+      <StackPanel Width="760" VerticalAlignment="Center" HorizontalAlignment="Center">
+        <TextBlock Text="PhotoViewer" FontSize="52" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource LogoBrush}"/>
+        <TextBlock Text="Index and search Stable Diffusion PNG metadata locally" HorizontalAlignment="Center"
+                   Foreground="{StaticResource TextSecondary}" FontSize="15" Margin="0,6,0,34"/>
+
+        <!-- folder set panel -->
+        <StackPanel x:Name="LandingPanel">
+          <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Style="{StaticResource BrowseButton}" Margin="0,0,12,0">
+              <StackPanel Orientation="Horizontal">
+                <Path Data="M22,19 a2,2 0 0 1 -2,2 H4 a2,2 0 0 1 -2,-2 V5 a2,2 0 0 1 2,-2 h5 l2,3 h9 a2,2 0 0 1 2,2 z" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="17" Height="17" Margin="0,0,8,0"/>
+                <TextBlock Text="Add folder" VerticalAlignment="Center"/>
+              </StackPanel>
+            </Button>
+            <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="Open folder set" Click="StartScan_Click"/>
+          </Grid>
+
+          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,6">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Left" Text="・" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock DockPanel.Dock="Right" Text="✕" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+              <TextBlock Text="D:\SD\outputs\txt2img" Foreground="{StaticResource TextPrimary}" FontSize="13.5" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+          </Border>
+          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,12">
+            <DockPanel>
+              <TextBlock DockPanel.Dock="Left" Text="・" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
+              <TextBlock DockPanel.Dock="Right" Text="✕" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="8,0,0,0"/>
+              <TextBlock Text="D:\SD\outputs\img2img" Foreground="{StaticResource TextPrimary}" FontSize="13.5" TextTrimming="CharacterEllipsis"/>
+            </DockPanel>
+          </Border>
+
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" Height="64" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,12,0">
+              <TextBlock Text="Paste one absolute path per line…" Foreground="{StaticResource TextTertiary}" FontSize="13"/>
+            </Border>
+            <Button Grid.Column="1" Style="{StaticResource BrowseButton}" Content="Add pasted" VerticalAlignment="Stretch"/>
+          </Grid>
+        </StackPanel>
+
+        <Button Style="{StaticResource BrowseButton}" Height="46" HorizontalAlignment="Stretch" Margin="0,14,0,0" Click="StartScan_Click">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="Open last folder set" Foreground="{StaticResource TextPrimary}" FontWeight="Medium"/>
+            <TextBlock Text="  D:\SD\outputs (+3)" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
+          </StackPanel>
+        </Button>
+
+        <TextBlock Text="RECENT FOLDER SETS" Foreground="{StaticResource TextTertiary}" FontSize="10" FontWeight="SemiBold" Margin="2,20,0,8"/>
+        <WrapPanel>
+          <WrapPanel.Resources>
+            <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
+              <Setter Property="Height" Value="30"/><Setter Property="Margin" Value="0,0,7,7"/><Setter Property="FontSize" Value="12"/>
+            </Style>
+          </WrapPanel.Resources>
+          <Button Content="D:\SD\outputs (+3)" Click="StartScan_Click"/>
+          <Button Content="E:\art\upscaled" Click="StartScan_Click"/>
+          <Button Content="D:\SD\favorites" Click="StartScan_Click"/>
+        </WrapPanel>
+
+        <!-- scanning progress -->
+        <StackPanel x:Name="ScanPanel" Visibility="Collapsed" Margin="0,26,0,0">
+          <Grid Margin="0,0,0,8">
+            <TextBlock x:Name="ScanLabel" Text="0 / 12,480 files" Foreground="{StaticResource TextSecondary}" FontSize="13" HorizontalAlignment="Left"/>
+            <TextBlock x:Name="ScanPercent" Text="0%" Foreground="{StaticResource TextSecondary}" FontSize="13" HorizontalAlignment="Right"/>
+          </Grid>
+          <ProgressBar x:Name="ScanBar" Height="6" Minimum="0" Maximum="100" Value="0">
+            <ProgressBar.Template>
+              <ControlTemplate TargetType="ProgressBar">
+                <Border CornerRadius="3" Background="{StaticResource BgTertiary}">
+                  <Border x:Name="PART_Indicator" HorizontalAlignment="Left" CornerRadius="3">
+                    <Border.Background>
+                      <LinearGradientBrush StartPoint="0,0" EndPoint="1,0"><GradientStop Color="#6366F1" Offset="0"/><GradientStop Color="#818CF8" Offset="1"/></LinearGradientBrush>
+                    </Border.Background>
+                  </Border>
+                </Border>
+              </ControlTemplate>
+            </ProgressBar.Template>
+          </ProgressBar>
+          <Border CornerRadius="8" Background="#05FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="0,8" Margin="0,10,0,0">
+            <TextBlock x:Name="ScanMessage" Text="Scanning files…" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center"/>
+          </Border>
+        </StackPanel>
+      </StackPanel>
+    </Grid>
+
+    <!-- ═══════════════ Modal ═══════════════ -->
+    <Grid x:Name="Modal" Grid.RowSpan="3" Visibility="Collapsed" Background="#EB040407">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/>
+        <RowDefinition Height="*"/>
+      </Grid.RowDefinitions>
+
+      <!-- topbar -->
+      <DockPanel Grid.Row="0" Margin="16,12" LastChildFill="False">
+        <TextBlock DockPanel.Dock="Left" x:Name="ModalTitle" Text="00427-portrait.png · 832 × 1216 · animagineXL_v31" Foreground="{StaticResource TextSecondary}" FontSize="13" VerticalAlignment="Center"/>
+        <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" Width="38" Height="38">
+          <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" Width="38" Height="38">
+          <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="15" Height="15"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite up (F)" Width="38" Height="38">
+          <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="16" Height="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38">
+          <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset (0)" Width="42" Height="38">
+          <TextBlock Text="1:1" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
+        </Button>
+      </DockPanel>
+
+      <!-- image area -->
+      <Grid Grid.Row="1" Margin="0,0,0,16">
+        <Border x:Name="ModalImage" Width="440" Height="640" CornerRadius="6" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center">
+          <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
+          <Grid>
+            <Rectangle x:Name="ModalArtBase"/>
+            <Rectangle x:Name="ModalArtGlow"/>
+            <Image x:Name="ModalBitmap" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
+          </Grid>
+        </Border>
+
+        <Button HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous (←)" Background="Transparent">
+          <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+            <Path Data="M15,18 l-6,-6 l6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
+          </Border>
+        </Button>
+        <Button HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next (→)" Background="Transparent">
+          <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+            <Path Data="M9,18 l6,-6 l-6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
+          </Border>
+        </Button>
+
+        <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" CornerRadius="999" Background="#80000000" Padding="12,5" Margin="0,0,0,10">
+          <TextBlock Foreground="{StaticResource TextSecondary}" FontSize="12">
+            <Run Text="100%"/><Run Text="   ·   ← → navigate   ·   Esc close" Foreground="{StaticResource TextTertiary}"/>
+          </TextBlock>
+        </Border>
+      </Grid>
+    </Grid>
+
+    <!-- ═══════════════ Settings ═══════════════ -->
+    <Grid x:Name="SettingsOverlay" Grid.RowSpan="3" Visibility="Collapsed">
+      <Rectangle Fill="#B3040407" MouseLeftButtonDown="CloseSettings_Click"/>
+      <Border Width="540" MaxHeight="660" VerticalAlignment="Center" HorizontalAlignment="Center" CornerRadius="16"
+              Background="{StaticResource BgElevated}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+        <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="20,16,12,10">
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseSettings_Click" ToolTip="Close">
+              <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
+            </Button>
+            <TextBlock Text="Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="20,0,20,18">
+            <StackPanel>
+              <TextBlock Text="Behavior" Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold" Margin="0,0,0,10"/>
+              <DockPanel Margin="0,0,0,10">
+                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
+                <TextBlock Text="Confirm before delete" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
+              </DockPanel>
+              <DockPanel Margin="0,0,0,10">
+                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
+                <TextBlock Text="Unseen dots" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
+              </DockPanel>
+              <DockPanel Margin="0,0,0,4">
+                <TextBlock DockPanel.Dock="Right" Text="22%" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Width="42" TextAlignment="Right"/>
+                <TextBlock Text="Modal edge navigation zone" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
+              </DockPanel>
+              <Slider Minimum="10" Maximum="40" Value="22" Margin="0,0,0,16"/>
+
+              <TextBlock Text="Key bindings" Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold" Margin="0,4,0,10"/>
+              <StackPanel>
+                <StackPanel.Resources>
+                  <Style TargetType="DockPanel"><Setter Property="Margin" Value="0,0,0,7"/></Style>
+                  <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{StaticResource TextPrimary}"/><Setter Property="FontSize" Value="13"/><Setter Property="VerticalAlignment" Value="Center"/></Style>
+                  <Style x:Key="Kbd" TargetType="Border">
+                    <Setter Property="DockPanel.Dock" Value="Right"/>
+                    <Setter Property="CornerRadius" Value="5"/>
+                    <Setter Property="Background" Value="#14FFFFFF"/>
+                    <Setter Property="BorderBrush" Value="{StaticResource GlassBorder}"/>
+                    <Setter Property="BorderThickness" Value="1"/>
+                    <Setter Property="Padding" Value="9,2"/>
+                    <Setter Property="MinWidth" Value="34"/>
+                  </Style>
+                </StackPanel.Resources>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="→" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Next image"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="←" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Previous image"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="F" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Toggle favorite"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="X" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Decrease favorite"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="A" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Add to album"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="Del" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Delete image"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="Esc" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Close modal"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="H" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Flip horizontal"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="E" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Enhance image"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="+" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Zoom in"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="−" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Zoom out"/></DockPanel>
+                <DockPanel><Border Style="{StaticResource Kbd}"><TextBlock Text="0" FontFamily="{StaticResource MonoFont}" FontSize="11.5" Foreground="{StaticResource TextSecondary}" HorizontalAlignment="Center"/></Border><TextBlock Text="Reset zoom"/></DockPanel>
+              </StackPanel>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- ═══════════════ Album picker ═══════════════ -->
+    <Grid x:Name="AlbumOverlay" Grid.RowSpan="3" Visibility="Collapsed">
+      <Rectangle Fill="#B3040407" MouseLeftButtonDown="CloseAlbum_Click"/>
+      <Border Width="440" MaxHeight="560" VerticalAlignment="Center" HorizontalAlignment="Center" CornerRadius="16"
+              Background="{StaticResource BgElevated}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+        <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
+        <StackPanel Margin="20">
+          <DockPanel Margin="0,0,0,14">
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAlbum_Click" ToolTip="Close">
+              <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
+            </Button>
+            <StackPanel>
+              <TextBlock Text="Add to Album" Foreground="{StaticResource TextPrimary}" FontSize="16" FontWeight="SemiBold"/>
+              <TextBlock Text="3 images selected" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="0,2,0,0"/>
+            </StackPanel>
+          </DockPanel>
+          <Border CornerRadius="8" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,10">
+            <TextBlock Text="Find album…" Foreground="{StaticResource TextTertiary}" FontSize="13"/>
+          </Border>
+          <Grid Margin="0,0,0,14">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <Border Grid.Column="0" CornerRadius="8" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,8,0">
+              <TextBlock Text="New album name" Foreground="{StaticResource TextTertiary}" FontSize="13"/>
+            </Border>
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Height="38">
+              <StackPanel Orientation="Horizontal">
+                <Path Data="M12,5 v14 M5,12 h14" Stroke="{StaticResource AccentLight}" StrokeThickness="2" Stretch="Uniform" Width="13" Height="13" Margin="0,0,5,0"/>
+                <TextBlock Text="Create" Foreground="{StaticResource AccentLight}"/>
+              </StackPanel>
+            </Button>
+          </Grid>
+          <StackPanel>
+            <StackPanel.Resources>
+              <Style x:Key="AlbumRow" TargetType="Button">
+                <Setter Property="Height" Value="42"/>
+                <Setter Property="Margin" Value="0,0,0,6"/>
+                <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template">
+                  <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                      <Border x:Name="bd" CornerRadius="8" Padding="12,0" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+                        <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="Stretch"/>
+                      </Border>
+                      <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                          <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
+                          <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
+                        </Trigger>
+                      </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                  </Setter.Value>
+                </Setter>
+              </Style>
+            </StackPanel.Resources>
+            <Button Style="{StaticResource AlbumRow}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="842" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/><TextBlock Text="★ Best of 2026" Foreground="{StaticResource TextPrimary}" FontSize="13" VerticalAlignment="Center"/></DockPanel></Button>
+            <Button Style="{StaticResource AlbumRow}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="318" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/><TextBlock Text="★ Character refs" Foreground="{StaticResource TextPrimary}" FontSize="13" VerticalAlignment="Center"/></DockPanel></Button>
+            <Button Style="{StaticResource AlbumRow}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="127" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/><TextBlock Text="Landscape studies" Foreground="{StaticResource TextPrimary}" FontSize="13" VerticalAlignment="Center"/></DockPanel></Button>
+            <Button Style="{StaticResource AlbumRow}"><DockPanel><TextBlock DockPanel.Dock="Right" Text="54" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/><TextBlock Text="To upscale" Foreground="{StaticResource TextPrimary}" FontSize="13" VerticalAlignment="Center"/></DockPanel></Button>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- ═══════════════ Enhance queue (drawer) ═══════════════ -->
+    <Grid x:Name="EnhanceOverlay" Grid.RowSpan="3" Visibility="Collapsed">
+      <Rectangle Fill="#66040407" MouseLeftButtonDown="CloseEnhance_Click"/>
+      <Border Width="380" HorizontalAlignment="Right" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1,0,0,0">
+        <Grid>
+          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+          <DockPanel Grid.Row="0" Margin="18,16,12,12">
+            <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseEnhance_Click" ToolTip="Close">
+              <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
+            </Button>
+            <TextBlock Text="Enhance queue" Foreground="{StaticResource TextPrimary}" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
+          </DockPanel>
+          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto" Padding="18,0,18,18">
+            <StackPanel>
+              <Border CornerRadius="8" Background="{StaticResource AccentSoft}" BorderBrush="#4D6366F1" BorderThickness="1" Padding="12,10" Margin="0,0,0,14">
+                <TextBlock Foreground="{StaticResource AccentLight}" FontSize="12" TextWrapping="Wrap"
+                           Text="Enhancement runs only when you start it. Nothing here starts automatically while you browse."/>
+              </Border>
+              <TextBlock Text="RECENT JOBS" Foreground="{StaticResource TextTertiary}" FontSize="10" FontWeight="SemiBold" Margin="0,0,0,8"/>
+              <StackPanel>
+                <StackPanel.Resources>
+                  <Style x:Key="Job" TargetType="Border"><Setter Property="CornerRadius" Value="8"/><Setter Property="Background" Value="{StaticResource SoftFill}"/><Setter Property="BorderBrush" Value="{StaticResource GlassBorder}"/><Setter Property="BorderThickness" Value="1"/><Setter Property="Padding" Value="10,8"/><Setter Property="Margin" Value="0,0,0,6"/></Style>
+                </StackPanel.Resources>
+                <Border Style="{StaticResource Job}"><DockPanel><Border DockPanel.Dock="Right" CornerRadius="999" Background="{StaticResource SuccessSoft}" BorderBrush="{StaticResource SuccessBorder}" BorderThickness="1" Padding="8,2" VerticalAlignment="Center"><TextBlock Text="Done" Foreground="#6EE7B7" FontSize="10.5" FontWeight="SemiBold"/></Border><TextBlock Text="00355-castle.png" Foreground="{StaticResource TextPrimary}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel></Border>
+                <Border Style="{StaticResource Job}"><DockPanel><Border DockPanel.Dock="Right" CornerRadius="999" Background="{StaticResource SuccessSoft}" BorderBrush="{StaticResource SuccessBorder}" BorderThickness="1" Padding="8,2" VerticalAlignment="Center"><TextBlock Text="Done" Foreground="#6EE7B7" FontSize="10.5" FontWeight="SemiBold"/></Border><TextBlock Text="00318-android.png" Foreground="{StaticResource TextPrimary}" FontSize="12.5" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/></DockPanel></Border>
+              </StackPanel>
+              <Border CornerRadius="10" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="0,26" Margin="0,10,0,0" Background="#04FFFFFF">
+                <StackPanel HorizontalAlignment="Center">
+                  <Path Data="M12,2 l1.9,6.1 L20,10 l-6.1,1.9 L12,18 l-1.9,-6.1 L4,10 l6.1,-1.9 z" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.4" Stretch="Uniform" Width="26" Height="26" HorizontalAlignment="Center" Opacity="0.5"/>
+                  <TextBlock Text="Queue is empty" Foreground="{StaticResource TextTertiary}" FontSize="12.5" HorizontalAlignment="Center" Margin="0,10,0,2"/>
+                  <TextBlock Text="Select images and press Enhance to start." Foreground="{StaticResource TextTertiary}" FontSize="11" HorizontalAlignment="Center"/>
+                </StackPanel>
+              </Border>
+            </StackPanel>
+          </ScrollViewer>
+        </Grid>
+      </Border>
+    </Grid>
+
+    <!-- ═══════════════ Confirm delete ═══════════════ -->
+    <Grid x:Name="ConfirmOverlay" Grid.RowSpan="3" Visibility="Collapsed">
+      <Rectangle Fill="#B3040407" MouseLeftButtonDown="CloseConfirm_Click"/>
+      <Border Width="420" VerticalAlignment="Center" HorizontalAlignment="Center" CornerRadius="16"
+              Background="{StaticResource BgElevated}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="24">
+        <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
+        <StackPanel>
+          <TextBlock Text="Move selected images to Recycle Bin?" Foreground="{StaticResource TextPrimary}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
+          <TextBlock Text="3 image(s) will be moved to Recycle Bin." Foreground="{StaticResource TextSecondary}" FontSize="13" Margin="0,10,0,16" TextWrapping="Wrap"/>
+          <CheckBox Content="Do not ask again" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center" Margin="0,0,0,18"/>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Style="{StaticResource GhostButton}" Height="40" Content="Cancel" Click="CloseConfirm_Click"/>
+            <Button Grid.Column="2" Style="{StaticResource DangerFilled}" Content="Move to Recycle Bin" Click="CloseConfirm_Click"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+  </Grid>
+</Window>
