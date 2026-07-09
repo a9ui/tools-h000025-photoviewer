@@ -25,7 +25,10 @@ public partial class MainWindow : Window
     private const int MaxLoadedImages = 1200;
     private const int MinParallelThumbnailCount = 32;
     private const int MaxThumbnailDecodeWorkers = 4;
+    private const int InitialGridRealizationCount = 96;
+    private const int GridRealizationBatchSize = 96;
     private readonly ObservableCollection<Tile> _tiles = new();
+    private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly List<Tile> _allTiles = new();
     private Rect _restoreBounds;
     private bool _fakeMaximized;
@@ -48,8 +51,9 @@ public partial class MainWindow : Window
         _allTiles.AddRange(_tiles);
         _tiles.Clear();
 
-        CardsList.ItemsSource = BuildGroupedView();
-        RowsList.ItemsSource = BuildGroupedView();
+        CardsList.ItemsSource = BuildGroupedView(_gridTiles);
+        RowsList.ItemsSource = BuildGroupedView(_tiles);
+        CardsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(CardsList_ScrollChanged));
         ApplyFilters(selectFirst: false);
 
         Loaded += (_, _) =>
@@ -62,9 +66,9 @@ public partial class MainWindow : Window
         _initializing = false;
     }
 
-    private System.ComponentModel.ICollectionView BuildGroupedView()
+    private static System.ComponentModel.ICollectionView BuildGroupedView(ObservableCollection<Tile> source)
     {
-        var cvs = new CollectionViewSource { Source = _tiles };
+        var cvs = new CollectionViewSource { Source = source };
         cvs.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Tile.Group)));
         return cvs.View;
     }
@@ -169,6 +173,7 @@ public partial class MainWindow : Window
                 previewMs: _previewMs,
                 previewUpdates: _previewUpdateCount,
                 totalWatch.ElapsedMilliseconds);
+            UpdateGridMetrics(LastLoadMetrics);
             LandingPanel.IsEnabled = true;
             ScanBar.Value = 0;
             ScanPercent.Text = "0%";
@@ -194,6 +199,7 @@ public partial class MainWindow : Window
             _previewMs,
             _previewUpdateCount,
             totalWatch.ElapsedMilliseconds);
+        UpdateGridMetrics(LastLoadMetrics);
     }
 
     private async Task<ThumbnailLoadMetrics> LoadThumbnailsAsync(CancellationToken token)
@@ -649,14 +655,69 @@ public partial class MainWindow : Window
         foreach (var tile in filtered)
             _tiles.Add(tile);
 
+        Tile? preferred = previous is not null && filtered.Contains(previous)
+            ? previous
+            : (selectFirst && _tiles.Count > 0 ? _tiles[0] : null);
+        RebuildGridTiles(preferred);
         UpdateFolderStats();
 
-        if (previous is not null && filtered.Contains(previous))
-            SelectTile(previous);
-        else if (selectFirst)
-            SelectFirstAvailable();
+        if (preferred is not null)
+            SelectTile(preferred);
         else if (filtered.Count == 0)
             SelectTile(null);
+    }
+
+    private void RebuildGridTiles(Tile? ensureTile = null)
+    {
+        _gridTiles.Clear();
+        int target = Math.Min(_tiles.Count, InitialGridRealizationCount);
+
+        if (ensureTile is not null)
+        {
+            int index = _tiles.IndexOf(ensureTile);
+            if (index >= 0)
+                target = Math.Min(_tiles.Count, Math.Max(target, index + 1));
+        }
+
+        EnsureGridRealizedCount(target);
+    }
+
+    private void EnsureGridTileRealized(Tile tile)
+    {
+        int index = _tiles.IndexOf(tile);
+        if (index < 0)
+            return;
+
+        EnsureGridRealizedCount(index + 1);
+    }
+
+    private void RealizeNextGridBatch()
+    {
+        if (_gridTiles.Count >= _tiles.Count)
+            return;
+
+        EnsureGridRealizedCount(_gridTiles.Count + GridRealizationBatchSize);
+    }
+
+    private void EnsureGridRealizedCount(int requestedCount)
+    {
+        int target = Math.Clamp(requestedCount, 0, _tiles.Count);
+        for (int i = _gridTiles.Count; i < target; i++)
+            _gridTiles.Add(_tiles[i]);
+
+        if (LastLoadMetrics is not null)
+            UpdateGridMetrics(LastLoadMetrics);
+    }
+
+    private void CardsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (CardsList.Visibility != Visibility.Visible || _gridTiles.Count >= _tiles.Count)
+            return;
+
+        double remaining = e.ExtentHeight - (e.VerticalOffset + e.ViewportHeight);
+        double threshold = Math.Max(360, e.ViewportHeight * 0.75);
+        if (remaining <= threshold)
+            RealizeNextGridBatch();
     }
 
     private static bool MatchesSearch(Tile tile, string query)
@@ -700,6 +761,9 @@ public partial class MainWindow : Window
 
     private void SelectTile(Tile? tile)
     {
+        if (tile is not null)
+            EnsureGridTileRealized(tile);
+
         CardsList.SelectedItem = tile;
         RowsList.SelectedItem = tile;
         if (tile is not null)
@@ -749,6 +813,15 @@ public partial class MainWindow : Window
         string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
         string folderText = string.IsNullOrWhiteSpace(_currentFolder) ? "sample" : "1 folder";
         HeaderStats.Text = $"{selected:N0} selected - {imageText} - {folderText}";
+    }
+
+    private void UpdateGridMetrics(LoadMetrics metrics)
+    {
+        metrics.GridTotalItems = _tiles.Count;
+        metrics.GridRealizedItems = _gridTiles.Count;
+        metrics.GridDeferredItems = Math.Max(0, _tiles.Count - _gridTiles.Count);
+        metrics.GridInitialRealizationLimit = InitialGridRealizationCount;
+        metrics.GridRealizationBatchSize = GridRealizationBatchSize;
     }
 
     // ─────────── Size slider ───────────
@@ -1120,8 +1193,18 @@ public partial class MainWindow : Window
     public string SearchQueryForSmoke => SearchInput.Text;
     public string StatePathForSmoke => ResolvedStatePath;
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+    public int FilteredCountForSmoke => _tiles.Count;
+    public int GridRealizedCountForSmoke => _gridTiles.Count;
+    public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
+
+    public bool RealizeNextGridBatchForSmoke()
+    {
+        int before = _gridTiles.Count;
+        RealizeNextGridBatch();
+        return _gridTiles.Count > before;
+    }
 
     public bool SelectIndexForSmoke(int index)
     {
@@ -1168,6 +1251,11 @@ public sealed class LoadMetrics
     public long ModalOpenMs { get; set; }
     public bool ModalImmediateSource { get; set; }
     public bool ModalDeferredDecode { get; set; }
+    public int GridTotalItems { get; set; }
+    public int GridRealizedItems { get; set; }
+    public int GridDeferredItems { get; set; }
+    public int GridInitialRealizationLimit { get; set; }
+    public int GridRealizationBatchSize { get; set; }
     public long TotalMs { get; set; }
     public string CompletedAtUtc { get; set; } = "";
 

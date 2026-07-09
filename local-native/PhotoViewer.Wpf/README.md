@@ -22,6 +22,7 @@ browse and practical viewer slice:
 - `--shot --query <text>` filtered search smoke capture
 - `--shot --perf-log <path>` load timing capture for WPF performance evidence
 - `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
+- `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -71,6 +72,13 @@ modal next/previous navigation keeps selection and `SelectedPath` in sync:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --modal-nav-smoke "$env:TEMP\photoviewer-wpf-modal-nav-smoke.json" --state-path "$env:TEMP\photoviewer-wpf-modal-nav-state.json" --folder .\local-native\ui-mockup --query wpf --select-index 1
 ```
 
+Grid realization smoke verifies that larger filtered folders render an initial
+bounded grid batch and append another batch on demand:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-realization-smoke "$env:TEMP\photoviewer-wpf-grid-realization-smoke.json" --folder "$env:TEMP\photoviewer-wpf-perf-fixture"
+```
+
 ## WPF M2 First Performance Slice
 
 The first #177 slice keeps the WPF surface isolated and adds measured load
@@ -118,6 +126,26 @@ The dedicated modal navigation smoke starts from a filtered real-image fixture,
 moves to the next image, returns to the previous image, and verifies that the
 bounded WPF state file records the final selected image.
 
+## WPF M6 Grid Virtualization Performance Slice
+
+The #193 slice keeps the existing WPF shell grid design but avoids realizing the
+entire filtered card set on initial display. `CardsList` now binds to a bounded
+grid realization collection, while the full filtered list remains available for
+list mode, selection, preview, and modal previous/next navigation. The grid
+starts with 96 realized cards and appends 96-card batches as the user scrolls.
+
+The `--perf-log` output now includes `GridTotalItems`, `GridRealizedItems`,
+`GridDeferredItems`, `GridInitialRealizationLimit`, and
+`GridRealizationBatchSize`.
+
+| Fixture | Before wall clock | #193 wall clock | #193 internal total | Initial grid realized | Deferred |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| temp copied larger smoke | 2,736.6 ms | 1,634.7 ms | 476 ms | 96 / 320 | 224 |
+| temp copied max-loaded smoke | 6,709.3 ms | 3,146.4 ms | 1,805 ms | 96 / 1,200 | 1,104 |
+
+The dedicated grid realization smoke verified a 320-image fixture starts at 96
+realized cards and advances to 192 after the next batch request.
+
 ## Files
 
 | File | Role |
@@ -132,8 +160,9 @@ bounded WPF state file records the final selected image.
 ## Current Limits
 
 - Folder scan is bounded to the first 1,200 images sorted by modified time.
-- The grid still uses the shell `WrapPanel`; virtualized layout is the next
-  performance step.
+- The grid still uses the shell `WrapPanel`, but initial card realization is
+  bounded and expands in batches. A custom true virtualizing wrap panel remains
+  deferred until a separate measured slice proves it is needed.
 - Favorites are currently read-only counts on imported/sample tiles; album
   mutation, delete, and browser-state import are not wired in this WPF surface yet.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
