@@ -30,6 +30,7 @@ browse and practical viewer slice:
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
+- `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -138,6 +139,16 @@ and malformed-file fail-safe behavior without touching real user state:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shared-seen-smoke "$env:TEMP\photoviewer-wpf-shared-seen-smoke.json" --folder .\local-native\ui-mockup
+```
+
+Shared recent-folders smoke creates a temporary project root and verifies the
+cross-surface `.cache/recent-folders.json` contract: import when WPF local
+`state.json` has no last folder, one-entry WPF write-through after folder load,
+additive preservation of existing folder sets, malformed-file fail-safe behavior,
+and favorites/seen store isolation:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shared-recent-smoke "$env:TEMP\photoviewer-wpf-shared-recent-smoke.json" --folder .\local-native\ui-mockup
 ```
 
 ## WPF M2 First Performance Slice
@@ -314,8 +325,20 @@ the legacy file without deleting or rewriting it.
 WPF reads and writes only that path and does not touch real `.cache/seen.json` or
 legacy `.cache/wpf-seen.json`. Malformed shared or legacy seen JSON blocks writes
 for that load, preserves existing files, and avoids mass seen/unseen mutation.
-Recent/history sharing remains deferred until a separate cross-surface contract
-defines filename, shape, precedence, migration, conflict, and verification.
+
+## WPF #230 Shared Recent-Folders Prep
+
+The #230 WPF prep accepts the browser M1 shared recent-folder contract for WPF
+only. Without changing the existing WPF `state.json` UX, WPF now imports the
+canonical `.cache/recent-folders.json` only when local WPF state has no
+`LastFolder`. The shared file shape is the browser-accepted versioned positive
+folder-set JSON with `lastFolderSet`, `recentFolderSets`, and `updatedAtUtc`.
+
+WPF writes the current folder through as a one-entry folder set after local state
+save, preserving existing shared folder sets additively. Malformed shared recent
+JSON is not overwritten; local WPF `state.json` still saves so passive browsing
+is not blocked. No richer multi-folder WPF history UI is added in this slice.
+WinForms and browser code remain untouched by this WPF lane.
 
 ## WPF M14 Performance Final Gate
 
@@ -373,8 +396,10 @@ Candidate classification from the final gate:
   and reads legacy `.cache/wpf-seen.json` additively. The
   `PHOTOVIEWER_WPF_SEEN_PATH` override remains exact for bounded smokes.
   `pvu_seen_images` import is supported only through the separately scoped
-  explicit-file smoke path, not through browser/profile reads. Recent/history
-  sharing remains deferred.
+  explicit-file smoke path, not through browser/profile reads.
+- Recent folders import/write through `.cache/recent-folders.json` using the
+  browser-accepted shared folder-set shape. WPF still exposes only the existing
+  last-folder UX; richer recent/history UI remains deferred.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
