@@ -1103,6 +1103,42 @@ internal sealed class NativeImageStore
                     "Browser thumbnail-size state was skipped; rerun the browser export or remove malformed pvu_view.thumbSize, then run Import again."));
             }
 
+            if (!pvuViewMalformed && TryReadBrowserAspectMode(pvuView, out var aspectMode, out var hasAspectMode, out warningMessage))
+            {
+                if (hasAspectMode && GetSetting(connection, transaction, "aspect_mode") is null)
+                {
+                    UpsertSetting(connection, transaction, "aspect_mode", aspectMode, importedAt);
+                    migrations.Add("pvu_view.aspectMode->aspect_mode");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "unsupported-aspect-mode-value",
+                    warningMessage,
+                    "Browser aspect-mode state was skipped; keep pvu_view.aspectMode as original, square, or portrait before running Import again."));
+            }
+
+            if (!pvuViewMalformed && TryReadBrowserDisplayStyle(pvuView, out var displayStyle, out var hasDisplayStyle, out warningMessage))
+            {
+                if (hasDisplayStyle && GetSetting(connection, transaction, "display_style") is null)
+                {
+                    UpsertSetting(connection, transaction, "display_style", displayStyle, importedAt);
+                    migrations.Add("pvu_view.displayStyle->display_style");
+                }
+            }
+            else if (!pvuViewMalformed && !string.IsNullOrWhiteSpace(warningMessage))
+            {
+                warnings.Add(new NativeImportWarning(
+                    "browser-state-export:pvu_view",
+                    "",
+                    "unsupported-display-style-value",
+                    warningMessage,
+                    "Browser display-style state was skipped; keep pvu_view.displayStyle as standard, compact, or poster before running Import again."));
+            }
+
             if (!pvuViewMalformed && TryReadBrowserSortMode(pvuView, out var sortMode, out var hasSortMode, out warningMessage))
             {
                 if (hasSortMode && GetSetting(connection, transaction, "sort_mode") is null)
@@ -1696,6 +1732,136 @@ internal sealed class NativeImageStore
                     return false;
                 default:
                     warningMessage = $"Unsupported pvu_view.sortBy value: {browserSort}.";
+                    return false;
+            }
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserAspectMode(
+        string value,
+        out string aspectMode,
+        out bool present,
+        out string? warningMessage)
+    {
+        aspectMode = "";
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("aspectMode", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                warningMessage = "pvu_view.aspectMode must be a string.";
+                return false;
+            }
+
+            switch (element.GetString()?.Trim())
+            {
+                case "original":
+                    aspectMode = "original";
+                    warningMessage = null;
+                    return true;
+                case "square":
+                    aspectMode = "square";
+                    warningMessage = null;
+                    return true;
+                case "portrait":
+                    aspectMode = "portrait";
+                    warningMessage = null;
+                    return true;
+                default:
+                    warningMessage = $"Unsupported pvu_view.aspectMode value: {element.GetString()}.";
+                    return false;
+            }
+        }
+        catch (JsonException ex)
+        {
+            warningMessage = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryReadBrowserDisplayStyle(
+        string value,
+        out string displayStyle,
+        out bool present,
+        out string? warningMessage)
+    {
+        displayStyle = "";
+        present = false;
+
+        var trimmed = value.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) || !trimmed.StartsWith("{", StringComparison.Ordinal))
+        {
+            warningMessage = null;
+            return true;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(trimmed);
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("displayStyle", out var element))
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            if (element.ValueKind == JsonValueKind.Null)
+            {
+                warningMessage = null;
+                return true;
+            }
+
+            present = true;
+            if (element.ValueKind != JsonValueKind.String)
+            {
+                warningMessage = "pvu_view.displayStyle must be a string.";
+                return false;
+            }
+
+            switch (element.GetString()?.Trim())
+            {
+                case "standard":
+                    displayStyle = "standard";
+                    warningMessage = null;
+                    return true;
+                case "compact":
+                    displayStyle = "compact";
+                    warningMessage = null;
+                    return true;
+                case "poster":
+                    displayStyle = "poster";
+                    warningMessage = null;
+                    return true;
+                default:
+                    warningMessage = $"Unsupported pvu_view.displayStyle value: {element.GetString()}.";
                     return false;
             }
         }
