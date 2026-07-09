@@ -267,6 +267,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const searchTotalRef = useRef(0);
   const loadedPagesRef = useRef<Set<string>>(new Set());
   const pendingPagesRef = useRef<Set<string>>(new Set());
+  const pendingSearchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const warmedThumbDirRef = useRef('');
   const PAGE_SIZE = 100;
   const buildHiddenFoldersKey = useCallback(
@@ -615,6 +616,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     return true;
   }, []);
 
+  const abortPendingSearchRequests = useCallback(() => {
+    for (const controller of pendingSearchControllersRef.current.values()) {
+      controller.abort();
+    }
+    pendingSearchControllersRef.current = new Map();
+  }, []);
+
   const doSearchPage = useCallback(async (
     query: string,
     page: number,
@@ -634,6 +642,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     pendingPagesRef.current.add(pageKey);
     setIsSearching(true);
     const startedAt = performance.now();
+    const abortController = new AbortController();
+    pendingSearchControllersRef.current.set(pageKey, abortController);
     try {
       const fromParam = dateFrom ? `&dateFrom=${encodeURIComponent(dateFrom)}` : '';
       const toParam = dateTo ? `&dateTo=${encodeURIComponent(dateTo)}` : '';
@@ -645,7 +655,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         : '';
       const dirParam = currentDirPath ? `&dir=${encodeURIComponent(currentDirPath)}` : '';
       const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${randomSeedParam}${fromParam}${toParam}${hiddenParam}${dirParam}`;
-      const res = await fetch(url);
+      const res = await fetch(url, { signal: abortController.signal });
       const data: SearchResponse = await res.json();
 
       // Ignore stale responses from previous query/sort/date state.
@@ -693,8 +703,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         return { searchCount, lastSearchMs, avgSearchMs };
       });
     } catch (e) {
+      if (abortController.signal.aborted) return;
       console.error('Search failed', e);
     } finally {
+      pendingSearchControllersRef.current.delete(pageKey);
       if (generation === searchGenerationRef.current) {
         pendingPagesRef.current.delete(pageKey);
       }
@@ -724,6 +736,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       dirPath: currentDirPath,
     };
     searchGenerationRef.current += 1;
+    abortPendingSearchRequests();
     loadedPagesRef.current = new Set();
     pendingPagesRef.current = new Set();
     searchTotalRef.current = 0;
@@ -731,7 +744,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     setIsSearching(false);
     setSearchTotal(0);
     setSearchResults([]);
-  }, [buildHiddenFoldersKey]);
+  }, [abortPendingSearchRequests, buildHiddenFoldersKey]);
 
   const ensureSearchRange = useCallback((startIndex: number, endIndex: number) => {
     if (startIndex > endIndex) return;
@@ -894,6 +907,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         searchGenerationRef.current += 1;
         const generation = searchGenerationRef.current;
+        abortPendingSearchRequests();
         loadedPagesRef.current = new Set();
         pendingPagesRef.current = new Set();
         setIsSearching(false);
@@ -944,7 +958,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       console.error('Delete failed', error);
       return false;
     }
-  }, [doSearchPage]);
+  }, [abortPendingSearchRequests, doSearchPage]);
 
   // ── Open in external viewer ──
   const openExternal = useCallback((id: string) => {
