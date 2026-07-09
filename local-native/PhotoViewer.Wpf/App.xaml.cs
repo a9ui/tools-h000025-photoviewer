@@ -133,6 +133,13 @@ public partial class App : Application
             return;
         }
 
+        int dateFilterSmokeIdx = Array.IndexOf(e.Args, "--date-filter-smoke");
+        if (dateFilterSmokeIdx >= 0 && dateFilterSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDateFilterSmoke(e.Args[dateFilterSmokeIdx + 1]);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -2032,6 +2039,164 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureDateFilterSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        DateFilterSmokeFixture fixture = PrepareDateFilterSmokeFolder(smokeRoot);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            DateFilterSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(fixture.Folder);
+                string statePath = first.StatePathForSmoke;
+                int allCount = first.FilteredCountForSmoke;
+                List<string> allOrder = first.FilteredFileNamesForSmoke(10);
+
+                bool selectedThirtyTarget = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
+                bool todayChanged = first.SetDatePresetForSmoke("today");
+                List<string> todayOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterToday = first.SelectedFileNameForSmoke;
+
+                bool clearChanged = first.SetDatePresetForSmoke("clear");
+                List<string> clearOrder = first.FilteredFileNamesForSmoke(10);
+
+                bool selectedThirtyAgain = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
+                bool thirtyChanged = first.SetDatePresetForSmoke("30d");
+                List<string> thirtyOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterThirty = first.SelectedFileNameForSmoke;
+
+                bool sevenChanged = first.SetDatePresetForSmoke("7d");
+                List<string> sevenOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterSeven = first.SelectedFileNameForSmoke;
+
+                bool yearChanged = first.SetDatePresetForSmoke("year");
+                List<string> yearOrder = first.FilteredFileNamesForSmoke(10);
+
+                bool persistTargetChanged = first.SetDatePresetForSmoke("30d");
+                bool selectedPersisted = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
+                ViewerState? persisted = ReadPersistedState(statePath);
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(fixture.Folder);
+                string restoredPreset = second.DatePresetForSmoke;
+                string? restoredFrom = second.DateFromForSmoke;
+                string? restoredTo = second.DateToForSmoke;
+                List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
+                string? restoredSelected = second.SelectedFileNameForSmoke;
+                second.Close();
+                string? persistedDatePreset = persisted?.DatePreset;
+                string? persistedDateFrom = persisted?.DateFrom;
+                string? persistedDateTo = persisted?.DateTo;
+
+                bool allOk = allCount == fixture.AllExpected.Count && SameNameOrder(allOrder, fixture.AllExpected);
+                bool todayOk = todayChanged
+                    && SameNameOrder(todayOrder, fixture.TodayExpected)
+                    && string.Equals(selectedAfterToday, fixture.TodayExpected.FirstOrDefault(), StringComparison.OrdinalIgnoreCase);
+                bool clearOk = clearChanged && SameNameOrder(clearOrder, fixture.AllExpected);
+                bool thirtyOk = selectedThirtyAgain
+                    && thirtyChanged
+                    && SameNameOrder(thirtyOrder, fixture.ThirtyDayExpected)
+                    && string.Equals(selectedAfterThirty, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
+                bool sevenOk = sevenChanged
+                    && SameNameOrder(sevenOrder, fixture.SevenDayExpected)
+                    && !string.Equals(selectedAfterSeven, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
+                bool yearOk = yearChanged
+                    && SameNameOrder(yearOrder, fixture.ThisYearExpected)
+                    && !yearOrder.Contains(fixture.PreviousYearName, StringComparer.OrdinalIgnoreCase);
+                bool persistenceOk = selectedPersisted
+                    && string.Equals(persistedDatePreset, "30d", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(persistedDateFrom)
+                    && !string.IsNullOrWhiteSpace(persistedDateTo)
+                    && string.Equals(restoredPreset, "30d", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredFrom, persistedDateFrom, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredTo, persistedDateTo, StringComparison.OrdinalIgnoreCase)
+                    && SameNameOrder(restoredOrder, fixture.ThirtyDayExpected)
+                    && string.Equals(restoredSelected, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
+
+                bool ok = allOk
+                    && selectedThirtyTarget
+                    && todayOk
+                    && clearOk
+                    && thirtyOk
+                    && sevenOk
+                    && yearOk
+                    && persistTargetChanged
+                    && persistenceOk;
+
+                result = new DateFilterSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "date preset filtering, clear action, selection fallback/preservation, and persistence checks passed"
+                        : "date preset smoke did not meet filter/selection/persistence expectations",
+                    Folder = fixture.Folder,
+                    ProjectRoot = smokeRoot,
+                    StatePath = statePath,
+                    TodayName = fixture.TodayName,
+                    SevenDayName = fixture.SevenDayName,
+                    ThirtyDayName = fixture.ThirtyDayName,
+                    ThisYearName = fixture.ThisYearName,
+                    PreviousYearName = fixture.PreviousYearName,
+                    AllExpected = fixture.AllExpected,
+                    TodayExpected = fixture.TodayExpected,
+                    SevenDayExpected = fixture.SevenDayExpected,
+                    ThirtyDayExpected = fixture.ThirtyDayExpected,
+                    ThisYearExpected = fixture.ThisYearExpected,
+                    AllOrder = allOrder,
+                    TodayOrder = todayOrder,
+                    SevenDayOrder = sevenOrder,
+                    ThirtyDayOrder = thirtyOrder,
+                    ThisYearOrder = yearOrder,
+                    ClearOrder = clearOrder,
+                    SelectedThirtyTarget = selectedThirtyTarget,
+                    SelectedAfterToday = selectedAfterToday,
+                    SelectedAfterThirty = selectedAfterThirty,
+                    SelectedAfterSeven = selectedAfterSeven,
+                    PersistedDatePreset = persistedDatePreset,
+                    PersistedDateFrom = persistedDateFrom,
+                    PersistedDateTo = persistedDateTo,
+                    RestoredDatePreset = restoredPreset,
+                    RestoredDateFrom = restoredFrom,
+                    RestoredDateTo = restoredTo,
+                    RestoredOrder = restoredOrder,
+                    RestoredSelected = restoredSelected,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new DateFilterSmokeResult { Ok = false, Message = ex.Message, Folder = fixture.Folder, ProjectRoot = smokeRoot };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteDateFilterSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureEnhancedFilterSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -3142,6 +3307,63 @@ public partial class App : Application
         return target;
     }
 
+    private static DateFilterSmokeFixture PrepareDateFilterSmokeFolder(string smokeRoot)
+    {
+        string target = Path.Combine(smokeRoot, "date-filter-folder");
+        Directory.CreateDirectory(target);
+
+        DateTime today = DateTime.Today;
+        DateTime thisYearOnlyDate = today.AddDays(-45);
+        if (thisYearOnlyDate.Year != today.Year)
+            thisYearOnlyDate = new DateTime(today.Year, 1, 1, 9, 0, 0);
+
+        var inputs = new List<DateFilterSmokeImage>
+        {
+            new("alpha-today.png", today.AddHours(12), Color.FromRgb(52, 152, 219)),
+            new("bravo-7d.png", today.AddDays(-6).AddHours(11), Color.FromRgb(46, 204, 113)),
+            new("charlie-30d.png", today.AddDays(-20).AddHours(10), Color.FromRgb(231, 76, 60)),
+            new("delta-this-year.png", thisYearOnlyDate, Color.FromRgb(155, 89, 182)),
+            new("echo-previous-year.png", new DateTime(today.Year - 1, 12, 31, 9, 0, 0), Color.FromRgb(241, 196, 15)),
+        };
+
+        foreach (var input in inputs)
+        {
+            string path = Path.Combine(target, input.Name);
+            WriteSmokePng(path, 128, 96, input.Color);
+            File.SetLastWriteTime(path, input.ModifiedLocal);
+        }
+
+        DateTime sevenFrom = today.AddDays(-6);
+        DateTime thirtyFrom = today.AddDays(-29);
+        DateTime yearFrom = new(today.Year, 1, 1);
+
+        return new DateFilterSmokeFixture
+        {
+            Folder = target,
+            TodayName = inputs[0].Name,
+            SevenDayName = inputs[1].Name,
+            ThirtyDayName = inputs[2].Name,
+            ThisYearName = inputs[3].Name,
+            PreviousYearName = inputs[4].Name,
+            AllExpected = ExpectedDateFilterNames(inputs, null, null),
+            TodayExpected = ExpectedDateFilterNames(inputs, today, today),
+            SevenDayExpected = ExpectedDateFilterNames(inputs, sevenFrom, today),
+            ThirtyDayExpected = ExpectedDateFilterNames(inputs, thirtyFrom, today),
+            ThisYearExpected = ExpectedDateFilterNames(inputs, yearFrom, today),
+        };
+    }
+
+    private static List<string> ExpectedDateFilterNames(IEnumerable<DateFilterSmokeImage> inputs, DateTime? from, DateTime? to)
+    {
+        return inputs
+            .Where(input => !from.HasValue || input.ModifiedLocal.Date >= from.Value.Date)
+            .Where(input => !to.HasValue || input.ModifiedLocal.Date <= to.Value.Date)
+            .OrderByDescending(input => input.ModifiedLocal)
+            .ThenBy(input => input.Name, StringComparer.OrdinalIgnoreCase)
+            .Select(input => input.Name)
+            .ToList();
+    }
+
     private static string PrepareAspectSmokeFolder(string smokeRoot)
     {
         string target = Path.Combine(smokeRoot, "aspect-folder");
@@ -3409,6 +3631,13 @@ public partial class App : Application
     }
 
     private static void WriteSortSmokeResult(string path, SortSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteDateFilterSmokeResult(string path, DateFilterSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -3791,6 +4020,60 @@ public partial class App : Application
         public string? ModalNextName { get; init; }
         public string? PersistedSort { get; init; }
         public string? RestoredSort { get; init; }
+    }
+
+    private sealed record DateFilterSmokeImage(string Name, DateTime ModifiedLocal, Color Color);
+
+    private sealed class DateFilterSmokeFixture
+    {
+        public string Folder { get; init; } = "";
+        public string TodayName { get; init; } = "";
+        public string SevenDayName { get; init; } = "";
+        public string ThirtyDayName { get; init; } = "";
+        public string ThisYearName { get; init; } = "";
+        public string PreviousYearName { get; init; } = "";
+        public List<string> AllExpected { get; init; } = [];
+        public List<string> TodayExpected { get; init; } = [];
+        public List<string> SevenDayExpected { get; init; } = [];
+        public List<string> ThirtyDayExpected { get; init; } = [];
+        public List<string> ThisYearExpected { get; init; } = [];
+    }
+
+    private sealed class DateFilterSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? StatePath { get; init; }
+        public string? TodayName { get; init; }
+        public string? SevenDayName { get; init; }
+        public string? ThirtyDayName { get; init; }
+        public string? ThisYearName { get; init; }
+        public string? PreviousYearName { get; init; }
+        public List<string> AllExpected { get; init; } = [];
+        public List<string> TodayExpected { get; init; } = [];
+        public List<string> SevenDayExpected { get; init; } = [];
+        public List<string> ThirtyDayExpected { get; init; } = [];
+        public List<string> ThisYearExpected { get; init; } = [];
+        public List<string> AllOrder { get; init; } = [];
+        public List<string> TodayOrder { get; init; } = [];
+        public List<string> SevenDayOrder { get; init; } = [];
+        public List<string> ThirtyDayOrder { get; init; } = [];
+        public List<string> ThisYearOrder { get; init; } = [];
+        public List<string> ClearOrder { get; init; } = [];
+        public bool SelectedThirtyTarget { get; init; }
+        public string? SelectedAfterToday { get; init; }
+        public string? SelectedAfterThirty { get; init; }
+        public string? SelectedAfterSeven { get; init; }
+        public string? PersistedDatePreset { get; init; }
+        public string? PersistedDateFrom { get; init; }
+        public string? PersistedDateTo { get; init; }
+        public string? RestoredDatePreset { get; init; }
+        public string? RestoredDateFrom { get; init; }
+        public string? RestoredDateTo { get; init; }
+        public List<string> RestoredOrder { get; init; } = [];
+        public string? RestoredSelected { get; init; }
     }
 
     private sealed class EnhancedFilterSmokeResult

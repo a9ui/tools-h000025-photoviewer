@@ -34,6 +34,7 @@ browse and practical viewer slice:
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
+- `--date-filter-smoke <path>` browser-aligned date preset filter smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -527,6 +528,31 @@ Dedicated smoke coverage:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --aspect-smoke $env:TEMP\wpf-aspect-smoke.json
 ```
 
+## WPF M21 Browser Date Filter Presets First Slice
+
+The #250 slice replaces the static date placeholders in the Filters section
+with browser-aligned preset controls:
+
+- Today
+- 7d
+- 30d
+- This year
+- Clear
+
+The filter applies to real-folder tiles using the WPF modified timestamp data.
+When the selected image remains visible, selection is preserved; otherwise WPF
+uses the existing first-visible fallback. The active preset and concrete
+`yyyy-MM-dd` range persist through the existing WPF `state.json` path as
+`DatePreset`, `DateFrom`, and `DateTo`.
+
+Dedicated smoke coverage creates a temporary real-folder fixture with
+deterministic file modified dates and verifies preset counts/order, clear
+behavior, selection preservation/fallback, and reload persistence:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --date-filter-smoke $env:TEMP\wpf-date-filter-smoke.json
+```
+
 ## Files
 
 | File | Role |
@@ -573,6 +599,10 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
   aspect shortcuts, fixed columns, exact object-fit/crop parity, and
   `pvu_view.aspectMode` browser-state import remain deferred until separately
   contracted.
+- Date filters support the browser preset controls Today, 7d, 30d, This year,
+  and Clear against modified timestamps. Manual date-from/date-to inputs,
+  date-range browser-state import, and created-date filtering remain deferred
+  until separately contracted.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
