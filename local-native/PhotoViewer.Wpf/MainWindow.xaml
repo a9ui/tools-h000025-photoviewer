@@ -630,12 +630,12 @@
           </Grid>
         </Border>
 
-        <Button HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous (←)" Background="Transparent">
+        <Button HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous (←)" Background="Transparent" Click="ModalPrevious_Click">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M15,18 l-6,-6 l6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>
         </Button>
-        <Button HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next (→)" Background="Transparent">
+        <Button HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next (→)" Background="Transparent" Click="ModalNext_Click">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M9,18 l6,-6 l-6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>

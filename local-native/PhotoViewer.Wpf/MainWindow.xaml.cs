@@ -915,6 +915,39 @@ public partial class MainWindow : Window
         Modal.Visibility = Visibility.Collapsed;
     }
 
+    private void ModalPrevious_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateModal(-1);
+    }
+
+    private void ModalNext_Click(object sender, RoutedEventArgs e)
+    {
+        NavigateModal(1);
+    }
+
+    private bool NavigateModal(int delta)
+    {
+        if (delta == 0 || _tiles.Count == 0)
+            return false;
+
+        var selected = SelectedTile();
+        int currentIndex = selected is null ? -1 : _tiles.IndexOf(selected);
+        if (currentIndex < 0)
+            currentIndex = delta > 0 ? -1 : _tiles.Count;
+
+        int nextIndex = Math.Clamp(currentIndex + delta, 0, _tiles.Count - 1);
+        if (nextIndex == currentIndex)
+            return false;
+
+        SelectTile(_tiles[nextIndex]);
+        SaveState();
+
+        if (Modal.Visibility == Visibility.Visible)
+            OpenModal();
+
+        return true;
+    }
+
     /// <summary>Used only by the --shot --modal smoke path to capture the modal state.</summary>
     public void ShowModalForShot()
     {
@@ -1031,6 +1064,23 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if (Modal.Visibility == Visibility.Visible)
+        {
+            if (e.Key == Key.Left)
+            {
+                NavigateModal(-1);
+                e.Handled = true;
+                return;
+            }
+
+            if (e.Key == Key.Right)
+            {
+                NavigateModal(1);
+                e.Handled = true;
+                return;
+            }
+        }
+
         if (e.Key == Key.Escape && CloseTopmostOverlay())
             e.Handled = true;
         base.OnPreviewKeyDown(e);
@@ -1069,6 +1119,19 @@ public partial class MainWindow : Window
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
     public string SearchQueryForSmoke => SearchInput.Text;
     public string StatePathForSmoke => ResolvedStatePath;
+    public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+
+    public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
+
+    public bool SelectIndexForSmoke(int index)
+    {
+        if (index < 0 || index >= _tiles.Count)
+            return false;
+
+        SelectTile(_tiles[index]);
+        SaveState();
+        return true;
+    }
 
     public bool SelectFileNameForSmoke(string fileName)
     {
