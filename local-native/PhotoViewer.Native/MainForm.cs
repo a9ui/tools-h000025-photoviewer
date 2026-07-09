@@ -12,19 +12,33 @@ internal sealed class MainForm : Form
     private static readonly char[] PromptTagTrailingTrimChars = [' ', '\t', '\r', '\n', ')', ']', '}'];
     private static readonly KeyBindingAction[] MainKeyBindingActions =
     [
-        new("next", "Next image"),
-        new("previous", "Previous image"),
-        new("favoriteUp", "Favorite up"),
-        new("favoriteDown", "Favorite down"),
-        new("delete", "Delete"),
-        new("openFile", "Open file"),
-        new("openFolder", "Open folder"),
-        new("openDetail", "Open detail"),
-        new("toggleView", "Toggle grid/list"),
-        new("togglePreview", "Toggle preview"),
-        new("toggleDetails", "Toggle details"),
-        new("reshuffleSort", "Reshuffle sort"),
+        new("next", "Next image", "main"),
+        new("previous", "Previous image", "main"),
+        new("favoriteUp", "Favorite up", "main"),
+        new("favoriteDown", "Favorite down", "main"),
+        new("delete", "Delete", "main"),
+        new("openFile", "Open file", "main"),
+        new("openFolder", "Open folder", "main"),
+        new("openDetail", "Open detail", "main"),
+        new("toggleView", "Toggle grid/list", "main"),
+        new("togglePreview", "Toggle preview", "main"),
+        new("toggleDetails", "Toggle details", "main"),
+        new("reshuffleSort", "Reshuffle sort", "main"),
     ];
+    private static readonly KeyBindingAction[] DetailKeyBindingActions =
+    [
+        new("detailNext", "Detail next image", "detail"),
+        new("detailPrevious", "Detail previous image", "detail"),
+        new("detailZoomIn", "Detail zoom in", "detail"),
+        new("detailZoomOut", "Detail zoom out", "detail"),
+        new("detailReset", "Detail reset view", "detail"),
+        new("detailFlip", "Detail flip", "detail"),
+        new("detailOpenExternal", "Detail open external", "detail"),
+        new("detailFavoriteUp", "Detail favorite up", "detail"),
+        new("detailFavoriteDown", "Detail favorite down", "detail"),
+    ];
+    private static readonly KeyBindingAction[] EditableKeyBindingActions =
+        MainKeyBindingActions.Concat(DetailKeyBindingActions).ToArray();
     private const int MaxGridImageListDimension = 256;
     private const int GalleryThumbnailMin = 64;
     private const int GalleryThumbnailMax = 192;
@@ -1695,11 +1709,18 @@ internal sealed class MainForm : Form
         var settingsSnapshot = BuildNativeSettingsSnapshot();
         var originalKeyBindingsJson = settingsSnapshot.KeyBindingsJson;
         var keybindingInputs = ExtractKeyBindingTextMap(originalKeyBindingsJson);
+        foreach (var fallback in ExtractKeyBindingTextMap(NativeImageStore.DefaultKeyBindingsJson))
+        {
+            keybindingInputs.TryAdd(fallback.Key, fallback.Value);
+        }
+
         keybindingInputs["next"] = "Shift+Right";
+        keybindingInputs["detailZoomIn"] = "Shift+F2";
         var customKeyBindingsJson = "";
         var keybindingRecorder = settingsSnapshot.KeyBindingMode.Contains("editable", StringComparison.OrdinalIgnoreCase)
             && settingsSnapshot.KeyBindingsJson.Contains("openDetail", StringComparison.OrdinalIgnoreCase)
             && settingsSnapshot.KeyBindingsJson.Contains("detailZoomIn", StringComparison.OrdinalIgnoreCase)
+            && settingsSnapshot.KeyBindingMode.Contains("detailPan deferred", StringComparison.OrdinalIgnoreCase)
             && TryBuildKeyBindingsJson(originalKeyBindingsJson, keybindingInputs, out customKeyBindingsJson, out _);
         Require(keybindingRecorder, "keybinding recorder validation failed");
 
@@ -1707,7 +1728,13 @@ internal sealed class MainForm : Form
         {
             ["previous"] = "Shift+Right",
         };
-        var keybindingConflictRejected = !TryBuildKeyBindingsJson(originalKeyBindingsJson, duplicateInputs, out _, out _);
+        var detailDuplicateInputs = new Dictionary<string, string>(keybindingInputs, StringComparer.OrdinalIgnoreCase)
+        {
+            ["detailZoomOut"] = "Shift+F2",
+        };
+        var keybindingConflictRejected =
+            !TryBuildKeyBindingsJson(originalKeyBindingsJson, duplicateInputs, out _, out _) &&
+            !TryBuildKeyBindingsJson(originalKeyBindingsJson, detailDuplicateInputs, out _, out _);
         Require(keybindingConflictRejected, "keybinding duplicate conflict was not rejected");
 
         SelectOffset(1);
@@ -1740,9 +1767,16 @@ internal sealed class MainForm : Form
         keyboardMessage = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
         var customNextHandled = ProcessCmdKey(ref keyboardMessage, Keys.Shift | Keys.Right);
         var keybindingRuntime = customNextHandled && GetSelectedIndex() == 1;
+        using var customDetail = CreateDetailModal(GetSelectedIndex());
+        customDetail.Show(this);
+        Application.DoEvents();
+        var detailKeybindingRuntime = customDetail.RunCustomKeyBindingSmoke(Keys.Shift | Keys.F2);
+        customDetail.Close();
+        Application.DoEvents();
         _store.SaveSetting("keybindings_json", originalKeyBindingsJson);
         RefreshKeyBindings();
         Require(keybindingRuntime, "custom keybinding runtime dispatch failed");
+        Require(detailKeybindingRuntime, "custom detail keybinding runtime dispatch failed");
 
         _favoritesOnly.Checked = false;
         SelectFavoriteFilter("all");
@@ -1870,6 +1904,7 @@ internal sealed class MainForm : Form
             KeybindingRecorder: keybindingRecorder,
             KeybindingConflictRejected: keybindingConflictRejected,
             KeybindingRuntime: keybindingRuntime,
+            DetailKeybindingRuntime: detailKeybindingRuntime,
             SearchMatches: searchMatches,
             FavoriteMatches: favoriteMatches,
             NoResultsState: noResultsState,
@@ -4009,6 +4044,7 @@ internal sealed class MainForm : Form
         return new DetailModalForm(
             _visibleImages,
             index,
+            LoadKeyBindings(_store.GetSetting("keybindings_json", NativeImageStore.DefaultKeyBindingsJson), DetailKeyBindingActions),
             OpenExternalPath,
             SetFavoriteLevelForPath,
             AddPromptTagToSearch);
@@ -4264,13 +4300,13 @@ internal sealed class MainForm : Form
 
     private void RefreshKeyBindings()
     {
-        _keyBindings = LoadMainKeyBindings(_store.GetSetting("keybindings_json", NativeImageStore.DefaultKeyBindingsJson));
+        _keyBindings = LoadKeyBindings(_store.GetSetting("keybindings_json", NativeImageStore.DefaultKeyBindingsJson), MainKeyBindingActions);
     }
 
-    private static Dictionary<string, Keys> LoadMainKeyBindings(string json)
+    private static Dictionary<string, Keys> LoadKeyBindings(string json, IReadOnlyList<KeyBindingAction> actions)
     {
         var map = new Dictionary<string, Keys>(StringComparer.OrdinalIgnoreCase);
-        foreach (var action in MainKeyBindingActions)
+        foreach (var action in actions)
         {
             if (TryGetKeyBindingText(NativeImageStore.DefaultKeyBindingsJson, action.Key, out var defaultValue) &&
                 TryNormalizeKeyBinding(defaultValue, out var defaultKeys, out _))
@@ -4279,7 +4315,7 @@ internal sealed class MainForm : Form
             }
         }
 
-        foreach (var action in MainKeyBindingActions)
+        foreach (var action in actions)
         {
             if (TryGetKeyBindingText(json, action.Key, out var value) &&
                 TryNormalizeKeyBinding(value, out var keys, out _))
@@ -5346,7 +5382,7 @@ internal sealed class MainForm : Form
             DatabasePath: _store.DatabasePath,
             BrowserSettingsImported: _store.GetSetting("browser_settings_imported", _store.GetSetting("browser_settings_found", "0")) == "1",
             KeyBindingsJson: _store.GetSetting("keybindings_json", NativeImageStore.DefaultKeyBindingsJson),
-            KeyBindingMode: "editable main actions; detail-modal bindings deferred",
+            KeyBindingMode: "editable main and detail keyboard actions; detailPan deferred",
             ImportWarningCount: ParseSettingInt("import_warning_count", 0),
             ImportRecoverySummary: _store.GetSetting("import_recovery_summary", ""));
     }
@@ -5393,8 +5429,8 @@ internal sealed class MainForm : Form
             merged.TryAdd(fallback.Key, fallback.Value);
         }
 
-        var used = new Dictionary<Keys, string>();
-        foreach (var action in MainKeyBindingActions)
+        var usedBySurface = new Dictionary<string, Dictionary<Keys, string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var action in EditableKeyBindingActions)
         {
             if (!updates.TryGetValue(action.Key, out var raw) || string.IsNullOrWhiteSpace(raw))
             {
@@ -5406,6 +5442,12 @@ internal sealed class MainForm : Form
             {
                 error = $"{action.Label} has an unsupported key binding.";
                 return false;
+            }
+
+            if (!usedBySurface.TryGetValue(action.Surface, out var used))
+            {
+                used = new Dictionary<Keys, string>();
+                usedBySurface[action.Surface] = used;
             }
 
             if (used.TryGetValue(keys, out var existingAction))
@@ -5451,6 +5493,20 @@ internal sealed class MainForm : Form
         if (string.IsNullOrWhiteSpace(value))
         {
             return false;
+        }
+
+        if (value.Trim().Equals("+", StringComparison.Ordinal))
+        {
+            keys = Keys.Oemplus;
+            normalized = "Plus";
+            return true;
+        }
+
+        if (value.Trim().Equals("-", StringComparison.Ordinal))
+        {
+            keys = Keys.OemMinus;
+            normalized = "Minus";
+            return true;
         }
 
         var modifiers = Keys.None;
@@ -6061,6 +6117,7 @@ internal sealed class MainForm : Form
             $"keybindingRecorder={BoolText(report.KeybindingRecorder)}",
             $"keybindingConflictRejected={BoolText(report.KeybindingConflictRejected)}",
             $"keybindingRuntime={BoolText(report.KeybindingRuntime)}",
+            $"detailKeybindingRuntime={BoolText(report.DetailKeybindingRuntime)}",
             $"searchMatches={report.SearchMatches}",
             $"favoriteMatches={report.FavoriteMatches}",
             $"noResultsState={BoolText(report.NoResultsState)}",
@@ -6275,6 +6332,7 @@ internal sealed class MainForm : Form
     private sealed class DetailModalForm : Form
     {
         private readonly List<NativeImageRecord> _images;
+        private readonly IReadOnlyDictionary<string, Keys> _keyBindings;
         private readonly Action<string> _openExternal;
         private readonly Action<string, int> _favoriteChanged;
         private readonly Func<string, bool> _addPromptTagToSearch;
@@ -6294,6 +6352,7 @@ internal sealed class MainForm : Form
         public DetailModalForm(
             IReadOnlyList<NativeImageRecord> images,
             int startIndex,
+            IReadOnlyDictionary<string, Keys> keyBindings,
             Action<string> openExternal,
             Action<string, int> favoriteChanged,
             Func<string, bool> addPromptTagToSearch)
@@ -6305,6 +6364,7 @@ internal sealed class MainForm : Form
 
             _images = images.ToList();
             _index = Math.Clamp(startIndex, 0, _images.Count - 1);
+            _keyBindings = keyBindings;
             _openExternal = openExternal;
             _favoriteChanged = favoriteChanged;
             _addPromptTagToSearch = addPromptTagToSearch;
@@ -6356,8 +6416,21 @@ internal sealed class MainForm : Form
             return new DetailSmokeReport(modalOpened, navigation, zoom, reset, pan, flip, favorite, openExternal, metadataDisplay, promptTags);
         }
 
+        public bool RunCustomKeyBindingSmoke(Keys keyData)
+        {
+            var beforeZoom = _zoom;
+            var message = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
+            var handled = ProcessCmdKey(ref message, keyData);
+            return handled && _zoom > beforeZoom;
+        }
+
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
         {
+            if (TryDispatchKeyBinding(keyData))
+            {
+                return true;
+            }
+
             switch (keyData)
             {
                 case Keys.Right:
@@ -6395,6 +6468,61 @@ internal sealed class MainForm : Form
             }
 
             return base.ProcessCmdKey(ref msg, keyData);
+        }
+
+        private bool TryDispatchKeyBinding(Keys keyData)
+        {
+            if (IsTextEntryControl(ActiveControl))
+            {
+                return false;
+            }
+
+            var normalizedKeyData = NormalizeKeyData(keyData);
+            foreach (var binding in _keyBindings)
+            {
+                if (binding.Value == normalizedKeyData)
+                {
+                    return ExecuteKeyBindingAction(binding.Key);
+                }
+            }
+
+            return false;
+        }
+
+        private bool ExecuteKeyBindingAction(string action)
+        {
+            switch (action)
+            {
+                case "detailNext":
+                    SelectOffset(1);
+                    return true;
+                case "detailPrevious":
+                    SelectOffset(-1);
+                    return true;
+                case "detailZoomIn":
+                    ZoomIn();
+                    return true;
+                case "detailZoomOut":
+                    ZoomOut();
+                    return true;
+                case "detailReset":
+                    ResetView();
+                    return true;
+                case "detailFlip":
+                    ToggleFlip();
+                    return true;
+                case "detailOpenExternal":
+                    _openExternal(CurrentImage.AbsolutePath);
+                    return true;
+                case "detailFavoriteUp":
+                    SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel + 1);
+                    return true;
+                case "detailFavoriteDown":
+                    SetCurrentFavoriteLevel(CurrentImage.FavoriteLevel - 1);
+                    return true;
+                default:
+                    return false;
+            }
         }
 
         protected override void Dispose(bool disposing)
@@ -6736,16 +6864,16 @@ internal sealed class MainForm : Form
                 Dock = DockStyle.Fill,
                 AutoScroll = true,
                 ColumnCount = 2,
-                RowCount = MainKeyBindingActions.Length,
+                RowCount = EditableKeyBindingActions.Length,
             };
             bindings.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 180));
             bindings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
             var bindingValues = ExtractKeyBindingTextMap(snapshot.KeyBindingsJson);
             var defaultValues = ExtractKeyBindingTextMap(NativeImageStore.DefaultKeyBindingsJson);
-            for (var i = 0; i < MainKeyBindingActions.Length; i++)
+            for (var i = 0; i < EditableKeyBindingActions.Length; i++)
             {
-                var action = MainKeyBindingActions[i];
+                var action = EditableKeyBindingActions[i];
                 var label = new Label
                 {
                     Text = action.Label,
@@ -6841,7 +6969,7 @@ internal sealed class MainForm : Form
         private void ResetDefaults()
         {
             var defaults = ExtractKeyBindingTextMap(NativeImageStore.DefaultKeyBindingsJson);
-            foreach (var action in MainKeyBindingActions)
+            foreach (var action in EditableKeyBindingActions)
             {
                 _bindingInputs[action.Key].Text = defaults.GetValueOrDefault(action.Key, "");
             }
@@ -6904,7 +7032,7 @@ internal sealed class MainForm : Form
 
     private sealed record PreviewTabState(string Path, string Filename, bool IsPinned);
 
-    private sealed record KeyBindingAction(string Key, string Label);
+    private sealed record KeyBindingAction(string Key, string Label, string Surface);
 
     private sealed record NativeUiScreenshotReport(
         string Folder,
@@ -6983,6 +7111,7 @@ internal sealed class MainForm : Form
         bool KeybindingRecorder,
         bool KeybindingConflictRejected,
         bool KeybindingRuntime,
+        bool DetailKeybindingRuntime,
         int SearchMatches,
         int FavoriteMatches,
         bool NoResultsState,
