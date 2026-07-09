@@ -199,6 +199,20 @@
                     <RadioButton x:Name="DatePresetClearButton" Style="{StaticResource Seg}" GroupName="datePreset" Content="Clear" IsChecked="True" Checked="DatePresetClear_Checked"/>
                   </UniformGrid>
                 </Border>
+                <Grid Margin="0,2,0,4">
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                  </Grid.RowDefinitions>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="44"/>
+                    <ColumnDefinition Width="*"/>
+                  </Grid.ColumnDefinitions>
+                  <TextBlock Grid.Row="0" Grid.Column="0" Text="From" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,4"/>
+                  <DatePicker x:Name="DateFromInput" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,4" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed"/>
+                  <TextBlock Grid.Row="1" Grid.Column="0" Text="To" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0"/>
+                  <DatePicker x:Name="DateToInput" Grid.Row="1" Grid.Column="1" Height="26" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed"/>
+                </Grid>
                 <TextBlock x:Name="DateFilterSummary" Text="No date filter" Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap"/>
               </StackPanel>
             </Border>
