@@ -32,6 +32,7 @@ browse and practical viewer slice:
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
+- `--folder-bucket-smoke <path>` folder bucket show/hide smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned date preset filter smoke
@@ -553,6 +554,30 @@ behavior, selection preservation/fallback, and reload persistence:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --date-filter-smoke $env:TEMP\wpf-date-filter-smoke.json
 ```
 
+## WPF M22 Browser Folder Bucket Controls First Slice
+
+The #252 slice adds browser-aligned folder bucket visibility controls to the
+WPF Folders section. WPF builds buckets from the active loaded folder set,
+assigns each real-file tile to the longest matching root folder, and supports:
+
+- per-folder Shown / Hidden toggles
+- Show all
+- Hide all
+- Invert
+
+Hidden folder buckets filter the current real-file tile list. Selection is
+preserved when the selected image remains visible and otherwise falls back to
+the existing first-visible behavior. Hidden bucket keys are persisted through
+the existing WPF `state.json` path as `HiddenFolderBuckets`.
+
+Dedicated smoke coverage creates a temporary two-folder fixture and verifies
+bucket counts, hide/show/invert behavior, selection fallback/preservation,
+hidden bucket reload persistence, and temp-state isolation:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --folder-bucket-smoke $env:TEMP\wpf-folder-bucket-smoke.json
+```
+
 ## Files
 
 | File | Role |
@@ -603,6 +628,10 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
   and Clear against modified timestamps. Manual date-from/date-to inputs,
   date-range browser-state import, and created-date filtering remain deferred
   until separately contracted.
+- Folder bucket controls support per-folder visibility, Show all, Hide all, and
+  Invert for the active loaded folder set. Browser-exact multi-select/range
+  bucket operations, folder bucket sort controls, and server/search
+  `hiddenFolders` integration remain deferred until separately contracted.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.

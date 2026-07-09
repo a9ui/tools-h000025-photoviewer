@@ -203,11 +203,27 @@
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
                 <TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
-                <ItemsControl x:Name="SidebarFolderSetList">
+                <WrapPanel Margin="0,0,0,8">
+                  <Button Style="{StaticResource SidebarLink}" Content="Show all" Margin="0,0,12,0" Click="ShowAllFolderBuckets_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Hide all" Margin="0,0,12,0" Click="HideAllFolderBuckets_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Invert" Click="InvertFolderBuckets_Click"/>
+                </WrapPanel>
+                <TextBlock x:Name="FolderBucketStatusText" Text="No folder buckets loaded" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,6" TextWrapping="Wrap"/>
+                <ItemsControl x:Name="SidebarFolderSetList" MaxHeight="180">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="7,5" Margin="0,0,0,4">
-                        <TextBlock Text="{Binding}" Foreground="{StaticResource TextSecondary}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                      <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="7,5" Margin="0,0,0,4" Opacity="{Binding Opacity}">
+                        <Grid>
+                          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                          <StackPanel Grid.Column="0">
+                            <DockPanel>
+                              <TextBlock DockPanel.Dock="Right" Text="{Binding CountText}" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="8,0,0,0"/>
+                              <TextBlock Text="{Binding Label}" Foreground="{StaticResource TextSecondary}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                            </DockPanel>
+                            <TextBlock Text="{Binding Path}" Foreground="{StaticResource TextTertiary}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
+                          </StackPanel>
+                          <Button Grid.Column="1" Style="{StaticResource SidebarLink}" Content="{Binding VisibilityText}" Tag="{Binding}" Click="ToggleFolderBucket_Click" Margin="8,0,0,0"/>
+                        </Grid>
                       </Border>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>

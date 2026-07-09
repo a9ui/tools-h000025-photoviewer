@@ -105,6 +105,13 @@ public partial class App : Application
             return;
         }
 
+        int folderBucketSmokeIdx = Array.IndexOf(e.Args, "--folder-bucket-smoke");
+        if (folderBucketSmokeIdx >= 0 && folderBucketSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFolderBucketSmoke(e.Args[folderBucketSmokeIdx + 1]);
+            return;
+        }
+
         int gridZoomSmokeIdx = Array.IndexOf(e.Args, "--grid-zoom-smoke");
         if (gridZoomSmokeIdx >= 0 && gridZoomSmokeIdx + 1 < e.Args.Length)
         {
@@ -1556,6 +1563,175 @@ public partial class App : Application
             FavoritesUnchanged = favoritesUnchanged,
             SeenPreserved = seenPreserved,
         };
+    }
+
+    private void CaptureFolderBucketSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        FolderBucketSmokeFixture fixture = PrepareFolderBucketSmokeFixture(smokeRoot);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            FolderBucketSmokeResult result;
+            try
+            {
+                await first.LoadFolderSetAsync([fixture.FolderA, fixture.FolderB]);
+                string statePath = first.StatePathForSmoke;
+                int allCount = first.FilteredCountForSmoke;
+                int bucketCount = first.FolderBucketCountForSmoke;
+                List<string> bucketKeys = first.FolderBucketKeysForSmoke;
+
+                bool selectedFolderA = first.SelectFileNameForSmoke(fixture.FolderASelectedName);
+                bool hideFolderA = first.SetFolderBucketHiddenForSmoke(fixture.FolderA, true);
+                int afterHideFolderA = first.FilteredCountForSmoke;
+                List<string> afterHideFolderAOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterHideFolderA = first.SelectedFileNameForSmoke;
+
+                bool showFolderA = first.SetFolderBucketHiddenForSmoke(fixture.FolderA, false);
+                int afterShowFolderA = first.FilteredCountForSmoke;
+
+                bool selectedFolderAAgain = first.SelectFileNameForSmoke(fixture.FolderASelectedName);
+                bool hideFolderB = first.SetFolderBucketHiddenForSmoke(fixture.FolderB, true);
+                int afterHideFolderB = first.FilteredCountForSmoke;
+                string? selectedAfterHideFolderB = first.SelectedFileNameForSmoke;
+
+                first.InvertFolderBucketsForSmoke();
+                int afterInvert = first.FilteredCountForSmoke;
+                List<string> afterInvertOrder = first.FilteredFileNamesForSmoke(10);
+
+                first.ShowAllFolderBucketsForSmoke();
+                int afterShowAll = first.FilteredCountForSmoke;
+
+                first.HideAllFolderBucketsForSmoke();
+                int afterHideAll = first.FilteredCountForSmoke;
+
+                first.ShowAllFolderBucketsForSmoke();
+                bool persistedHideFolderB = first.SetFolderBucketHiddenForSmoke(fixture.FolderB, true);
+                ViewerState? persisted = ReadPersistedState(statePath);
+                string favoritesPath = first.FavoritesPathForSmoke;
+                string seenPath = first.SeenPathForSmoke;
+                string favoritesBefore = File.Exists(favoritesPath) ? File.ReadAllText(favoritesPath) : "";
+                int seenBefore = first.SeenStoreCountForSmoke;
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderSetAsync([fixture.FolderA, fixture.FolderB]);
+                int restoredCount = second.FilteredCountForSmoke;
+                int restoredHiddenCount = second.HiddenFolderBucketCountForSmoke;
+                List<string> restoredHiddenKeys = second.HiddenFolderBucketKeysForSmoke;
+                List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
+                int favoriteCountAfterReload = second.FavoriteStoreCountForSmoke;
+                int seenAfterReload = second.SeenStoreCountForSmoke;
+                second.Close();
+
+                bool bucketKeysOk = bucketCount == 2
+                    && bucketKeys.Contains(fixture.FolderA, StringComparer.OrdinalIgnoreCase)
+                    && bucketKeys.Contains(fixture.FolderB, StringComparer.OrdinalIgnoreCase);
+                bool hideFolderAOk = selectedFolderA
+                    && hideFolderA
+                    && afterHideFolderA == fixture.FolderBCount
+                    && afterHideFolderAOrder.All(name => name.EndsWith("-b.png", StringComparison.OrdinalIgnoreCase))
+                    && !string.Equals(selectedAfterHideFolderA, fixture.FolderASelectedName, StringComparison.OrdinalIgnoreCase);
+                bool showFolderAOk = showFolderA && afterShowFolderA == fixture.TotalCount;
+                bool hideFolderBOk = selectedFolderAAgain
+                    && hideFolderB
+                    && afterHideFolderB == fixture.FolderACount
+                    && string.Equals(selectedAfterHideFolderB, fixture.FolderASelectedName, StringComparison.OrdinalIgnoreCase);
+                bool invertOk = afterInvert == fixture.FolderBCount
+                    && afterInvertOrder.All(name => name.EndsWith("-b.png", StringComparison.OrdinalIgnoreCase));
+                bool bulkOk = afterShowAll == fixture.TotalCount && afterHideAll == 0;
+                bool persistenceOk = persistedHideFolderB
+                    && persisted?.HiddenFolderBuckets is not null
+                    && persisted.HiddenFolderBuckets.Count == 1
+                    && persisted.HiddenFolderBuckets.Contains(fixture.FolderB, StringComparer.OrdinalIgnoreCase)
+                    && restoredCount == fixture.FolderACount
+                    && restoredHiddenCount == 1
+                    && restoredHiddenKeys.Contains(fixture.FolderB, StringComparer.OrdinalIgnoreCase)
+                    && restoredOrder.All(name => name.EndsWith("-a.png", StringComparison.OrdinalIgnoreCase));
+                bool stateIsolated = favoriteCountAfterReload == 0
+                    && string.IsNullOrWhiteSpace(favoritesBefore)
+                    && Path.GetFullPath(favoritesPath).StartsWith(Path.GetFullPath(smokeRoot), StringComparison.OrdinalIgnoreCase)
+                    && Path.GetFullPath(seenPath).StartsWith(Path.GetFullPath(smokeRoot), StringComparison.OrdinalIgnoreCase)
+                    && seenAfterReload >= seenBefore;
+
+                bool ok = allCount == fixture.TotalCount
+                    && bucketKeysOk
+                    && hideFolderAOk
+                    && showFolderAOk
+                    && hideFolderBOk
+                    && invertOk
+                    && bulkOk
+                    && persistenceOk
+                    && stateIsolated;
+
+                result = new FolderBucketSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "folder bucket show/hide, invert, selection behavior, persistence, and state isolation checks passed"
+                        : "folder bucket smoke did not meet show/hide/selection/persistence expectations",
+                    ProjectRoot = smokeRoot,
+                    FolderA = fixture.FolderA,
+                    FolderB = fixture.FolderB,
+                    StatePath = statePath,
+                    AllCount = allCount,
+                    BucketCount = bucketCount,
+                    BucketKeys = bucketKeys,
+                    SelectedFolderA = selectedFolderA,
+                    AfterHideFolderA = afterHideFolderA,
+                    AfterHideFolderAOrder = afterHideFolderAOrder,
+                    SelectedAfterHideFolderA = selectedAfterHideFolderA,
+                    AfterShowFolderA = afterShowFolderA,
+                    SelectedFolderAAgain = selectedFolderAAgain,
+                    AfterHideFolderB = afterHideFolderB,
+                    SelectedAfterHideFolderB = selectedAfterHideFolderB,
+                    AfterInvert = afterInvert,
+                    AfterInvertOrder = afterInvertOrder,
+                    AfterShowAll = afterShowAll,
+                    AfterHideAll = afterHideAll,
+                    PersistedHiddenBuckets = persisted?.HiddenFolderBuckets ?? [],
+                    RestoredCount = restoredCount,
+                    RestoredHiddenCount = restoredHiddenCount,
+                    RestoredHiddenKeys = restoredHiddenKeys,
+                    RestoredOrder = restoredOrder,
+                    FavoriteCountAfterReload = favoriteCountAfterReload,
+                    SeenBefore = seenBefore,
+                    SeenAfterReload = seenAfterReload,
+                    FavoritesPath = favoritesPath,
+                    SeenPath = seenPath,
+                    StateIsolated = stateIsolated,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new FolderBucketSmokeResult { Ok = false, Message = ex.Message, ProjectRoot = smokeRoot, FolderA = fixture.FolderA, FolderB = fixture.FolderB };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteFolderBucketSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void CaptureGridZoomSmoke(string resultPath, string[] args)
@@ -3270,6 +3446,39 @@ public partial class App : Application
         return target;
     }
 
+    private static FolderBucketSmokeFixture PrepareFolderBucketSmokeFixture(string smokeRoot)
+    {
+        string folderA = Path.Combine(smokeRoot, "bucket-a");
+        string folderB = Path.Combine(smokeRoot, "bucket-b");
+        Directory.CreateDirectory(folderA);
+        Directory.CreateDirectory(folderB);
+
+        var inputs = new[]
+        {
+            new { Folder = folderA, Name = "alpha-a.png", ModifiedUtc = new DateTime(2026, 7, 10, 12, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(52, 152, 219) },
+            new { Folder = folderA, Name = "bravo-a.png", ModifiedUtc = new DateTime(2026, 7, 10, 11, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(46, 204, 113) },
+            new { Folder = folderB, Name = "charlie-b.png", ModifiedUtc = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(231, 76, 60) },
+            new { Folder = folderB, Name = "delta-b.png", ModifiedUtc = new DateTime(2026, 7, 10, 9, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(155, 89, 182) },
+        };
+
+        foreach (var input in inputs)
+        {
+            string path = Path.Combine(input.Folder, input.Name);
+            WriteSmokePng(path, 128, 96, input.Color);
+            File.SetLastWriteTimeUtc(path, input.ModifiedUtc);
+        }
+
+        return new FolderBucketSmokeFixture
+        {
+            FolderA = folderA,
+            FolderB = folderB,
+            FolderASelectedName = "bravo-a.png",
+            FolderACount = 2,
+            FolderBCount = 2,
+            TotalCount = 4,
+        };
+    }
+
     private static string PrepareSortSmokeFolder(string sourceFolder, string[] fixtureNames, string smokeRoot)
     {
         string target = Path.Combine(smokeRoot, "sort-folder");
@@ -3609,6 +3818,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteFolderBucketSmokeResult(string path, FolderBucketSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteGridZoomSmokeResult(string path, GridZoomSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -3924,6 +4140,52 @@ public partial class App : Application
         public bool AdditivePreserved { get; init; }
         public bool FavoritesUnchanged { get; init; }
         public bool SeenPreserved { get; init; }
+    }
+
+    private sealed class FolderBucketSmokeFixture
+    {
+        public string FolderA { get; init; } = "";
+        public string FolderB { get; init; } = "";
+        public string FolderASelectedName { get; init; } = "";
+        public int FolderACount { get; init; }
+        public int FolderBCount { get; init; }
+        public int TotalCount { get; init; }
+    }
+
+    private sealed class FolderBucketSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? ProjectRoot { get; init; }
+        public string? FolderA { get; init; }
+        public string? FolderB { get; init; }
+        public string? StatePath { get; init; }
+        public string? FavoritesPath { get; init; }
+        public string? SeenPath { get; init; }
+        public int AllCount { get; init; }
+        public int BucketCount { get; init; }
+        public List<string> BucketKeys { get; init; } = [];
+        public bool SelectedFolderA { get; init; }
+        public int AfterHideFolderA { get; init; }
+        public List<string> AfterHideFolderAOrder { get; init; } = [];
+        public string? SelectedAfterHideFolderA { get; init; }
+        public int AfterShowFolderA { get; init; }
+        public bool SelectedFolderAAgain { get; init; }
+        public int AfterHideFolderB { get; init; }
+        public string? SelectedAfterHideFolderB { get; init; }
+        public int AfterInvert { get; init; }
+        public List<string> AfterInvertOrder { get; init; } = [];
+        public int AfterShowAll { get; init; }
+        public int AfterHideAll { get; init; }
+        public List<string> PersistedHiddenBuckets { get; init; } = [];
+        public int RestoredCount { get; init; }
+        public int RestoredHiddenCount { get; init; }
+        public List<string> RestoredHiddenKeys { get; init; } = [];
+        public List<string> RestoredOrder { get; init; } = [];
+        public int FavoriteCountAfterReload { get; init; }
+        public int SeenBefore { get; init; }
+        public int SeenAfterReload { get; init; }
+        public bool StateIsolated { get; init; }
     }
 
     private sealed record GridZoomSmokeResult(
