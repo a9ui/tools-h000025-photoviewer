@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { ImageFile } from './types';
-import { removeImageSlot } from './imageListState';
+import { buildImageIndexById, removeImageSlot } from './imageListState';
 
 function image(id: string): ImageFile {
   return {
@@ -43,5 +43,28 @@ describe('removeImageSlot', () => {
     const results = [image('a'), null, image('c')];
 
     expect(removeImageSlot(results, 'b')).toBe(results);
+  });
+});
+
+describe('buildImageIndexById', () => {
+  it('indexes only loaded sparse search results', () => {
+    const indexById = buildImageIndexById([
+      image('a'),
+      null,
+      image('b'),
+      null,
+      image('c'),
+    ]);
+
+    expect(indexById.get('a')).toBe(0);
+    expect(indexById.get('b')).toBe(2);
+    expect(indexById.get('c')).toBe(4);
+    expect(indexById.has('missing')).toBe(false);
+  });
+
+  it('keeps the latest loaded slot for duplicate ids', () => {
+    const indexById = buildImageIndexById([image('a'), image('a')]);
+
+    expect(indexById.get('a')).toBe(1);
   });
 });

@@ -6,6 +6,7 @@ import { useImageStore } from '../store/ImageContext';
 import { getArrowSelectionIndex, getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
+import { buildImageIndexById } from '../lib/imageListState';
 import {
   buildDateSectionLayout,
   findDateSectionItemTop,
@@ -299,6 +300,10 @@ export default function ImageGrid() {
   }, [clientFilteredVisible, isClientFiltered, searchResults]);
 
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const searchResultIndexById = useMemo(
+    () => buildImageIndexById(searchResults),
+    [searchResults]
+  );
   const modalImageIdKey = modalImageIds.join('\u0001');
 
   useEffect(() => {
@@ -316,7 +321,7 @@ export default function ImageGrid() {
     }
 
     const nextIndex = nextState.selectedId
-      ? searchResults.findIndex((image) => image?.id === nextState.selectedId)
+      ? searchResultIndexById.get(nextState.selectedId) ?? -1
       : null;
     const resolvedNextIndex = nextIndex !== null && nextIndex >= 0 ? nextIndex : null;
     if (selectedIndex !== resolvedNextIndex) {
@@ -327,6 +332,7 @@ export default function ImageGrid() {
     isClientFiltered,
     modalImageIdKey,
     modalImageIds,
+    searchResultIndexById,
     searchResults,
     selectedIndex,
     setModalImageIds,
@@ -848,7 +854,7 @@ export default function ImageGrid() {
 
     const visibleIndex = isClientFiltered
       ? filteredOrderedIds.indexOf(revealImageId)
-      : searchResults.findIndex((image) => image?.id === revealImageId);
+      : searchResultIndexById.get(revealImageId) ?? -1;
 
     if (visibleIndex < 0) {
       consumeRevealImage();
@@ -877,6 +883,7 @@ export default function ImageGrid() {
     gridColumns,
     revealImageId,
     searchResults,
+    searchResultIndexById,
     sectionLayout,
     isClientFiltered,
     view.viewMode,
