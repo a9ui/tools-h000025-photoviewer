@@ -326,7 +326,7 @@
                     RenderTransformOrigin="0.5,0.5">
               <Grid>
                 <Border CornerRadius="12" ClipToBounds="True" Background="{StaticResource BgSecondary}"
-                        Width="{Binding CardWidth}" Height="{Binding CardWidth, Converter={StaticResource Multiply}, ConverterParameter=1.5}">
+                        Width="{Binding CardWidth}" Height="{Binding CardHeight}">
                   <Grid>
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
@@ -396,7 +396,7 @@
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Width="52" Height="52" CornerRadius="7" ClipToBounds="True" Margin="0,0,12,0">
+                <Border Grid.Column="0" Width="{Binding ListThumbnailSize}" Height="{Binding ListThumbnailSize}" CornerRadius="7" ClipToBounds="True" Margin="0,0,12,0">
                   <Grid>
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
