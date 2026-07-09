@@ -251,9 +251,9 @@
                   <TextBlock Grid.Column="0" Text="Style" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
                   <Border Grid.Column="1" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
                     <UniformGrid Rows="1">
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Standard" IsChecked="True" IsEnabled="False"/>
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Compact" IsEnabled="False"/>
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Poster" IsEnabled="False"/>
+                      <RadioButton x:Name="StyleStandard" Style="{StaticResource Seg}" GroupName="style" Content="Standard" IsChecked="True" Checked="StyleStandard_Checked"/>
+                      <RadioButton x:Name="StyleCompact" Style="{StaticResource Seg}" GroupName="style" Content="Compact" Checked="StyleCompact_Checked"/>
+                      <RadioButton x:Name="StylePoster" Style="{StaticResource Seg}" GroupName="style" Content="Poster" Checked="StylePoster_Checked"/>
                     </UniformGrid>
                   </Border>
                 </Grid>

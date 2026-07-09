@@ -32,6 +32,9 @@ public partial class MainWindow : Window
     private const int MaxRecentFolderSets = 8;
     private const double DefaultCardWidth = 190;
     private const double CardWidthStep = 15;
+    private const string DisplayStyleStandard = "standard";
+    private const string DisplayStyleCompact = "compact";
+    private const string DisplayStylePoster = "poster";
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -62,6 +65,7 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _modalCts;
     private int _previewUpdateCount;
     private long _previewMs;
+    private string _displayStyle = DisplayStyleStandard;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -74,6 +78,7 @@ public partial class MainWindow : Window
         BuildSampleTiles();
         _allTiles.AddRange(_tiles);
         _tiles.Clear();
+        ApplyCardLayoutToAllTiles();
 
         CardsList.ItemsSource = BuildGroupedView(_gridTiles);
         RowsList.ItemsSource = BuildGroupedView(_tiles);
@@ -529,7 +534,7 @@ public partial class MainWindow : Window
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
-        return new Tile
+        var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
             ArtGlow = MakeGlowBrush(paletteIndex),
@@ -544,6 +549,8 @@ public partial class MainWindow : Window
             SizeText = FormatBytes(file.Length),
             ModifiedText = modified.ToString("yyyy-MM-dd HH:mm"),
         };
+        ApplyCardLayout(tile);
+        return tile;
     }
 
     private static string FormatGroup(DateTime modified)
@@ -1498,11 +1505,11 @@ public partial class MainWindow : Window
             _tiles.Add(MakeTile(i, "Yesterday  ·  2026-07-07", yesterday[i].fav, yesterday[i].unseen, 391, w, offset: 4));
     }
 
-    private static Tile MakeTile(int i, string group, int fav, bool unseen, int baseNum, double width, int offset = 0)
+    private Tile MakeTile(int i, string group, int fav, bool unseen, int baseNum, double width, int offset = 0)
     {
         int idx = i + offset;
         string name = $"{(baseNum - i):00000}-{Names[idx % Names.Length]}.png";
-        return new Tile
+        var tile = new Tile
         {
             ArtBase = MakeBaseBrush(idx),
             ArtGlow = MakeGlowBrush(idx),
@@ -1516,6 +1523,8 @@ public partial class MainWindow : Window
             SizeText = "832 x 1216",
             ModifiedText = "2026-07-08 14:22",
         };
+        ApplyCardLayout(tile);
+        return tile;
     }
 
     private static Color Hex(string hex) => (Color)ColorConverter.ConvertFromString(hex);
@@ -1983,8 +1992,7 @@ public partial class MainWindow : Window
     // ─────────── Size slider ───────────
     private void SizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        foreach (var t in _allTiles)
-            t.CardWidth = e.NewValue;
+        ApplyCardLayoutToAllTiles();
         if (!_initializing)
             SaveState();
     }
@@ -2010,6 +2018,67 @@ public partial class MainWindow : Window
     private void SetCardWidth(double value)
     {
         SizeSlider.Value = Math.Clamp(value, SizeSlider.Minimum, SizeSlider.Maximum);
+    }
+
+    private void ApplyCardLayoutToAllTiles()
+    {
+        foreach (var tile in _allTiles)
+            ApplyCardLayout(tile);
+    }
+
+    private void ApplyCardLayout(Tile tile)
+    {
+        double baseWidth = SizeSlider?.Value ?? DefaultCardWidth;
+        double minWidth = SizeSlider?.Minimum ?? 130;
+        double maxWidth = SizeSlider?.Maximum ?? 280;
+        (double widthFactor, double heightFactor) = _displayStyle switch
+        {
+            DisplayStyleCompact => (0.82, 1.08),
+            DisplayStylePoster => (1.12, 1.56),
+            _ => (1.0, 1.5),
+        };
+
+        double width = Math.Clamp(baseWidth * widthFactor, minWidth, maxWidth);
+        tile.CardWidth = width;
+        tile.CardHeight = Math.Max(minWidth, width * heightFactor);
+        tile.ListThumbnailSize = _displayStyle switch
+        {
+            DisplayStyleCompact => 42,
+            DisplayStylePoster => 64,
+            _ => 52,
+        };
+    }
+
+    private static string NormalizeDisplayStyle(string? style)
+    {
+        return style?.Trim().ToLowerInvariant() switch
+        {
+            DisplayStyleCompact => DisplayStyleCompact,
+            DisplayStylePoster => DisplayStylePoster,
+            _ => DisplayStyleStandard,
+        };
+    }
+
+    private bool SetDisplayStyle(string style)
+    {
+        string normalized = NormalizeDisplayStyle(style);
+        bool changed = !string.Equals(_displayStyle, normalized, StringComparison.Ordinal);
+        _displayStyle = normalized;
+        SyncDisplayStyleButtons();
+        ApplyCardLayoutToAllTiles();
+        if (!_initializing)
+            SaveState();
+        return changed;
+    }
+
+    private void SyncDisplayStyleButtons()
+    {
+        if (StyleStandard is null || StyleCompact is null || StylePoster is null)
+            return;
+
+        StyleStandard.IsChecked = _displayStyle == DisplayStyleStandard;
+        StyleCompact.IsChecked = _displayStyle == DisplayStyleCompact;
+        StylePoster.IsChecked = _displayStyle == DisplayStylePoster;
     }
 
     private static bool IsZoomModifierActive()
@@ -2066,6 +2135,10 @@ public partial class MainWindow : Window
     }
 
     // ─────────── Landing / scan ───────────
+    private void StyleStandard_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleStandard);
+    private void StyleCompact_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleCompact);
+    private void StylePoster_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStylePoster);
+
     private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
 
     private void SetPhase(bool landing)
@@ -2313,6 +2386,9 @@ public partial class MainWindow : Window
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
 
+        _displayStyle = NormalizeDisplayStyle(state.DisplayStyle);
+        SyncDisplayStyleButtons();
+
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
 
@@ -2347,6 +2423,7 @@ public partial class MainWindow : Window
                 LastFolderSet = _currentFolderSet.Count > 0 ? _currentFolderSet : null,
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
+                DisplayStyle = _displayStyle,
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -2657,6 +2734,7 @@ public partial class MainWindow : Window
     public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
     public double CardWidthForSmoke => SizeSlider.Value;
+    public string DisplayStyleForSmoke => _displayStyle;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
@@ -2683,6 +2761,20 @@ public partial class MainWindow : Window
 
     public bool AllCardWidthsMatchForSmoke(double width)
         => _allTiles.All(tile => Math.Abs(tile.CardWidth - width) < 0.01);
+
+    public bool SetDisplayStyleForSmoke(string style) => SetDisplayStyle(style);
+
+    public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
+    {
+        var tile = _allTiles.FirstOrDefault();
+        return new DisplayStyleMetrics(
+            _displayStyle,
+            SizeSlider.Value,
+            tile?.CardWidth ?? 0,
+            tile?.CardHeight ?? 0,
+            tile?.ListThumbnailSize ?? 0,
+            _tiles.Count);
+    }
 
     public int AppendPastedFoldersForSmoke(string folderText)
         => AppendLandingFolders(SplitFolderSet(folderText));
@@ -2760,7 +2852,16 @@ public sealed class ViewerState
     public string? SearchQuery { get; set; }
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
+    public string? DisplayStyle { get; set; }
 }
+
+public readonly record struct DisplayStyleMetrics(
+    string Style,
+    double BaseWidth,
+    double CardWidth,
+    double CardHeight,
+    double ListThumbnailSize,
+    int FilteredCount);
 
 public sealed class RecentFolderSetView
 {
@@ -2924,6 +3025,30 @@ public sealed class Tile : INotifyPropertyChanged
             if (Math.Abs(_cardWidth - value) < 0.01) return;
             _cardWidth = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardWidth)));
+        }
+    }
+
+    private double _cardHeight = 285;
+    public double CardHeight
+    {
+        get => _cardHeight;
+        set
+        {
+            if (Math.Abs(_cardHeight - value) < 0.01) return;
+            _cardHeight = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardHeight)));
+        }
+    }
+
+    private double _listThumbnailSize = 52;
+    public double ListThumbnailSize
+    {
+        get => _listThumbnailSize;
+        set
+        {
+            if (Math.Abs(_listThumbnailSize - value) < 0.01) return;
+            _listThumbnailSize = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ListThumbnailSize)));
         }
     }
 

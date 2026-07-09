@@ -112,6 +112,13 @@ public partial class App : Application
             return;
         }
 
+        int displayStyleSmokeIdx = Array.IndexOf(e.Args, "--display-style-smoke");
+        if (displayStyleSmokeIdx >= 0 && displayStyleSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDisplayStyleSmoke(e.Args[displayStyleSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1598,6 +1605,115 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureDisplayStyleSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteDisplayStyleSmokeResult(resultPath, new DisplayStyleSmokeResult(false, "missing required --folder", folder, null, null, 0, null, null, null, null, false, false, false, false));
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            DisplayStyleSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(fullFolder);
+                DisplayStyleMetrics standard = first.DisplayStyleMetricsForSmoke();
+                bool compactChanged = first.SetDisplayStyleForSmoke("compact");
+                DisplayStyleMetrics compact = first.DisplayStyleMetricsForSmoke();
+                bool posterChanged = first.SetDisplayStyleForSmoke("poster");
+                DisplayStyleMetrics poster = first.DisplayStyleMetricsForSmoke();
+                bool zoomed = first.ZoomInForSmoke();
+                DisplayStyleMetrics posterZoomed = first.DisplayStyleMetricsForSmoke();
+                string statePath = first.StatePathForSmoke;
+                int filtered = first.FilteredCountForSmoke;
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(fullFolder);
+                DisplayStyleMetrics restored = second.DisplayStyleMetricsForSmoke();
+                second.Close();
+
+                ViewerState? persisted = ReadPersistedState(statePath);
+                bool compactDense = compact.CardWidth < standard.CardWidth
+                    && compact.CardHeight < standard.CardHeight
+                    && compact.ListThumbnailSize < standard.ListThumbnailSize
+                    && Area(compact) < Area(standard);
+                bool posterPortrait = poster.CardHeight > poster.CardWidth
+                    && poster.CardHeight > standard.CardHeight
+                    && poster.ListThumbnailSize > standard.ListThumbnailSize
+                    && Area(poster) > Area(standard);
+                bool zoomComposes = zoomed
+                    && posterZoomed.CardWidth > poster.CardWidth
+                    && posterZoomed.CardHeight > poster.CardHeight;
+                bool persistedPoster = string.Equals(persisted?.DisplayStyle, "poster", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restored.Style, "poster", StringComparison.OrdinalIgnoreCase);
+
+                bool ok = filtered > 0
+                    && string.Equals(standard.Style, "standard", StringComparison.OrdinalIgnoreCase)
+                    && compactChanged
+                    && posterChanged
+                    && compactDense
+                    && posterPortrait
+                    && zoomComposes
+                    && persistedPoster;
+
+                result = new DisplayStyleSmokeResult(
+                    ok,
+                    ok ? "display styles changed grid density/aspect, composed with zoom, and restored from WPF state" : "display style smoke did not meet density/aspect/persistence expectations",
+                    fullFolder,
+                    smokeRoot,
+                    statePath,
+                    filtered,
+                    standard,
+                    compact,
+                    poster,
+                    posterZoomed,
+                    compactChanged,
+                    posterChanged,
+                    zoomed,
+                    persistedPoster);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new DisplayStyleSmokeResult(false, ex.Message, fullFolder, smokeRoot, null, 0, null, null, null, null, false, false, false, false);
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteDisplayStyleSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static double Area(DisplayStyleMetrics metrics)
+        => metrics.CardWidth * metrics.CardHeight;
+
     private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
         MainWindow first,
         string fullFolder,
@@ -2634,6 +2750,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteDisplayStyleSmokeResult(string path, DisplayStyleSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteStartupSmokeResult(string path, StartupSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -2927,6 +3050,22 @@ public partial class App : Application
         bool ShortcutReset,
         bool WheelIn,
         bool WheelOutAndTileSync);
+
+    private sealed record DisplayStyleSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? ProjectRoot,
+        string? StatePath,
+        int Filtered,
+        DisplayStyleMetrics? Standard,
+        DisplayStyleMetrics? Compact,
+        DisplayStyleMetrics? Poster,
+        DisplayStyleMetrics? PosterZoomed,
+        bool CompactChanged,
+        bool PosterChanged,
+        bool Zoomed,
+        bool PersistedPoster);
 
     private sealed record StartupSmokeResult(
         bool Ok,
