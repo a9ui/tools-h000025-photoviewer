@@ -553,15 +553,25 @@ public partial class MainWindow : Window
     {
         get
         {
-            var overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+            var overridePath = SeenPathOverride;
             if (!string.IsNullOrWhiteSpace(overridePath))
                 return Path.GetFullPath(overridePath);
 
-            var root = FindProjectRoot(Environment.CurrentDirectory)
-                ?? FindProjectRoot(AppContext.BaseDirectory)
-                ?? Environment.CurrentDirectory;
-            return Path.Combine(root, ".cache", "wpf-seen.json");
+            return ProjectCachePath("seen.json");
         }
+    }
+
+    private static string LegacySeenPath => ProjectCachePath("wpf-seen.json");
+
+    private static string? SeenPathOverride
+        => Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+
+    private static string ProjectCachePath(string fileName)
+    {
+        var root = FindProjectRoot(Environment.CurrentDirectory)
+            ?? FindProjectRoot(AppContext.BaseDirectory)
+            ?? Environment.CurrentDirectory;
+        return Path.Combine(root, ".cache", fileName);
     }
 
     private void LoadSeenState()
@@ -569,18 +579,28 @@ public partial class MainWindow : Window
         _seenPaths.Clear();
         _seenWriteBlocked = false;
 
-        string path = ResolvedSeenPath;
-        if (!File.Exists(path))
+        if (!string.IsNullOrWhiteSpace(SeenPathOverride))
+        {
+            string overridePath = ResolvedSeenPath;
+            _seenWriteBlocked = !TryLoadSeenFile(overridePath, _seenPaths);
             return;
+        }
+
+        bool sharedOk = TryLoadSeenFile(ResolvedSeenPath, _seenPaths);
+        bool legacyOk = TryLoadSeenFile(LegacySeenPath, _seenPaths);
+        _seenWriteBlocked = !sharedOk || !legacyOk;
+    }
+
+    private static bool TryLoadSeenFile(string path, HashSet<string> destination)
+    {
+        if (!File.Exists(path))
+            return true;
 
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(path));
             if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                _seenWriteBlocked = true;
-                return;
-            }
+                return false;
 
             foreach (var property in document.RootElement.EnumerateObject())
             {
@@ -591,13 +611,14 @@ public partial class MainWindow : Window
                     || (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int numeric) && numeric != 0)
                     || (property.Value.ValueKind == JsonValueKind.String && bool.TryParse(property.Value.GetString(), out bool parsed) && parsed);
                 if (seen)
-                    _seenPaths.Add(NormalizeFavoritePath(property.Name));
+                    destination.Add(NormalizeFavoritePath(property.Name));
             }
+
+            return true;
         }
         catch
         {
-            _seenPaths.Clear();
-            _seenWriteBlocked = true;
+            return false;
         }
     }
 
