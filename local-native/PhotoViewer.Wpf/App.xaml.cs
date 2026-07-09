@@ -75,6 +75,13 @@ public partial class App : Application
             return;
         }
 
+        int sharedSeenSmokeIdx = Array.IndexOf(e.Args, "--shared-seen-smoke");
+        if (sharedSeenSmokeIdx >= 0 && sharedSeenSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSharedSeenSmoke(e.Args[sharedSeenSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1031,6 +1038,276 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSharedSeenSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteSharedSeenSmokeResult(
+                resultPath,
+                new SharedSeenSmokeResult
+                {
+                    Ok = false,
+                    Message = "missing required --folder",
+                    Folder = folder,
+                });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder).Take(4).ToArray();
+        if (fixtureNames.Length < 3)
+        {
+            WriteSharedSeenSmokeResult(
+                resultPath,
+                new SharedSeenSmokeResult
+                {
+                    Ok = false,
+                    Message = "shared seen smoke requires at least three fixture images",
+                    Folder = folder,
+                });
+            Shutdown(1);
+            return;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+        first.SuppressStatePersistence();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            SharedSeenSmokeResult result;
+            try
+            {
+                result = await RunSharedSeenSmokeAsync(first, fullFolder, smokeRoot, fixtureNames);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new SharedSeenSmokeResult
+                {
+                    Ok = false,
+                    Message = ex.Message,
+                    Folder = folder,
+                    ProjectRoot = smokeRoot,
+                };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteSharedSeenSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
+        MainWindow first,
+        string fullFolder,
+        string smokeRoot,
+        string[] fixtureNames)
+    {
+        string sharedSeenPath = Path.Combine(smokeRoot, ".cache", "seen.json");
+        string legacySeenPath = Path.Combine(smokeRoot, ".cache", "wpf-seen.json");
+        string sharedSeedName = fixtureNames[0];
+        string legacySeedName = fixtureNames[1];
+        string targetName = fixtureNames[2];
+        string sharedSeedPath = Path.Combine(fullFolder, sharedSeedName);
+        string legacySeedPath = Path.Combine(fullFolder, legacySeedName);
+        string targetPath = Path.Combine(fullFolder, targetName);
+
+        WriteSeenSeed(sharedSeenPath, sharedSeedPath);
+        WriteSeenSeed(legacySeenPath, legacySeedPath);
+        string legacyBefore = File.ReadAllText(legacySeenPath);
+
+        await first.LoadFolderAsync(fullFolder);
+        first.SetSearchQuery("", persist: false);
+        string resolvedSeenPath = first.SeenPathForSmoke;
+        int initialSeenStoreCount = first.SeenStoreCountForSmoke;
+        bool selectedTarget = first.SelectFileNameForSmoke(targetName);
+        int seenStoreAfterSelection = first.SeenStoreCountForSmoke;
+        bool targetSelectedSeen = first.IsFileUnseenForSmoke(targetName) == false;
+        first.SetUnseenOnlyFilterForSmoke(true);
+        int filteredAfterSelection = first.FilteredCountForSmoke;
+        first.Close();
+
+        var sharedMap = ReadSeenMap(sharedSeenPath);
+        var legacyMap = ReadSeenMap(legacySeenPath);
+        string legacyAfter = File.ReadAllText(legacySeenPath);
+        bool sharedHasSharedSeed = sharedMap.ContainsKey(NormalizeFavoritePath(sharedSeedPath));
+        bool sharedHasLegacySeed = sharedMap.ContainsKey(NormalizeFavoritePath(legacySeedPath));
+        bool sharedHasTarget = sharedMap.ContainsKey(NormalizeFavoritePath(targetPath));
+        bool legacyPreserved = string.Equals(legacyBefore, legacyAfter, StringComparison.Ordinal)
+            && legacyMap.Count == 1
+            && legacyMap.ContainsKey(NormalizeFavoritePath(legacySeedPath))
+            && !legacyMap.ContainsKey(NormalizeFavoritePath(sharedSeedPath))
+            && !legacyMap.ContainsKey(NormalizeFavoritePath(targetPath));
+
+        var second = HiddenWindow();
+        second.Show();
+        second.SuppressStatePersistence();
+        await second.LoadFolderAsync(fullFolder);
+        second.SetSearchQuery("", persist: false);
+        bool reloadSharedSeedSeen = second.IsFileUnseenForSmoke(sharedSeedName) == false;
+        bool reloadLegacySeedSeen = second.IsFileUnseenForSmoke(legacySeedName) == false;
+        bool reloadTargetSeen = second.IsFileUnseenForSmoke(targetName) == false;
+        int reloadSeenStoreCount = second.SeenStoreCountForSmoke;
+        second.Close();
+
+        MalformedSeenSmokeCaseResult malformedLegacy = await RunMalformedSeenSmokeCaseAsync(
+            fullFolder,
+            smokeRoot,
+            "malformed-legacy",
+            fixtureNames,
+            malformedShared: false);
+        MalformedSeenSmokeCaseResult malformedShared = await RunMalformedSeenSmokeCaseAsync(
+            fullFolder,
+            smokeRoot,
+            "malformed-shared",
+            fixtureNames,
+            malformedShared: true);
+
+        bool ok = string.Equals(Path.GetFullPath(resolvedSeenPath), Path.GetFullPath(sharedSeenPath), StringComparison.OrdinalIgnoreCase)
+            && selectedTarget
+            && targetSelectedSeen
+            && initialSeenStoreCount >= 2
+            && seenStoreAfterSelection >= initialSeenStoreCount
+            && filteredAfterSelection >= 0
+            && sharedHasSharedSeed
+            && sharedHasLegacySeed
+            && sharedHasTarget
+            && legacyPreserved
+            && reloadSharedSeedSeen
+            && reloadLegacySeedSeen
+            && reloadTargetSeen
+            && reloadSeenStoreCount >= sharedMap.Count
+            && malformedLegacy.Ok
+            && malformedShared.Ok;
+
+        return new SharedSeenSmokeResult
+        {
+            Ok = ok,
+            Message = ok ? "shared seen default path, legacy additive merge, shared-only write, reload, and malformed fail-safe passed" : "shared seen smoke did not meet expected policy",
+            Folder = fullFolder,
+            ProjectRoot = smokeRoot,
+            SharedSeenPath = sharedSeenPath,
+            LegacySeenPath = legacySeenPath,
+            ResolvedSeenPath = resolvedSeenPath,
+            SharedSeedName = sharedSeedName,
+            LegacySeedName = legacySeedName,
+            TargetName = targetName,
+            InitialSeenStoreCount = initialSeenStoreCount,
+            SeenStoreCountAfterSelection = seenStoreAfterSelection,
+            SharedMapCountAfterSelection = sharedMap.Count,
+            LegacyMapCountAfterSelection = legacyMap.Count,
+            SharedHasSharedSeed = sharedHasSharedSeed,
+            SharedHasLegacySeed = sharedHasLegacySeed,
+            SharedHasTarget = sharedHasTarget,
+            LegacyPreserved = legacyPreserved,
+            ReloadSharedSeedSeen = reloadSharedSeedSeen,
+            ReloadLegacySeedSeen = reloadLegacySeedSeen,
+            ReloadTargetSeen = reloadTargetSeen,
+            ReloadSeenStoreCount = reloadSeenStoreCount,
+            MalformedLegacy = malformedLegacy,
+            MalformedShared = malformedShared,
+        };
+    }
+
+    private static async Task<MalformedSeenSmokeCaseResult> RunMalformedSeenSmokeCaseAsync(
+        string fullFolder,
+        string parentRoot,
+        string caseName,
+        string[] fixtureNames,
+        bool malformedShared)
+    {
+        string caseRoot = Path.Combine(parentRoot, caseName);
+        PrepareSharedSeenSmokeEnvironment(caseRoot);
+
+        string sharedSeenPath = Path.Combine(caseRoot, ".cache", "seen.json");
+        string legacySeenPath = Path.Combine(caseRoot, ".cache", "wpf-seen.json");
+        string sharedSeedName = fixtureNames[0];
+        string legacySeedName = fixtureNames[1];
+        string targetName = fixtureNames[2];
+        string sharedSeedPath = Path.Combine(fullFolder, sharedSeedName);
+        string legacySeedPath = Path.Combine(fullFolder, legacySeedName);
+        string targetPath = Path.Combine(fullFolder, targetName);
+        const string malformedJson = "[";
+
+        if (malformedShared)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(sharedSeenPath)!);
+            File.WriteAllText(sharedSeenPath, malformedJson);
+            WriteSeenSeed(legacySeenPath, legacySeedPath);
+        }
+        else
+        {
+            WriteSeenSeed(sharedSeenPath, sharedSeedPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(legacySeenPath)!);
+            File.WriteAllText(legacySeenPath, malformedJson);
+        }
+
+        string sharedBefore = File.ReadAllText(sharedSeenPath);
+        string legacyBefore = File.ReadAllText(legacySeenPath);
+
+        var window = HiddenWindow();
+        window.Show();
+        window.SuppressStatePersistence();
+        await window.LoadFolderAsync(fullFolder);
+        window.SetSearchQuery("", persist: false);
+        string resolvedSeenPath = window.SeenPathForSmoke;
+        bool selectedTarget = window.SelectFileNameForSmoke(targetName);
+        bool targetStillUnseen = window.IsFileUnseenForSmoke(targetName) == true;
+        bool validSeedLoaded = malformedShared
+            ? window.IsFileUnseenForSmoke(legacySeedName) == false
+            : window.IsFileUnseenForSmoke(sharedSeedName) == false;
+        int seenStoreCount = window.SeenStoreCountForSmoke;
+        window.Close();
+
+        string sharedAfter = File.ReadAllText(sharedSeenPath);
+        string legacyAfter = File.ReadAllText(legacySeenPath);
+        bool sharedPreserved = string.Equals(sharedBefore, sharedAfter, StringComparison.Ordinal);
+        bool legacyPreserved = string.Equals(legacyBefore, legacyAfter, StringComparison.Ordinal);
+        bool targetNotPersisted = malformedShared
+            ? !ReadSeenFlag(legacySeenPath, targetPath)
+            : !ReadSeenFlag(sharedSeenPath, targetPath);
+        bool ok = string.Equals(Path.GetFullPath(resolvedSeenPath), Path.GetFullPath(sharedSeenPath), StringComparison.OrdinalIgnoreCase)
+            && selectedTarget
+            && targetStillUnseen
+            && targetNotPersisted
+            && validSeedLoaded
+            && sharedPreserved
+            && legacyPreserved;
+
+        return new MalformedSeenSmokeCaseResult(
+            ok,
+            caseName,
+            malformedShared,
+            resolvedSeenPath,
+            selectedTarget,
+            targetStillUnseen,
+            targetNotPersisted,
+            validSeedLoaded,
+            sharedPreserved,
+            legacyPreserved,
+            seenStoreCount);
+    }
+
     private void CaptureScrollRealizationSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -1372,6 +1649,33 @@ public partial class App : Application
     private static int SelectFavoriteLevel(MainWindow window, string fileName)
         => window.SelectFileNameForSmoke(fileName) ? window.SelectedFavoriteLevelForSmoke : -1;
 
+    private static string[] GetSmokeImageFileNames(string folder)
+    {
+        string[] extensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+        return Directory.Exists(folder)
+            ? Directory
+                .EnumerateFiles(folder)
+                .Where(file => extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase))
+                .Select(Path.GetFileName)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Cast<string>()
+                .OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray()
+            : [];
+    }
+
+    private static void PrepareSharedSeenSmokeEnvironment(string projectRoot)
+    {
+        Directory.CreateDirectory(projectRoot);
+        Directory.CreateDirectory(Path.Combine(projectRoot, "local-native"));
+        Directory.CreateDirectory(Path.Combine(projectRoot, ".cache"));
+        File.WriteAllText(Path.Combine(projectRoot, "project.toml"), "# shared seen smoke root");
+        Environment.CurrentDirectory = projectRoot;
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", null);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", Path.Combine(projectRoot, ".cache", "favorites.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", Path.Combine(projectRoot, ".cache", "state.json"));
+    }
+
     private static void WriteFavoriteSeed(string favoritesPath, string preservedPath, int level)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(favoritesPath))!);
@@ -1574,6 +1878,47 @@ public partial class App : Application
         return false;
     }
 
+    private static Dictionary<string, bool> ReadSeenMap(string seenPath)
+    {
+        var seen = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            if (!File.Exists(seenPath))
+                return seen;
+
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(seenPath));
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return seen;
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                bool truthy = property.Value.ValueKind == System.Text.Json.JsonValueKind.True
+                    || (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number && property.Value.TryGetInt32(out int numeric) && numeric != 0)
+                    || (property.Value.ValueKind == System.Text.Json.JsonValueKind.String && bool.TryParse(property.Value.GetString(), out bool parsed) && parsed);
+                if (truthy)
+                    seen[NormalizeFavoritePath(property.Name)] = true;
+            }
+        }
+        catch
+        {
+        }
+
+        return seen;
+    }
+
+    private static void WriteSeenSeed(string seenPath, params string[] paths)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(seenPath))!);
+        var seen = paths
+            .Where(static path => !string.IsNullOrWhiteSpace(path))
+            .Select(NormalizeFavoritePath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static path => path, static _ => true, StringComparer.OrdinalIgnoreCase);
+        var json = System.Text.Json.JsonSerializer.Serialize(seen, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(seenPath, json);
+    }
+
     private static string NormalizeFavoritePath(string path)
     {
         try
@@ -1636,6 +1981,13 @@ public partial class App : Application
     }
 
     private static void WriteSeenImportSmokeResult(string path, SeenImportSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteSharedSeenSmokeResult(string path, SharedSeenSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -1819,6 +2171,47 @@ public partial class App : Application
         public bool ReloadImportedByNameSeen { get; init; }
         public bool ReloadZeroStillUnseen { get; init; }
     }
+
+    private sealed class SharedSeenSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? SharedSeenPath { get; init; }
+        public string? LegacySeenPath { get; init; }
+        public string? ResolvedSeenPath { get; init; }
+        public string? SharedSeedName { get; init; }
+        public string? LegacySeedName { get; init; }
+        public string? TargetName { get; init; }
+        public int InitialSeenStoreCount { get; init; }
+        public int SeenStoreCountAfterSelection { get; init; }
+        public int SharedMapCountAfterSelection { get; init; }
+        public int LegacyMapCountAfterSelection { get; init; }
+        public bool SharedHasSharedSeed { get; init; }
+        public bool SharedHasLegacySeed { get; init; }
+        public bool SharedHasTarget { get; init; }
+        public bool LegacyPreserved { get; init; }
+        public bool ReloadSharedSeedSeen { get; init; }
+        public bool ReloadLegacySeedSeen { get; init; }
+        public bool ReloadTargetSeen { get; init; }
+        public int ReloadSeenStoreCount { get; init; }
+        public MalformedSeenSmokeCaseResult? MalformedLegacy { get; init; }
+        public MalformedSeenSmokeCaseResult? MalformedShared { get; init; }
+    }
+
+    private sealed record MalformedSeenSmokeCaseResult(
+        bool Ok,
+        string CaseName,
+        bool MalformedShared,
+        string ResolvedSeenPath,
+        bool SelectedTarget,
+        bool TargetStillUnseen,
+        bool TargetNotPersisted,
+        bool ValidSeedLoaded,
+        bool SharedPreserved,
+        bool LegacyPreserved,
+        int SeenStoreCount);
 
     private sealed record GridRealizationSmokeResult(
         bool Ok,

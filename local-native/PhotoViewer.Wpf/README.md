@@ -29,6 +29,7 @@ browse and practical viewer slice:
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
+- `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -129,6 +130,14 @@ only `browserLocalStorage.pvu_seen_images` into the accepted WPF seen-state JSON
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --seen-import-smoke "$env:TEMP\photoviewer-wpf-seen-import-smoke.json" --folder .\local-native\ui-mockup --seen-path "$env:TEMP\photoviewer-wpf-seen-import.json" --favorites-path "$env:TEMP\photoviewer-wpf-seen-import-favorites.json" --browser-state-path "$env:TEMP\photoviewer-wpf-seen-import-browser-state.json"
+```
+
+Shared seen smoke creates a temporary project root and verifies default
+`.cache/seen.json` writes, additive legacy `.cache/wpf-seen.json` reads, reload,
+and malformed-file fail-safe behavior without touching real user state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shared-seen-smoke "$env:TEMP\photoviewer-wpf-shared-seen-smoke.json" --folder .\local-native\ui-mockup
 ```
 
 ## WPF M2 First Performance Slice
@@ -292,6 +301,22 @@ Chrome/profile reads, broad browser-state migration, WinForms/browser changes,
 delete/recycle, album mutation, cache/state deletion, and automatic workers
 remain out of scope.
 
+## WPF #222 Shared Seen Prep
+
+The #222 WPF prep accepts PM's shared seen contract for WPF only. Without
+`PHOTOVIEWER_WPF_SEEN_PATH`, WPF now writes selected-image seen state to the
+canonical shared `.cache/seen.json` file, whose shape is
+`Record<absolutePath, true>`. If legacy `.cache/wpf-seen.json` exists, WPF reads
+it additively into memory, writes the union to `.cache/seen.json`, and preserves
+the legacy file without deleting or rewriting it.
+
+`PHOTOVIEWER_WPF_SEEN_PATH` remains exact for tests and smokes: when it is set,
+WPF reads and writes only that path and does not touch real `.cache/seen.json` or
+legacy `.cache/wpf-seen.json`. Malformed shared or legacy seen JSON blocks writes
+for that load, preserves existing files, and avoids mass seen/unseen mutation.
+Recent/history sharing remains deferred until a separate cross-surface contract
+defines filename, shape, precedence, migration, conflict, and verification.
+
 ## WPF M14 Performance Final Gate
 
 The #218 slice keeps the existing viewer contract and accelerates the measured
@@ -344,10 +369,12 @@ Candidate classification from the final gate:
   bounded `pvu_fav_levels` / `pvu_favorites` explicit-import smoke. Album
   mutation, delete, and broad browser-state import are not wired in this WPF
   surface yet.
-- Seen state uses the WPF-only `.cache/wpf-seen.json` absolute-path map for
-  selected-image seen persistence and real-folder `Unseen only` filtering.
+- Seen state writes the shared `.cache/seen.json` absolute-path map by default
+  and reads legacy `.cache/wpf-seen.json` additively. The
+  `PHOTOVIEWER_WPF_SEEN_PATH` override remains exact for bounded smokes.
   `pvu_seen_images` import is supported only through the separately scoped
-  explicit-file smoke path, not through browser/profile reads.
+  explicit-file smoke path, not through browser/profile reads. Recent/history
+  sharing remains deferred.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
