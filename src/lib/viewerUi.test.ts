@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getArrowSelectionIndex,
   getResultCountLabel,
   getZoomCenteredScrollTop,
   sortFolderBuckets,
@@ -107,5 +108,92 @@ describe('getZoomCenteredScrollTop', () => {
     );
 
     expect(nextScrollTop).toBe(0);
+  });
+});
+
+describe('getArrowSelectionIndex', () => {
+  it('moves horizontally by one item', () => {
+    expect(getArrowSelectionIndex({
+      key: 'ArrowRight',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 2,
+      itemCount: 10,
+    })).toBe(3);
+    expect(getArrowSelectionIndex({
+      key: 'ArrowLeft',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 2,
+      itemCount: 10,
+    })).toBe(1);
+  });
+
+  it('moves vertically by one row in grid mode', () => {
+    expect(getArrowSelectionIndex({
+      key: 'ArrowDown',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 2,
+      itemCount: 10,
+    })).toBe(6);
+    expect(getArrowSelectionIndex({
+      key: 'ArrowUp',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 6,
+      itemCount: 10,
+    })).toBe(2);
+  });
+
+  it('moves vertically by one item in list mode', () => {
+    expect(getArrowSelectionIndex({
+      key: 'ArrowDown',
+      viewMode: 'list',
+      gridColumns: 4,
+      currentIndex: 2,
+      itemCount: 10,
+    })).toBe(3);
+    expect(getArrowSelectionIndex({
+      key: 'ArrowUp',
+      viewMode: 'list',
+      gridColumns: 4,
+      currentIndex: 2,
+      itemCount: 10,
+    })).toBe(1);
+  });
+
+  it('chooses an edge item when no current selection is present', () => {
+    expect(getArrowSelectionIndex({
+      key: 'ArrowDown',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: -1,
+      itemCount: 10,
+    })).toBe(0);
+    expect(getArrowSelectionIndex({
+      key: 'ArrowUp',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: -1,
+      itemCount: 10,
+    })).toBe(9);
+  });
+
+  it('clamps at collection edges', () => {
+    expect(getArrowSelectionIndex({
+      key: 'ArrowLeft',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 0,
+      itemCount: 10,
+    })).toBe(0);
+    expect(getArrowSelectionIndex({
+      key: 'ArrowDown',
+      viewMode: 'grid',
+      gridColumns: 4,
+      currentIndex: 8,
+      itemCount: 10,
+    })).toBe(9);
   });
 });
