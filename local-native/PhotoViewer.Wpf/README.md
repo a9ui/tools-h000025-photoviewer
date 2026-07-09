@@ -21,6 +21,7 @@ browse and practical viewer slice:
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
 - `--shot --perf-log <path>` load timing capture for WPF performance evidence
+- `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -63,6 +64,13 @@ browser or WinForms state:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --state-smoke "$env:TEMP\photoviewer-wpf-state-smoke.json" --state-path "$env:TEMP\photoviewer-wpf-state.json" --folder .\local-native\ui-mockup --query wpf --select-name wpf-settings.png
 ```
 
+Modal navigation smoke uses the same bounded WPF state path and verifies that
+modal next/previous navigation keeps selection and `SelectedPath` in sync:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --modal-nav-smoke "$env:TEMP\photoviewer-wpf-modal-nav-smoke.json" --state-path "$env:TEMP\photoviewer-wpf-modal-nav-state.json" --folder .\local-native\ui-mockup --query wpf --select-index 1
+```
+
 ## WPF M2 First Performance Slice
 
 The first #177 slice keeps the WPF surface isolated and adds measured load
@@ -99,6 +107,16 @@ visible result.
 The dedicated state smoke uses `--state-path` to keep verification inside a
 bounded local WPF state file. It proved `wpf-settings.png` restored with the
 search query `wpf` on the second window instance.
+
+## WPF M5 Modal Navigation Polish Slice
+
+The #190 slice wires the modal Previous / Next buttons and Left / Right keys
+to the current filtered tile list. Navigation updates the selected tile, right
+preview, modal image, and persisted `SelectedPath` together.
+
+The dedicated modal navigation smoke starts from a filtered real-image fixture,
+moves to the next image, returns to the previous image, and verifies that the
+bounded WPF state file records the final selected image.
 
 ## Files
 

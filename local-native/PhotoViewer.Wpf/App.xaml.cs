@@ -19,6 +19,13 @@ public partial class App : Application
             return;
         }
 
+        int modalNavSmokeIdx = Array.IndexOf(e.Args, "--modal-nav-smoke");
+        if (modalNavSmokeIdx >= 0 && modalNavSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureModalNavigationSmoke(e.Args[modalNavSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -85,6 +92,93 @@ public partial class App : Application
 
             win.Close();
             Shutdown();
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureModalNavigationSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? statePath = ArgValue(args, "--state-path");
+        string selectName = ArgValue(args, "--select-name") ?? "";
+        string query = ArgValue(args, "--query") ?? "";
+        int selectIndex = ArgInt(args, "--select-index", 1);
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(statePath))
+        {
+            WriteModalNavigationSmokeResult(
+                resultPath,
+                new ModalNavigationSmokeResult(false, "missing required --folder or --state-path", statePath, folder, query, selectName, selectIndex, false, null, null, false, null, null, false, null, null, false, null, null));
+            Shutdown(1);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ModalNavigationSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                if (!string.IsNullOrWhiteSpace(query))
+                    win.SetSearchQuery(query);
+
+                bool selected = !string.IsNullOrWhiteSpace(selectName)
+                    ? win.SelectFileNameForSmoke(selectName)
+                    : win.SelectIndexForSmoke(selectIndex);
+                win.ShowModalForShot();
+                string? startName = win.SelectedFileNameForSmoke;
+                string? startPath = win.SelectedPathForSmoke;
+                bool movedNext = win.NavigateModalForSmoke(1);
+                string? nextName = win.SelectedFileNameForSmoke;
+                string? nextPath = win.SelectedPathForSmoke;
+                bool movedPrevious = win.NavigateModalForSmoke(-1);
+                string? previousName = win.SelectedFileNameForSmoke;
+                string? previousPath = win.SelectedPathForSmoke;
+                var persisted = ReadPersistedState(statePath);
+                string? persistedName = persisted?.SelectedPath is null ? null : Path.GetFileName(persisted.SelectedPath);
+
+                bool ok = selected
+                    && win.ModalVisibleForSmoke
+                    && movedNext
+                    && movedPrevious
+                    && !string.IsNullOrWhiteSpace(startPath)
+                    && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(startPath, previousPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(previousPath, persisted?.SelectedPath, StringComparison.OrdinalIgnoreCase);
+
+                result = new ModalNavigationSmokeResult(
+                    ok,
+                    ok ? "modal navigation moved next, returned previous, and persisted selected path" : "modal navigation did not keep selection/state in sync",
+                    statePath,
+                    folder,
+                    query,
+                    selectName,
+                    selectIndex,
+                    selected,
+                    startName,
+                    startPath,
+                    movedNext,
+                    nextName,
+                    nextPath,
+                    movedPrevious,
+                    previousName,
+                    previousPath,
+                    win.ModalVisibleForSmoke,
+                    persistedName,
+                    persisted?.SelectedPath);
+            }
+            catch (Exception ex)
+            {
+                result = new ModalNavigationSmokeResult(false, ex.Message, statePath, folder, query, selectName, selectIndex, false, null, null, false, null, null, false, null, null, false, null, null);
+            }
+
+            win.Close();
+            WriteModalNavigationSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -174,7 +268,34 @@ public partial class App : Application
         return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
     }
 
+    private static int ArgInt(string[] args, string name, int fallback)
+    {
+        var value = ArgValue(args, name);
+        return int.TryParse(value, out int parsed) ? parsed : fallback;
+    }
+
+    private static ViewerState? ReadPersistedState(string path)
+    {
+        try
+        {
+            return File.Exists(path)
+                ? System.Text.Json.JsonSerializer.Deserialize<ViewerState>(File.ReadAllText(path))
+                : null;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static void WriteStateSmokeResult(string path, StateSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteModalNavigationSmokeResult(string path, ModalNavigationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -192,4 +313,25 @@ public partial class App : Application
         string? RestoredPath,
         string Query,
         string? RestoredQuery);
+
+    private sealed record ModalNavigationSmokeResult(
+        bool Ok,
+        string Message,
+        string? StatePath,
+        string? Folder,
+        string Query,
+        string SelectName,
+        int SelectIndex,
+        bool Selected,
+        string? StartName,
+        string? StartPath,
+        bool MovedNext,
+        string? NextName,
+        string? NextPath,
+        bool MovedPrevious,
+        string? PreviousName,
+        string? PreviousPath,
+        bool ModalVisible,
+        string? PersistedName,
+        string? PersistedPath);
 }
