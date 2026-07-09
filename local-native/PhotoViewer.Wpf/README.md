@@ -25,6 +25,7 @@ browse and practical viewer slice:
 - `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
 - `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
+- `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -93,6 +94,13 @@ verification does not modify real user favorites:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-smoke "$env:TEMP\photoviewer-wpf-favorite-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorites.json"
+```
+
+Favorite level smoke uses the same bounded favorites JSON override and verifies
+level up/down, clear, final persistence, reload, and favorites-only filtering:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-level-smoke "$env:TEMP\photoviewer-wpf-favorite-level-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorite-levels.json"
 ```
 
 ## WPF M2 First Performance Slice
@@ -193,6 +201,15 @@ The dedicated favorite smoke toggles the selected real image from level `0` to
 `5`, enables the existing `Favorites only` filter, verifies exactly one visible
 favorite, reloads a second WPF window from the same favorites JSON, and verifies
 the selected image still has level `5` under the favorites-only filter.
+
+## WPF M9 Favorite Level Polish Slice
+
+The #203 slice keeps the #199 favorite storage path unchanged and adds explicit
+headless evidence for level adjustment. The WPF preview stepper already mutates
+the selected real image in the accepted `0..5` model; `--favorite-level-smoke`
+now proves that path by moving `0 -> 1 -> 2 -> 1 -> 0 -> 4`, verifying the clear
+removes the store entry, enabling `Favorites only`, and reloading a second WPF
+window from the same temporary favorites JSON with level `4` preserved.
 
 ## Files
 

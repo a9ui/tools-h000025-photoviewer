@@ -1472,6 +1472,12 @@ public partial class MainWindow : Window
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
+    public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
+
+    public bool SetSelectedFavoriteLevelForSmoke(int level)
+    {
+        return SelectedTile() is { IsRealFile: true } tile && SetFavoriteLevel(tile, level);
+    }
 
     public void SetFavoriteOnlyFilterForSmoke(bool enabled)
     {

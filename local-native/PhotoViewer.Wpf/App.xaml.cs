@@ -47,6 +47,13 @@ public partial class App : Application
             return;
         }
 
+        int favoriteLevelSmokeIdx = Array.IndexOf(e.Args, "--favorite-level-smoke");
+        if (favoriteLevelSmokeIdx >= 0 && favoriteLevelSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFavoriteLevelSmoke(e.Args[favoriteLevelSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -204,6 +211,189 @@ public partial class App : Application
             }
 
             WriteFavoriteSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureFavoriteLevelSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? favoritesPath = ArgValue(args, "--favorites-path");
+        int selectIndex = ArgInt(args, "--select-index", 0);
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(favoritesPath))
+        {
+            WriteFavoriteLevelSmokeResult(
+                resultPath,
+                new FavoriteLevelSmokeResult(
+                    false,
+                    "missing required --folder or --favorites-path",
+                    folder,
+                    favoritesPath,
+                    selectIndex,
+                    false,
+                    null,
+                    null,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0));
+            Shutdown(1);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+        first.SuppressStatePersistence();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            FavoriteLevelSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                bool selected = first.SelectIndexForSmoke(selectIndex);
+                string? selectedName = first.SelectedFileNameForSmoke;
+                string? selectedPath = first.SelectedPathForSmoke;
+                int beforeLevel = first.SelectedFavoriteLevelForSmoke;
+
+                bool increasedOnce = first.AdjustSelectedFavoriteForSmoke(1);
+                int afterIncreaseOnce = first.SelectedFavoriteLevelForSmoke;
+                bool increasedTwice = first.AdjustSelectedFavoriteForSmoke(1);
+                int afterIncreaseTwice = first.SelectedFavoriteLevelForSmoke;
+                bool decreasedOnce = first.AdjustSelectedFavoriteForSmoke(-1);
+                int afterDecreaseOnce = first.SelectedFavoriteLevelForSmoke;
+                bool cleared = first.SetSelectedFavoriteLevelForSmoke(0);
+                int afterClear = first.SelectedFavoriteLevelForSmoke;
+                int storeCountAfterClear = first.FavoriteStoreCountForSmoke;
+
+                bool adjustedToFinalLevel = true;
+                int increaseStepsAfterClear = 0;
+                for (int i = 0; i < 4; i++)
+                {
+                    adjustedToFinalLevel &= first.AdjustSelectedFavoriteForSmoke(1);
+                    increaseStepsAfterClear++;
+                }
+
+                int finalLevel = first.SelectedFavoriteLevelForSmoke;
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                int filteredAfterFinal = first.FilteredCountForSmoke;
+                int storeCountAfterFinal = first.FavoriteStoreCountForSmoke;
+                first.Close();
+
+                int persistedLevel = selectedPath is null ? 0 : ReadFavoriteLevel(favoritesPath, selectedPath);
+
+                var second = HiddenWindow();
+                second.Show();
+                second.SuppressStatePersistence();
+                await second.LoadFolderAsync(folder);
+                bool reloadSelected = !string.IsNullOrWhiteSpace(selectedName) && second.SelectFileNameForSmoke(selectedName);
+                int reloadedLevel = second.SelectedFavoriteLevelForSmoke;
+                second.SetFavoriteOnlyFilterForSmoke(true);
+                int reloadedFilteredCount = second.FilteredCountForSmoke;
+                second.Close();
+
+                bool ok = selected
+                    && beforeLevel == 0
+                    && increasedOnce
+                    && afterIncreaseOnce == 1
+                    && increasedTwice
+                    && afterIncreaseTwice == 2
+                    && decreasedOnce
+                    && afterDecreaseOnce == 1
+                    && cleared
+                    && afterClear == 0
+                    && storeCountAfterClear == 0
+                    && adjustedToFinalLevel
+                    && increaseStepsAfterClear == 4
+                    && finalLevel == 4
+                    && filteredAfterFinal == 1
+                    && storeCountAfterFinal == 1
+                    && persistedLevel == 4
+                    && reloadSelected
+                    && reloadedLevel == 4
+                    && reloadedFilteredCount == 1;
+
+                result = new FavoriteLevelSmokeResult(
+                    ok,
+                    ok ? "favorite level adjustment, clear, filter, and reload persistence passed" : "favorite level adjustment did not match expected 0..5 behavior",
+                    folder,
+                    favoritesPath,
+                    selectIndex,
+                    selected,
+                    selectedName,
+                    selectedPath,
+                    beforeLevel,
+                    increasedOnce,
+                    afterIncreaseOnce,
+                    increasedTwice,
+                    afterIncreaseTwice,
+                    decreasedOnce,
+                    afterDecreaseOnce,
+                    cleared,
+                    afterClear,
+                    storeCountAfterClear,
+                    adjustedToFinalLevel,
+                    increaseStepsAfterClear,
+                    finalLevel,
+                    filteredAfterFinal,
+                    storeCountAfterFinal,
+                    persistedLevel,
+                    reloadSelected,
+                    reloadedLevel,
+                    reloadedFilteredCount);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new FavoriteLevelSmokeResult(
+                    false,
+                    ex.Message,
+                    folder,
+                    favoritesPath,
+                    selectIndex,
+                    false,
+                    null,
+                    null,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    false,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0);
+            }
+
+            WriteFavoriteLevelSmokeResult(resultPath, result);
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
@@ -633,6 +823,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteFavoriteLevelSmokeResult(string path, FavoriteLevelSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteScrollRealizationSmokeResult(string path, ScrollRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -687,6 +884,35 @@ public partial class App : Application
         int AfterLevel,
         int FilteredAfterToggle,
         int StoreCountAfterToggle,
+        int PersistedLevel,
+        bool ReloadSelected,
+        int ReloadedLevel,
+        int ReloadedFilteredCount);
+
+    private sealed record FavoriteLevelSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? FavoritesPath,
+        int SelectIndex,
+        bool Selected,
+        string? SelectedName,
+        string? SelectedPath,
+        int BeforeLevel,
+        bool IncreasedOnce,
+        int AfterIncreaseOnce,
+        bool IncreasedTwice,
+        int AfterIncreaseTwice,
+        bool DecreasedOnce,
+        int AfterDecreaseOnce,
+        bool Cleared,
+        int AfterClear,
+        int StoreCountAfterClear,
+        bool AdjustedToFinalLevel,
+        int IncreaseStepsAfterClear,
+        int FinalLevel,
+        int FilteredAfterFinal,
+        int StoreCountAfterFinal,
         int PersistedLevel,
         bool ReloadSelected,
         int ReloadedLevel,
