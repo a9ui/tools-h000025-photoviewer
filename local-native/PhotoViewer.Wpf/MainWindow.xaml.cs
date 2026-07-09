@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private const string DatePreset7DaysValue = "7d";
     private const string DatePreset30DaysValue = "30d";
     private const string DatePresetThisYearValue = "this-year";
+    private const string DatePresetManualValue = "manual";
     private const int MinFavoriteFilterLevel = 1;
     private const int MaxFavoriteFilterLevel = 5;
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
@@ -80,6 +81,7 @@ public partial class MainWindow : Window
     private bool _seenWriteBlocked;
     private bool _syncingSelection;
     private bool _syncingFavoriteFilterControls;
+    private bool _syncingDateControls;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
@@ -2462,8 +2464,7 @@ public partial class MainWindow : Window
 
     private bool MatchesDateFilter(Tile tile)
     {
-        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal)
-            || (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
+        if ((!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
             || !tile.IsRealFile)
         {
             return true;
@@ -2765,6 +2766,7 @@ public partial class MainWindow : Window
             DatePreset7DaysValue or "last7" or "last-7" => DatePreset7DaysValue,
             DatePreset30DaysValue or "last30" or "last-30" => DatePreset30DaysValue,
             DatePresetThisYearValue or "year" => DatePresetThisYearValue,
+            DatePresetManualValue or "range" => DatePresetManualValue,
             "clear" or "" or null => DatePresetNoneValue,
             _ => DatePresetNoneValue,
         };
@@ -2802,17 +2804,23 @@ public partial class MainWindow : Window
             DatePreset7DaysValue => "7d",
             DatePreset30DaysValue => "30d",
             DatePresetThisYearValue => "This year",
+            DatePresetManualValue => "Manual",
             _ => "Clear",
         };
     }
 
     private bool SetDatePreset(string preset)
     {
+        string previousPreset = _datePreset;
         string normalized = NormalizeDatePreset(preset);
-        bool changed = !string.Equals(_datePreset, normalized, StringComparison.Ordinal);
+        DateTime? previousFrom = _dateFromLocal;
+        DateTime? previousTo = _dateToLocal;
         _datePreset = normalized;
         (_dateFromLocal, _dateToLocal) = DateRangeForPreset(normalized);
-        SyncDatePresetButtons();
+        bool changed = !string.Equals(previousPreset, normalized, StringComparison.Ordinal)
+            || !SameDate(previousFrom, _dateFromLocal)
+            || !SameDate(previousTo, _dateToLocal);
+        SyncDateControls();
         UpdateDateFilterSummary();
 
         if (changed && !_initializing)
@@ -2824,10 +2832,47 @@ public partial class MainWindow : Window
         return changed;
     }
 
+    private bool SetManualDateRange(DateTime? from, DateTime? to)
+    {
+        DateTime? normalizedFrom = from?.Date;
+        DateTime? normalizedTo = to?.Date;
+        string normalizedPreset = normalizedFrom.HasValue || normalizedTo.HasValue
+            ? DatePresetManualValue
+            : DatePresetNoneValue;
+
+        bool changed = !string.Equals(_datePreset, normalizedPreset, StringComparison.Ordinal)
+            || !SameDate(_dateFromLocal, normalizedFrom)
+            || !SameDate(_dateToLocal, normalizedTo);
+
+        _datePreset = normalizedPreset;
+        _dateFromLocal = normalizedFrom;
+        _dateToLocal = normalizedTo;
+        SyncDateControls();
+        UpdateDateFilterSummary();
+
+        if (changed && !_initializing)
+        {
+            ApplyFilters();
+            SaveState();
+        }
+
+        return changed;
+    }
+
+    private static bool SameDate(DateTime? left, DateTime? right)
+        => left?.Date == right?.Date;
+
     private void RestoreDateFilter(ViewerState state)
     {
         _datePreset = NormalizeDatePreset(state.DatePreset);
-        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal))
+        if (string.Equals(_datePreset, DatePresetManualValue, StringComparison.Ordinal))
+        {
+            _dateFromLocal = ParseStateDate(state.DateFrom);
+            _dateToLocal = ParseStateDate(state.DateTo);
+            if (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
+                _datePreset = DatePresetNoneValue;
+        }
+        else if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal))
         {
             _dateFromLocal = null;
             _dateToLocal = null;
@@ -2840,26 +2885,38 @@ public partial class MainWindow : Window
                 (_dateFromLocal, _dateToLocal) = DateRangeForPreset(_datePreset);
         }
 
-        SyncDatePresetButtons();
+        SyncDateControls();
         UpdateDateFilterSummary();
     }
 
-    private void SyncDatePresetButtons()
+    private void SyncDateControls()
     {
         if (DatePresetTodayButton is null
             || DatePreset7DaysButton is null
             || DatePreset30DaysButton is null
             || DatePresetThisYearButton is null
-            || DatePresetClearButton is null)
+            || DatePresetClearButton is null
+            || DateFromInput is null
+            || DateToInput is null)
         {
             return;
         }
 
-        DatePresetTodayButton.IsChecked = _datePreset == DatePresetTodayValue;
-        DatePreset7DaysButton.IsChecked = _datePreset == DatePreset7DaysValue;
-        DatePreset30DaysButton.IsChecked = _datePreset == DatePreset30DaysValue;
-        DatePresetThisYearButton.IsChecked = _datePreset == DatePresetThisYearValue;
-        DatePresetClearButton.IsChecked = _datePreset == DatePresetNoneValue;
+        _syncingDateControls = true;
+        try
+        {
+            DatePresetTodayButton.IsChecked = _datePreset == DatePresetTodayValue;
+            DatePreset7DaysButton.IsChecked = _datePreset == DatePreset7DaysValue;
+            DatePreset30DaysButton.IsChecked = _datePreset == DatePreset30DaysValue;
+            DatePresetThisYearButton.IsChecked = _datePreset == DatePresetThisYearValue;
+            DatePresetClearButton.IsChecked = _datePreset == DatePresetNoneValue;
+            DateFromInput.SelectedDate = _dateFromLocal;
+            DateToInput.SelectedDate = _dateToLocal;
+        }
+        finally
+        {
+            _syncingDateControls = false;
+        }
     }
 
     private void UpdateDateFilterSummary()
@@ -2867,8 +2924,7 @@ public partial class MainWindow : Window
         if (DateFilterSummary is null)
             return;
 
-        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal)
-            || (!_dateFromLocal.HasValue && !_dateToLocal.HasValue))
+        if (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
         {
             DateFilterSummary.Text = "No date filter";
             return;
@@ -2957,32 +3013,40 @@ public partial class MainWindow : Window
 
     private void DatePresetToday_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_initializing)
+        if (!_initializing && !_syncingDateControls)
             SetDatePreset(DatePresetTodayValue);
     }
 
     private void DatePreset7Days_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_initializing)
+        if (!_initializing && !_syncingDateControls)
             SetDatePreset(DatePreset7DaysValue);
     }
 
     private void DatePreset30Days_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_initializing)
+        if (!_initializing && !_syncingDateControls)
             SetDatePreset(DatePreset30DaysValue);
     }
 
     private void DatePresetThisYear_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_initializing)
+        if (!_initializing && !_syncingDateControls)
             SetDatePreset(DatePresetThisYearValue);
     }
 
     private void DatePresetClear_Checked(object sender, RoutedEventArgs e)
     {
-        if (!_initializing)
+        if (!_initializing && !_syncingDateControls)
             SetDatePreset(DatePresetNoneValue);
+    }
+
+    private void ManualDateRange_Changed(object sender, SelectionChangedEventArgs e)
+    {
+        if (_initializing || _syncingDateControls)
+            return;
+
+        SetManualDateRange(DateFromInput.SelectedDate, DateToInput.SelectedDate);
     }
 
     private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
@@ -3686,6 +3750,7 @@ public partial class MainWindow : Window
     public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
     public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
+    public bool SetManualDateRangeForSmoke(string? from, string? to) => SetManualDateRange(ParseStateDate(from), ParseStateDate(to));
     public bool SetFavoriteFilterLevelForSmoke(int level) => SetFavoriteFilterLevel(level);
     public bool SetFolderBucketHiddenForSmoke(string key, bool hidden) => SetFolderBucketHidden(key, hidden);
     public void ShowAllFolderBucketsForSmoke()

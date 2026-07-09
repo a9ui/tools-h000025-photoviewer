@@ -2465,9 +2465,29 @@ public partial class App : Application
                 bool yearChanged = first.SetDatePresetForSmoke("year");
                 List<string> yearOrder = first.FilteredFileNamesForSmoke(10);
 
+                bool selectedManualExcluded = first.SelectFileNameForSmoke(fixture.TodayName);
+                bool manualRangeChanged = first.SetManualDateRangeForSmoke(fixture.ManualFromText, fixture.ManualToText);
+                List<string> manualRangeOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterManualRange = first.SelectedFileNameForSmoke;
+
+                bool manualFromOnlyChanged = first.SetManualDateRangeForSmoke(fixture.ManualFromText, null);
+                List<string> manualFromOnlyOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterManualFromOnly = first.SelectedFileNameForSmoke;
+
+                bool manualToOnlyChanged = first.SetManualDateRangeForSmoke(null, fixture.ManualToText);
+                List<string> manualToOnlyOrder = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterManualToOnly = first.SelectedFileNameForSmoke;
+
+                bool manualClearChanged = first.SetDatePresetForSmoke("clear");
+                List<string> manualClearOrder = first.FilteredFileNamesForSmoke(10);
+
                 bool persistTargetChanged = first.SetDatePresetForSmoke("30d");
-                bool selectedPersisted = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
-                ViewerState? persisted = ReadPersistedState(statePath);
+                bool selectedPresetPersisted = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
+                ViewerState? persistedPreset = ReadPersistedState(statePath);
+
+                bool manualPersistChanged = first.SetManualDateRangeForSmoke(fixture.ManualFromText, fixture.ManualToText);
+                bool selectedManualPersisted = first.SelectFileNameForSmoke(fixture.SevenDayName);
+                ViewerState? persistedManual = ReadPersistedState(statePath);
                 first.Close();
 
                 var second = HiddenWindow();
@@ -2479,9 +2499,12 @@ public partial class App : Application
                 List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
                 string? restoredSelected = second.SelectedFileNameForSmoke;
                 second.Close();
-                string? persistedDatePreset = persisted?.DatePreset;
-                string? persistedDateFrom = persisted?.DateFrom;
-                string? persistedDateTo = persisted?.DateTo;
+                string? persistedPresetDatePreset = persistedPreset?.DatePreset;
+                string? persistedPresetDateFrom = persistedPreset?.DateFrom;
+                string? persistedPresetDateTo = persistedPreset?.DateTo;
+                string? persistedManualDatePreset = persistedManual?.DatePreset;
+                string? persistedManualDateFrom = persistedManual?.DateFrom;
+                string? persistedManualDateTo = persistedManual?.DateTo;
 
                 bool allOk = allCount == fixture.AllExpected.Count && SameNameOrder(allOrder, fixture.AllExpected);
                 bool todayOk = todayChanged
@@ -2498,15 +2521,31 @@ public partial class App : Application
                 bool yearOk = yearChanged
                     && SameNameOrder(yearOrder, fixture.ThisYearExpected)
                     && !yearOrder.Contains(fixture.PreviousYearName, StringComparer.OrdinalIgnoreCase);
-                bool persistenceOk = selectedPersisted
-                    && string.Equals(persistedDatePreset, "30d", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(persistedDateFrom)
-                    && !string.IsNullOrWhiteSpace(persistedDateTo)
-                    && string.Equals(restoredPreset, "30d", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredFrom, persistedDateFrom, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredTo, persistedDateTo, StringComparison.OrdinalIgnoreCase)
-                    && SameNameOrder(restoredOrder, fixture.ThirtyDayExpected)
-                    && string.Equals(restoredSelected, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
+                bool manualRangeOk = selectedManualExcluded
+                    && manualRangeChanged
+                    && SameNameOrder(manualRangeOrder, fixture.ManualRangeExpected)
+                    && string.Equals(selectedAfterManualRange, fixture.ManualRangeExpected.FirstOrDefault(), StringComparison.OrdinalIgnoreCase);
+                bool manualFromOnlyOk = manualFromOnlyChanged
+                    && SameNameOrder(manualFromOnlyOrder, fixture.ManualFromOnlyExpected)
+                    && string.Equals(selectedAfterManualFromOnly, selectedAfterManualRange, StringComparison.OrdinalIgnoreCase);
+                bool manualToOnlyOk = manualToOnlyChanged
+                    && SameNameOrder(manualToOnlyOrder, fixture.ManualToOnlyExpected)
+                    && string.Equals(selectedAfterManualToOnly, selectedAfterManualRange, StringComparison.OrdinalIgnoreCase);
+                bool manualClearOk = manualClearChanged && SameNameOrder(manualClearOrder, fixture.AllExpected);
+                bool presetPersistenceOk = selectedPresetPersisted
+                    && string.Equals(persistedPresetDatePreset, "30d", StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(persistedPresetDateFrom)
+                    && !string.IsNullOrWhiteSpace(persistedPresetDateTo);
+                bool manualPersistenceOk = manualPersistChanged
+                    && selectedManualPersisted
+                    && string.Equals(persistedManualDatePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(persistedManualDateFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(persistedManualDateTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredPreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
+                    && SameNameOrder(restoredOrder, fixture.ManualRangeExpected)
+                    && string.Equals(restoredSelected, fixture.SevenDayName, StringComparison.OrdinalIgnoreCase);
 
                 bool ok = allOk
                     && selectedThirtyTarget
@@ -2515,15 +2554,20 @@ public partial class App : Application
                     && thirtyOk
                     && sevenOk
                     && yearOk
+                    && manualRangeOk
+                    && manualFromOnlyOk
+                    && manualToOnlyOk
+                    && manualClearOk
                     && persistTargetChanged
-                    && persistenceOk;
+                    && presetPersistenceOk
+                    && manualPersistenceOk;
 
                 result = new DateFilterSmokeResult
                 {
                     Ok = ok,
                     Message = ok
-                        ? "date preset filtering, clear action, selection fallback/preservation, and persistence checks passed"
-                        : "date preset smoke did not meet filter/selection/persistence expectations",
+                        ? "date preset and manual range filtering, clear action, selection fallback/preservation, and persistence checks passed"
+                        : "date filter smoke did not meet preset/manual filter/selection/persistence expectations",
                     Folder = fixture.Folder,
                     ProjectRoot = smokeRoot,
                     StatePath = statePath,
@@ -2537,19 +2581,34 @@ public partial class App : Application
                     SevenDayExpected = fixture.SevenDayExpected,
                     ThirtyDayExpected = fixture.ThirtyDayExpected,
                     ThisYearExpected = fixture.ThisYearExpected,
+                    ManualFrom = fixture.ManualFromText,
+                    ManualTo = fixture.ManualToText,
+                    ManualRangeExpected = fixture.ManualRangeExpected,
+                    ManualFromOnlyExpected = fixture.ManualFromOnlyExpected,
+                    ManualToOnlyExpected = fixture.ManualToOnlyExpected,
                     AllOrder = allOrder,
                     TodayOrder = todayOrder,
                     SevenDayOrder = sevenOrder,
                     ThirtyDayOrder = thirtyOrder,
                     ThisYearOrder = yearOrder,
                     ClearOrder = clearOrder,
+                    ManualRangeOrder = manualRangeOrder,
+                    ManualFromOnlyOrder = manualFromOnlyOrder,
+                    ManualToOnlyOrder = manualToOnlyOrder,
+                    ManualClearOrder = manualClearOrder,
                     SelectedThirtyTarget = selectedThirtyTarget,
                     SelectedAfterToday = selectedAfterToday,
                     SelectedAfterThirty = selectedAfterThirty,
                     SelectedAfterSeven = selectedAfterSeven,
-                    PersistedDatePreset = persistedDatePreset,
-                    PersistedDateFrom = persistedDateFrom,
-                    PersistedDateTo = persistedDateTo,
+                    SelectedAfterManualRange = selectedAfterManualRange,
+                    SelectedAfterManualFromOnly = selectedAfterManualFromOnly,
+                    SelectedAfterManualToOnly = selectedAfterManualToOnly,
+                    PersistedPresetDatePreset = persistedPresetDatePreset,
+                    PersistedPresetDateFrom = persistedPresetDateFrom,
+                    PersistedPresetDateTo = persistedPresetDateTo,
+                    PersistedManualDatePreset = persistedManualDatePreset,
+                    PersistedManualDateFrom = persistedManualDateFrom,
+                    PersistedManualDateTo = persistedManualDateTo,
                     RestoredDatePreset = restoredPreset,
                     RestoredDateFrom = restoredFrom,
                     RestoredDateTo = restoredTo,
@@ -3909,6 +3968,8 @@ public partial class App : Application
         DateTime sevenFrom = today.AddDays(-6);
         DateTime thirtyFrom = today.AddDays(-29);
         DateTime yearFrom = new(today.Year, 1, 1);
+        DateTime manualFrom = today.AddDays(-20);
+        DateTime manualTo = today.AddDays(-6);
 
         return new DateFilterSmokeFixture
         {
@@ -3923,6 +3984,11 @@ public partial class App : Application
             SevenDayExpected = ExpectedDateFilterNames(inputs, sevenFrom, today),
             ThirtyDayExpected = ExpectedDateFilterNames(inputs, thirtyFrom, today),
             ThisYearExpected = ExpectedDateFilterNames(inputs, yearFrom, today),
+            ManualFrom = manualFrom,
+            ManualTo = manualTo,
+            ManualRangeExpected = ExpectedDateFilterNames(inputs, manualFrom, manualTo),
+            ManualFromOnlyExpected = ExpectedDateFilterNames(inputs, manualFrom, null),
+            ManualToOnlyExpected = ExpectedDateFilterNames(inputs, null, manualTo),
         };
     }
 
@@ -4785,6 +4851,13 @@ public partial class App : Application
         public List<string> SevenDayExpected { get; init; } = [];
         public List<string> ThirtyDayExpected { get; init; } = [];
         public List<string> ThisYearExpected { get; init; } = [];
+        public DateTime ManualFrom { get; init; }
+        public DateTime ManualTo { get; init; }
+        public string ManualFromText => ManualFrom.ToString("yyyy-MM-dd");
+        public string ManualToText => ManualTo.ToString("yyyy-MM-dd");
+        public List<string> ManualRangeExpected { get; init; } = [];
+        public List<string> ManualFromOnlyExpected { get; init; } = [];
+        public List<string> ManualToOnlyExpected { get; init; } = [];
     }
 
     private sealed class FavoriteFilterSmokeFixture
@@ -4818,19 +4891,34 @@ public partial class App : Application
         public List<string> SevenDayExpected { get; init; } = [];
         public List<string> ThirtyDayExpected { get; init; } = [];
         public List<string> ThisYearExpected { get; init; } = [];
+        public string? ManualFrom { get; init; }
+        public string? ManualTo { get; init; }
+        public List<string> ManualRangeExpected { get; init; } = [];
+        public List<string> ManualFromOnlyExpected { get; init; } = [];
+        public List<string> ManualToOnlyExpected { get; init; } = [];
         public List<string> AllOrder { get; init; } = [];
         public List<string> TodayOrder { get; init; } = [];
         public List<string> SevenDayOrder { get; init; } = [];
         public List<string> ThirtyDayOrder { get; init; } = [];
         public List<string> ThisYearOrder { get; init; } = [];
         public List<string> ClearOrder { get; init; } = [];
+        public List<string> ManualRangeOrder { get; init; } = [];
+        public List<string> ManualFromOnlyOrder { get; init; } = [];
+        public List<string> ManualToOnlyOrder { get; init; } = [];
+        public List<string> ManualClearOrder { get; init; } = [];
         public bool SelectedThirtyTarget { get; init; }
         public string? SelectedAfterToday { get; init; }
         public string? SelectedAfterThirty { get; init; }
         public string? SelectedAfterSeven { get; init; }
-        public string? PersistedDatePreset { get; init; }
-        public string? PersistedDateFrom { get; init; }
-        public string? PersistedDateTo { get; init; }
+        public string? SelectedAfterManualRange { get; init; }
+        public string? SelectedAfterManualFromOnly { get; init; }
+        public string? SelectedAfterManualToOnly { get; init; }
+        public string? PersistedPresetDatePreset { get; init; }
+        public string? PersistedPresetDateFrom { get; init; }
+        public string? PersistedPresetDateTo { get; init; }
+        public string? PersistedManualDatePreset { get; init; }
+        public string? PersistedManualDateFrom { get; init; }
+        public string? PersistedManualDateTo { get; init; }
         public string? RestoredDatePreset { get; init; }
         public string? RestoredDateFrom { get; init; }
         public string? RestoredDateTo { get; init; }

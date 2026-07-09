@@ -37,7 +37,7 @@ browse and practical viewer slice:
 - `--folder-bucket-smoke <path>` folder bucket show/hide smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
-- `--date-filter-smoke <path>` browser-aligned date preset filter smoke
+- `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -572,9 +572,15 @@ uses the existing first-visible fallback. The active preset and concrete
 `yyyy-MM-dd` range persist through the existing WPF `state.json` path as
 `DatePreset`, `DateFrom`, and `DateTo`.
 
+The #258 follow-up adds browser-aligned manual Date from / Date to inputs. A
+manual range is stored as `DatePreset = manual` plus the same `DateFrom` and
+`DateTo` fields. Clear resets both manual inputs and preset state. From-only
+and to-only ranges are supported against the same modified timestamp data.
+
 Dedicated smoke coverage creates a temporary real-folder fixture with
-deterministic file modified dates and verifies preset counts/order, clear
-behavior, selection preservation/fallback, and reload persistence:
+deterministic file modified dates and verifies preset counts/order, manual
+bounded/from-only/to-only ranges, clear behavior, selection
+preservation/fallback, and reload persistence:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --date-filter-smoke $env:TEMP\wpf-date-filter-smoke.json
@@ -651,8 +657,8 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
   `pvu_view.aspectMode` browser-state import remain deferred until separately
   contracted.
 - Date filters support the browser preset controls Today, 7d, 30d, This year,
-  and Clear against modified timestamps. Manual date-from/date-to inputs,
-  date-range browser-state import, and created-date filtering remain deferred
+  Clear, and manual Date from / Date to inputs against modified timestamps.
+  Date-range browser-state import and created-date filtering remain deferred
   until separately contracted.
 - Folder bucket controls support per-folder visibility, Show all, Hide all, and
   Invert for the active loaded folder set. Browser-exact multi-select/range
