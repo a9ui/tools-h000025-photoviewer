@@ -31,8 +31,12 @@ public partial class MainWindow : Window
     private bool _fakeMaximized;
     private bool _initializing = true;
     private bool _suppressStateSave;
+    private bool _syncingSelection;
     private string? _currentFolder;
     private CancellationTokenSource? _loadCts;
+    private CancellationTokenSource? _modalCts;
+    private int _previewUpdateCount;
+    private long _previewMs;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -82,6 +86,8 @@ public partial class MainWindow : Window
     {
         var totalWatch = Stopwatch.StartNew();
         LastLoadMetrics = null;
+        _previewUpdateCount = 0;
+        _previewMs = 0;
         string resolvedFolder;
         try
         {
@@ -150,6 +156,8 @@ public partial class MainWindow : Window
                 thumbnailMs: 0,
                 thumbnailWorkers: 0,
                 thumbnailsCompleted: 0,
+                previewMs: _previewMs,
+                previewUpdates: _previewUpdateCount,
                 totalWatch.ElapsedMilliseconds);
             LandingPanel.IsEnabled = true;
             ScanBar.Value = 0;
@@ -172,6 +180,8 @@ public partial class MainWindow : Window
             thumbnails.ElapsedMs,
             thumbnails.Workers,
             thumbnails.Completed,
+            _previewMs,
+            _previewUpdateCount,
             totalWatch.ElapsedMilliseconds);
     }
 
@@ -516,12 +526,26 @@ public partial class MainWindow : Window
     // ─────────── Selection → right preview ───────────
     private void CardsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is not ListBox lb || lb.SelectedItem is not Tile t) return;
-        if (lb == CardsList && RowsList.SelectedItem != t)
-            RowsList.SelectedItem = t;
-        if (lb == RowsList && CardsList.SelectedItem != t)
-            CardsList.SelectedItem = t;
+        if (_syncingSelection || sender is not ListBox lb || lb.SelectedItem is not Tile t) return;
+        try
+        {
+            _syncingSelection = true;
+            if (lb == CardsList && RowsList.SelectedItem != t)
+                RowsList.SelectedItem = t;
+            if (lb == RowsList && CardsList.SelectedItem != t)
+                CardsList.SelectedItem = t;
+        }
+        finally
+        {
+            _syncingSelection = false;
+        }
 
+        UpdatePreview(t);
+    }
+
+    private void UpdatePreview(Tile t)
+    {
+        var watch = Stopwatch.StartNew();
         var preview = t.IsRealFile ? LoadBitmap(t.Path, 900) : null;
         PreviewBitmap.Source = preview;
         PreviewBitmap.Visibility = preview is null ? Visibility.Collapsed : Visibility.Visible;
@@ -542,6 +566,9 @@ public partial class MainWindow : Window
         PreviewPromptText.Text = string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt;
         UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
+        watch.Stop();
+        _previewUpdateCount++;
+        _previewMs += watch.ElapsedMilliseconds;
     }
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
@@ -792,17 +819,75 @@ public partial class MainWindow : Window
     private void OpenModal()
     {
         if (SelectedTile() is not Tile t) return;
-        var bitmap = t.IsRealFile ? LoadBitmap(t.Path, 1400) : null;
-        ModalBitmap.Source = bitmap;
-        ModalBitmap.Visibility = bitmap is null ? Visibility.Collapsed : Visibility.Visible;
-        ModalArtBase.Visibility = bitmap is null ? Visibility.Visible : Visibility.Collapsed;
-        ModalArtGlow.Visibility = bitmap is null ? Visibility.Visible : Visibility.Collapsed;
+        var watch = Stopwatch.StartNew();
+        _modalCts?.Cancel();
+        var cts = new CancellationTokenSource();
+        _modalCts = cts;
+
+        var immediate = PreviewBitmap.Source as BitmapSource ?? t.Thumbnail;
+        ModalBitmap.Source = immediate;
+        ModalBitmap.Visibility = immediate is null ? Visibility.Collapsed : Visibility.Visible;
+        ModalArtBase.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
+        ModalArtGlow.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
         ModalArtBase.Fill = t.ArtBase;
         ModalArtGlow.Fill = t.ArtGlow;
         Modal.Visibility = Visibility.Visible;
+        watch.Stop();
+
+        if (LastLoadMetrics is not null)
+        {
+            LastLoadMetrics.ModalOpenMs = watch.ElapsedMilliseconds;
+            LastLoadMetrics.ModalImmediateSource = immediate is not null;
+            LastLoadMetrics.ModalDeferredDecode = t.IsRealFile;
+        }
+
+        if (t.IsRealFile)
+            _ = LoadModalBitmapAsync(t.Path, cts.Token);
     }
 
-    private void CloseModal_Click(object sender, RoutedEventArgs e) => Modal.Visibility = Visibility.Collapsed;
+    private async Task LoadModalBitmapAsync(string path, CancellationToken token)
+    {
+        BitmapSource? bitmap;
+        try
+        {
+            bitmap = await Task.Run(() => LoadBitmap(path, 1400), token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+
+        if (token.IsCancellationRequested || bitmap is null)
+            return;
+
+        try
+        {
+            await Dispatcher.InvokeAsync(
+                () =>
+                {
+                    if (token.IsCancellationRequested || Modal.Visibility != Visibility.Visible)
+                        return;
+                    if (SelectedTile()?.Path != path)
+                        return;
+
+                    ModalBitmap.Source = bitmap;
+                    ModalBitmap.Visibility = Visibility.Visible;
+                    ModalArtBase.Visibility = Visibility.Collapsed;
+                    ModalArtGlow.Visibility = Visibility.Collapsed;
+                },
+                DispatcherPriority.Background,
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+    }
+
+    private void CloseModal_Click(object sender, RoutedEventArgs e)
+    {
+        _modalCts?.Cancel();
+        Modal.Visibility = Visibility.Collapsed;
+    }
 
     /// <summary>Used only by the --shot --modal smoke path to capture the modal state.</summary>
     public void ShowModalForShot()
@@ -958,10 +1043,15 @@ public sealed class LoadMetrics
     public long ThumbnailMs { get; set; }
     public int ThumbnailWorkers { get; set; }
     public int ThumbnailsCompleted { get; set; }
+    public long PreviewMs { get; set; }
+    public int PreviewUpdates { get; set; }
+    public long ModalOpenMs { get; set; }
+    public bool ModalImmediateSource { get; set; }
+    public bool ModalDeferredDecode { get; set; }
     public long TotalMs { get; set; }
     public string CompletedAtUtc { get; set; } = "";
 
-    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long totalMs)
+    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long previewMs, int previewUpdates, long totalMs)
         => new()
         {
             Folder = folder,
@@ -971,6 +1061,8 @@ public sealed class LoadMetrics
             ThumbnailMs = thumbnailMs,
             ThumbnailWorkers = thumbnailWorkers,
             ThumbnailsCompleted = thumbnailsCompleted,
+            PreviewMs = previewMs,
+            PreviewUpdates = previewUpdates,
             TotalMs = totalMs,
             CompletedAtUtc = DateTime.UtcNow.ToString("O"),
         };
