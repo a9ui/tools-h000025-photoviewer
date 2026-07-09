@@ -29,6 +29,12 @@ public partial class MainWindow : Window
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
+    private const int MaxRecentFolderSets = 8;
+    private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
+    {
+        WriteIndented = true,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+    };
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly List<Tile> _allTiles = new();
@@ -2074,14 +2080,18 @@ public partial class MainWindow : Window
     private void RestoreState()
     {
         var state = ReadState();
-        if (state is null) return;
+        string? lastFolder = state?.LastFolder;
+        if (string.IsNullOrWhiteSpace(lastFolder))
+            lastFolder = ReadSharedRecentFolders().Recent.LastFolderSet.FirstOrDefault();
 
-        if (!string.IsNullOrWhiteSpace(state.LastFolder))
+        if (!string.IsNullOrWhiteSpace(lastFolder))
         {
-            _currentFolder = state.LastFolder;
-            FolderPathText.Text = state.LastFolder;
-            FolderCountText.Text = Directory.Exists(state.LastFolder) ? "Last folder saved" : "Last folder unavailable";
+            _currentFolder = lastFolder;
+            FolderPathText.Text = lastFolder;
+            FolderCountText.Text = Directory.Exists(lastFolder) ? "Last folder saved" : "Last folder unavailable";
         }
+
+        if (state is null) return;
 
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
@@ -2123,10 +2133,172 @@ public partial class MainWindow : Window
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ResolvedStatePath, json);
+            if (!string.IsNullOrWhiteSpace(_currentFolder))
+                SaveSharedRecentFolder(_currentFolder);
         }
         catch
         {
             // State persistence should never block passive browsing.
+        }
+    }
+
+    private static string ResolvedSharedRecentPath => ProjectCachePath("recent-folders.json");
+
+    private static SharedRecentReadResult ReadSharedRecentFolders()
+    {
+        string path = ResolvedSharedRecentPath;
+        if (!File.Exists(path))
+            return new SharedRecentReadResult(true, NormalizeSharedRecentFolders(null), null);
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            return new SharedRecentReadResult(true, NormalizeSharedRecentFolders(document.RootElement), null);
+        }
+        catch (Exception ex)
+        {
+            return new SharedRecentReadResult(false, NormalizeSharedRecentFolders(null), ex.Message);
+        }
+    }
+
+    private static SharedRecentFoldersState NormalizeSharedRecentFolders(JsonElement? root)
+    {
+        List<string> lastFolderSet = [];
+        List<List<string>> recentFolderSets = [];
+        string updatedAtUtc = DateTime.UtcNow.ToString("O");
+
+        if (root.HasValue && root.Value.ValueKind == JsonValueKind.Object)
+        {
+            var element = root.Value;
+            if (element.TryGetProperty("lastFolderSet", out var lastFolderSetElement))
+                lastFolderSet = NormalizeFolderSet(lastFolderSetElement);
+            if (element.TryGetProperty("recentFolderSets", out var recentFolderSetsElement))
+                recentFolderSets = NormalizeRecentFolderSets(recentFolderSetsElement);
+            if (element.TryGetProperty("updatedAtUtc", out var updatedAtElement) &&
+                updatedAtElement.ValueKind == JsonValueKind.String &&
+                !string.IsNullOrWhiteSpace(updatedAtElement.GetString()))
+                updatedAtUtc = updatedAtElement.GetString()!;
+        }
+
+        return new SharedRecentFoldersState
+        {
+            LastFolderSet = lastFolderSet,
+            RecentFolderSets = recentFolderSets,
+            UpdatedAtUtc = updatedAtUtc,
+        };
+    }
+
+    private static List<string> NormalizeFolderSet(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.Array)
+            return NormalizeFolderSet(element.EnumerateArray()
+                .Where(static item => item.ValueKind == JsonValueKind.String)
+                .Select(static item => item.GetString() ?? ""));
+
+        if (element.ValueKind == JsonValueKind.String)
+            return NormalizeFolderSet(SplitFolderSet(element.GetString()));
+
+        return [];
+    }
+
+    private static List<string> NormalizeFolderSet(IEnumerable<string> paths)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<string>();
+        foreach (string raw in paths)
+        {
+            string? path = NormalizeRecentFolderPath(raw);
+            if (path is null || !seen.Add(path))
+                continue;
+            normalized.Add(path);
+        }
+
+        return normalized;
+    }
+
+    private static IEnumerable<string> SplitFolderSet(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? []
+            : value.Split(["\r\n", "\n"], StringSplitOptions.None).Select(static item => item.Trim());
+
+    private static List<List<string>> NormalizeRecentFolderSets(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Array)
+            return [];
+
+        return NormalizeRecentFolderSets(element.EnumerateArray().Select(NormalizeFolderSet));
+    }
+
+    private static List<List<string>> NormalizeRecentFolderSets(IEnumerable<IReadOnlyList<string>> folderSets)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<List<string>>();
+        foreach (var folderSet in folderSets)
+        {
+            var folders = NormalizeFolderSet(folderSet);
+            if (folders.Count == 0)
+                continue;
+
+            string key = FormatRecentFolderSet(folders);
+            if (!seen.Add(key))
+                continue;
+
+            normalized.Add(folders);
+            if (normalized.Count >= MaxRecentFolderSets)
+                break;
+        }
+
+        return normalized;
+    }
+
+    private static string FormatRecentFolderSet(IEnumerable<string> paths)
+        => string.Join("\n", NormalizeFolderSet(paths));
+
+    private static string? NormalizeRecentFolderPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+            return null;
+
+        try
+        {
+            return Path.GetFullPath(path.Trim());
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static bool SaveSharedRecentFolder(string folder)
+    {
+        var folderSet = NormalizeFolderSet([folder]);
+        if (folderSet.Count == 0)
+            return true;
+
+        var current = ReadSharedRecentFolders();
+        if (!current.Ok)
+            return false;
+
+        var recentFolderSets = NormalizeRecentFolderSets(
+            new[] { folderSet }.Concat(current.Recent.RecentFolderSets));
+        var next = new SharedRecentFoldersState
+        {
+            LastFolderSet = folderSet,
+            RecentFolderSets = recentFolderSets,
+            UpdatedAtUtc = DateTime.UtcNow.ToString("O"),
+        };
+
+        try
+        {
+            string path = ResolvedSharedRecentPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var json = JsonSerializer.Serialize(next, SharedRecentJsonOptions);
+            File.WriteAllText(path, json);
+            return true;
+        }
+        catch
+        {
+            return false;
         }
     }
 
@@ -2226,6 +2398,8 @@ public partial class MainWindow : Window
     public string StatePathForSmoke => ResolvedStatePath;
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
+    public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public string? CurrentFolderForSmoke => _currentFolder;
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
@@ -2315,6 +2489,19 @@ public sealed class ViewerState
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
 }
+
+public sealed class SharedRecentFoldersState
+{
+    public int Version { get; set; } = 1;
+    public List<string> LastFolderSet { get; set; } = [];
+    public List<List<string>> RecentFolderSets { get; set; } = [];
+    public string UpdatedAtUtc { get; set; } = "";
+}
+
+public sealed record SharedRecentReadResult(
+    bool Ok,
+    SharedRecentFoldersState Recent,
+    string? Error);
 
 public sealed record FavoriteImportSummary(
     bool Ok,

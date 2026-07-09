@@ -82,6 +82,13 @@ public partial class App : Application
             return;
         }
 
+        int sharedRecentSmokeIdx = Array.IndexOf(e.Args, "--shared-recent-smoke");
+        if (sharedRecentSmokeIdx >= 0 && sharedRecentSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSharedRecentSmoke(e.Args[sharedRecentSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1117,6 +1124,196 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSharedRecentSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteSharedRecentSmokeResult(
+                resultPath,
+                new SharedRecentSmokeResult
+                {
+                    Ok = false,
+                    Message = "missing required --folder",
+                    Folder = folder,
+                });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            SharedRecentSmokeResult result;
+            try
+            {
+                result = await RunSharedRecentSmokeAsync(first, fullFolder, smokeRoot);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new SharedRecentSmokeResult
+                {
+                    Ok = false,
+                    Message = ex.Message,
+                    Folder = folder,
+                    ProjectRoot = smokeRoot,
+                };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteSharedRecentSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static async Task<SharedRecentSmokeResult> RunSharedRecentSmokeAsync(
+        MainWindow first,
+        string fullFolder,
+        string smokeRoot)
+    {
+        string cacheRoot = Path.Combine(smokeRoot, ".cache");
+        string sharedRecentPath = Path.Combine(cacheRoot, "recent-folders.json");
+        string favoritesPath = Path.Combine(cacheRoot, "favorites.json");
+        string seenPath = Path.Combine(cacheRoot, "seen.json");
+        string statePath = Path.Combine(cacheRoot, "state.json");
+        string writeFolder = Path.Combine(smokeRoot, "write-folder");
+        string preservedFolder = Path.Combine(smokeRoot, "preserved-folder");
+        string malformedFolder = Path.Combine(smokeRoot, "malformed-folder");
+        Directory.CreateDirectory(writeFolder);
+        Directory.CreateDirectory(preservedFolder);
+        Directory.CreateDirectory(malformedFolder);
+
+        string favoriteSeedPath = Path.Combine(fullFolder, "shared-recent-favorite-seed.png");
+        string seenSeedPath = Path.Combine(fullFolder, "shared-recent-seen-seed.png");
+        WriteFavoriteSeed(favoritesPath, favoriteSeedPath, 4);
+        WriteSeenSeed(seenPath, seenSeedPath);
+        string favoritesBefore = File.ReadAllText(favoritesPath);
+        string seenBefore = File.ReadAllText(seenPath);
+        WriteSharedRecentSeed(sharedRecentPath, fullFolder, preservedFolder);
+
+        var importWindow = HiddenWindow();
+        importWindow.Show();
+        string? importedCurrentFolder = importWindow.CurrentFolderForSmoke;
+        string resolvedRecentPath = importWindow.SharedRecentPathForSmoke;
+        importWindow.Close();
+
+        await first.LoadFolderAsync(writeFolder);
+        string? writeCurrentFolder = first.CurrentFolderForSmoke;
+        first.Close();
+
+        SharedRecentSmokeSnapshot afterWrite = ReadSharedRecentSnapshot(sharedRecentPath);
+        ViewerState? stateAfterWrite = ReadPersistedState(statePath);
+        bool importedSharedLastFolder = string.Equals(
+            NormalizeFavoritePath(fullFolder),
+            NormalizeFavoritePath(importedCurrentFolder ?? ""),
+            StringComparison.OrdinalIgnoreCase);
+        bool wroteLastFolder = afterWrite.Ok
+            && afterWrite.LastFolderSet.Count == 1
+            && string.Equals(afterWrite.LastFolderSet[0], NormalizeFavoritePath(writeFolder), StringComparison.OrdinalIgnoreCase);
+        bool additivePreserved = afterWrite.Ok && afterWrite.ContainsFolderSet(preservedFolder);
+        bool writeFolderInRecent = afterWrite.Ok && afterWrite.ContainsFolderSet(writeFolder);
+        bool statePreserved = stateAfterWrite is not null
+            && string.Equals(
+                NormalizeFavoritePath(stateAfterWrite.LastFolder ?? ""),
+                NormalizeFavoritePath(writeFolder),
+                StringComparison.OrdinalIgnoreCase);
+        bool favoritesUnchangedAfterWrite = string.Equals(favoritesBefore, File.ReadAllText(favoritesPath), StringComparison.Ordinal);
+        bool seenUnchangedAfterWrite = string.Equals(seenBefore, File.ReadAllText(seenPath), StringComparison.Ordinal);
+
+        var reloadWindow = HiddenWindow();
+        reloadWindow.Show();
+        string? reloadedCurrentFolder = reloadWindow.CurrentFolderForSmoke;
+        reloadWindow.Close();
+        bool reloadedLocalStateWins = string.Equals(
+            NormalizeFavoritePath(reloadedCurrentFolder ?? ""),
+            NormalizeFavoritePath(writeFolder),
+            StringComparison.OrdinalIgnoreCase);
+
+        const string malformedJson = "[";
+        File.WriteAllText(sharedRecentPath, malformedJson);
+        var malformedWindow = HiddenWindow();
+        malformedWindow.Show();
+        await malformedWindow.LoadFolderAsync(malformedFolder);
+        malformedWindow.Close();
+
+        string malformedAfter = File.ReadAllText(sharedRecentPath);
+        ViewerState? stateAfterMalformed = ReadPersistedState(statePath);
+        bool malformedPreserved = string.Equals(malformedJson, malformedAfter, StringComparison.Ordinal);
+        bool localStateStillSavedAfterMalformed = stateAfterMalformed is not null
+            && string.Equals(
+                NormalizeFavoritePath(stateAfterMalformed.LastFolder ?? ""),
+                NormalizeFavoritePath(malformedFolder),
+                StringComparison.OrdinalIgnoreCase);
+        bool favoritesUnchangedAfterMalformed = string.Equals(favoritesBefore, File.ReadAllText(favoritesPath), StringComparison.Ordinal);
+        bool seenUnchangedAfterMalformed = string.Equals(seenBefore, File.ReadAllText(seenPath), StringComparison.Ordinal);
+
+        bool ok = string.Equals(Path.GetFullPath(resolvedRecentPath), Path.GetFullPath(sharedRecentPath), StringComparison.OrdinalIgnoreCase)
+            && importedSharedLastFolder
+            && string.Equals(NormalizeFavoritePath(writeCurrentFolder ?? ""), NormalizeFavoritePath(writeFolder), StringComparison.OrdinalIgnoreCase)
+            && wroteLastFolder
+            && writeFolderInRecent
+            && additivePreserved
+            && statePreserved
+            && reloadedLocalStateWins
+            && malformedPreserved
+            && localStateStillSavedAfterMalformed
+            && favoritesUnchangedAfterWrite
+            && seenUnchangedAfterWrite
+            && favoritesUnchangedAfterMalformed
+            && seenUnchangedAfterMalformed;
+
+        return new SharedRecentSmokeResult
+        {
+            Ok = ok,
+            Message = ok ? "shared recent import, write-through, additive preservation, malformed fail-safe, and favorites/seen isolation passed" : "shared recent smoke did not meet expected policy",
+            Folder = fullFolder,
+            ProjectRoot = smokeRoot,
+            SharedRecentPath = sharedRecentPath,
+            ResolvedRecentPath = resolvedRecentPath,
+            ImportedCurrentFolder = importedCurrentFolder,
+            WriteFolder = writeFolder,
+            PreservedFolder = preservedFolder,
+            MalformedFolder = malformedFolder,
+            WriteCurrentFolder = writeCurrentFolder,
+            LastFolderAfterWrite = afterWrite.LastFolderSet,
+            RecentFolderSetCountAfterWrite = afterWrite.RecentFolderSets.Count,
+            ImportedSharedLastFolder = importedSharedLastFolder,
+            WroteLastFolder = wroteLastFolder,
+            WriteFolderInRecent = writeFolderInRecent,
+            AdditivePreserved = additivePreserved,
+            StatePreserved = statePreserved,
+            ReloadedCurrentFolder = reloadedCurrentFolder,
+            ReloadedLocalStateWins = reloadedLocalStateWins,
+            MalformedPreserved = malformedPreserved,
+            LocalStateStillSavedAfterMalformed = localStateStillSavedAfterMalformed,
+            FavoritesUnchangedAfterWrite = favoritesUnchangedAfterWrite,
+            SeenUnchangedAfterWrite = seenUnchangedAfterWrite,
+            FavoritesUnchangedAfterMalformed = favoritesUnchangedAfterMalformed,
+            SeenUnchangedAfterMalformed = seenUnchangedAfterMalformed,
+        };
+    }
+
     private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
         MainWindow first,
         string fullFolder,
@@ -1919,6 +2116,94 @@ public partial class App : Application
         File.WriteAllText(seenPath, json);
     }
 
+    private static void WriteSharedRecentSeed(string recentPath, string lastFolder, string preservedFolder)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(recentPath))!);
+        var seed = new
+        {
+            version = 1,
+            lastFolderSet = new[] { NormalizeFavoritePath(lastFolder) },
+            recentFolderSets = new[]
+            {
+                new[] { NormalizeFavoritePath(lastFolder) },
+                new[] { NormalizeFavoritePath(preservedFolder) },
+            },
+            updatedAtUtc = "2026-07-09T00:00:00Z",
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(seed, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(recentPath, json);
+    }
+
+    private static SharedRecentSmokeSnapshot ReadSharedRecentSnapshot(string recentPath)
+    {
+        try
+        {
+            if (!File.Exists(recentPath))
+                return new SharedRecentSmokeSnapshot();
+
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(recentPath));
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return new SharedRecentSmokeSnapshot();
+
+            var lastFolderSet = document.RootElement.TryGetProperty("lastFolderSet", out var lastElement)
+                ? NormalizeFolderSetForSmoke(lastElement)
+                : [];
+            var recentFolderSets = new List<List<string>>();
+            if (document.RootElement.TryGetProperty("recentFolderSets", out var recentElement) &&
+                recentElement.ValueKind == System.Text.Json.JsonValueKind.Array)
+            {
+                foreach (var item in recentElement.EnumerateArray())
+                {
+                    var folderSet = NormalizeFolderSetForSmoke(item);
+                    if (folderSet.Count > 0)
+                        recentFolderSets.Add(folderSet);
+                }
+            }
+
+            return new SharedRecentSmokeSnapshot
+            {
+                Ok = true,
+                LastFolderSet = lastFolderSet,
+                RecentFolderSets = recentFolderSets,
+            };
+        }
+        catch
+        {
+            return new SharedRecentSmokeSnapshot();
+        }
+    }
+
+    private static List<string> NormalizeFolderSetForSmoke(System.Text.Json.JsonElement element)
+    {
+        if (element.ValueKind == System.Text.Json.JsonValueKind.Array)
+            return NormalizeFolderSetForSmoke(element.EnumerateArray()
+                .Where(static item => item.ValueKind == System.Text.Json.JsonValueKind.String)
+                .Select(static item => item.GetString() ?? ""));
+
+        if (element.ValueKind == System.Text.Json.JsonValueKind.String)
+            return NormalizeFolderSetForSmoke(
+                (element.GetString() ?? "").Split(["\r\n", "\n"], StringSplitOptions.None));
+
+        return [];
+    }
+
+    private static List<string> NormalizeFolderSetForSmoke(IEnumerable<string> paths)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<string>();
+        foreach (string raw in paths)
+        {
+            if (string.IsNullOrWhiteSpace(raw))
+                continue;
+
+            string path = NormalizeFavoritePath(raw.Trim());
+            if (seen.Add(path))
+                normalized.Add(path);
+        }
+
+        return normalized;
+    }
+
     private static string NormalizeFavoritePath(string path)
     {
         try
@@ -1988,6 +2273,13 @@ public partial class App : Application
     }
 
     private static void WriteSharedSeenSmokeResult(string path, SharedSeenSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteSharedRecentSmokeResult(string path, SharedRecentSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -2199,6 +2491,52 @@ public partial class App : Application
         public MalformedSeenSmokeCaseResult? MalformedLegacy { get; init; }
         public MalformedSeenSmokeCaseResult? MalformedShared { get; init; }
     }
+
+    private sealed class SharedRecentSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? SharedRecentPath { get; init; }
+        public string? ResolvedRecentPath { get; init; }
+        public string? ImportedCurrentFolder { get; init; }
+        public string? WriteFolder { get; init; }
+        public string? PreservedFolder { get; init; }
+        public string? MalformedFolder { get; init; }
+        public string? WriteCurrentFolder { get; init; }
+        public List<string> LastFolderAfterWrite { get; init; } = [];
+        public int RecentFolderSetCountAfterWrite { get; init; }
+        public bool ImportedSharedLastFolder { get; init; }
+        public bool WroteLastFolder { get; init; }
+        public bool WriteFolderInRecent { get; init; }
+        public bool AdditivePreserved { get; init; }
+        public bool StatePreserved { get; init; }
+        public string? ReloadedCurrentFolder { get; init; }
+        public bool ReloadedLocalStateWins { get; init; }
+        public bool MalformedPreserved { get; init; }
+        public bool LocalStateStillSavedAfterMalformed { get; init; }
+        public bool FavoritesUnchangedAfterWrite { get; init; }
+        public bool SeenUnchangedAfterWrite { get; init; }
+        public bool FavoritesUnchangedAfterMalformed { get; init; }
+        public bool SeenUnchangedAfterMalformed { get; init; }
+    }
+
+    private sealed class SharedRecentSmokeSnapshot
+    {
+        public bool Ok { get; init; }
+        public List<string> LastFolderSet { get; init; } = [];
+        public List<List<string>> RecentFolderSets { get; init; } = [];
+
+        public bool ContainsFolderSet(string folder)
+        {
+            string expected = FormatFolderSetForSmoke([folder]);
+            return RecentFolderSets.Any(set => string.Equals(FormatFolderSetForSmoke(set), expected, StringComparison.OrdinalIgnoreCase));
+        }
+    }
+
+    private static string FormatFolderSetForSmoke(IEnumerable<string> paths)
+        => string.Join("\n", NormalizeFolderSetForSmoke(paths));
 
     private sealed record MalformedSeenSmokeCaseResult(
         bool Ok,
