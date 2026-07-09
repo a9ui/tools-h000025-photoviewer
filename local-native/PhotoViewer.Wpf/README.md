@@ -23,6 +23,7 @@ browse and practical viewer slice:
 - `--shot --perf-log <path>` load timing capture for WPF performance evidence
 - `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
 - `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
+- `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -77,6 +78,13 @@ bounded grid batch and append another batch on demand:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-realization-smoke "$env:TEMP\photoviewer-wpf-grid-realization-smoke.json" --folder "$env:TEMP\photoviewer-wpf-perf-fixture"
+```
+
+Scroll realization smoke verifies that repeated grid advances keep the realized
+card window bounded while still moving through a large filtered folder:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --scroll-realization-smoke "$env:TEMP\photoviewer-wpf-scroll-realization-smoke.json" --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --advance-count 16
 ```
 
 ## WPF M2 First Performance Slice
@@ -146,6 +154,24 @@ The `--perf-log` output now includes `GridTotalItems`, `GridRealizedItems`,
 The dedicated grid realization smoke verified a 320-image fixture starts at 96
 realized cards and advances to 192 after the next batch request.
 
+## WPF M7 Scroll Realization Guard Slice
+
+The #196 slice keeps the M6 manual grid-realization strategy but prevents
+scroll/advance from growing the realized card collection without bound. The grid
+still starts at 96 realized cards, expands in 96-card batches, and is capped at
+384 realized cards. Further forward/back scroll advances slide a bounded window
+through the filtered list instead of appending every card.
+
+The `--perf-log` output now also includes `GridMaxRealizationCount`,
+`GridWindowStartIndex`, and `GridWindowEndIndex`.
+
+| Fixture | Before scroll evidence | #196 scroll evidence |
+| --- | --- | --- |
+| 1,200-image temp smoke | one advance grew `96 -> 192` realized and the M6 path had no repeated-advance cap | 16 advances kept `MaxObservedRealized=384`, final window `816..1200`, `FinalDeferred=816`, back advance succeeded |
+
+The 1,200-image perf smoke after #196 recorded initial `GridRealizedItems=96`,
+`GridDeferredItems=1104`, `GridMaxRealizationCount=384`, and window `0..96`.
+
 ## Files
 
 | File | Role |
@@ -161,8 +187,9 @@ realized cards and advances to 192 after the next batch request.
 
 - Folder scan is bounded to the first 1,200 images sorted by modified time.
 - The grid still uses the shell `WrapPanel`, but initial card realization is
-  bounded and expands in batches. A custom true virtualizing wrap panel remains
-  deferred until a separate measured slice proves it is needed.
+  bounded and expands in capped sliding-window batches. A custom true
+  virtualizing wrap panel remains deferred until a separate measured slice
+  proves it is needed.
 - Favorites are currently read-only counts on imported/sample tiles; album
   mutation, delete, and browser-state import are not wired in this WPF surface yet.
 - Additional speed work should stay in measured WPF-only follow-up lanes.

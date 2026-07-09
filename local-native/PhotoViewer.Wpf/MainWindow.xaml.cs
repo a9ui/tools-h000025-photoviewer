@@ -27,9 +27,11 @@ public partial class MainWindow : Window
     private const int MaxThumbnailDecodeWorkers = 4;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
+    private const int MaxGridRealizationCount = 384;
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly List<Tile> _allTiles = new();
+    private int _gridStartIndex;
     private Rect _restoreBounds;
     private bool _fakeMaximized;
     private bool _initializing = true;
@@ -669,17 +671,27 @@ public partial class MainWindow : Window
 
     private void RebuildGridTiles(Tile? ensureTile = null)
     {
-        _gridTiles.Clear();
+        if (_tiles.Count == 0)
+        {
+            RebuildGridWindow(0, 0);
+            return;
+        }
+
         int target = Math.Min(_tiles.Count, InitialGridRealizationCount);
+        int startIndex = 0;
 
         if (ensureTile is not null)
         {
             int index = _tiles.IndexOf(ensureTile);
-            if (index >= 0)
-                target = Math.Min(_tiles.Count, Math.Max(target, index + 1));
+            if (index >= target)
+            {
+                target = Math.Min(_tiles.Count, MaxGridRealizationCount);
+                int maxStart = Math.Max(0, _tiles.Count - target);
+                startIndex = Math.Clamp(index - (target / 2), 0, maxStart);
+            }
         }
 
-        EnsureGridRealizedCount(target);
+        RebuildGridWindow(startIndex, target);
     }
 
     private void EnsureGridTileRealized(Tile tile)
@@ -688,7 +700,14 @@ public partial class MainWindow : Window
         if (index < 0)
             return;
 
-        EnsureGridRealizedCount(index + 1);
+        int windowEnd = _gridStartIndex + _gridTiles.Count;
+        if (index >= _gridStartIndex && index < windowEnd)
+            return;
+
+        int target = Math.Min(_tiles.Count, MaxGridRealizationCount);
+        int maxStart = Math.Max(0, _tiles.Count - target);
+        int startIndex = Math.Clamp(index - (target / 2), 0, maxStart);
+        RebuildGridWindow(startIndex, target);
     }
 
     private void RealizeNextGridBatch()
@@ -696,13 +715,43 @@ public partial class MainWindow : Window
         if (_gridTiles.Count >= _tiles.Count)
             return;
 
-        EnsureGridRealizedCount(_gridTiles.Count + GridRealizationBatchSize);
+        if (_gridTiles.Count < MaxGridRealizationCount)
+        {
+            RebuildGridWindow(_gridStartIndex, _gridTiles.Count + GridRealizationBatchSize);
+            return;
+        }
+
+        int maxStart = Math.Max(0, _tiles.Count - _gridTiles.Count);
+        if (_gridStartIndex >= maxStart)
+            return;
+
+        RebuildGridWindow(_gridStartIndex + GridRealizationBatchSize, _gridTiles.Count);
     }
 
-    private void EnsureGridRealizedCount(int requestedCount)
+    private void RealizePreviousGridBatch()
     {
-        int target = Math.Clamp(requestedCount, 0, _tiles.Count);
-        for (int i = _gridTiles.Count; i < target; i++)
+        if (_gridStartIndex <= 0 || _gridTiles.Count == 0)
+            return;
+
+        RebuildGridWindow(_gridStartIndex - GridRealizationBatchSize, _gridTiles.Count);
+    }
+
+    private void RebuildGridWindow(int requestedStartIndex, int requestedCount)
+    {
+        _gridTiles.Clear();
+        if (_tiles.Count == 0 || requestedCount <= 0)
+        {
+            _gridStartIndex = 0;
+            if (LastLoadMetrics is not null)
+                UpdateGridMetrics(LastLoadMetrics);
+            return;
+        }
+
+        int target = Math.Min(_tiles.Count, Math.Min(MaxGridRealizationCount, requestedCount));
+        int maxStart = Math.Max(0, _tiles.Count - target);
+        _gridStartIndex = Math.Clamp(requestedStartIndex, 0, maxStart);
+        int end = Math.Min(_tiles.Count, _gridStartIndex + target);
+        for (int i = _gridStartIndex; i < end; i++)
             _gridTiles.Add(_tiles[i]);
 
         if (LastLoadMetrics is not null)
@@ -718,6 +767,8 @@ public partial class MainWindow : Window
         double threshold = Math.Max(360, e.ViewportHeight * 0.75);
         if (remaining <= threshold)
             RealizeNextGridBatch();
+        else if (e.VerticalOffset <= threshold)
+            RealizePreviousGridBatch();
     }
 
     private static bool MatchesSearch(Tile tile, string query)
@@ -822,6 +873,9 @@ public partial class MainWindow : Window
         metrics.GridDeferredItems = Math.Max(0, _tiles.Count - _gridTiles.Count);
         metrics.GridInitialRealizationLimit = InitialGridRealizationCount;
         metrics.GridRealizationBatchSize = GridRealizationBatchSize;
+        metrics.GridMaxRealizationCount = MaxGridRealizationCount;
+        metrics.GridWindowStartIndex = _gridStartIndex;
+        metrics.GridWindowEndIndex = _gridStartIndex + _gridTiles.Count;
     }
 
     // ─────────── Size slider ───────────
@@ -1196,14 +1250,25 @@ public partial class MainWindow : Window
     public int FilteredCountForSmoke => _tiles.Count;
     public int GridRealizedCountForSmoke => _gridTiles.Count;
     public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
+    public int GridWindowStartIndexForSmoke => _gridStartIndex;
+    public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
+    public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
 
     public bool RealizeNextGridBatchForSmoke()
     {
         int before = _gridTiles.Count;
+        int beforeStart = _gridStartIndex;
         RealizeNextGridBatch();
-        return _gridTiles.Count > before;
+        return _gridTiles.Count > before || _gridStartIndex > beforeStart;
+    }
+
+    public bool RealizePreviousGridBatchForSmoke()
+    {
+        int beforeStart = _gridStartIndex;
+        RealizePreviousGridBatch();
+        return _gridStartIndex < beforeStart;
     }
 
     public bool SelectIndexForSmoke(int index)
@@ -1256,6 +1321,9 @@ public sealed class LoadMetrics
     public int GridDeferredItems { get; set; }
     public int GridInitialRealizationLimit { get; set; }
     public int GridRealizationBatchSize { get; set; }
+    public int GridMaxRealizationCount { get; set; }
+    public int GridWindowStartIndex { get; set; }
+    public int GridWindowEndIndex { get; set; }
     public long TotalMs { get; set; }
     public string CompletedAtUtc { get; set; } = "";
 

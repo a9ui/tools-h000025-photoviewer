@@ -33,6 +33,13 @@ public partial class App : Application
             return;
         }
 
+        int scrollRealizationSmokeIdx = Array.IndexOf(e.Args, "--scroll-realization-smoke");
+        if (scrollRealizationSmokeIdx >= 0 && scrollRealizationSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureScrollRealizationSmoke(e.Args[scrollRealizationSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -99,6 +106,101 @@ public partial class App : Application
 
             win.Close();
             Shutdown();
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureScrollRealizationSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string query = ArgValue(args, "--query") ?? "";
+        int advanceCount = ArgInt(args, "--advance-count", 16);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteScrollRealizationSmokeResult(
+                resultPath,
+                new ScrollRealizationSmokeResult(false, "missing required --folder", folder, query, advanceCount, 0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0, false));
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ScrollRealizationSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSearchQuery(query, persist: false);
+
+                int total = win.FilteredCountForSmoke;
+                int initialRealized = win.GridRealizedCountForSmoke;
+                int initialDeferred = win.GridDeferredCountForSmoke;
+                int initialStart = win.GridWindowStartIndexForSmoke;
+                int initialEnd = win.GridWindowEndIndexForSmoke;
+                int maxAllowed = win.GridMaxRealizationCountForSmoke;
+                int maxObserved = initialRealized;
+                int advancesMoved = 0;
+
+                for (int i = 0; i < advanceCount; i++)
+                {
+                    if (win.RealizeNextGridBatchForSmoke())
+                        advancesMoved++;
+                    maxObserved = Math.Max(maxObserved, win.GridRealizedCountForSmoke);
+                }
+
+                int finalRealized = win.GridRealizedCountForSmoke;
+                int finalDeferred = win.GridDeferredCountForSmoke;
+                int finalStart = win.GridWindowStartIndexForSmoke;
+                int finalEnd = win.GridWindowEndIndexForSmoke;
+                bool movedBack = win.RealizePreviousGridBatchForSmoke();
+                int afterBackStart = win.GridWindowStartIndexForSmoke;
+                int afterBackRealized = win.GridRealizedCountForSmoke;
+
+                bool bounded = maxObserved <= maxAllowed && finalRealized <= maxAllowed && afterBackRealized <= maxAllowed;
+                bool ok = total > maxAllowed
+                    && initialRealized < total
+                    && advancesMoved > 0
+                    && finalStart > initialStart
+                    && finalEnd <= total
+                    && finalDeferred > 0
+                    && bounded
+                    && movedBack
+                    && afterBackStart < finalStart;
+
+                result = new ScrollRealizationSmokeResult(
+                    ok,
+                    ok ? "scroll advance keeps grid realization bounded and moves the window forward/back" : "scroll realization guard did not stay bounded or did not move as expected",
+                    folder,
+                    query,
+                    advanceCount,
+                    total,
+                    initialRealized,
+                    initialDeferred,
+                    initialStart,
+                    initialEnd,
+                    advancesMoved,
+                    maxObserved,
+                    bounded,
+                    finalRealized,
+                    finalDeferred,
+                    finalStart,
+                    finalEnd,
+                    maxAllowed,
+                    movedBack);
+            }
+            catch (Exception ex)
+            {
+                result = new ScrollRealizationSmokeResult(false, ex.Message, folder, query, advanceCount, 0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0, false);
+            }
+
+            win.Close();
+            WriteScrollRealizationSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -380,6 +482,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteScrollRealizationSmokeResult(string path, ScrollRealizationSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private sealed record StateSmokeResult(
         bool Ok,
         string Message,
@@ -424,4 +533,25 @@ public partial class App : Application
         bool BatchAdvanced,
         int AfterBatchRealized,
         int AfterBatchDeferred);
+
+    private sealed record ScrollRealizationSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string Query,
+        int AdvanceCount,
+        int Total,
+        int InitialRealized,
+        int InitialDeferred,
+        int InitialWindowStart,
+        int InitialWindowEnd,
+        int AdvancesMoved,
+        int MaxObservedRealized,
+        bool Bounded,
+        int FinalRealized,
+        int FinalDeferred,
+        int FinalWindowStart,
+        int FinalWindowEnd,
+        int MaxAllowedRealized,
+        bool MovedBack);
 }
