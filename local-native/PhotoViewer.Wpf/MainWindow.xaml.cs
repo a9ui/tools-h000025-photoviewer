@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     };
 
     private const int MaxLoadedImages = 1200;
+    private const int MinParallelThumbnailCount = 32;
+    private const int MaxThumbnailDecodeWorkers = 4;
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly List<Tile> _allTiles = new();
     private Rect _restoreBounds;
@@ -31,6 +33,7 @@ public partial class MainWindow : Window
     private bool _suppressStateSave;
     private string? _currentFolder;
     private CancellationTokenSource? _loadCts;
+    public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
     {
@@ -77,6 +80,8 @@ public partial class MainWindow : Window
 
     public async Task LoadFolderAsync(string folder)
     {
+        var totalWatch = Stopwatch.StartNew();
+        LastLoadMetrics = null;
         string resolvedFolder;
         try
         {
@@ -100,6 +105,7 @@ public partial class MainWindow : Window
         ScanMessage.Text = resolvedFolder;
 
         IReadOnlyList<FileInfo> files;
+        var scanWatch = Stopwatch.StartNew();
         try
         {
             files = await Task.Run(
@@ -114,10 +120,12 @@ public partial class MainWindow : Window
         {
             return;
         }
+        scanWatch.Stop();
 
         if (cts.IsCancellationRequested)
             return;
 
+        var materializeWatch = Stopwatch.StartNew();
         _currentFolder = resolvedFolder;
         _allTiles.Clear();
         _tiles.Clear();
@@ -129,9 +137,20 @@ public partial class MainWindow : Window
         ApplyFilters(selectFirst: false);
         UpdateFolderStats();
         SaveState();
+        materializeWatch.Stop();
 
         if (files.Count == 0)
         {
+            totalWatch.Stop();
+            LastLoadMetrics = LoadMetrics.Create(
+                resolvedFolder,
+                files.Count,
+                scanWatch.ElapsedMilliseconds,
+                materializeWatch.ElapsedMilliseconds,
+                thumbnailMs: 0,
+                thumbnailWorkers: 0,
+                thumbnailsCompleted: 0,
+                totalWatch.ElapsedMilliseconds);
             LandingPanel.IsEnabled = true;
             ScanBar.Value = 0;
             ScanPercent.Text = "0%";
@@ -143,43 +162,131 @@ public partial class MainWindow : Window
         SetPhase(landing: false);
         SelectFirstAvailable();
 
-        await LoadThumbnailsAsync(cts.Token);
+        var thumbnails = await LoadThumbnailsAsync(cts.Token);
+        totalWatch.Stop();
+        LastLoadMetrics = LoadMetrics.Create(
+            resolvedFolder,
+            files.Count,
+            scanWatch.ElapsedMilliseconds,
+            materializeWatch.ElapsedMilliseconds,
+            thumbnails.ElapsedMs,
+            thumbnails.Workers,
+            thumbnails.Completed,
+            totalWatch.ElapsedMilliseconds);
     }
 
-    private async Task LoadThumbnailsAsync(CancellationToken token)
+    private async Task<ThumbnailLoadMetrics> LoadThumbnailsAsync(CancellationToken token)
     {
+        var watch = Stopwatch.StartNew();
         var snapshot = _allTiles.Where(static tile => tile.IsRealFile).ToList();
-        int total = Math.Max(1, snapshot.Count);
+        int total = snapshot.Count;
+        if (total == 0)
+            return new ThumbnailLoadMetrics(0, 0, 0, 0);
+
+        if (total < MinParallelThumbnailCount)
+            return await LoadThumbnailsSequentiallyAsync(snapshot, token);
+
+        int workers = Math.Min(MaxThumbnailDecodeWorkers, Math.Max(1, total));
         int done = 0;
 
-        foreach (var tile in snapshot)
+        try
         {
-            if (token.IsCancellationRequested)
-                return;
+            await Parallel.ForEachAsync(
+                snapshot,
+                new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = workers },
+                async (tile, itemToken) =>
+                {
+                    BitmapSource? thumbnail = null;
+                    try
+                    {
+                        int decodeWidth = (int)Math.Clamp(tile.CardWidth * 1.4, 180, 520);
+                        thumbnail = await Task.Run(() => LoadBitmap(tile.Path, decodeWidth), itemToken);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        throw;
+                    }
+                    catch
+                    {
+                        thumbnail = null;
+                    }
 
-            try
-            {
-                int decodeWidth = (int)Math.Clamp(tile.CardWidth * 1.4, 180, 520);
-                tile.Thumbnail = await Task.Run(() => LoadBitmap(tile.Path, decodeWidth), token);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            catch
-            {
-                tile.Thumbnail = null;
-            }
+                    await Dispatcher.InvokeAsync(
+                        () =>
+                        {
+                            tile.Thumbnail = thumbnail;
+                            int completed = Interlocked.Increment(ref done);
+                            UpdateThumbnailProgress(completed, total);
+                        },
+                        DispatcherPriority.Background,
+                        itemToken);
+                });
+        }
+        catch (OperationCanceledException)
+        {
+            watch.Stop();
+            return new ThumbnailLoadMetrics(total, workers, done, watch.ElapsedMilliseconds);
+        }
+        finally
+        {
+            watch.Stop();
+        }
 
-            done++;
-            if (done % 8 == 0 || done == total)
+        return new ThumbnailLoadMetrics(total, workers, done, watch.ElapsedMilliseconds);
+    }
+
+    private async Task<ThumbnailLoadMetrics> LoadThumbnailsSequentiallyAsync(IReadOnlyList<Tile> snapshot, CancellationToken token)
+    {
+        var watch = Stopwatch.StartNew();
+        int total = snapshot.Count;
+        int done = 0;
+
+        try
+        {
+            foreach (var tile in snapshot)
             {
-                double progress = done * 100.0 / total;
-                ScanBar.Value = progress;
-                ScanPercent.Text = $"{(int)progress}%";
-                ScanLabel.Text = $"{done:N0} / {total:N0} thumbnails";
+                token.ThrowIfCancellationRequested();
+
+                try
+                {
+                    int decodeWidth = (int)Math.Clamp(tile.CardWidth * 1.4, 180, 520);
+                    tile.Thumbnail = await Task.Run(() => LoadBitmap(tile.Path, decodeWidth), token);
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch
+                {
+                    tile.Thumbnail = null;
+                }
+
+                done++;
+                UpdateThumbnailProgress(done, total);
             }
         }
+        catch (OperationCanceledException)
+        {
+            watch.Stop();
+            return new ThumbnailLoadMetrics(total, Workers: 1, done, watch.ElapsedMilliseconds);
+        }
+        finally
+        {
+            watch.Stop();
+        }
+
+        return new ThumbnailLoadMetrics(total, Workers: 1, done, watch.ElapsedMilliseconds);
+    }
+
+    private void UpdateThumbnailProgress(int done, int total)
+    {
+        if (done % 8 != 0 && done != total)
+            return;
+
+        double progress = done * 100.0 / total;
+        ScanBar.Value = progress;
+        ScanPercent.Text = $"{(int)progress}%";
+        ScanLabel.Text = $"{done:N0} / {total:N0} thumbnails";
     }
 
     private static IEnumerable<string> EnumerateImageFiles(string root)
@@ -841,6 +948,35 @@ public sealed class ViewerState
     public string? SearchQuery { get; set; }
     public double CardWidth { get; set; } = 190;
 }
+
+public sealed class LoadMetrics
+{
+    public string Folder { get; set; } = "";
+    public int FileCount { get; set; }
+    public long ScanMs { get; set; }
+    public long MaterializeMs { get; set; }
+    public long ThumbnailMs { get; set; }
+    public int ThumbnailWorkers { get; set; }
+    public int ThumbnailsCompleted { get; set; }
+    public long TotalMs { get; set; }
+    public string CompletedAtUtc { get; set; } = "";
+
+    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long totalMs)
+        => new()
+        {
+            Folder = folder,
+            FileCount = fileCount,
+            ScanMs = scanMs,
+            MaterializeMs = materializeMs,
+            ThumbnailMs = thumbnailMs,
+            ThumbnailWorkers = thumbnailWorkers,
+            ThumbnailsCompleted = thumbnailsCompleted,
+            TotalMs = totalMs,
+            CompletedAtUtc = DateTime.UtcNow.ToString("O"),
+        };
+}
+
+public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
 
 // ─────────── Tile view model ───────────
 public sealed class Tile : INotifyPropertyChanged

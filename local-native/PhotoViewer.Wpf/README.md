@@ -20,6 +20,7 @@ browse and practical viewer slice:
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
+- `--shot --perf-log <path>` load timing capture for WPF performance evidence
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -49,15 +50,32 @@ dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-query-smoke.png" --screen viewer --folder .\local-native\ui-mockup --query wpf-preview
 ```
 
+Performance-log smoke:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-perf-after.png" --screen viewer --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --perf-log "$env:TEMP\photoviewer-wpf-perf-after.json"
+```
+
+## WPF M2 First Performance Slice
+
+The first #177 slice keeps the WPF surface isolated and adds measured load
+timing plus bounded parallel thumbnail decode. Folders under 32 images stay on
+the sequential path to avoid parallel overhead on small launches.
+
+| Fixture | Baseline wall clock | #177 wall clock | #177 internal total | #177 thumbnail decode | Workers | Images |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `../ui-mockup` small smoke | 1,353.6 ms | 1,162.1 ms | 143 ms | 78 ms | 1 | 8 |
+| temp copied larger smoke | 2,852.8 ms | 1,806.8 ms | 484 ms | 416 ms | 4 | 160 |
+
 ## Files
 
 | File | Role |
 | --- | --- |
 | `PhotoViewer.Wpf.csproj` | net8.0-windows WPF project |
 | `App.xaml` | design tokens, control styles, card/list templates |
-| `App.xaml.cs` | startup and `--shot` / `--query` capture path |
+| `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` capture path |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
-| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, search/filter, state, selection wiring |
+| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load timing, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
 
 ## Current Limits
