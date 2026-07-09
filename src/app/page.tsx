@@ -13,6 +13,7 @@ import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
 import { getResultCountLabel } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
+import { sharedRecentToLocalMemory } from '../lib/recentFolders';
 import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
 
 function ViewerApp() {
@@ -71,53 +72,85 @@ function ViewerApp() {
     if (localRecentDirs.length > 0) setRecentDirs(localRecentDirs);
     if (localLastDirSet) setLastDirSet(localLastDirSet);
 
-    let serverLegacyAlreadyImported = false;
-    try {
-      serverLegacyAlreadyImported = localStorage.getItem('pvu_server_legacy_imported') === '1';
-    } catch {
-      serverLegacyAlreadyImported = false;
-    }
-    void fetch('/api/legacy-state', { cache: 'no-store' })
-      .then((res) => res.ok ? res.json() : null)
-      .then((data) => {
-        if (!data) return;
-        const legacyRecent = Array.isArray(data.recentDirs)
-          ? data.recentDirs
-            .filter((v: unknown): v is string => typeof v === 'string')
-            .map((v: string) => formatDirSet(parseDirSet(v)))
-            .filter(Boolean)
-          : [];
-        const legacyLast = typeof data.lastDirSet === 'string'
-          ? formatDirSet(parseDirSet(data.lastDirSet))
-          : '';
-        if (legacyRecent.length === 0 && !legacyLast) return;
+    const initializeFolderMemory = async () => {
+      let activeRecentDirs = localRecentDirs;
+      let activeLastDirSet = localLastDirSet;
+      const hasLocalFolderMemory = activeRecentDirs.length > 0 || Boolean(activeLastDirSet);
 
-        const combined = [
-          ...(serverLegacyAlreadyImported ? localRecentDirs : legacyRecent),
-          ...(serverLegacyAlreadyImported ? legacyRecent : localRecentDirs),
-        ].filter(Boolean);
-        const seen = new Set<string>();
-        const nextRecent = combined.filter((value) => {
-          const key = value.toLowerCase();
-          if (seen.has(key)) return false;
-          seen.add(key);
-          return true;
-        }).slice(0, 8);
-        const nextLast = serverLegacyAlreadyImported
-          ? (localLastDirSet || legacyLast)
-          : (legacyLast || localLastDirSet);
-
-        setRecentDirs(nextRecent);
-        if (nextLast) setLastDirSet(nextLast);
+      if (!hasLocalFolderMemory) {
         try {
-          localStorage.setItem('pvu_recent_dirs', JSON.stringify(nextRecent));
-          if (nextLast) localStorage.setItem('pvu_last_dir_set', nextLast);
-          localStorage.setItem('pvu_server_legacy_imported', '1');
+          const sharedRes = await fetch('/api/recent-folders', { cache: 'no-store' });
+          const sharedData = sharedRes.ok ? await sharedRes.json() : null;
+          if (sharedData?.ok && !sharedData.malformed && sharedData.recent) {
+            const sharedMemory = sharedRecentToLocalMemory(sharedData.recent);
+            if (sharedMemory.recentDirs.length > 0 || sharedMemory.lastDirSet) {
+              activeRecentDirs = sharedMemory.recentDirs;
+              activeLastDirSet = sharedMemory.lastDirSet;
+              setRecentDirs(activeRecentDirs);
+              if (activeLastDirSet) setLastDirSet(activeLastDirSet);
+              try {
+                localStorage.setItem('pvu_recent_dirs', JSON.stringify(activeRecentDirs));
+                if (activeLastDirSet) localStorage.setItem('pvu_last_dir_set', activeLastDirSet);
+              } catch {
+                // ignore localStorage write errors
+              }
+            }
+          }
         } catch {
-          // ignore localStorage write errors
+          // Shared recent folders are best-effort and must not block legacy/local restore.
         }
-      })
-      .catch(() => {});
+      }
+
+      let serverLegacyAlreadyImported = false;
+      try {
+        serverLegacyAlreadyImported = localStorage.getItem('pvu_server_legacy_imported') === '1';
+      } catch {
+        serverLegacyAlreadyImported = false;
+      }
+      void fetch('/api/legacy-state', { cache: 'no-store' })
+        .then((res) => res.ok ? res.json() : null)
+        .then((data) => {
+          if (!data) return;
+          const legacyRecent = Array.isArray(data.recentDirs)
+            ? data.recentDirs
+              .filter((v: unknown): v is string => typeof v === 'string')
+              .map((v: string) => formatDirSet(parseDirSet(v)))
+              .filter(Boolean)
+            : [];
+          const legacyLast = typeof data.lastDirSet === 'string'
+            ? formatDirSet(parseDirSet(data.lastDirSet))
+            : '';
+          if (legacyRecent.length === 0 && !legacyLast) return;
+
+          const combined = [
+            ...(serverLegacyAlreadyImported ? activeRecentDirs : legacyRecent),
+            ...(serverLegacyAlreadyImported ? legacyRecent : activeRecentDirs),
+          ].filter(Boolean);
+          const seen = new Set<string>();
+          const nextRecent = combined.filter((value) => {
+            const key = value.toLowerCase();
+            if (seen.has(key)) return false;
+            seen.add(key);
+            return true;
+          }).slice(0, 8);
+          const nextLast = serverLegacyAlreadyImported
+            ? (activeLastDirSet || legacyLast)
+            : (legacyLast || activeLastDirSet);
+
+          setRecentDirs(nextRecent);
+          if (nextLast) setLastDirSet(nextLast);
+          try {
+            localStorage.setItem('pvu_recent_dirs', JSON.stringify(nextRecent));
+            if (nextLast) localStorage.setItem('pvu_last_dir_set', nextLast);
+            localStorage.setItem('pvu_server_legacy_imported', '1');
+          } catch {
+            // ignore localStorage write errors
+          }
+        })
+        .catch(() => {});
+    };
+
+    void initializeFolderMemory();
   }, []);
 
   useEffect(() => {
@@ -135,6 +168,11 @@ function ViewerApp() {
       } catch {
         // ignore localStorage write errors
       }
+      void fetch('/api/recent-folders', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ recentDirs: next, lastDirSet: normalized }),
+      }).catch(() => {});
       return next;
     });
   }, [rememberLastDirSet]);
