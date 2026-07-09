@@ -45,6 +45,28 @@ dotnet build .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj
 ```
 
+Fast direct launch from the project root uses the Release executable instead of
+`dotnet run`:
+
+```powershell
+.\start_wpf.bat
+```
+
+If the Release executable is missing, the launcher builds it once and then runs
+it directly. To force a rebuild before launch:
+
+```powershell
+$env:PHOTOVIEWER_WPF_REBUILD = "1"
+.\start_wpf.bat
+```
+
+For development, the old `dotnet run` path remains available:
+
+```powershell
+$env:PHOTOVIEWER_WPF_DOTNET_RUN = "1"
+.\start_wpf.bat
+```
+
 Headless UI-smoke evidence renders the window to a PNG and exits. `--screen`
 selects the state to capture: `viewer` (default), `landing`, `list`, `modal`,
 `settings`, `album`, `enhance`, `confirm`.
@@ -166,6 +188,14 @@ used by zoom shortcut and wheel paths:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
+```
+
+Startup smoke opens the WPF shell to dispatcher-idle readiness, writes timing
+evidence, and exits. It can be run through either launch path:
+
+```powershell
+dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --startup-smoke "$env:TEMP\photoviewer-wpf-startup-dotnet-run.json" --startup-mode dotnet-run
+.\local-native\PhotoViewer.Wpf\bin\Release\net8.0-windows\PhotoViewer.Wpf.exe --startup-smoke "$env:TEMP\photoviewer-wpf-startup-release-exe.json" --startup-mode release-exe
 ```
 
 ## WPF M2 First Performance Slice
@@ -407,6 +437,29 @@ The current `start_wpf.bat` / `dotnet run` path still works, but this slice does
 not replace it with a faster packaged launch route. Faster startup packaging or
 a release-mode launcher should be measured in a follow-up WPF slice.
 
+## WPF M16 Fast Launch Slice
+
+The #240 slice changes `start_wpf.bat` from the previous `dotnet run` path to a
+direct Release executable launch. The script builds
+`local-native\PhotoViewer.Wpf\bin\Release\net8.0-windows\PhotoViewer.Wpf.exe`
+only when that target is missing or when `PHOTOVIEWER_WPF_REBUILD=1` is set.
+The old development route remains available with
+`PHOTOVIEWER_WPF_DOTNET_RUN=1`.
+
+The dedicated `--startup-smoke` route records shell readiness timing without
+writing user state. It is intended for comparing process wall time for
+`dotnet run` against the direct executable route.
+
+Measured #240 evidence on the project fixture shell:
+
+| Route | Evidence command | Wall clock |
+| --- | --- | ---: |
+| Before change, `dotnet run` landing shot | 3-run median, `--shot --screen landing` | 1,796.1 ms |
+| Before change, Release exe landing shot | 3-run median, same shot route | 1,114.3 ms |
+| After change, `dotnet run` startup smoke | 5-run median, `--startup-smoke` | 1,454.8 ms |
+| After change, Release exe startup smoke | 5-run median, `--startup-smoke` | 654.6 ms |
+| After change, `start_wpf.bat` direct route | single `--startup-smoke` with piped pause input | 1,040.3 ms |
+
 ## Files
 
 | File | Role |
@@ -439,8 +492,9 @@ a release-mode launcher should be measured in a follow-up WPF slice.
   browser-accepted shared folder-set shape. WPF exposes current, last, and
   recent folder sets on the landing page; richer history management remains
   deferred.
-- Faster packaged launch remains deferred. The current BAT/dotnet route is
-  usable but not the fastest possible WPF startup path.
+- `start_wpf.bat` now launches the Release executable directly after a first
+  build. A richer packaged installer or self-contained distribution remains
+  deferred.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
