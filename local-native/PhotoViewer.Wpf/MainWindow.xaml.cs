@@ -552,6 +552,35 @@ public partial class MainWindow : Window
         }
     }
 
+    public FavoriteImportSummary ImportPvuFavoritesForSmoke(string browserStatePath)
+    {
+        if (string.IsNullOrWhiteSpace(browserStatePath) || !File.Exists(browserStatePath))
+            return FavoriteImportSummary.Failed(browserStatePath, "missing browser state file");
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(browserStatePath));
+            if (!TryFindBrowserStateProperty(document.RootElement, "pvu_favorites", out var favoritesElement, out string sourceShape))
+                return FavoriteImportSummary.Failed(browserStatePath, "pvu_favorites not found");
+
+            if (favoritesElement.ValueKind == JsonValueKind.String)
+            {
+                string? embeddedJson = favoritesElement.GetString();
+                if (string.IsNullOrWhiteSpace(embeddedJson))
+                    return FavoriteImportSummary.Failed(browserStatePath, "pvu_favorites string was empty", sourceShape);
+
+                using var embeddedDocument = JsonDocument.Parse(embeddedJson);
+                return ImportPvuFavoritesElement(embeddedDocument.RootElement, browserStatePath, sourceShape);
+            }
+
+            return ImportPvuFavoritesElement(favoritesElement, browserStatePath, sourceShape);
+        }
+        catch (Exception ex)
+        {
+            return FavoriteImportSummary.Failed(browserStatePath, ex.Message);
+        }
+    }
+
     private FavoriteImportSummary ImportPvuFavoriteLevelsObject(JsonElement levelsElement, string browserStatePath, string sourceShape)
     {
         if (levelsElement.ValueKind != JsonValueKind.Object)
@@ -640,16 +669,136 @@ public partial class MainWindow : Window
             FavoriteStoreCountForSmoke);
     }
 
-    private static bool TryFindPvuFavoriteLevels(JsonElement root, out JsonElement levelsElement, out string sourceShape)
+    private FavoriteImportSummary ImportPvuFavoritesElement(JsonElement favoritesElement, string browserStatePath, string sourceShape)
     {
-        levelsElement = default;
+        if (favoritesElement.ValueKind != JsonValueKind.Object && favoritesElement.ValueKind != JsonValueKind.Array)
+            return FavoriteImportSummary.Failed(browserStatePath, "pvu_favorites is not an object map or list", sourceShape);
+
+        int total = 0;
+        int imported = 0;
+        int preserved = 0;
+        int ignoredZero = 0;
+        int ignoredInvalid = 0;
+        int missing = 0;
+        int unmatched = 0;
+        var favoriteSnapshot = new Dictionary<string, int>(_favorites, StringComparer.OrdinalIgnoreCase);
+        var tileSnapshot = _allTiles.ToDictionary(static tile => tile, static tile => tile.Fav);
+
+        void ImportCandidate(string rawKey, int level)
+        {
+            var tile = ResolvePvuFavoriteImportTile(rawKey);
+            if (tile is null)
+            {
+                unmatched++;
+                return;
+            }
+
+            string key = NormalizeFavoritePath(tile.Path);
+            int existingLevel = FavoriteLevelForPath(tile.Path);
+            if (existingLevel > 0)
+            {
+                preserved++;
+                return;
+            }
+
+            _favorites[key] = level;
+            tile.Fav = level;
+            imported++;
+        }
+
+        if (favoritesElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in favoritesElement.EnumerateObject())
+            {
+                total++;
+                string rawKey = property.Name.Trim();
+                if (string.IsNullOrWhiteSpace(rawKey))
+                {
+                    missing++;
+                    continue;
+                }
+
+                if (!TryReadPvuFavoritesImportLevel(property.Value, out int level, out bool wasZero))
+                {
+                    if (wasZero)
+                        ignoredZero++;
+                    else
+                        ignoredInvalid++;
+                    continue;
+                }
+
+                ImportCandidate(rawKey, level);
+            }
+        }
+        else
+        {
+            foreach (var item in favoritesElement.EnumerateArray())
+            {
+                total++;
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    ignoredInvalid++;
+                    continue;
+                }
+
+                string rawKey = item.GetString()?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(rawKey))
+                {
+                    missing++;
+                    continue;
+                }
+
+                ImportCandidate(rawKey, 5);
+            }
+        }
+
+        if (imported > 0 && !SaveFavorites())
+        {
+            _favorites.Clear();
+            foreach (var item in favoriteSnapshot)
+                _favorites[item.Key] = item.Value;
+            foreach (var (tile, fav) in tileSnapshot)
+                tile.Fav = fav;
+            return FavoriteImportSummary.Failed(browserStatePath, "favorites save failed", sourceShape);
+        }
+
+        if (imported > 0)
+        {
+            ApplyFilters();
+            if (SelectedTile() is { } selected)
+                UpdatePreview(selected);
+            else
+                UpdateHeaderStats();
+        }
+
+        return new FavoriteImportSummary(
+            true,
+            "pvu_favorites import policy applied",
+            browserStatePath,
+            sourceShape,
+            total,
+            imported,
+            preserved,
+            ignoredZero,
+            ignoredInvalid,
+            missing,
+            unmatched,
+            FavoriteStoreCountForSmoke);
+    }
+
+    private static bool TryFindPvuFavoriteLevels(JsonElement root, out JsonElement levelsElement, out string sourceShape)
+        => TryFindBrowserStateProperty(root, "pvu_fav_levels", out levelsElement, out sourceShape);
+
+    private static bool TryFindBrowserStateProperty(JsonElement root, string propertyName, out JsonElement value, out string sourceShape)
+    {
+        value = default;
         sourceShape = "";
         if (root.ValueKind != JsonValueKind.Object)
             return false;
 
-        if (root.TryGetProperty("pvu_fav_levels", out levelsElement))
+        if (root.TryGetProperty(propertyName, out value))
         {
-            sourceShape = "pvu_fav_levels";
+            sourceShape = propertyName;
             return true;
         }
 
@@ -668,9 +817,9 @@ public partial class MainWindow : Window
             if (!root.TryGetProperty(container, out var nested) || nested.ValueKind != JsonValueKind.Object)
                 continue;
 
-            if (nested.TryGetProperty("pvu_fav_levels", out levelsElement))
+            if (nested.TryGetProperty(propertyName, out value))
             {
-                sourceShape = $"{container}.pvu_fav_levels";
+                sourceShape = $"{container}.{propertyName}";
                 return true;
             }
         }
@@ -682,6 +831,40 @@ public partial class MainWindow : Window
     {
         level = 0;
         wasZero = false;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
+            level = numeric;
+        else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))
+            level = parsed;
+        else
+            return false;
+
+        if (level <= 0)
+        {
+            wasZero = true;
+            return false;
+        }
+
+        level = Math.Clamp(level, 1, 5);
+        return true;
+    }
+
+    private static bool TryReadPvuFavoritesImportLevel(JsonElement value, out int level, out bool wasZero)
+    {
+        level = 0;
+        wasZero = false;
+
+        if (value.ValueKind == JsonValueKind.True)
+        {
+            level = 5;
+            return true;
+        }
+
+        if (value.ValueKind == JsonValueKind.False)
+        {
+            wasZero = true;
+            return false;
+        }
+
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
             level = numeric;
         else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))

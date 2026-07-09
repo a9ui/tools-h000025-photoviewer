@@ -425,6 +425,8 @@ public partial class App : Application
                     null,
                     null,
                     null,
+                    null,
+                    null,
                     0,
                     0,
                     0,
@@ -440,7 +442,9 @@ public partial class App : Application
                     0,
                     0,
                     0,
-                    0));
+                    0,
+                    new Dictionary<string, int>(),
+                    new Dictionary<string, int>()));
             Shutdown(1);
             return;
         }
@@ -452,10 +456,23 @@ public partial class App : Application
         string clampedPath = Path.Combine(fullFolder, clampedName);
         string zeroPath = Path.Combine(fullFolder, "wpf-modal-preview.png");
         string unmatchedPath = Path.Combine(fullFolder, "missing-pvu-fav-level.png");
+        string pvuFavoriteDefaultName = "wpf-enhance.png";
+        string pvuFavoriteDefaultPath = Path.Combine(fullFolder, pvuFavoriteDefaultName);
+        string pvuFavoriteExplicitName = "wpf-confirm.png";
+        string pvuFavoriteExplicitPath = Path.Combine(fullFolder, pvuFavoriteExplicitName);
+        string pvuFavoriteUnmatchedPath = Path.Combine(fullFolder, "missing-pvu-favorite.png");
+        string pvuFavoriteListName = "wpf-album.png";
+        string pvuFavoriteListPath = Path.Combine(fullFolder, pvuFavoriteListName);
+        string pvuFavoritesListStatePath = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(browserStatePath)) ?? Path.GetTempPath(),
+            Path.GetFileNameWithoutExtension(browserStatePath) + "-list.json");
         bool fixtureFilesExist = File.Exists(importedPath) &&
             File.Exists(preservedPath) &&
             File.Exists(clampedPath) &&
-            File.Exists(zeroPath);
+            File.Exists(zeroPath) &&
+            File.Exists(pvuFavoriteDefaultPath) &&
+            File.Exists(pvuFavoriteExplicitPath) &&
+            File.Exists(pvuFavoriteListPath);
 
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
@@ -463,7 +480,21 @@ public partial class App : Application
         if (fixtureFilesExist)
         {
             WriteFavoriteSeed(favoritesPath, preservedPath, 2);
-            WritePvuFavoriteImportFixture(browserStatePath, importedPath, preservedPath, clampedName, zeroPath, unmatchedPath);
+            WritePvuFavoriteImportFixture(
+                browserStatePath,
+                importedPath,
+                preservedPath,
+                clampedName,
+                zeroPath,
+                unmatchedPath,
+                pvuFavoriteDefaultPath,
+                pvuFavoriteExplicitName,
+                pvuFavoriteUnmatchedPath);
+            WritePvuFavoritesListImportFixture(
+                pvuFavoritesListStatePath,
+                pvuFavoriteListPath,
+                pvuFavoriteDefaultPath,
+                pvuFavoriteUnmatchedPath);
         }
 
         var first = HiddenWindow();
@@ -481,20 +512,35 @@ public partial class App : Application
                 FavoriteImportSummary? importSummary = fixtureFilesExist
                     ? first.ImportPvuFavoriteLevelsForSmoke(browserStatePath)
                     : FavoriteImportSummary.Failed(browserStatePath, "fixture files missing");
+                FavoriteImportSummary? pvuFavoritesImportSummary = fixtureFilesExist
+                    ? first.ImportPvuFavoritesForSmoke(browserStatePath)
+                    : FavoriteImportSummary.Failed(browserStatePath, "fixture files missing");
+                FavoriteImportSummary? pvuFavoritesListImportSummary = fixtureFilesExist
+                    ? first.ImportPvuFavoritesForSmoke(pvuFavoritesListStatePath)
+                    : FavoriteImportSummary.Failed(pvuFavoritesListStatePath, "fixture files missing");
 
                 int importedLevel = SelectFavoriteLevel(first, "wpf-preview.png");
                 int preservedLevel = SelectFavoriteLevel(first, "wpf-settings.png");
                 int clampedLevel = SelectFavoriteLevel(first, clampedName);
                 int zeroLevel = SelectFavoriteLevel(first, "wpf-modal-preview.png");
+                int pvuFavoriteDefaultLevel = SelectFavoriteLevel(first, pvuFavoriteDefaultName);
+                int pvuFavoriteExplicitLevel = SelectFavoriteLevel(first, pvuFavoriteExplicitName);
+                int pvuFavoriteListLevel = SelectFavoriteLevel(first, pvuFavoriteListName);
                 first.SetFavoriteOnlyFilterForSmoke(true);
                 int filteredAfterImport = first.FilteredCountForSmoke;
                 int storeCountAfterImport = first.FavoriteStoreCountForSmoke;
                 first.Close();
 
-                int persistedImportedLevel = ReadFavoriteLevel(favoritesPath, importedPath);
-                int persistedPreservedLevel = ReadFavoriteLevel(favoritesPath, preservedPath);
-                int persistedClampedLevel = ReadFavoriteLevel(favoritesPath, clampedPath);
-                int persistedZeroLevel = ReadFavoriteLevel(favoritesPath, zeroPath);
+                var persistedLevels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["wpf-preview.png"] = ReadFavoriteLevel(favoritesPath, importedPath),
+                    ["wpf-settings.png"] = ReadFavoriteLevel(favoritesPath, preservedPath),
+                    ["wpf-list.png"] = ReadFavoriteLevel(favoritesPath, clampedPath),
+                    ["wpf-modal-preview.png"] = ReadFavoriteLevel(favoritesPath, zeroPath),
+                    [pvuFavoriteDefaultName] = ReadFavoriteLevel(favoritesPath, pvuFavoriteDefaultPath),
+                    [pvuFavoriteExplicitName] = ReadFavoriteLevel(favoritesPath, pvuFavoriteExplicitPath),
+                    [pvuFavoriteListName] = ReadFavoriteLevel(favoritesPath, pvuFavoriteListPath),
+                };
 
                 var second = HiddenWindow();
                 second.Show();
@@ -506,9 +552,23 @@ public partial class App : Application
                 int reloadedPreservedLevel = SelectFavoriteLevel(second, "wpf-settings.png");
                 int reloadedClampedLevel = SelectFavoriteLevel(second, clampedName);
                 int reloadedZeroLevel = SelectFavoriteLevel(second, "wpf-modal-preview.png");
+                int reloadedPvuFavoriteDefaultLevel = SelectFavoriteLevel(second, pvuFavoriteDefaultName);
+                int reloadedPvuFavoriteExplicitLevel = SelectFavoriteLevel(second, pvuFavoriteExplicitName);
+                int reloadedPvuFavoriteListLevel = SelectFavoriteLevel(second, pvuFavoriteListName);
                 second.SetFavoriteOnlyFilterForSmoke(true);
                 int reloadedFilteredCount = second.FilteredCountForSmoke;
                 second.Close();
+
+                var reloadedLevels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["wpf-preview.png"] = reloadedImportedLevel,
+                    ["wpf-settings.png"] = reloadedPreservedLevel,
+                    ["wpf-list.png"] = reloadedClampedLevel,
+                    ["wpf-modal-preview.png"] = reloadedZeroLevel,
+                    [pvuFavoriteDefaultName] = reloadedPvuFavoriteDefaultLevel,
+                    [pvuFavoriteExplicitName] = reloadedPvuFavoriteExplicitLevel,
+                    [pvuFavoriteListName] = reloadedPvuFavoriteListLevel,
+                };
 
                 bool ok = fixtureFilesExist
                     && importSummary.Ok
@@ -520,26 +580,53 @@ public partial class App : Application
                     && importSummary.IgnoredInvalidCount == 1
                     && importSummary.MissingCount == 1
                     && importSummary.UnmatchedCount == 1
+                    && pvuFavoritesImportSummary.Ok
+                    && pvuFavoritesImportSummary.SourceShape == "browserLocalStorage.pvu_favorites"
+                    && pvuFavoritesImportSummary.TotalEntries == 8
+                    && pvuFavoritesImportSummary.ImportedCount == 2
+                    && pvuFavoritesImportSummary.PreservedCount == 2
+                    && pvuFavoritesImportSummary.IgnoredZeroCount == 1
+                    && pvuFavoritesImportSummary.IgnoredInvalidCount == 1
+                    && pvuFavoritesImportSummary.MissingCount == 1
+                    && pvuFavoritesImportSummary.UnmatchedCount == 1
+                    && pvuFavoritesListImportSummary.Ok
+                    && pvuFavoritesListImportSummary.SourceShape == "browserLocalStorage.pvu_favorites"
+                    && pvuFavoritesListImportSummary.TotalEntries == 5
+                    && pvuFavoritesListImportSummary.ImportedCount == 1
+                    && pvuFavoritesListImportSummary.PreservedCount == 1
+                    && pvuFavoritesListImportSummary.IgnoredZeroCount == 0
+                    && pvuFavoritesListImportSummary.IgnoredInvalidCount == 1
+                    && pvuFavoritesListImportSummary.MissingCount == 1
+                    && pvuFavoritesListImportSummary.UnmatchedCount == 1
                     && importedLevel == 4
                     && preservedLevel == 2
                     && clampedLevel == 5
                     && zeroLevel == 0
-                    && filteredAfterImport == 3
-                    && storeCountAfterImport == 3
-                    && persistedImportedLevel == 4
-                    && persistedPreservedLevel == 2
-                    && persistedClampedLevel == 5
-                    && persistedZeroLevel == 0
+                    && pvuFavoriteDefaultLevel == 5
+                    && pvuFavoriteExplicitLevel == 2
+                    && pvuFavoriteListLevel == 5
+                    && filteredAfterImport == 6
+                    && storeCountAfterImport == 6
+                    && persistedLevels["wpf-preview.png"] == 4
+                    && persistedLevels["wpf-settings.png"] == 2
+                    && persistedLevels["wpf-list.png"] == 5
+                    && persistedLevels["wpf-modal-preview.png"] == 0
+                    && persistedLevels[pvuFavoriteDefaultName] == 5
+                    && persistedLevels[pvuFavoriteExplicitName] == 2
+                    && persistedLevels[pvuFavoriteListName] == 5
                     && reloadSelected
                     && reloadedImportedLevel == 4
                     && reloadedPreservedLevel == 2
                     && reloadedClampedLevel == 5
                     && reloadedZeroLevel == 0
-                    && reloadedFilteredCount == 3;
+                    && reloadedPvuFavoriteDefaultLevel == 5
+                    && reloadedPvuFavoriteExplicitLevel == 2
+                    && reloadedPvuFavoriteListLevel == 5
+                    && reloadedFilteredCount == 6;
 
                 result = new FavoriteImportSmokeResult(
                     ok,
-                    ok ? "pvu_fav_levels import, preserve-existing, ignore cases, persistence, reload, and filter passed" : "pvu_fav_levels import smoke did not meet expected policy",
+                    ok ? "pvu_fav_levels and pvu_favorites import, preserve-existing, ignore cases, persistence, reload, and filter passed" : "favorite import smoke did not meet expected policy",
                     folder,
                     favoritesPath,
                     browserStatePath,
@@ -548,27 +635,31 @@ public partial class App : Application
                     clampedPath,
                     zeroPath,
                     importSummary,
+                    pvuFavoritesImportSummary,
+                    pvuFavoritesListImportSummary,
                     importedLevel,
                     preservedLevel,
                     clampedLevel,
                     zeroLevel,
                     filteredAfterImport,
                     storeCountAfterImport,
-                    persistedImportedLevel,
-                    persistedPreservedLevel,
-                    persistedClampedLevel,
-                    persistedZeroLevel,
+                    persistedLevels["wpf-preview.png"],
+                    persistedLevels["wpf-settings.png"],
+                    persistedLevels["wpf-list.png"],
+                    persistedLevels["wpf-modal-preview.png"],
                     reloadSelected,
                     reloadedImportedLevel,
                     reloadedPreservedLevel,
                     reloadedClampedLevel,
                     reloadedZeroLevel,
-                    reloadedFilteredCount);
+                    reloadedFilteredCount,
+                    persistedLevels,
+                    reloadedLevels);
             }
             catch (Exception ex)
             {
                 first.Close();
-                result = new FavoriteImportSmokeResult(false, ex.Message, folder, favoritesPath, browserStatePath, importedPath, preservedPath, clampedPath, zeroPath, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0);
+                result = new FavoriteImportSmokeResult(false, ex.Message, folder, favoritesPath, browserStatePath, importedPath, preservedPath, clampedPath, zeroPath, null, null, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0, new Dictionary<string, int>(), new Dictionary<string, int>());
             }
 
             WriteFavoriteImportSmokeResult(resultPath, result);
@@ -934,7 +1025,10 @@ public partial class App : Application
         string preservedPath,
         string clampedName,
         string zeroPath,
-        string unmatchedPath)
+        string unmatchedPath,
+        string pvuFavoriteDefaultPath,
+        string pvuFavoriteExplicitName,
+        string pvuFavoriteUnmatchedPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(browserStatePath))!);
         var pvuFavLevels = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
@@ -947,11 +1041,49 @@ public partial class App : Application
             ["invalid-level"] = "bad",
             [""] = 2,
         };
+        var pvuFavorites = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [NormalizeFavoritePath(pvuFavoriteDefaultPath)] = true,
+            [NormalizeFavoritePath(importedPath)] = true,
+            [NormalizeFavoritePath(preservedPath)] = true,
+            [pvuFavoriteExplicitName] = 2,
+            [NormalizeFavoritePath(zeroPath)] = false,
+            [NormalizeFavoritePath(pvuFavoriteUnmatchedPath)] = true,
+            ["invalid-favorite"] = new { unsupported = true },
+            [""] = true,
+        };
         var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
         {
             ["browserLocalStorage"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
             {
                 ["pvu_fav_levels"] = pvuFavLevels,
+                ["pvu_favorites"] = pvuFavorites,
+            },
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(browserStatePath, json);
+    }
+
+    private static void WritePvuFavoritesListImportFixture(
+        string browserStatePath,
+        string importedPath,
+        string preservedPath,
+        string unmatchedPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(browserStatePath))!);
+        object?[] pvuFavorites =
+        [
+            NormalizeFavoritePath(importedPath),
+            NormalizeFavoritePath(preservedPath),
+            NormalizeFavoritePath(unmatchedPath),
+            "",
+            new { unsupported = true },
+        ];
+        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["browserLocalStorage"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["pvu_favorites"] = pvuFavorites,
             },
         };
         var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -1158,6 +1290,8 @@ public partial class App : Application
         string? ClampedPath,
         string? ZeroPath,
         FavoriteImportSummary? ImportSummary,
+        FavoriteImportSummary? PvuFavoritesImportSummary,
+        FavoriteImportSummary? PvuFavoritesListImportSummary,
         int ImportedLevel,
         int PreservedLevel,
         int ClampedLevel,
@@ -1173,7 +1307,9 @@ public partial class App : Application
         int ReloadedPreservedLevel,
         int ReloadedClampedLevel,
         int ReloadedZeroLevel,
-        int ReloadedFilteredCount);
+        int ReloadedFilteredCount,
+        Dictionary<string, int> PersistedLevels,
+        Dictionary<string, int> ReloadedLevels);
 
     private sealed record GridRealizationSmokeResult(
         bool Ok,
