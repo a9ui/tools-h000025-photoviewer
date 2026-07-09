@@ -16,7 +16,7 @@ browse and practical viewer slice:
 - favorites-only and unseen-only filters
 - refresh active folder
 - open the selected real image with the OS default app
-- lightweight WPF state for last folder, search query, and card size
+- lightweight WPF state for last folder, search query, selected image, and card size
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
@@ -56,6 +56,13 @@ Performance-log smoke:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-perf-after.png" --screen viewer --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --perf-log "$env:TEMP\photoviewer-wpf-perf-after.json"
 ```
 
+State-restore smoke uses a caller-provided bounded state file and never writes
+browser or WinForms state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --state-smoke "$env:TEMP\photoviewer-wpf-state-smoke.json" --state-path "$env:TEMP\photoviewer-wpf-state.json" --folder .\local-native\ui-mockup --query wpf --select-name wpf-settings.png
+```
+
 ## WPF M2 First Performance Slice
 
 The first #177 slice keeps the WPF surface isolated and adds measured load
@@ -82,13 +89,24 @@ The `--perf-log` output now includes preview and modal fields:
 `PreviewMs`, `PreviewUpdates`, `ModalOpenMs`, `ModalImmediateSource`, and
 `ModalDeferredDecode`.
 
+## WPF M4 State And Navigation Polish Slice
+
+The first #186 slice restores the previously selected image when the same WPF
+folder/search state is opened again. The state file now records `SelectedPath`,
+and `LoadFolderAsync` prefers that tile before falling back to the first
+visible result.
+
+The dedicated state smoke uses `--state-path` to keep verification inside a
+bounded local WPF state file. It proved `wpf-settings.png` restored with the
+search query `wpf` on the second window instance.
+
 ## Files
 
 | File | Role |
 | --- | --- |
 | `PhotoViewer.Wpf.csproj` | net8.0-windows WPF project |
 | `App.xaml` | design tokens, control styles, card/list templates |
-| `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` capture path |
+| `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` / `--state-smoke` capture path |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
 | `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
