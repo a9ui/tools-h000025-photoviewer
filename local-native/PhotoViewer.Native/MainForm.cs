@@ -102,6 +102,7 @@ internal sealed class MainForm : Form
     private bool _updatingSearchSuggestions;
     private bool _committingSearchText;
     private bool _updatingPreviewTabs;
+    private int _folderBucketRangeAnchorIndex = -1;
     private readonly List<PreviewTabState> _closedPreviewTabs = [];
     private string _hoverPreviewPath = "";
     private string _lastSavedSelectedPath = "";
@@ -1050,6 +1051,7 @@ internal sealed class MainForm : Form
         _folderBuckets.Dock = DockStyle.Fill;
         _folderBuckets.CheckOnClick = true;
         _folderBuckets.SelectedIndexChanged += (_, _) => UpdateFolderBucketButtons();
+        _folderBuckets.MouseUp += (_, args) => HandleFolderBucketMouseUp(args);
         _folderBuckets.ItemCheck += (_, _) =>
         {
             if (_updatingFolderBuckets || IsDisposed)
@@ -1322,6 +1324,21 @@ internal sealed class MainForm : Form
         SetSelectedFolderBuckets(visible: true);
         var folderShowSelected = _visibleImages.Count == initialVisible;
         Require(folderShowSelected, "folder show-selected did not restore a selected bucket");
+        SetAllFolderBuckets(visible: true);
+        var rangeEndIndex = Math.Min(1, _folderBuckets.Items.Count - 1);
+        _folderBucketRangeAnchorIndex = 0;
+        var folderRangeHide = ApplyFolderBucketRange(0, rangeEndIndex, visible: false) &&
+            _folderBuckets.Items.Count >= 2 &&
+            !_folderBuckets.GetItemChecked(0) &&
+            !_folderBuckets.GetItemChecked(rangeEndIndex) &&
+            _visibleImages.Count == 0;
+        Require(folderRangeHide, "folder range hide did not filter contiguous buckets");
+        _folderBucketRangeAnchorIndex = rangeEndIndex;
+        var folderRangeShow = ApplyFolderBucketRange(rangeEndIndex, 0, visible: true) &&
+            _folderBuckets.GetItemChecked(0) &&
+            _folderBuckets.GetItemChecked(rangeEndIndex) &&
+            _visibleImages.Count == initialVisible;
+        Require(folderRangeShow, "folder range show did not restore contiguous buckets");
         ClearFolderBucketSelection();
         var folderClearSelection = _folderBuckets.SelectedIndices.Count == 0;
         Require(folderClearSelection, "folder clear-selection did not clear selected buckets");
@@ -1793,6 +1810,7 @@ internal sealed class MainForm : Form
             ClearSearch: clearSearch,
             FolderShowSelected: folderShowSelected,
             FolderHideSelected: folderHideSelected,
+            FolderRangeSelection: folderRangeHide && folderRangeShow,
             FolderClearSelection: folderClearSelection,
             DetailModal: detailReport.ModalOpened,
             DetailNavigation: detailReport.Navigation,
@@ -4808,6 +4826,8 @@ internal sealed class MainForm : Form
             {
                 _folderBuckets.Items.Add(bucket, !hidden.Contains(bucket.Folder));
             }
+
+            _folderBucketRangeAnchorIndex = -1;
         }
         finally
         {
@@ -4902,6 +4922,61 @@ internal sealed class MainForm : Form
 
         SaveFolderBucketState();
         ApplyFilter();
+    }
+
+    private void HandleFolderBucketMouseUp(MouseEventArgs args)
+    {
+        if (args.Button != MouseButtons.Left)
+        {
+            return;
+        }
+
+        var clickedIndex = _folderBuckets.IndexFromPoint(args.Location);
+        if (clickedIndex < 0 || clickedIndex >= _folderBuckets.Items.Count)
+        {
+            return;
+        }
+
+        if ((ModifierKeys & Keys.Shift) == Keys.Shift && _folderBucketRangeAnchorIndex >= 0)
+        {
+            ApplyFolderBucketRange(_folderBucketRangeAnchorIndex, clickedIndex, _folderBuckets.GetItemChecked(clickedIndex));
+            return;
+        }
+
+        _folderBucketRangeAnchorIndex = clickedIndex;
+    }
+
+    private bool ApplyFolderBucketRange(int anchorIndex, int clickedIndex, bool visible)
+    {
+        if (_folderBuckets.Items.Count == 0)
+        {
+            return false;
+        }
+
+        var start = Math.Clamp(Math.Min(anchorIndex, clickedIndex), 0, _folderBuckets.Items.Count - 1);
+        var end = Math.Clamp(Math.Max(anchorIndex, clickedIndex), 0, _folderBuckets.Items.Count - 1);
+        if (start > end)
+        {
+            return false;
+        }
+
+        _updatingFolderBuckets = true;
+        try
+        {
+            for (var index = start; index <= end; index++)
+            {
+                _folderBuckets.SetItemChecked(index, visible);
+            }
+        }
+        finally
+        {
+            _updatingFolderBuckets = false;
+        }
+
+        SaveFolderBucketState();
+        ApplyFilter();
+        UpdateFolderBucketButtons();
+        return true;
     }
 
     private void SetSelectedFolderBuckets(bool visible)
@@ -5497,6 +5572,7 @@ internal sealed class MainForm : Form
             $"folderHideAll={BoolText(report.FolderHideAll)}",
             $"folderShowSelected={BoolText(report.FolderShowSelected)}",
             $"folderHideSelected={BoolText(report.FolderHideSelected)}",
+            $"folderRangeSelection={BoolText(report.FolderRangeSelection)}",
             $"folderClearSelection={BoolText(report.FolderClearSelection)}",
             $"folderSortMode={BoolText(report.FolderSortMode)}",
             $"sortName={BoolText(report.SortName)}",
@@ -6344,6 +6420,7 @@ internal sealed class MainForm : Form
         bool ClearSearch,
         bool FolderShowSelected,
         bool FolderHideSelected,
+        bool FolderRangeSelection,
         bool FolderClearSelection,
         bool DetailModal,
         bool DetailNavigation,
