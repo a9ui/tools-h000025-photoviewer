@@ -67,6 +67,21 @@ the sequential path to avoid parallel overhead on small launches.
 | `../ui-mockup` small smoke | 1,353.6 ms | 1,162.1 ms | 143 ms | 78 ms | 1 | 8 |
 | temp copied larger smoke | 2,852.8 ms | 1,806.8 ms | 484 ms | 416 ms | 4 | 160 |
 
+## WPF M3 Follow-Up Improvement Slice
+
+The first #182 slice improves selection-to-modal responsiveness. List/grid
+selection synchronization now avoids duplicate preview updates, and modal open
+uses the currently decoded preview or thumbnail immediately while the larger
+modal bitmap decodes on a cancellable background task.
+
+| Fixture | Baseline modal wall clock | #182 modal wall clock | Modal immediate source | Modal deferred decode |
+| --- | ---: | ---: | --- | --- |
+| temp 3000px PNG modal smoke, 4 images | 1,589.1 ms | 1,330.6 ms | true | true |
+
+The `--perf-log` output now includes preview and modal fields:
+`PreviewMs`, `PreviewUpdates`, `ModalOpenMs`, `ModalImmediateSource`, and
+`ModalDeferredDecode`.
+
 ## Files
 
 | File | Role |
@@ -75,7 +90,7 @@ the sequential path to avoid parallel overhead on small launches.
 | `App.xaml` | design tokens, control styles, card/list templates |
 | `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` capture path |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
-| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load timing, search/filter, state, selection wiring |
+| `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
 
 ## Current Limits
@@ -85,7 +100,7 @@ the sequential path to avoid parallel overhead on small launches.
   performance step.
 - Favorites are currently read-only counts on imported/sample tiles; album
   mutation, delete, and browser-state import are not wired in this WPF surface yet.
-- Broader speed work is intentionally deferred to the WPF M2 performance pass.
+- Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
 
