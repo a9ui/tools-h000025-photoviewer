@@ -183,7 +183,7 @@
                   <ToggleButton Content="★ 2+"/>
                   <ToggleButton Content="★ 3+"/>
                 </WrapPanel>
-                <CheckBox Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" IsEnabled="False" ToolTip="Enhancement filtering is deferred"/>
+                <CheckBox x:Name="EnhancedOnlyFilter" Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="Filter_Changed" Unchecked="Filter_Changed" ToolTip="Read-only filter from .cache/enhance/jobs.json"/>
                 <CheckBox x:Name="UnseenOnlyFilter" Content="Unseen only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

@@ -48,8 +48,13 @@ public partial class MainWindow : Window
     private readonly List<Tile> _allTiles = new();
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private int _gridStartIndex;
     private int _lastInitialUnseenCount;
+    private int _enhancementJobsRead;
+    private int _enhancedCandidateCount;
+    private bool _enhancementReadOk = true;
+    private string? _enhancementReadError;
     private Rect _restoreBounds;
     private bool _fakeMaximized;
     private bool _initializing = true;
@@ -191,6 +196,7 @@ public partial class MainWindow : Window
             SetLandingFolderSet(_currentFolderSet);
             LoadFavorites();
             LoadSeenState();
+            LoadEnhancedState();
             _allTiles.Clear();
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
@@ -534,6 +540,7 @@ public partial class MainWindow : Window
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
+        bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
         var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
@@ -546,6 +553,8 @@ public partial class MainWindow : Window
             Prompt = file.FullName,
             Path = file.FullName,
             IsRealFile = true,
+            Enhanced = enhanced,
+            EnhancedOutputPath = enhancedOutputPath,
             SizeText = FormatBytes(file.Length),
             ModifiedText = modified.ToString("yyyy-MM-dd HH:mm"),
         };
@@ -667,6 +676,91 @@ public partial class MainWindow : Window
 
     private int FavoriteLevelForPath(string path)
         => _favorites.TryGetValue(NormalizeFavoritePath(path), out int level) ? Math.Clamp(level, 0, 5) : 0;
+
+    private static string ResolvedEnhancementJobsPath => ProjectCachePath(Path.Combine("enhance", "jobs.json"));
+
+    private void LoadEnhancedState()
+    {
+        _enhancedOutputs.Clear();
+        _enhancementJobsRead = 0;
+        _enhancedCandidateCount = 0;
+        _enhancementReadOk = true;
+        _enhancementReadError = null;
+
+        string path = ResolvedEnhancementJobsPath;
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object ||
+                !document.RootElement.TryGetProperty("jobs", out var jobsElement) ||
+                jobsElement.ValueKind != JsonValueKind.Array)
+            {
+                _enhancementReadOk = false;
+                _enhancementReadError = "jobs array missing";
+                return;
+            }
+
+            foreach (var job in jobsElement.EnumerateArray())
+            {
+                if (job.ValueKind != JsonValueKind.Object)
+                    continue;
+                _enhancementJobsRead++;
+                if (!TryGetStringProperty(job, "status", out string? status) ||
+                    !string.Equals(status, "succeeded", StringComparison.OrdinalIgnoreCase))
+                    continue;
+                if (!TryGetStringProperty(job, "outputPath", out string? outputPath) ||
+                    string.IsNullOrWhiteSpace(outputPath))
+                    continue;
+
+                string resolvedOutput = NormalizeFavoritePath(outputPath);
+                if (!File.Exists(resolvedOutput))
+                    continue;
+
+                bool mapped = false;
+                foreach (string propertyName in new[] { "sourcePath", "sourceId" })
+                {
+                    if (!TryGetStringProperty(job, propertyName, out string? sourcePath) ||
+                        string.IsNullOrWhiteSpace(sourcePath))
+                        continue;
+
+                    string resolvedSource = NormalizeFavoritePath(sourcePath);
+                    if (!File.Exists(resolvedSource))
+                        continue;
+
+                    if (!_enhancedOutputs.ContainsKey(resolvedSource))
+                        _enhancedOutputs[resolvedSource] = resolvedOutput;
+                    mapped = true;
+                }
+
+                if (mapped)
+                    _enhancedCandidateCount++;
+            }
+        }
+        catch (Exception ex)
+        {
+            _enhancedOutputs.Clear();
+            _enhancementReadOk = false;
+            _enhancementReadError = ex.Message;
+        }
+    }
+
+    private static bool TryGetStringProperty(JsonElement element, string propertyName, out string? value)
+    {
+        value = null;
+        if (!element.TryGetProperty(propertyName, out var property) || property.ValueKind != JsonValueKind.String)
+            return false;
+
+        value = property.GetString();
+        return !string.IsNullOrWhiteSpace(value);
+    }
+
+    private bool TryGetEnhancedOutputForPath(string path, out string? outputPath)
+    {
+        return _enhancedOutputs.TryGetValue(NormalizeFavoritePath(path), out outputPath);
+    }
 
     private bool SaveFavorites()
     {
@@ -1755,11 +1849,13 @@ public partial class MainWindow : Window
         var previous = SelectedTile();
         string query = SearchInput?.Text?.Trim() ?? "";
         bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
+        bool enhancedOnly = EnhancedOnlyFilter?.IsChecked == true;
         bool unseenOnly = UnseenOnlyFilter?.IsChecked == true;
 
         var filtered = _allTiles
             .Where(tile => MatchesSearch(tile, query))
             .Where(tile => !favoritesOnly || tile.Fav > 0)
+            .Where(tile => !enhancedOnly || tile.Enhanced)
             .Where(tile => !unseenOnly || tile.Unseen)
             .ToList();
 
@@ -2715,6 +2811,7 @@ public partial class MainWindow : Window
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public string EnhancementJobsPathForSmoke => ResolvedEnhancementJobsPath;
     public string? CurrentFolderForSmoke => _currentFolder;
     public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
     public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
@@ -2726,6 +2823,13 @@ public partial class MainWindow : Window
     public bool SelectedUnseenForSmoke => SelectedTile()?.Unseen == true;
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
     public int SeenStoreCountForSmoke => _seenPaths.Count;
+    public int EnhancedStoreCountForSmoke => _enhancedOutputs.Count;
+    public int EnhancementJobsReadForSmoke => _enhancementJobsRead;
+    public int EnhancedCandidateCountForSmoke => _enhancedCandidateCount;
+    public bool EnhancementReadOkForSmoke => _enhancementReadOk;
+    public string? EnhancementReadErrorForSmoke => _enhancementReadError;
+    public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
+    public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
     public int LastInitialUnseenCountForSmoke => _lastInitialUnseenCount;
     public int GridRealizedCountForSmoke => _gridTiles.Count;
@@ -2790,6 +2894,12 @@ public partial class MainWindow : Window
     public void SetFavoriteOnlyFilterForSmoke(bool enabled)
     {
         FavoriteOnlyFilter.IsChecked = enabled;
+        ApplyFilters();
+    }
+
+    public void SetEnhancedOnlyFilterForSmoke(bool enabled)
+    {
+        EnhancedOnlyFilter.IsChecked = enabled;
         ApplyFilters();
     }
 
@@ -2975,6 +3085,8 @@ public sealed class Tile : INotifyPropertyChanged
     public string Prompt { get; set; } = "";
     public string Path { get; set; } = "";
     public bool IsRealFile { get; set; }
+    public bool Enhanced { get; set; }
+    public string? EnhancedOutputPath { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
 
