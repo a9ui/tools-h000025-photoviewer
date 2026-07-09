@@ -523,6 +523,216 @@ public partial class MainWindow : Window
         }
     }
 
+    public FavoriteImportSummary ImportPvuFavoriteLevelsForSmoke(string browserStatePath)
+    {
+        if (string.IsNullOrWhiteSpace(browserStatePath) || !File.Exists(browserStatePath))
+            return FavoriteImportSummary.Failed(browserStatePath, "missing browser state file");
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(browserStatePath));
+            if (!TryFindPvuFavoriteLevels(document.RootElement, out var levelsElement, out string sourceShape))
+                return FavoriteImportSummary.Failed(browserStatePath, "pvu_fav_levels not found");
+
+            if (levelsElement.ValueKind == JsonValueKind.String)
+            {
+                string? embeddedJson = levelsElement.GetString();
+                if (string.IsNullOrWhiteSpace(embeddedJson))
+                    return FavoriteImportSummary.Failed(browserStatePath, "pvu_fav_levels string was empty", sourceShape);
+
+                using var embeddedDocument = JsonDocument.Parse(embeddedJson);
+                return ImportPvuFavoriteLevelsObject(embeddedDocument.RootElement, browserStatePath, sourceShape);
+            }
+
+            return ImportPvuFavoriteLevelsObject(levelsElement, browserStatePath, sourceShape);
+        }
+        catch (Exception ex)
+        {
+            return FavoriteImportSummary.Failed(browserStatePath, ex.Message);
+        }
+    }
+
+    private FavoriteImportSummary ImportPvuFavoriteLevelsObject(JsonElement levelsElement, string browserStatePath, string sourceShape)
+    {
+        if (levelsElement.ValueKind != JsonValueKind.Object)
+            return FavoriteImportSummary.Failed(browserStatePath, "pvu_fav_levels is not an object map", sourceShape);
+
+        int total = 0;
+        int imported = 0;
+        int preserved = 0;
+        int ignoredZero = 0;
+        int ignoredInvalid = 0;
+        int missing = 0;
+        int unmatched = 0;
+        var favoriteSnapshot = new Dictionary<string, int>(_favorites, StringComparer.OrdinalIgnoreCase);
+        var tileSnapshot = _allTiles.ToDictionary(static tile => tile, static tile => tile.Fav);
+
+        foreach (var property in levelsElement.EnumerateObject())
+        {
+            total++;
+            string rawKey = property.Name.Trim();
+            if (string.IsNullOrWhiteSpace(rawKey))
+            {
+                missing++;
+                continue;
+            }
+
+            if (!TryReadPvuFavoriteImportLevel(property.Value, out int level, out bool wasZero))
+            {
+                if (wasZero)
+                    ignoredZero++;
+                else
+                    ignoredInvalid++;
+                continue;
+            }
+
+            var tile = ResolvePvuFavoriteImportTile(rawKey);
+            if (tile is null)
+            {
+                unmatched++;
+                continue;
+            }
+
+            string key = NormalizeFavoritePath(tile.Path);
+            int existingLevel = FavoriteLevelForPath(tile.Path);
+            if (existingLevel > 0)
+            {
+                preserved++;
+                continue;
+            }
+
+            _favorites[key] = level;
+            tile.Fav = level;
+            imported++;
+        }
+
+        if (imported > 0 && !SaveFavorites())
+        {
+            _favorites.Clear();
+            foreach (var item in favoriteSnapshot)
+                _favorites[item.Key] = item.Value;
+            foreach (var (tile, fav) in tileSnapshot)
+                tile.Fav = fav;
+            return FavoriteImportSummary.Failed(browserStatePath, "favorites save failed", sourceShape);
+        }
+
+        if (imported > 0)
+        {
+            ApplyFilters();
+            if (SelectedTile() is { } selected)
+                UpdatePreview(selected);
+            else
+                UpdateHeaderStats();
+        }
+
+        return new FavoriteImportSummary(
+            true,
+            "pvu_fav_levels import policy applied",
+            browserStatePath,
+            sourceShape,
+            total,
+            imported,
+            preserved,
+            ignoredZero,
+            ignoredInvalid,
+            missing,
+            unmatched,
+            FavoriteStoreCountForSmoke);
+    }
+
+    private static bool TryFindPvuFavoriteLevels(JsonElement root, out JsonElement levelsElement, out string sourceShape)
+    {
+        levelsElement = default;
+        sourceShape = "";
+        if (root.ValueKind != JsonValueKind.Object)
+            return false;
+
+        if (root.TryGetProperty("pvu_fav_levels", out levelsElement))
+        {
+            sourceShape = "pvu_fav_levels";
+            return true;
+        }
+
+        string[] containers =
+        [
+            "browserLocalStorage",
+            "browser_local_storage",
+            "localStorage",
+            "local_storage",
+            "browserState",
+            "browser_state",
+        ];
+
+        foreach (string container in containers)
+        {
+            if (!root.TryGetProperty(container, out var nested) || nested.ValueKind != JsonValueKind.Object)
+                continue;
+
+            if (nested.TryGetProperty("pvu_fav_levels", out levelsElement))
+            {
+                sourceShape = $"{container}.pvu_fav_levels";
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool TryReadPvuFavoriteImportLevel(JsonElement value, out int level, out bool wasZero)
+    {
+        level = 0;
+        wasZero = false;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
+            level = numeric;
+        else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))
+            level = parsed;
+        else
+            return false;
+
+        if (level <= 0)
+        {
+            wasZero = true;
+            return false;
+        }
+
+        level = Math.Clamp(level, 1, 5);
+        return true;
+    }
+
+    private Tile? ResolvePvuFavoriteImportTile(string rawKey)
+    {
+        string normalizedKey = NormalizeFavoritePath(rawKey);
+        var byPath = _allTiles.FirstOrDefault(tile =>
+            tile.IsRealFile &&
+            string.Equals(NormalizeFavoritePath(tile.Path), normalizedKey, StringComparison.OrdinalIgnoreCase));
+        if (byPath is not null)
+            return byPath;
+
+        if (!string.IsNullOrWhiteSpace(_currentFolder))
+        {
+            try
+            {
+                string relativePath = NormalizeFavoritePath(Path.Combine(_currentFolder, rawKey));
+                byPath = _allTiles.FirstOrDefault(tile =>
+                    tile.IsRealFile &&
+                    string.Equals(NormalizeFavoritePath(tile.Path), relativePath, StringComparison.OrdinalIgnoreCase));
+                if (byPath is not null)
+                    return byPath;
+            }
+            catch
+            {
+            }
+        }
+
+        string fileName = Path.GetFileName(rawKey);
+        if (string.IsNullOrWhiteSpace(fileName))
+            return null;
+
+        return _allTiles.FirstOrDefault(tile =>
+            tile.IsRealFile &&
+            string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static BitmapSource? LoadBitmap(string path, int decodePixelWidth)
     {
         try
@@ -1520,6 +1730,9 @@ public partial class MainWindow : Window
         SaveState();
         return true;
     }
+
+    public string? PathForFileNameForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
 }
 
 // Lightweight persisted shell state.
@@ -1529,6 +1742,24 @@ public sealed class ViewerState
     public string? SearchQuery { get; set; }
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
+}
+
+public sealed record FavoriteImportSummary(
+    bool Ok,
+    string Message,
+    string? BrowserStatePath,
+    string? SourceShape,
+    int TotalEntries,
+    int ImportedCount,
+    int PreservedCount,
+    int IgnoredZeroCount,
+    int IgnoredInvalidCount,
+    int MissingCount,
+    int UnmatchedCount,
+    int StoreCount)
+{
+    public static FavoriteImportSummary Failed(string? browserStatePath, string message, string? sourceShape = null)
+        => new(false, message, browserStatePath, sourceShape, 0, 0, 0, 0, 0, 0, 0, 0);
 }
 
 public sealed class LoadMetrics
