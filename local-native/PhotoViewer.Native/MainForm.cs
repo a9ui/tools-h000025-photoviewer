@@ -5034,7 +5034,7 @@ internal sealed class MainForm : Form
             return selected;
         }
 
-        _store.MarkImageSeen(selected.AbsolutePath);
+        var seenWrite = _store.MarkImageSeen(selected.AbsolutePath);
         var updated = selected with { IsSeen = true };
         _visibleImages[visibleIndex] = updated;
         var allIndex = _allImages.FindIndex(item => string.Equals(item.AbsolutePath, updated.AbsolutePath, StringComparison.OrdinalIgnoreCase));
@@ -5046,6 +5046,11 @@ internal sealed class MainForm : Form
         if (visibleIndex >= 0 && visibleIndex < _list.VirtualListSize)
         {
             _list.RedrawItems(visibleIndex, visibleIndex, invalidateOnly: false);
+        }
+
+        if (!seenWrite.Succeeded && !string.IsNullOrWhiteSpace(seenWrite.Warning))
+        {
+            SetStatus($"Marked seen locally ({seenWrite.Warning})");
         }
 
         return updated;

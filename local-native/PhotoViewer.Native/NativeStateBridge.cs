@@ -4,6 +4,8 @@ namespace PhotoViewer.Native;
 
 internal sealed record NativeSharedFavoriteWriteResult(bool Succeeded, string Warning);
 
+internal sealed record NativeSharedSeenWriteResult(bool Succeeded, string Warning);
+
 internal sealed record NativeStateSummary(
     string ProjectRoot,
     int FavoriteCount,
@@ -209,6 +211,146 @@ internal static class NativeStateBridge
     public static string FavoritesPath(string projectRoot)
     {
         return Path.Combine(projectRoot, ".cache", "favorites.json");
+    }
+
+    public static HashSet<string> LoadSeen(
+        string projectRoot,
+        ICollection<NativeImportWarning>? warnings = null)
+    {
+        var path = SeenPath(projectRoot);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!File.Exists(path))
+        {
+            return seen;
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var doc = JsonDocument.Parse(stream);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                AddWarning(
+                    warnings,
+                    "seen",
+                    path,
+                    "unexpected-shape",
+                    "seen.json was readable JSON but not an object.",
+                    "Seen state was skipped; fix or regenerate .cache/seen.json, then run Import again.");
+                return seen;
+            }
+
+            foreach (var property in doc.RootElement.EnumerateObject())
+            {
+                if (property.Value.ValueKind != JsonValueKind.True)
+                {
+                    continue;
+                }
+
+                try
+                {
+                    seen.Add(Path.GetFullPath(property.Name));
+                }
+                catch
+                {
+                    seen.Add(property.Name);
+                }
+            }
+        }
+        catch (JsonException ex)
+        {
+            AddWarning(
+                warnings,
+                "seen",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Seen state was skipped; fix or regenerate .cache/seen.json, then run Import again.");
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "seen",
+                path,
+                "unreadable",
+                ex.Message,
+                "Seen state was skipped; check file permissions or replace .cache/seen.json, then run Import again.");
+            return new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        }
+
+        return seen;
+    }
+
+    public static NativeSharedSeenWriteResult WriteSeen(string projectRoot, string absolutePath)
+    {
+        var path = SeenPath(projectRoot);
+        var normalizedPath = Path.GetFullPath(absolutePath);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var doc = JsonDocument.Parse(stream);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return new NativeSharedSeenWriteResult(false, "shared seen skipped: seen.json is not an object");
+                }
+
+                foreach (var property in doc.RootElement.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.True)
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        seen.Add(Path.GetFullPath(property.Name));
+                    }
+                    catch
+                    {
+                        seen.Add(property.Name);
+                    }
+                }
+            }
+            catch (JsonException ex)
+            {
+                return new NativeSharedSeenWriteResult(false, $"shared seen skipped: malformed seen.json ({ex.Message})");
+            }
+            catch (Exception ex) when (IsRecoverableReadException(ex))
+            {
+                return new NativeSharedSeenWriteResult(false, $"shared seen skipped: seen.json was not readable ({ex.Message})");
+            }
+        }
+
+        seen.Add(normalizedPath);
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var orderedSeen = seen
+                .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase);
+            var json = JsonSerializer.Serialize(orderedSeen, new JsonSerializerOptions { WriteIndented = true });
+            var tempPath = $"{path}.{Environment.ProcessId}.{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.tmp";
+            File.WriteAllText(tempPath, json + Environment.NewLine);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch (Exception ex) when (IsRecoverableWriteException(ex))
+        {
+            return new NativeSharedSeenWriteResult(false, $"shared seen write failed: {ex.Message}");
+        }
+
+        return new NativeSharedSeenWriteResult(true, "");
+    }
+
+    public static string SeenPath(string projectRoot)
+    {
+        return Path.Combine(projectRoot, ".cache", "seen.json");
     }
 
     public static List<NativeAlbumRecord> LoadAlbums(

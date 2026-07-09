@@ -722,6 +722,84 @@ internal static class NativeHeadlessRunner
         return 0;
     }
 
+    public static int RunSharedSeenSmoke()
+    {
+        var hostRoot = NativeStateBridge.ResolveProjectRoot();
+        var smokeRoot = Path.Combine(hostRoot, ".cache", "native-shared-seen-smoke", $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}");
+        var smokeFolder = Path.Combine(smokeRoot, "images");
+        var sharedSeenPath = Path.Combine(smokeFolder, "shared-seen-imported.png");
+        var nativeSeenPath = Path.Combine(smokeFolder, "shared-seen-native.png");
+        var ignoredFalsePath = Path.Combine(smokeFolder, "shared-seen-false-ignored.png");
+        WriteSmokePng(sharedSeenPath, Color.DeepSkyBlue);
+        WriteSmokePng(nativeSeenPath, Color.DarkOrange);
+        WriteSmokePng(ignoredFalsePath, Color.DimGray);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(NativeStateBridge.SeenPath(smokeRoot))!);
+        File.WriteAllText(
+            NativeStateBridge.SeenPath(smokeRoot),
+            JsonSerializer.Serialize(new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
+            {
+                [sharedSeenPath] = true,
+                [ignoredFalsePath] = false,
+            }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            Encoding.UTF8);
+
+        var store = new NativeImageStore(smokeRoot);
+        store.Initialize();
+        var import = store.ImportProjectState();
+        var favorites = store.LoadFavorites();
+        var images = NativeImageScanner.ScanAsync(smokeFolder, favorites, progress: null, CancellationToken.None)
+            .GetAwaiter()
+            .GetResult();
+        store.SaveScanResult(smokeFolder, images, TimeSpan.Zero);
+        var afterImport = store.LoadImagesForRoot(smokeFolder);
+        var sharedImport = IsSeen(afterImport, sharedSeenPath);
+        var falseIgnored = !IsSeen(afterImport, ignoredFalsePath);
+
+        var nativeWrite = store.MarkImageSeen(nativeSeenPath, "native_shared_seen_smoke");
+        var afterNativeMark = store.LoadImagesForRoot(smokeFolder);
+        var nativeSeenPersisted = IsSeen(afterNativeMark, nativeSeenPath);
+        var sharedStillSeen = IsSeen(afterNativeMark, sharedSeenPath);
+        var afterWriteShared = NativeStateBridge.LoadSeen(smokeRoot);
+        var writeThrough = nativeWrite.Succeeded &&
+            afterWriteShared.Contains(Path.GetFullPath(nativeSeenPath)) &&
+            afterWriteShared.Contains(Path.GetFullPath(sharedSeenPath)) &&
+            !afterWriteShared.Contains(Path.GetFullPath(ignoredFalsePath));
+
+        var malformedRoot = Path.Combine(smokeRoot, "malformed");
+        var malformedSeenPath = NativeStateBridge.SeenPath(malformedRoot);
+        Directory.CreateDirectory(Path.GetDirectoryName(malformedSeenPath)!);
+        File.WriteAllText(malformedSeenPath, "{not-json", Encoding.UTF8);
+        var malformedStore = new NativeImageStore(malformedRoot);
+        malformedStore.Initialize();
+        var malformedImport = malformedStore.ImportProjectState();
+        var malformedTarget = Path.Combine(malformedRoot, "images", "malformed-local-seen.png");
+        WriteSmokePng(malformedTarget, Color.Firebrick);
+        var malformedWrite = malformedStore.MarkImageSeen(malformedTarget, "native_shared_seen_smoke");
+        var malformedSafe = malformedImport.WarningCount > 0 &&
+            !malformedWrite.Succeeded &&
+            malformedStore.CountSeenImages() == 1 &&
+            string.Equals(File.ReadAllText(malformedSeenPath, Encoding.UTF8), "{not-json", StringComparison.Ordinal);
+
+        var complete = import.WarningCount == 0 &&
+            sharedImport &&
+            falseIgnored &&
+            nativeSeenPersisted &&
+            sharedStillSeen &&
+            writeThrough &&
+            malformedSafe;
+        if (!complete)
+        {
+            Console.Error.WriteLine(
+                $"native-shared-seen-smoke error sharedImport={BoolText(sharedImport)} falseIgnored={BoolText(falseIgnored)} nativeSeenPersisted={BoolText(nativeSeenPersisted)} sharedStillSeen={BoolText(sharedStillSeen)} writeThrough={BoolText(writeThrough)} malformedSafe={BoolText(malformedSafe)}");
+            return 2;
+        }
+
+        Console.WriteLine(
+            $"native-shared-seen-smoke complete smokeRoot=\"{smokeRoot}\" sharedImport={BoolText(sharedImport)} nativeWriteThrough={BoolText(writeThrough)} additiveUnion={BoolText(sharedStillSeen && afterWriteShared.Contains(Path.GetFullPath(nativeSeenPath)))} positiveOnly={BoolText(falseIgnored)} malformedSafe={BoolText(malformedSafe)} sqliteSeenImages={store.CountSeenImages()} sharedSeen=\"{NativeStateBridge.SeenPath(smokeRoot)}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+        return 0;
+    }
+
     public static int RunSeenStateSmoke(string? folder)
     {
         var projectRoot = NativeStateBridge.ResolveProjectRoot();

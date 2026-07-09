@@ -168,6 +168,7 @@ internal sealed class NativeImageStore
         Initialize();
         var warnings = new List<NativeImportWarning>();
         var favorites = NativeStateBridge.LoadFavorites(_projectRoot, warnings);
+        var sharedSeen = NativeStateBridge.LoadSeen(_projectRoot, warnings);
         var albums = NativeStateBridge.LoadAlbums(_projectRoot, warnings);
         var browserState = NativeStateBridge.LoadBrowserStateExport(_projectRoot, browserStateExportPath, warnings);
         var resolvedBrowserStateExportPath = NativeStateBridge.ResolveBrowserStateExportPath(_projectRoot, browserStateExportPath) ?? "";
@@ -271,6 +272,8 @@ internal sealed class NativeImageStore
             ApplyBrowserStateMigrations(connection, transaction, browserState, importedAt, warnings, importedSeenCount);
         }
 
+        var sharedSeenCount = ImportSharedSeenImages(connection, transaction, sharedSeen, importedAt);
+
         UpsertSetting(connection, transaction, "browser_settings_found", settingsFound ? "1" : "0", importedAt);
         UpsertSetting(connection, transaction, "browser_settings_imported", browserSettingsJson is null ? "0" : "1", importedAt);
         if (browserSettingsJson is not null)
@@ -285,6 +288,7 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "browser_state_export_found", string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "0" : "1", importedAt);
         UpsertSetting(connection, transaction, "browser_state_export_imported", !browserStateImportFailed && !string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "1" : "0", importedAt);
         UpsertSetting(connection, transaction, "browser_seen_image_count", importedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
+        UpsertSetting(connection, transaction, "shared_seen_image_count", sharedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
         if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
         {
             UpsertSetting(connection, transaction, "browser_state_export_path", resolvedBrowserStateExportPath, importedAt);
@@ -769,7 +773,7 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
-    public void MarkImageSeen(string absolutePath, string source = "native")
+    public NativeSharedSeenWriteResult MarkImageSeen(string absolutePath, string source = "native")
     {
         Initialize();
         var normalizedPath = Path.GetFullPath(absolutePath);
@@ -777,6 +781,7 @@ internal sealed class NativeImageStore
         using var transaction = connection.BeginTransaction();
         UpsertSeenImage(connection, transaction, normalizedPath, DateTime.UtcNow, source);
         transaction.Commit();
+        return NativeStateBridge.WriteSeen(_projectRoot, normalizedPath);
     }
 
     public NativeSharedFavoriteWriteResult SetFavoriteLevel(string absolutePath, int level)
@@ -983,6 +988,26 @@ internal sealed class NativeImageStore
             }
 
             UpsertSeenImage(connection, transaction, imageId, importedAt, "browser_export");
+        }
+
+        return imported.Count;
+    }
+
+    private static int ImportSharedSeenImages(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        IReadOnlyCollection<string> sharedSeen,
+        DateTime importedAt)
+    {
+        var imported = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var imageId in sharedSeen)
+        {
+            if (!imported.Add(imageId))
+            {
+                continue;
+            }
+
+            UpsertSeenImage(connection, transaction, imageId, importedAt, "shared_seen_json");
         }
 
         return imported.Count;
