@@ -33,6 +33,7 @@ public partial class MainWindow : Window
     private bool _suppressStateSave;
     private bool _syncingSelection;
     private string? _currentFolder;
+    private string? _restoredSelectedPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private int _previewUpdateCount;
@@ -132,21 +133,30 @@ public partial class MainWindow : Window
             return;
 
         var materializeWatch = Stopwatch.StartNew();
-        _currentFolder = resolvedFolder;
-        _allTiles.Clear();
-        _tiles.Clear();
-        double width = SizeSlider?.Value ?? 190;
-        foreach (var file in files)
-            _allTiles.Add(MakeFileTile(file, width));
+        bool previousSuppress = _suppressStateSave;
+        _suppressStateSave = true;
+        try
+        {
+            _currentFolder = resolvedFolder;
+            _allTiles.Clear();
+            _tiles.Clear();
+            double width = SizeSlider?.Value ?? 190;
+            foreach (var file in files)
+                _allTiles.Add(MakeFileTile(file, width));
 
-        FolderPathText.Text = resolvedFolder;
-        ApplyFilters(selectFirst: false);
-        UpdateFolderStats();
-        SaveState();
+            FolderPathText.Text = resolvedFolder;
+            ApplyFilters(selectFirst: false);
+            UpdateFolderStats();
+        }
+        finally
+        {
+            _suppressStateSave = previousSuppress;
+        }
         materializeWatch.Stop();
 
         if (files.Count == 0)
         {
+            SaveState();
             totalWatch.Stop();
             LastLoadMetrics = LoadMetrics.Create(
                 resolvedFolder,
@@ -168,7 +178,8 @@ public partial class MainWindow : Window
         }
 
         SetPhase(landing: false);
-        SelectFirstAvailable();
+        SelectRestoredOrFirst();
+        SaveState();
 
         var thumbnails = await LoadThumbnailsAsync(cts.Token);
         totalWatch.Stop();
@@ -541,6 +552,8 @@ public partial class MainWindow : Window
         }
 
         UpdatePreview(t);
+        if (t.IsRealFile)
+            SaveState();
     }
 
     private void UpdatePreview(Tile t)
@@ -677,10 +690,23 @@ public partial class MainWindow : Window
         SelectTile(_tiles.Count > 0 ? _tiles[0] : null);
     }
 
+    private void SelectRestoredOrFirst()
+    {
+        var restored = !string.IsNullOrWhiteSpace(_restoredSelectedPath)
+            ? _tiles.FirstOrDefault(tile => string.Equals(tile.Path, _restoredSelectedPath, StringComparison.OrdinalIgnoreCase))
+            : null;
+        SelectTile(restored ?? (_tiles.Count > 0 ? _tiles[0] : null));
+    }
+
     private void SelectTile(Tile? tile)
     {
         CardsList.SelectedItem = tile;
         RowsList.SelectedItem = tile;
+        if (tile is not null)
+        {
+            CardsList.ScrollIntoView(tile);
+            RowsList.ScrollIntoView(tile);
+        }
         if (tile is null)
             ClearPreview();
     }
@@ -912,6 +938,15 @@ public partial class MainWindow : Window
         "PhotoViewer.Wpf",
         "state.json");
 
+    private static string ResolvedStatePath
+    {
+        get
+        {
+            var overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+            return string.IsNullOrWhiteSpace(overridePath) ? StatePath : Path.GetFullPath(overridePath);
+        }
+    }
+
     private void RestoreState()
     {
         var state = ReadState();
@@ -929,14 +964,16 @@ public partial class MainWindow : Window
 
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
+
+        _restoredSelectedPath = state.SelectedPath;
     }
 
     private static ViewerState? ReadState()
     {
         try
         {
-            if (!File.Exists(StatePath)) return null;
-            return JsonSerializer.Deserialize<ViewerState>(File.ReadAllText(StatePath));
+            if (!File.Exists(ResolvedStatePath)) return null;
+            return JsonSerializer.Deserialize<ViewerState>(File.ReadAllText(ResolvedStatePath));
         }
         catch
         {
@@ -950,15 +987,18 @@ public partial class MainWindow : Window
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(StatePath)!);
+            Directory.CreateDirectory(Path.GetDirectoryName(ResolvedStatePath)!);
+            var selectedPath = SelectedTile() is { IsRealFile: true } selected ? selected.Path : null;
+            _restoredSelectedPath = selectedPath;
             var state = new ViewerState
             {
                 LastFolder = _currentFolder,
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
+                SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(StatePath, json);
+            File.WriteAllText(ResolvedStatePath, json);
         }
         catch
         {
@@ -1024,6 +1064,22 @@ public partial class MainWindow : Window
     }
 
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    public string? SelectedPathForSmoke => SelectedTile()?.Path;
+    public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
+    public string SearchQueryForSmoke => SearchInput.Text;
+    public string StatePathForSmoke => ResolvedStatePath;
+
+    public bool SelectFileNameForSmoke(string fileName)
+    {
+        var tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (tile is null)
+            return false;
+
+        SelectTile(tile);
+        SaveState();
+        return true;
+    }
 }
 
 // Lightweight persisted shell state.
@@ -1031,6 +1087,7 @@ public sealed class ViewerState
 {
     public string? LastFolder { get; set; }
     public string? SearchQuery { get; set; }
+    public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
 }
 

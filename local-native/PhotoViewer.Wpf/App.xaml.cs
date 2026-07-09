@@ -19,6 +19,13 @@ public partial class App : Application
             return;
         }
 
+        int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
+        if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureStateSmoke(e.Args[stateSmokeIdx + 1], e.Args);
+            return;
+        }
+
         new MainWindow().Show();
     }
 
@@ -80,4 +87,109 @@ public partial class App : Application
             Shutdown();
         }, DispatcherPriority.ContextIdle);
     }
+
+    private void CaptureStateSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? statePath = ArgValue(args, "--state-path");
+        string selectName = ArgValue(args, "--select-name") ?? "";
+        string query = ArgValue(args, "--query") ?? "";
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(statePath))
+        {
+            WriteStateSmokeResult(
+                resultPath,
+                new StateSmokeResult(false, "missing required --folder or --state-path", statePath, selectName, null, null, null, null, query, null));
+            Shutdown(1);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            StateSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                if (!string.IsNullOrWhiteSpace(query))
+                    first.SetSearchQuery(query);
+
+                bool selected = !string.IsNullOrWhiteSpace(selectName) && first.SelectFileNameForSmoke(selectName);
+                string? expectedPath = first.SelectedPathForSmoke;
+                string? expectedName = first.SelectedFileNameForSmoke;
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(folder);
+                string? restoredPath = second.SelectedPathForSmoke;
+                string? restoredName = second.SelectedFileNameForSmoke;
+                string restoredQuery = second.SearchQueryForSmoke;
+
+                bool restored = selected
+                    && !string.IsNullOrWhiteSpace(expectedPath)
+                    && string.Equals(expectedPath, restoredPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(query, restoredQuery, StringComparison.Ordinal);
+
+                result = new StateSmokeResult(
+                    restored,
+                    restored ? "restored selected path and search query" : "selection or search did not restore",
+                    second.StatePathForSmoke,
+                    selectName,
+                    expectedName,
+                    expectedPath,
+                    restoredName,
+                    restoredPath,
+                    query,
+                    restoredQuery);
+                second.Close();
+            }
+            catch (Exception ex)
+            {
+                result = new StateSmokeResult(false, ex.Message, statePath, selectName, null, null, null, null, query, null);
+            }
+
+            WriteStateSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static MainWindow HiddenWindow()
+        => new()
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            Width = 1280,
+            Height = 820,
+        };
+
+    private static string? ArgValue(string[] args, string name)
+    {
+        int index = Array.IndexOf(args, name);
+        return index >= 0 && index + 1 < args.Length ? args[index + 1] : null;
+    }
+
+    private static void WriteStateSmokeResult(string path, StateSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private sealed record StateSmokeResult(
+        bool Ok,
+        string Message,
+        string? StatePath,
+        string SelectName,
+        string? ExpectedName,
+        string? ExpectedPath,
+        string? RestoredName,
+        string? RestoredPath,
+        string Query,
+        string? RestoredQuery);
 }
