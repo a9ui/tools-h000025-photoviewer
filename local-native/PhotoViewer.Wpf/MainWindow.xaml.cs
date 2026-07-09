@@ -32,12 +32,15 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly List<Tile> _allTiles = new();
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private int _gridStartIndex;
+    private int _lastInitialUnseenCount;
     private Rect _restoreBounds;
     private bool _fakeMaximized;
     private bool _initializing = true;
     private bool _suppressStateSave;
     private bool _favoritesWriteBlocked;
+    private bool _seenWriteBlocked;
     private bool _syncingSelection;
     private string? _currentFolder;
     private string? _restoredSelectedPath;
@@ -147,11 +150,13 @@ public partial class MainWindow : Window
         {
             _currentFolder = resolvedFolder;
             LoadFavorites();
+            LoadSeenState();
             _allTiles.Clear();
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
             foreach (var file in files)
                 _allTiles.Add(MakeFileTile(file, width));
+            _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
 
             FolderPathText.Text = resolvedFolder;
             ApplyFilters(selectFirst: false);
@@ -371,7 +376,7 @@ public partial class MainWindow : Window
             ArtGlow = MakeGlowBrush(paletteIndex),
             FileName = file.Name,
             Fav = FavoriteLevelForPath(file.FullName),
-            Unseen = false,
+            Unseen = !SeenStateContains(file.FullName),
             Group = FormatGroup(modified),
             CardWidth = width,
             Prompt = file.FullName,
@@ -521,6 +526,120 @@ public partial class MainWindow : Window
         {
             return false;
         }
+    }
+
+    private static string ResolvedSeenPath
+    {
+        get
+        {
+            var overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+            if (!string.IsNullOrWhiteSpace(overridePath))
+                return Path.GetFullPath(overridePath);
+
+            var root = FindProjectRoot(Environment.CurrentDirectory)
+                ?? FindProjectRoot(AppContext.BaseDirectory)
+                ?? Environment.CurrentDirectory;
+            return Path.Combine(root, ".cache", "wpf-seen.json");
+        }
+    }
+
+    private void LoadSeenState()
+    {
+        _seenPaths.Clear();
+        _seenWriteBlocked = false;
+
+        string path = ResolvedSeenPath;
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                _seenWriteBlocked = true;
+                return;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(property.Name))
+                    continue;
+
+                bool seen = property.Value.ValueKind == JsonValueKind.True
+                    || (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int numeric) && numeric != 0)
+                    || (property.Value.ValueKind == JsonValueKind.String && bool.TryParse(property.Value.GetString(), out bool parsed) && parsed);
+                if (seen)
+                    _seenPaths.Add(NormalizeFavoritePath(property.Name));
+            }
+        }
+        catch
+        {
+            _seenPaths.Clear();
+            _seenWriteBlocked = true;
+        }
+    }
+
+    private bool SeenStateContains(string path)
+        => _seenPaths.Contains(NormalizeFavoritePath(path));
+
+    private bool SaveSeenState()
+    {
+        if (_seenWriteBlocked)
+            return false;
+
+        try
+        {
+            string path = ResolvedSeenPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var ordered = _seenPaths
+                .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase);
+            var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private bool MarkTileSeen(Tile tile)
+    {
+        if (!tile.IsRealFile)
+            return false;
+
+        string key = NormalizeFavoritePath(tile.Path);
+        bool wasUnseen = tile.Unseen;
+        bool hadSeen = _seenPaths.Contains(key);
+
+        if (hadSeen && !wasUnseen)
+            return true;
+
+        _seenPaths.Add(key);
+        tile.Unseen = false;
+
+        if (!SaveSeenState())
+        {
+            if (!hadSeen)
+                _seenPaths.Remove(key);
+            tile.Unseen = wasUnseen;
+            return false;
+        }
+
+        if (UnseenOnlyFilter?.IsChecked == true)
+        {
+            ApplyFilters(selectFirst: false);
+            if (!_tiles.Contains(tile))
+                SelectTile(null);
+        }
+        else
+        {
+            UpdateHeaderStats();
+        }
+
+        return true;
     }
 
     public FavoriteImportSummary ImportPvuFavoriteLevelsForSmoke(string browserStatePath)
@@ -1076,7 +1195,10 @@ public partial class MainWindow : Window
 
         UpdatePreview(t);
         if (t.IsRealFile)
+        {
+            MarkTileSeen(t);
             SaveState();
+        }
     }
 
     private void UpdatePreview(Tile t)
@@ -1118,6 +1240,20 @@ public partial class MainWindow : Window
     private void Filter_Changed(object sender, RoutedEventArgs e)
     {
         if (_initializing) return;
+        ApplyFiltersForCurrentFilterChange();
+    }
+
+    private void ApplyFiltersForCurrentFilterChange()
+    {
+        if (UnseenOnlyFilter?.IsChecked == true)
+        {
+            var previous = SelectedTile();
+            ApplyFilters(selectFirst: false);
+            if (previous is not null && !_tiles.Contains(previous))
+                SelectTile(null);
+            return;
+        }
+
         ApplyFilters();
     }
 
@@ -1853,10 +1989,15 @@ public partial class MainWindow : Window
     public string SearchQueryForSmoke => SearchInput.Text;
     public string StatePathForSmoke => ResolvedStatePath;
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
+    public string SeenPathForSmoke => ResolvedSeenPath;
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
+    public bool SelectedUnseenForSmoke => SelectedTile()?.Unseen == true;
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
+    public int SeenStoreCountForSmoke => _seenPaths.Count;
+    public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
+    public int LastInitialUnseenCountForSmoke => _lastInitialUnseenCount;
     public int GridRealizedCountForSmoke => _gridTiles.Count;
     public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
     public int GridWindowStartIndexForSmoke => _gridStartIndex;
@@ -1866,6 +2007,7 @@ public partial class MainWindow : Window
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
+    public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
 
     public bool SetSelectedFavoriteLevelForSmoke(int level)
     {
@@ -1876,6 +2018,14 @@ public partial class MainWindow : Window
     {
         FavoriteOnlyFilter.IsChecked = enabled;
         ApplyFilters();
+    }
+
+    public void SetUnseenOnlyFilterForSmoke(bool enabled)
+    {
+        bool changed = UnseenOnlyFilter.IsChecked != enabled;
+        UnseenOnlyFilter.IsChecked = enabled;
+        if (!changed)
+            ApplyFiltersForCurrentFilterChange();
     }
 
     public bool RealizeNextGridBatchForSmoke()
@@ -1995,7 +2145,6 @@ public sealed class Tile : INotifyPropertyChanged
     public Brush? ArtBase { get; set; }
     public Brush? ArtGlow { get; set; }
     public string FileName { get; set; } = "";
-    public bool Unseen { get; set; }
     public string Group { get; set; } = "";
     public string Prompt { get; set; } = "";
     public string Path { get; set; } = "";
@@ -2004,6 +2153,19 @@ public sealed class Tile : INotifyPropertyChanged
     public string ModifiedText { get; set; } = "";
 
     private int _fav;
+    private bool _unseen;
+
+    public bool Unseen
+    {
+        get => _unseen;
+        set
+        {
+            if (_unseen == value) return;
+            _unseen = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Unseen)));
+        }
+    }
+
     public int Fav
     {
         get => _fav;

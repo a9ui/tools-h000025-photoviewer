@@ -27,6 +27,7 @@ browse and practical viewer slice:
 - `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
+- `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -113,6 +114,13 @@ reload, and favorites-only filtering:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-import-smoke "$env:TEMP\photoviewer-wpf-favorite-import-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorite-import-favorites.json" --browser-state-path "$env:TEMP\photoviewer-wpf-favorite-import-browser-state.json"
+```
+
+Seen-state smoke uses caller-provided bounded seen and favorites JSON paths so
+verification does not modify real WPF state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --seen-smoke "$env:TEMP\photoviewer-wpf-seen-smoke.json" --folder .\local-native\ui-mockup --seen-path "$env:TEMP\photoviewer-wpf-seen.json" --favorites-path "$env:TEMP\photoviewer-wpf-seen-favorites.json"
 ```
 
 ## WPF M2 First Performance Slice
@@ -244,13 +252,28 @@ boolean `true` and list entries import as level `5`; zero, `false`, invalid,
 empty-key, and unmatched entries are ignored. Existing WPF levels, including
 earlier `pvu_fav_levels` imports, are preserved and not overwritten.
 
+## WPF M12 Seen State Slice
+
+The #214 slice keeps seen/unseen state WPF-only and non-destructive. Real-file
+tiles read seen flags from `.cache/wpf-seen.json`, whose shape is
+`Record<absolutePath, true>`. Runtime selection/preview of a real image marks
+that image seen, persists the map, clears the tile's `Unseen` flag, and lets the
+existing `Unseen only` filter work against real folders.
+
+The dedicated seen smoke uses `--seen-path` and
+`PHOTOVIEWER_WPF_SEEN_PATH` to keep verification in a temporary JSON file. It
+proves initial real-folder unseen count, selected-image seen persistence,
+unseen-only count change, reload behavior, and favorite-store isolation.
+`pvu_seen_images` import, direct browser/profile reads, delete/recycle, album
+mutation, and broad browser-state import remain out of scope.
+
 ## Files
 
 | File | Role |
 | --- | --- |
 | `PhotoViewer.Wpf.csproj` | net8.0-windows WPF project |
 | `App.xaml` | design tokens, control styles, card/list templates |
-| `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` / `--state-smoke` capture path |
+| `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` / WPF smoke capture paths |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
 | `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
@@ -267,6 +290,10 @@ earlier `pvu_fav_levels` imports, are preserved and not overwritten.
   bounded `pvu_fav_levels` / `pvu_favorites` explicit-import smoke. Album
   mutation, delete, and broad browser-state import are not wired in this WPF
   surface yet.
+- Seen state uses the WPF-only `.cache/wpf-seen.json` absolute-path map for
+  selected-image seen persistence and real-folder `Unseen only` filtering.
+  `pvu_seen_images` import is deferred to a separately scoped explicit-import
+  slice.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
