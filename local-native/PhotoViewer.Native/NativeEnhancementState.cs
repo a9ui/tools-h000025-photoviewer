@@ -30,6 +30,9 @@ internal sealed record NativeEnhancementSummary(
 
 internal static class NativeEnhancementState
 {
+    private static readonly object SnapshotLock = new();
+    private static NativeEnhancementSnapshot? _snapshot;
+
     public static string JobsFilePath(string projectRoot)
     {
         return Path.Combine(projectRoot, ".cache", "enhance", "jobs.json");
@@ -42,84 +45,56 @@ internal static class NativeEnhancementState
 
     public static Dictionary<string, NativeEnhancedOutput> LoadSucceededOutputs(string projectRoot, string? jobsPath = null)
     {
-        var sourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var outputs = new Dictionary<string, NativeEnhancedOutput>(StringComparer.OrdinalIgnoreCase);
-        var path = string.IsNullOrWhiteSpace(jobsPath) ? JobsFilePath(projectRoot) : jobsPath;
-        if (!File.Exists(path))
-        {
-            return outputs;
-        }
-
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (!document.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
-            {
-                return outputs;
-            }
-
-            foreach (var job in jobs.EnumerateArray())
-            {
-                if (!IsSucceededOutputJob(job))
-                {
-                    continue;
-                }
-
-                var outputPath = ResolveJobPath(projectRoot, ReadString(job, "outputPath"));
-                if (string.IsNullOrWhiteSpace(outputPath) || !File.Exists(outputPath))
-                {
-                    continue;
-                }
-
-                var sourcePath = ResolveJobPath(projectRoot, ReadString(job, "sourcePath"));
-                if (!string.IsNullOrWhiteSpace(sourcePath) && !SourceSignatureMatches(sourcePath, job))
-                {
-                    continue;
-                }
-
-                AddOutput(outputs, ReadString(job, "sourceId"), sourcePath, outputPath);
-                AddOutput(outputs, sourcePath, sourcePath, outputPath);
-            }
-        }
-        catch (JsonException)
-        {
-            return outputs;
-        }
-        catch (IOException)
-        {
-            return outputs;
-        }
-        catch (UnauthorizedAccessException)
-        {
-            return outputs;
-        }
-
-        return outputs;
+        return new Dictionary<string, NativeEnhancedOutput>(
+            LoadSnapshot(projectRoot, jobsPath).SucceededOutputs,
+            StringComparer.OrdinalIgnoreCase);
     }
 
     public static NativeEnhancementStatus GetStatusForSource(string projectRoot, string sourcePath, string? jobsPath = null)
     {
-        var status = new NativeEnhancementStatus(
-            NativeEnhancementJobStatus.Absent,
-            sourcePath,
-            "",
-            "");
         var normalizedSource = ResolveJobPath(projectRoot, sourcePath);
-        foreach (var job in LoadJobs(projectRoot, jobsPath))
-        {
-            if (!JobMatchesSource(job, normalizedSource))
-            {
-                continue;
-            }
-
-            status = ToStatus(job);
-        }
-
-        return status;
+        var snapshot = LoadSnapshot(projectRoot, jobsPath);
+        return snapshot.StatusBySource.TryGetValue(normalizedSource, out var status)
+            ? status
+            : new NativeEnhancementStatus(
+                NativeEnhancementJobStatus.Absent,
+                sourcePath,
+                "",
+                "");
     }
 
     public static NativeEnhancementSummary LoadSummary(string projectRoot, string? jobsPath = null)
     {
+        return LoadSnapshot(projectRoot, jobsPath).Summary;
+    }
+
+    private static NativeEnhancementSnapshot LoadSnapshot(string projectRoot, string? jobsPath)
+    {
+        var path = string.IsNullOrWhiteSpace(jobsPath) ? JobsFilePath(projectRoot) : jobsPath;
+        var fingerprint = NativeEnhancementSnapshotFingerprint.From(path);
+        lock (SnapshotLock)
+        {
+            if (_snapshot is not null &&
+                string.Equals(_snapshot.ProjectRoot, projectRoot, StringComparison.OrdinalIgnoreCase) &&
+                string.Equals(_snapshot.JobsPath, path, StringComparison.OrdinalIgnoreCase) &&
+                _snapshot.Fingerprint == fingerprint)
+            {
+                return _snapshot;
+            }
+
+            _snapshot = BuildSnapshot(projectRoot, path, fingerprint);
+            return _snapshot;
+        }
+    }
+
+    private static NativeEnhancementSnapshot BuildSnapshot(
+        string projectRoot,
+        string path,
+        NativeEnhancementSnapshotFingerprint fingerprint)
+    {
+        var jobs = LoadJobs(projectRoot, path).ToList();
+        var outputs = new Dictionary<string, NativeEnhancedOutput>(StringComparer.OrdinalIgnoreCase);
+        var statuses = new Dictionary<string, NativeEnhancementStatus>(StringComparer.OrdinalIgnoreCase);
         var total = 0;
         var pendingOrRunning = 0;
         var succeededDisplayable = 0;
@@ -127,10 +102,22 @@ internal static class NativeEnhancementState
         var failed = 0;
         var unknown = 0;
 
-        foreach (var job in LoadJobs(projectRoot, jobsPath))
+        foreach (var job in jobs)
         {
             total++;
-            switch (ToStatus(job).Status)
+            var status = ToStatus(job);
+            AddStatus(statuses, job.SourceId, status);
+            AddStatus(statuses, job.SourcePath, status);
+            if (job.SourceSignatureMatches &&
+                status.Status is NativeEnhancementJobStatus.SucceededDisplayable or NativeEnhancementJobStatus.SucceededInvalidOutput &&
+                !string.IsNullOrWhiteSpace(job.OutputPath) &&
+                File.Exists(job.OutputPath))
+            {
+                AddOutput(outputs, job.SourceId, job.SourcePath, job.OutputPath);
+                AddOutput(outputs, job.SourcePath, job.SourcePath, job.OutputPath);
+            }
+
+            switch (status.Status)
             {
                 case NativeEnhancementJobStatus.PendingOrRunning:
                     pendingOrRunning++;
@@ -150,27 +137,32 @@ internal static class NativeEnhancementState
             }
         }
 
-        return new NativeEnhancementSummary(
-            total,
-            pendingOrRunning,
-            succeededDisplayable,
-            succeededInvalidOutput,
-            failed,
-            unknown);
+        return new NativeEnhancementSnapshot(
+            projectRoot,
+            path,
+            fingerprint,
+            outputs,
+            statuses,
+            new NativeEnhancementSummary(
+                total,
+                pendingOrRunning,
+                succeededDisplayable,
+                succeededInvalidOutput,
+                failed,
+                unknown));
     }
 
     private static IEnumerable<NativeEnhancementJob> LoadJobs(string projectRoot, string? jobsPath)
     {
         var loadedJobs = new List<NativeEnhancementJob>();
-        var path = string.IsNullOrWhiteSpace(jobsPath) ? JobsFilePath(projectRoot) : jobsPath;
-        if (!File.Exists(path))
+        if (string.IsNullOrWhiteSpace(jobsPath) || !File.Exists(jobsPath))
         {
             return loadedJobs;
         }
 
         try
         {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            using var document = JsonDocument.Parse(File.ReadAllText(jobsPath));
             if (!document.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
             {
                 return loadedJobs;
@@ -236,18 +228,6 @@ internal static class NativeEnhancementState
         return new NativeEnhancementStatus(NativeEnhancementJobStatus.Unknown, job.SourcePath, job.OutputPath, job.RawStatus);
     }
 
-    private static bool JobMatchesSource(NativeEnhancementJob job, string sourcePath)
-    {
-        return string.Equals(job.SourceId, sourcePath, StringComparison.OrdinalIgnoreCase) ||
-            string.Equals(job.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool IsSucceededOutputJob(JsonElement job)
-    {
-        return string.Equals(ReadString(job, "status"), "succeeded", StringComparison.OrdinalIgnoreCase)
-            && !string.IsNullOrWhiteSpace(ReadString(job, "outputPath"));
-    }
-
     private static string ReadString(JsonElement element, string propertyName)
     {
         return element.TryGetProperty(propertyName, out var value) && value.ValueKind == JsonValueKind.String
@@ -294,6 +274,27 @@ internal static class NativeEnhancementState
         }
     }
 
+    private static void AddStatus(
+        IDictionary<string, NativeEnhancementStatus> statuses,
+        string sourceId,
+        NativeEnhancementStatus status)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
+        {
+            return;
+        }
+
+        statuses[sourceId] = status;
+        try
+        {
+            statuses[Path.GetFullPath(sourceId)] = status;
+        }
+        catch
+        {
+            // Non-path source ids are still useful if the native record uses the same id.
+        }
+    }
+
     private static bool SourceSignatureMatches(string sourcePath, JsonElement job)
     {
         if (!job.TryGetProperty("sourceSignature", out var signature) || signature.ValueKind != JsonValueKind.Object)
@@ -333,4 +334,40 @@ internal static class NativeEnhancementState
         string OutputPath,
         string RawStatus,
         bool SourceSignatureMatches);
+
+    private sealed record NativeEnhancementSnapshot(
+        string ProjectRoot,
+        string JobsPath,
+        NativeEnhancementSnapshotFingerprint Fingerprint,
+        Dictionary<string, NativeEnhancedOutput> SucceededOutputs,
+        Dictionary<string, NativeEnhancementStatus> StatusBySource,
+        NativeEnhancementSummary Summary);
+
+    private readonly record struct NativeEnhancementSnapshotFingerprint(
+        bool Exists,
+        long Length,
+        long LastWriteUtcTicks)
+    {
+        public static NativeEnhancementSnapshotFingerprint From(string path)
+        {
+            if (!File.Exists(path))
+            {
+                return new NativeEnhancementSnapshotFingerprint(false, 0, 0);
+            }
+
+            try
+            {
+                var info = new FileInfo(path);
+                return new NativeEnhancementSnapshotFingerprint(true, info.Length, info.LastWriteTimeUtc.Ticks);
+            }
+            catch (IOException)
+            {
+                return new NativeEnhancementSnapshotFingerprint(false, 0, 0);
+            }
+            catch (UnauthorizedAccessException)
+            {
+                return new NativeEnhancementSnapshotFingerprint(false, 0, 0);
+            }
+        }
+    }
 }
