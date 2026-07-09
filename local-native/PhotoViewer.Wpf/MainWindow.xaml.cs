@@ -35,6 +35,9 @@ public partial class MainWindow : Window
     private const string DisplayStyleStandard = "standard";
     private const string DisplayStyleCompact = "compact";
     private const string DisplayStylePoster = "poster";
+    private const string AspectOriginalValue = "original";
+    private const string AspectSquareValue = "square";
+    private const string AspectPortraitValue = "portrait";
     private const string SortModifiedNewestValue = "modified-newest";
     private const string SortModifiedOldestValue = "modified-oldest";
     private const string SortNameValue = "name";
@@ -74,6 +77,7 @@ public partial class MainWindow : Window
     private int _previewUpdateCount;
     private long _previewMs;
     private string _displayStyle = DisplayStyleStandard;
+    private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
@@ -545,6 +549,7 @@ public partial class MainWindow : Window
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
+        TryReadBitmapSize(file.FullName, out int imageWidth, out int imageHeight);
         var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
@@ -558,6 +563,8 @@ public partial class MainWindow : Window
             Prompt = file.FullName,
             Path = file.FullName,
             IsRealFile = true,
+            ImagePixelWidth = imageWidth,
+            ImagePixelHeight = imageHeight,
             Enhanced = enhanced,
             EnhancedOutputPath = enhancedOutputPath,
             SizeText = FormatBytes(file.Length),
@@ -1619,6 +1626,8 @@ public partial class MainWindow : Window
             CardWidth = width,
             Prompt = Prompts[idx % Prompts.Length],
             Path = $@"D:\SD\outputs\txt2img\{name}",
+            ImagePixelWidth = 832,
+            ImagePixelHeight = 1216,
             SizeText = "832 x 1216",
             ModifiedText = "2026-07-08 14:22",
         };
@@ -2151,22 +2160,38 @@ public partial class MainWindow : Window
         double baseWidth = SizeSlider?.Value ?? DefaultCardWidth;
         double minWidth = SizeSlider?.Minimum ?? 130;
         double maxWidth = SizeSlider?.Maximum ?? 280;
-        (double widthFactor, double heightFactor) = _displayStyle switch
+        (double widthFactor, double listThumbnailBase) = _displayStyle switch
         {
-            DisplayStyleCompact => (0.82, 1.08),
-            DisplayStylePoster => (1.12, 1.56),
-            _ => (1.0, 1.5),
+            DisplayStyleCompact => (0.82, 42),
+            DisplayStylePoster => (1.12, 64),
+            _ => (1.0, 52),
         };
 
         double width = Math.Clamp(baseWidth * widthFactor, minWidth, maxWidth);
+        double aspectHeightFactor = AspectHeightFactor(tile);
         tile.CardWidth = width;
-        tile.CardHeight = Math.Max(minWidth, width * heightFactor);
-        tile.ListThumbnailSize = _displayStyle switch
+        tile.CardHeight = Math.Max(64, width * aspectHeightFactor);
+        tile.ListThumbnailWidth = listThumbnailBase;
+        tile.ListThumbnailHeight = Math.Clamp(listThumbnailBase * aspectHeightFactor, 32, 120);
+        tile.ListThumbnailSize = Math.Max(tile.ListThumbnailWidth, tile.ListThumbnailHeight);
+    }
+
+    private double AspectHeightFactor(Tile tile)
+    {
+        return _aspectMode switch
         {
-            DisplayStyleCompact => 42,
-            DisplayStylePoster => 64,
-            _ => 52,
+            AspectSquareValue => 1.0,
+            AspectPortraitValue => 1.5,
+            _ => OriginalAspectHeightFactor(tile),
         };
+    }
+
+    private static double OriginalAspectHeightFactor(Tile tile)
+    {
+        if (tile.ImagePixelWidth > 0 && tile.ImagePixelHeight > 0)
+            return Math.Clamp((double)tile.ImagePixelHeight / tile.ImagePixelWidth, 0.65, 1.8);
+
+        return 1.5;
     }
 
     private static string NormalizeDisplayStyle(string? style)
@@ -2199,6 +2224,39 @@ public partial class MainWindow : Window
         StyleStandard.IsChecked = _displayStyle == DisplayStyleStandard;
         StyleCompact.IsChecked = _displayStyle == DisplayStyleCompact;
         StylePoster.IsChecked = _displayStyle == DisplayStylePoster;
+    }
+
+    private static string NormalizeAspectMode(string? aspectMode)
+    {
+        return aspectMode?.Trim().ToLowerInvariant() switch
+        {
+            AspectSquareValue or "1:1" => AspectSquareValue,
+            AspectPortraitValue or "2:3" => AspectPortraitValue,
+            AspectOriginalValue => AspectOriginalValue,
+            _ => AspectOriginalValue,
+        };
+    }
+
+    private bool SetAspectMode(string aspectMode)
+    {
+        string normalized = NormalizeAspectMode(aspectMode);
+        bool changed = !string.Equals(_aspectMode, normalized, StringComparison.Ordinal);
+        _aspectMode = normalized;
+        SyncAspectButtons();
+        ApplyCardLayoutToAllTiles();
+        if (changed && !_initializing)
+            SaveState();
+        return changed;
+    }
+
+    private void SyncAspectButtons()
+    {
+        if (AspectOriginalButton is null || AspectSquareButton is null || AspectPortraitButton is null)
+            return;
+
+        AspectOriginalButton.IsChecked = _aspectMode == AspectOriginalValue;
+        AspectSquareButton.IsChecked = _aspectMode == AspectSquareValue;
+        AspectPortraitButton.IsChecked = _aspectMode == AspectPortraitValue;
     }
 
     private static string NormalizeSortBy(string? sortBy)
@@ -2295,6 +2353,9 @@ public partial class MainWindow : Window
     private void StyleStandard_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleStandard);
     private void StyleCompact_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleCompact);
     private void StylePoster_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStylePoster);
+    private void AspectOriginal_Checked(object sender, RoutedEventArgs e) => SetAspectMode(AspectOriginalValue);
+    private void AspectSquare_Checked(object sender, RoutedEventArgs e) => SetAspectMode(AspectSquareValue);
+    private void AspectPortrait_Checked(object sender, RoutedEventArgs e) => SetAspectMode(AspectPortraitValue);
     private void SortModifiedNewest_Checked(object sender, RoutedEventArgs e)
     {
         if (!_initializing)
@@ -2562,6 +2623,8 @@ public partial class MainWindow : Window
 
         _displayStyle = NormalizeDisplayStyle(state.DisplayStyle);
         SyncDisplayStyleButtons();
+        _aspectMode = NormalizeAspectMode(state.AspectMode);
+        SyncAspectButtons();
         _sortBy = NormalizeSortBy(state.SortBy);
         SyncSortButtons();
 
@@ -2600,6 +2663,7 @@ public partial class MainWindow : Window
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
                 DisplayStyle = _displayStyle,
+                AspectMode = _aspectMode,
                 SortBy = _sortBy,
                 SelectedPath = selectedPath,
             };
@@ -2920,6 +2984,7 @@ public partial class MainWindow : Window
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
     public double CardWidthForSmoke => SizeSlider.Value;
     public string DisplayStyleForSmoke => _displayStyle;
+    public string AspectModeForSmoke => _aspectMode;
     public string SortByForSmoke => _sortBy;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
@@ -2949,6 +3014,7 @@ public partial class MainWindow : Window
         => _allTiles.All(tile => Math.Abs(tile.CardWidth - width) < 0.01);
 
     public bool SetDisplayStyleForSmoke(string style) => SetDisplayStyle(style);
+    public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
 
     public List<string> FilteredFileNamesForSmoke(int take = 20)
@@ -2965,9 +3031,12 @@ public partial class MainWindow : Window
         var tile = _allTiles.FirstOrDefault();
         return new DisplayStyleMetrics(
             _displayStyle,
+            _aspectMode,
             SizeSlider.Value,
             tile?.CardWidth ?? 0,
             tile?.CardHeight ?? 0,
+            tile?.ListThumbnailWidth ?? 0,
+            tile?.ListThumbnailHeight ?? 0,
             tile?.ListThumbnailSize ?? 0,
             _tiles.Count);
     }
@@ -3055,14 +3124,18 @@ public sealed class ViewerState
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
     public string? DisplayStyle { get; set; }
+    public string? AspectMode { get; set; }
     public string? SortBy { get; set; }
 }
 
 public readonly record struct DisplayStyleMetrics(
     string Style,
+    string AspectMode,
     double BaseWidth,
     double CardWidth,
     double CardHeight,
+    double ListThumbnailWidth,
+    double ListThumbnailHeight,
     double ListThumbnailSize,
     int FilteredCount);
 
@@ -3181,6 +3254,8 @@ public sealed class Tile : INotifyPropertyChanged
     public bool Enhanced { get; set; }
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
+    public int ImagePixelWidth { get; set; }
+    public int ImagePixelHeight { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
 
@@ -3255,6 +3330,30 @@ public sealed class Tile : INotifyPropertyChanged
             if (Math.Abs(_listThumbnailSize - value) < 0.01) return;
             _listThumbnailSize = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ListThumbnailSize)));
+        }
+    }
+
+    private double _listThumbnailWidth = 52;
+    public double ListThumbnailWidth
+    {
+        get => _listThumbnailWidth;
+        set
+        {
+            if (Math.Abs(_listThumbnailWidth - value) < 0.01) return;
+            _listThumbnailWidth = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ListThumbnailWidth)));
+        }
+    }
+
+    private double _listThumbnailHeight = 52;
+    public double ListThumbnailHeight
+    {
+        get => _listThumbnailHeight;
+        set
+        {
+            if (Math.Abs(_listThumbnailHeight - value) < 0.01) return;
+            _listThumbnailHeight = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ListThumbnailHeight)));
         }
     }
 
