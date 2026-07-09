@@ -87,6 +87,7 @@ public partial class MainWindow : Window
     private List<string> _lastFolderSet = [];
     private string? _restoredSelectedPath;
     private string? _activePreviewTabPath;
+    private string? _hoverPreviewTabPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private int _previewUpdateCount;
@@ -2134,6 +2135,24 @@ public partial class MainWindow : Window
             ActivatePreviewTab(tab.Path);
     }
 
+    private void PreviewTab_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab } target)
+            ShowPreviewTabHover(tab, target);
+    }
+
+    private void PreviewTab_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab } target)
+            ShowPreviewTabHover(tab, target);
+    }
+
+    private void PreviewTab_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab })
+            HidePreviewTabHover(tab.Path);
+    }
+
     private void ClosePreviewTab_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: PreviewTabView tab })
@@ -2167,6 +2186,7 @@ public partial class MainWindow : Window
         if (tile is null)
             return false;
 
+        HidePreviewTabHover(path);
         _activePreviewTabPath = tile.Path;
         SelectTile(tile);
         RefreshPreviewTabs();
@@ -2180,6 +2200,7 @@ public partial class MainWindow : Window
         if (tab is null)
             return false;
 
+        HidePreviewTabHover(path);
         _previewTabs.Remove(tab);
         if (_allTiles.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase)) is { } closed)
         {
@@ -2233,6 +2254,7 @@ public partial class MainWindow : Window
         if (_closedPreviewTabs.Count > 30)
             _closedPreviewTabs.RemoveRange(30, _closedPreviewTabs.Count - 30);
 
+        HidePreviewTabHover();
         _previewTabs.Clear();
         _activePreviewTabPath = null;
         RefreshPreviewTabs();
@@ -2249,6 +2271,43 @@ public partial class MainWindow : Window
             CloseAllPreviewTabsButton.IsEnabled = _previewTabs.Count > 0;
         if (RestorePreviewTabButton is not null)
             RestorePreviewTabButton.IsEnabled = _closedPreviewTabs.Count > 0;
+    }
+
+    private bool ShowPreviewTabHover(PreviewTabView tab, FrameworkElement? placementTarget)
+    {
+        var tile = _allTiles.FirstOrDefault(candidate => string.Equals(candidate.Path, tab.Path, StringComparison.OrdinalIgnoreCase));
+        if (tile is null || PreviewTabHoverPopup is null)
+            return false;
+
+        _hoverPreviewTabPath = tile.Path;
+        PreviewTabHoverName.Text = tile.FileName;
+        PreviewTabHoverPath.Text = tile.Path;
+        PreviewTabHoverBitmap.Source = tile.Thumbnail ?? LoadBitmap(tile.Path, 360);
+        if (placementTarget is not null)
+            PreviewTabHoverPopup.PlacementTarget = placementTarget;
+        PreviewTabHoverPopup.IsOpen = true;
+        return true;
+    }
+
+    private bool HidePreviewTabHover(string? path = null)
+    {
+        if (!string.IsNullOrWhiteSpace(path)
+            && !string.Equals(_hoverPreviewTabPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        bool wasVisible = PreviewTabHoverPopup?.IsOpen == true || _hoverPreviewTabPath is not null;
+        _hoverPreviewTabPath = null;
+        if (PreviewTabHoverPopup is not null)
+            PreviewTabHoverPopup.IsOpen = false;
+        if (PreviewTabHoverBitmap is not null)
+            PreviewTabHoverBitmap.Source = null;
+        if (PreviewTabHoverName is not null)
+            PreviewTabHoverName.Text = "";
+        if (PreviewTabHoverPath is not null)
+            PreviewTabHoverPath.Text = "";
+        return wasVisible;
     }
 
     private void QuickSearch_Click(object sender, RoutedEventArgs e)
@@ -3685,6 +3744,11 @@ public partial class MainWindow : Window
     public int ClosedPreviewTabCountForSmoke => _closedPreviewTabs.Count;
     public string? ActivePreviewTabNameForSmoke => _previewTabs.FirstOrDefault(tab => tab.IsActive)?.FileName;
     public List<string> PreviewTabNamesForSmoke => _previewTabs.Select(static tab => tab.FileName).ToList();
+    public bool PreviewTabHoverVisibleForSmoke => PreviewTabHoverPopup?.IsOpen == true;
+    public string? HoverPreviewTabNameForSmoke => string.IsNullOrWhiteSpace(_hoverPreviewTabPath)
+        ? null
+        : _allTiles.FirstOrDefault(tile => string.Equals(tile.Path, _hoverPreviewTabPath, StringComparison.OrdinalIgnoreCase))?.FileName;
+    public string? HoverPreviewTabPathForSmoke => _hoverPreviewTabPath;
     public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
     public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
@@ -3721,6 +3785,20 @@ public partial class MainWindow : Window
 
     public bool RestoreLastClosedPreviewTabForSmoke() => RestoreLastClosedPreviewTab();
     public void CloseAllPreviewTabsForSmoke() => CloseAllPreviewTabs();
+    public bool ShowPreviewTabHoverForSmoke(string fileName)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && ShowPreviewTabHover(tab, PreviewTabList);
+    }
+
+    public bool HidePreviewTabHoverForSmoke(string? fileName = null)
+    {
+        string? path = null;
+        if (!string.IsNullOrWhiteSpace(fileName))
+            path = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
+        return HidePreviewTabHover(path);
+    }
+
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);

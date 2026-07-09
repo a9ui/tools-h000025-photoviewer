@@ -28,7 +28,7 @@ browse and practical viewer slice:
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
 - `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
-- `--preview-tabs-smoke <path>` preview tab open/activate/close/restore smoke
+- `--preview-tabs-smoke <path>` preview tab open/hover/activate/close/restore smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
@@ -340,8 +340,13 @@ clears the current runtime tab set. Activating or restoring a tab selects the
 matching visible tile so the right preview and modal source stay coherent.
 `--preview-tabs-smoke` verifies opening two tabs, activation, close, restore,
 close-all, restore-after-close-all, and selection sync with temporary state,
-seen, and favorites paths. Hover preview, pinned tabs, drag/reorder, and preview
-tab persistence remain deferred.
+seen, and favorites paths.
+
+The #260 follow-up adds browser-aligned hover previews for bottom preview tabs.
+Hovering a tab shows a small non-mutating preview card with thumbnail, filename,
+and path; leaving the tab hides it. The same smoke verifies hover show/hide and
+that hover does not mutate active tab or selected tile. Pinned tabs, drag/reorder,
+grid/list tile hover preview, and preview tab persistence remain deferred.
 
 ## WPF M10 Favorite Import Policy Slice
 

@@ -494,7 +494,7 @@
                 <DataTemplate>
                   <Border Padding="6,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                      <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" ToolTip="{Binding Path}">
+                      <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" MouseEnter="PreviewTab_MouseEnter" MouseMove="PreviewTab_MouseMove" MouseLeave="PreviewTab_MouseLeave" ToolTip="{Binding Path}">
                         <StackPanel Orientation="Horizontal">
                           <TextBlock Text="{Binding ActiveMarker}" Foreground="{StaticResource FavoriteText}" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
                           <TextBlock Text="{Binding FileName}" Foreground="{Binding Foreground}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" VerticalAlignment="Center"/>
@@ -507,6 +507,17 @@
               </ItemsControl.ItemTemplate>
             </ItemsControl>
           </ScrollViewer>
+          <Popup x:Name="PreviewTabHoverPopup" AllowsTransparency="True" Placement="Top" StaysOpen="True" VerticalOffset="-10">
+            <Border Width="220" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" CornerRadius="10" Padding="10" IsHitTestVisible="False">
+              <StackPanel>
+                <Border Height="148" Background="{StaticResource BgTertiary}" CornerRadius="8" ClipToBounds="True" Margin="0,0,0,8">
+                  <Image x:Name="PreviewTabHoverBitmap" Stretch="UniformToFill"/>
+                </Border>
+                <TextBlock x:Name="PreviewTabHoverName" Foreground="{StaticResource TextPrimary}" FontSize="12.5" FontWeight="SemiBold" TextTrimming="CharacterEllipsis"/>
+                <TextBlock x:Name="PreviewTabHoverPath" Foreground="{StaticResource TextTertiary}" FontSize="10.5" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"/>
+              </StackPanel>
+            </Border>
+          </Popup>
         </Grid>
       </DockPanel>
     </Border>
