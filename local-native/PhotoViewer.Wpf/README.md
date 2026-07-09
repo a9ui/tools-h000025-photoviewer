@@ -477,6 +477,26 @@ Dedicated smoke coverage:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --enhanced-filter-smoke $env:TEMP\wpf-enhanced-filter.json --folder .\local-native\ui-mockup
 ```
 
+## WPF M19 Browser Sort Parity First Slice
+
+The #246 slice replaces the static Sort row with working WPF controls for the
+safe browser-aligned first set:
+
+- Modified new
+- Modified old
+- Name
+
+The sort choice applies after the current search/favorite/enhanced/unseen
+filters, so grid, list, modal navigation, and selection all follow the same
+filtered order. The choice is persisted through the existing WPF `state.json`
+path as `SortBy`.
+
+Dedicated smoke coverage:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --sort-smoke $env:TEMP\wpf-sort-smoke.json --folder .\local-native\ui-mockup
+```
+
 ## Files
 
 | File | Role |
@@ -516,6 +536,9 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
   `.cache/enhance/jobs.json` when source and output files are both usable.
   Enhancement generation, queue management, retry/cancel, output ownership, and
   cache mutation remain deferred.
+- Sort supports modified-newest, modified-oldest, and name ordering. Browser
+  created-date sorting, random sorting, and reshuffle remain deferred until WPF
+  has reliable created timestamp and deterministic random-seed contracts.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.

@@ -35,6 +35,9 @@ public partial class MainWindow : Window
     private const string DisplayStyleStandard = "standard";
     private const string DisplayStyleCompact = "compact";
     private const string DisplayStylePoster = "poster";
+    private const string SortModifiedNewestValue = "modified-newest";
+    private const string SortModifiedOldestValue = "modified-oldest";
+    private const string SortNameValue = "name";
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -71,6 +74,7 @@ public partial class MainWindow : Window
     private int _previewUpdateCount;
     private long _previewMs;
     private string _displayStyle = DisplayStyleStandard;
+    private string _sortBy = SortModifiedNewestValue;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -550,6 +554,7 @@ public partial class MainWindow : Window
             Unseen = !SeenStateContains(file.FullName),
             Group = FormatGroup(modified),
             CardWidth = width,
+            ModifiedUtc = file.LastWriteTimeUtc,
             Prompt = file.FullName,
             Path = file.FullName,
             IsRealFile = true,
@@ -1852,11 +1857,11 @@ public partial class MainWindow : Window
         bool enhancedOnly = EnhancedOnlyFilter?.IsChecked == true;
         bool unseenOnly = UnseenOnlyFilter?.IsChecked == true;
 
-        var filtered = _allTiles
+        var filtered = SortTiles(_allTiles
             .Where(tile => MatchesSearch(tile, query))
             .Where(tile => !favoritesOnly || tile.Fav > 0)
             .Where(tile => !enhancedOnly || tile.Enhanced)
-            .Where(tile => !unseenOnly || tile.Unseen)
+            .Where(tile => !unseenOnly || tile.Unseen))
             .ToList();
 
         _tiles.Clear();
@@ -2002,6 +2007,25 @@ public partial class MainWindow : Window
 
     private static bool ContainsText(string? value, string token)
         => !string.IsNullOrEmpty(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    private IEnumerable<Tile> SortTiles(IEnumerable<Tile> source)
+    {
+        return _sortBy switch
+        {
+            SortModifiedOldestValue => source
+                .OrderBy(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortNameValue => source
+                .OrderBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            _ => source
+                .OrderByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+        };
+    }
 
     private void SelectFirstAvailable()
     {
@@ -2177,6 +2201,43 @@ public partial class MainWindow : Window
         StylePoster.IsChecked = _displayStyle == DisplayStylePoster;
     }
 
+    private static string NormalizeSortBy(string? sortBy)
+    {
+        return sortBy?.Trim().ToLowerInvariant() switch
+        {
+            SortModifiedOldestValue or "oldest" => SortModifiedOldestValue,
+            SortNameValue => SortNameValue,
+            SortModifiedNewestValue or "newest" => SortModifiedNewestValue,
+            _ => SortModifiedNewestValue,
+        };
+    }
+
+    private bool SetSortBy(string sortBy)
+    {
+        string normalized = NormalizeSortBy(sortBy);
+        bool changed = !string.Equals(_sortBy, normalized, StringComparison.Ordinal);
+        _sortBy = normalized;
+        SyncSortButtons();
+
+        if (changed && !_initializing)
+        {
+            ApplyFilters();
+            SaveState();
+        }
+
+        return changed;
+    }
+
+    private void SyncSortButtons()
+    {
+        if (SortModifiedNewest is null || SortModifiedOldest is null || SortName is null)
+            return;
+
+        SortModifiedNewest.IsChecked = _sortBy == SortModifiedNewestValue;
+        SortModifiedOldest.IsChecked = _sortBy == SortModifiedOldestValue;
+        SortName.IsChecked = _sortBy == SortNameValue;
+    }
+
     private static bool IsZoomModifierActive()
         => (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0;
 
@@ -2234,6 +2295,23 @@ public partial class MainWindow : Window
     private void StyleStandard_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleStandard);
     private void StyleCompact_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStyleCompact);
     private void StylePoster_Checked(object sender, RoutedEventArgs e) => SetDisplayStyle(DisplayStylePoster);
+    private void SortModifiedNewest_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortModifiedNewestValue);
+    }
+
+    private void SortModifiedOldest_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortModifiedOldestValue);
+    }
+
+    private void SortName_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortNameValue);
+    }
 
     private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
 
@@ -2484,6 +2562,8 @@ public partial class MainWindow : Window
 
         _displayStyle = NormalizeDisplayStyle(state.DisplayStyle);
         SyncDisplayStyleButtons();
+        _sortBy = NormalizeSortBy(state.SortBy);
+        SyncSortButtons();
 
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
@@ -2520,6 +2600,7 @@ public partial class MainWindow : Window
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
                 DisplayStyle = _displayStyle,
+                SortBy = _sortBy,
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -2839,6 +2920,7 @@ public partial class MainWindow : Window
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
     public double CardWidthForSmoke => SizeSlider.Value;
     public string DisplayStyleForSmoke => _displayStyle;
+    public string SortByForSmoke => _sortBy;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
@@ -2867,6 +2949,16 @@ public partial class MainWindow : Window
         => _allTiles.All(tile => Math.Abs(tile.CardWidth - width) < 0.01);
 
     public bool SetDisplayStyleForSmoke(string style) => SetDisplayStyle(style);
+    public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
+
+    public List<string> FilteredFileNamesForSmoke(int take = 20)
+        => _tiles.Take(take).Select(static tile => tile.FileName).ToList();
+
+    public bool OpenModalForSmoke()
+    {
+        OpenModal();
+        return Modal.Visibility == Visibility.Visible;
+    }
 
     public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
     {
@@ -2963,6 +3055,7 @@ public sealed class ViewerState
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
     public string? DisplayStyle { get; set; }
+    public string? SortBy { get; set; }
 }
 
 public readonly record struct DisplayStyleMetrics(
@@ -3087,6 +3180,7 @@ public sealed class Tile : INotifyPropertyChanged
     public bool IsRealFile { get; set; }
     public bool Enhanced { get; set; }
     public string? EnhancedOutputPath { get; set; }
+    public DateTime ModifiedUtc { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
 

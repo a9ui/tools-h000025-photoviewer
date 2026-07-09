@@ -223,11 +223,12 @@
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
                 <TextBlock Text="SORT" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
-                <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,7">
-                  <DockPanel>
-                    <Path DockPanel.Dock="Right" Data="M6,9 l6,6 l6,-6" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="11" Height="11" VerticalAlignment="Center"/>
-                    <TextBlock Text="Date · Newest first" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
-                  </DockPanel>
+                <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
+                  <UniformGrid Rows="3">
+                    <RadioButton x:Name="SortModifiedNewest" Style="{StaticResource Seg}" GroupName="sort" Content="Modified new" IsChecked="True" Checked="SortModifiedNewest_Checked"/>
+                    <RadioButton x:Name="SortModifiedOldest" Style="{StaticResource Seg}" GroupName="sort" Content="Modified old" Checked="SortModifiedOldest_Checked"/>
+                    <RadioButton x:Name="SortName" Style="{StaticResource Seg}" GroupName="sort" Content="Name" Checked="SortName_Checked"/>
+                  </UniformGrid>
                 </Border>
               </StackPanel>
             </Border>

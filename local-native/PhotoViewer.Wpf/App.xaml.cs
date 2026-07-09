@@ -119,6 +119,13 @@ public partial class App : Application
             return;
         }
 
+        int sortSmokeIdx = Array.IndexOf(e.Args, "--sort-smoke");
+        if (sortSmokeIdx >= 0 && sortSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSortSmoke(e.Args[sortSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -1721,6 +1728,151 @@ public partial class App : Application
     private static double Area(DisplayStyleMetrics metrics)
         => metrics.CardWidth * metrics.CardHeight;
 
+    private void CaptureSortSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteSortSmokeResult(resultPath, new SortSmokeResult { Ok = false, Message = "missing required --folder", Folder = folder });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length < 3)
+        {
+            WriteSortSmokeResult(resultPath, new SortSmokeResult { Ok = false, Message = "sort smoke requires at least 3 fixture images", Folder = fullFolder });
+            Shutdown(1);
+            return;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        string sortFolder = PrepareSortSmokeFolder(fullFolder, fixtureNames, smokeRoot);
+        string alphaName = "alpha-sort" + Path.GetExtension(fixtureNames[0]).ToLowerInvariant();
+        string bravoName = "bravo-sort" + Path.GetExtension(fixtureNames[1]).ToLowerInvariant();
+        string charlieName = "charlie-sort" + Path.GetExtension(fixtureNames[2]).ToLowerInvariant();
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            SortSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(sortFolder);
+                string statePath = first.StatePathForSmoke;
+                List<string> newestOrder = first.FilteredFileNamesForSmoke(3);
+                bool selectedAlpha = first.SelectFileNameForSmoke(alphaName);
+                bool changedOldest = first.SetSortByForSmoke("modified-oldest");
+                List<string> oldestOrder = first.FilteredFileNamesForSmoke(3);
+                bool selectionKeptAfterOldest = string.Equals(first.SelectedFileNameForSmoke, alphaName, StringComparison.OrdinalIgnoreCase);
+                bool changedName = first.SetSortByForSmoke("name");
+                List<string> nameOrder = first.FilteredFileNamesForSmoke(3);
+                bool selectionKeptAfterName = string.Equals(first.SelectedFileNameForSmoke, alphaName, StringComparison.OrdinalIgnoreCase);
+
+                first.SetSearchQuery("alpha", persist: false);
+                List<string> filteredAlphaOrder = first.FilteredFileNamesForSmoke(3);
+                bool filterPreserved = first.FilteredCountForSmoke == 1
+                    && filteredAlphaOrder.Count == 1
+                    && string.Equals(filteredAlphaOrder[0], alphaName, StringComparison.OrdinalIgnoreCase);
+
+                first.SetSearchQuery("", persist: false);
+                bool modalOpened = first.OpenModalForSmoke();
+                bool modalMovedNext = first.NavigateModalForSmoke(1);
+                string? modalNextName = first.SelectedFileNameForSmoke;
+                bool modalUsesSortedNameOrder = modalOpened
+                    && modalMovedNext
+                    && string.Equals(modalNextName, bravoName, StringComparison.OrdinalIgnoreCase);
+
+                bool changedNewest = first.SetSortByForSmoke("modified-newest");
+                ViewerState? persisted = ReadPersistedState(statePath);
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(sortFolder);
+                string restoredSort = second.SortByForSmoke;
+                List<string> restoredOrder = second.FilteredFileNamesForSmoke(3);
+                second.Close();
+
+                List<string> expectedNewest = [bravoName, alphaName, charlieName];
+                List<string> expectedOldest = [charlieName, alphaName, bravoName];
+                List<string> expectedName = [alphaName, bravoName, charlieName];
+                bool newestOk = SameNameOrder(newestOrder, expectedNewest);
+                bool oldestOk = SameNameOrder(oldestOrder, expectedOldest);
+                bool nameOk = SameNameOrder(nameOrder, expectedName);
+                bool persistedNewest = string.Equals(persisted?.SortBy, "modified-newest", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredSort, "modified-newest", StringComparison.OrdinalIgnoreCase)
+                    && SameNameOrder(restoredOrder, expectedNewest);
+                bool ok = newestOk
+                    && changedOldest
+                    && oldestOk
+                    && selectionKeptAfterOldest
+                    && changedName
+                    && nameOk
+                    && selectionKeptAfterName
+                    && filterPreserved
+                    && modalUsesSortedNameOrder
+                    && changedNewest
+                    && persistedNewest;
+
+                result = new SortSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "modified newest, modified oldest, name sort, filter, selection, modal navigation, and persistence checks passed"
+                        : "sort smoke did not meet order/filter/selection/modal/persistence expectations",
+                    Folder = sortFolder,
+                    ProjectRoot = smokeRoot,
+                    StatePath = statePath,
+                    ExpectedNewest = expectedNewest,
+                    ExpectedOldest = expectedOldest,
+                    ExpectedName = expectedName,
+                    NewestOrder = newestOrder,
+                    OldestOrder = oldestOrder,
+                    NameOrder = nameOrder,
+                    RestoredOrder = restoredOrder,
+                    SelectedAlpha = selectedAlpha,
+                    SelectionKeptAfterOldest = selectionKeptAfterOldest,
+                    SelectionKeptAfterName = selectionKeptAfterName,
+                    FilterPreserved = filterPreserved,
+                    ModalOpened = modalOpened,
+                    ModalMovedNext = modalMovedNext,
+                    ModalNextName = modalNextName,
+                    PersistedSort = persisted?.SortBy,
+                    RestoredSort = restoredSort,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new SortSmokeResult { Ok = false, Message = ex.Message, Folder = sortFolder, ProjectRoot = smokeRoot };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteSortSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureEnhancedFilterSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -2794,6 +2946,43 @@ public partial class App : Application
         return target;
     }
 
+    private static string PrepareSortSmokeFolder(string sourceFolder, string[] fixtureNames, string smokeRoot)
+    {
+        string target = Path.Combine(smokeRoot, "sort-folder");
+        Directory.CreateDirectory(target);
+        var inputs = new[]
+        {
+            new
+            {
+                SourceName = fixtureNames[0],
+                TargetName = "alpha-sort" + Path.GetExtension(fixtureNames[0]).ToLowerInvariant(),
+                ModifiedUtc = new DateTime(2026, 7, 10, 11, 0, 0, DateTimeKind.Utc),
+            },
+            new
+            {
+                SourceName = fixtureNames[1],
+                TargetName = "bravo-sort" + Path.GetExtension(fixtureNames[1]).ToLowerInvariant(),
+                ModifiedUtc = new DateTime(2026, 7, 10, 12, 0, 0, DateTimeKind.Utc),
+            },
+            new
+            {
+                SourceName = fixtureNames[2],
+                TargetName = "charlie-sort" + Path.GetExtension(fixtureNames[2]).ToLowerInvariant(),
+                ModifiedUtc = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc),
+            },
+        };
+
+        foreach (var input in inputs)
+        {
+            string source = Path.Combine(sourceFolder, input.SourceName);
+            string destination = Path.Combine(target, input.TargetName);
+            File.Copy(source, destination, overwrite: true);
+            File.SetLastWriteTimeUtc(destination, input.ModifiedUtc);
+        }
+
+        return target;
+    }
+
     private static int CountDirectSmokeImages(string folder)
         => Directory.Exists(folder) ? Directory.EnumerateFiles(folder).Count(IsSmokeImageFile) : 0;
 
@@ -2805,6 +2994,11 @@ public partial class App : Application
 
     private static bool SameFolderSet(IEnumerable<string> actual, IEnumerable<string> expected)
         => string.Equals(FormatFolderSetForSmoke(actual), FormatFolderSetForSmoke(expected), StringComparison.OrdinalIgnoreCase);
+
+    private static bool SameNameOrder(IReadOnlyList<string> actual, IReadOnlyList<string> expected)
+        => actual.Count >= expected.Count && expected
+            .Select((name, index) => string.Equals(actual[index], name, StringComparison.OrdinalIgnoreCase))
+            .All(static matches => matches);
 
     private static bool SnapshotContainsFolderSet(SharedRecentSmokeSnapshot snapshot, IEnumerable<string> folders)
     {
@@ -2979,6 +3173,13 @@ public partial class App : Application
     }
 
     private static void WriteDisplayStyleSmokeResult(string path, DisplayStyleSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteSortSmokeResult(string path, SortSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -3301,6 +3502,31 @@ public partial class App : Application
         bool PosterChanged,
         bool Zoomed,
         bool PersistedPoster);
+
+    private sealed class SortSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? StatePath { get; init; }
+        public List<string> ExpectedNewest { get; init; } = [];
+        public List<string> ExpectedOldest { get; init; } = [];
+        public List<string> ExpectedName { get; init; } = [];
+        public List<string> NewestOrder { get; init; } = [];
+        public List<string> OldestOrder { get; init; } = [];
+        public List<string> NameOrder { get; init; } = [];
+        public List<string> RestoredOrder { get; init; } = [];
+        public bool SelectedAlpha { get; init; }
+        public bool SelectionKeptAfterOldest { get; init; }
+        public bool SelectionKeptAfterName { get; init; }
+        public bool FilterPreserved { get; init; }
+        public bool ModalOpened { get; init; }
+        public bool ModalMovedNext { get; init; }
+        public string? ModalNextName { get; init; }
+        public string? PersistedSort { get; init; }
+        public string? RestoredSort { get; init; }
+    }
 
     private sealed class EnhancedFilterSmokeResult
     {
