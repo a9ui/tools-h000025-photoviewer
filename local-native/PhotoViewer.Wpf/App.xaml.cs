@@ -26,6 +26,13 @@ public partial class App : Application
             return;
         }
 
+        int gridRealizationSmokeIdx = Array.IndexOf(e.Args, "--grid-realization-smoke");
+        if (gridRealizationSmokeIdx >= 0 && gridRealizationSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureGridRealizationSmoke(e.Args[gridRealizationSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -92,6 +99,70 @@ public partial class App : Application
 
             win.Close();
             Shutdown();
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureGridRealizationSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string query = ArgValue(args, "--query") ?? "";
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteGridRealizationSmokeResult(
+                resultPath,
+                new GridRealizationSmokeResult(false, "missing required --folder", folder, query, 0, 0, 0, false, 0, 0));
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            GridRealizationSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSearchQuery(query, persist: false);
+
+                int total = win.FilteredCountForSmoke;
+                int initial = win.GridRealizedCountForSmoke;
+                int initialDeferred = win.GridDeferredCountForSmoke;
+                bool moved = win.RealizeNextGridBatchForSmoke();
+                int afterBatch = win.GridRealizedCountForSmoke;
+                int afterDeferred = win.GridDeferredCountForSmoke;
+
+                bool ok = total > initial
+                    && initialDeferred > 0
+                    && moved
+                    && afterBatch > initial
+                    && afterBatch <= total
+                    && afterDeferred < initialDeferred;
+
+                result = new GridRealizationSmokeResult(
+                    ok,
+                    ok ? "grid starts with a bounded realized batch and appends the next batch on demand" : "grid realization batch did not advance as expected",
+                    folder,
+                    query,
+                    total,
+                    initial,
+                    initialDeferred,
+                    moved,
+                    afterBatch,
+                    afterDeferred);
+            }
+            catch (Exception ex)
+            {
+                result = new GridRealizationSmokeResult(false, ex.Message, folder, query, 0, 0, 0, false, 0, 0);
+            }
+
+            win.Close();
+            WriteGridRealizationSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -302,6 +373,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteGridRealizationSmokeResult(string path, GridRealizationSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private sealed record StateSmokeResult(
         bool Ok,
         string Message,
@@ -334,4 +412,16 @@ public partial class App : Application
         bool ModalVisible,
         string? PersistedName,
         string? PersistedPath);
+
+    private sealed record GridRealizationSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string Query,
+        int Total,
+        int InitialRealized,
+        int InitialDeferred,
+        bool BatchAdvanced,
+        int AfterBatchRealized,
+        int AfterBatchDeferred);
 }
