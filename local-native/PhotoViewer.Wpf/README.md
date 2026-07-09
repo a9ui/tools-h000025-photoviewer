@@ -292,6 +292,35 @@ Chrome/profile reads, broad browser-state migration, WinForms/browser changes,
 delete/recycle, album mutation, cache/state deletion, and automatic workers
 remain out of scope.
 
+## WPF M14 Performance Final Gate
+
+The #218 slice keeps the existing viewer contract and accelerates the measured
+thumbnail pipeline without changing grid/list/modal behavior. Thumbnail decode
+still completes for the loaded real-file set, but decoded thumbnails are applied
+to WPF bindings in small dispatcher batches instead of one dispatcher hop per
+image. Parallel decode is now capped by both CPU count and a 12-worker maximum;
+small folders still stay on the sequential path below 32 images.
+
+Representative temp fixture measurements:
+
+| Fixture | Before wall | #218 wall | Before internal total | #218 internal total | Before thumbnail | #218 thumbnail | Workers | Grid / scroll evidence |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
+| 320 hardlinked PNGs | 2,453.1 ms | 1,506.6 ms repeat median | 711 ms | 394 ms repeat median | 425 ms | 153 ms repeat median | 12 | grid 96 realized / 224 deferred; scroll cap not applicable below 384 |
+| 1,200 hardlinked PNGs | 2,893.6 ms | 2,854.3 ms | 1,643 ms | 1,189 ms | 1,346 ms | 875 ms | 12 | grid 96 realized / 1,104 deferred; scroll max 384, final 816 deferred |
+| 2,400 hardlinked PNGs | 3,161.3 ms | 2,186.3 ms | 1,659 ms | 856 ms | 1,320 ms | 541 ms | 12 | load cap 1,200; grid 96 realized / 1,104 deferred; scroll max 384 |
+
+Candidate classification from the final gate:
+
+| Candidate | Classification | Evidence / reason |
+| --- | --- | --- |
+| Batch decoded-thumbnail UI application | ADOPT | Removes per-image dispatcher churn while preserving all thumbnail completion semantics. |
+| Raise thumbnail workers from 4 to CPU-capped max 12 | ADOPT | 1,200-image internal thumbnail time improved from 1,346 ms to 875 ms in the full final run; 12-worker repeats also recorded 544-548 ms. 16 workers regressed and was rejected. |
+| File scan / metadata materialization | NO-OP | Scan and materialize stayed small compared with thumbnail decode: final 2,400 fixture scan/materialize was 53/77 ms. |
+| Grid realization / scroll object growth | NO-OP | Existing M6/M7 guards still held: initial 96 realized, repeated scroll max 384, deferred count remained bounded. |
+| Modal immediate responsiveness | NO-OP | Modal open remained immediate (`ModalOpenMs=0`, `ModalImmediateSource=true`, deferred decode true). |
+| Custom virtualizing wrap panel or broad lazy thumbnail redesign | DEFER | It would change the current shell/layout and smoke contract; keep it as a separately measured WPF issue only if future evidence needs it. |
+| WinForms/browser/scripts/cache deletion/destructive work | REJECT | Out of scope for this WPF-only performance gate. |
+
 ## Files
 
 | File | Role |
@@ -317,8 +346,8 @@ remain out of scope.
   surface yet.
 - Seen state uses the WPF-only `.cache/wpf-seen.json` absolute-path map for
   selected-image seen persistence and real-folder `Unseen only` filtering.
-  `pvu_seen_images` import is deferred to a separately scoped explicit-import
-  slice.
+  `pvu_seen_images` import is supported only through the separately scoped
+  explicit-file smoke path, not through browser/profile reads.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
@@ -24,7 +25,7 @@ public partial class MainWindow : Window
 
     private const int MaxLoadedImages = 1200;
     private const int MinParallelThumbnailCount = 32;
-    private const int MaxThumbnailDecodeWorkers = 4;
+    private const int MaxThumbnailDecodeWorkers = 12;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
@@ -223,7 +224,9 @@ public partial class MainWindow : Window
         if (total < MinParallelThumbnailCount)
             return await LoadThumbnailsSequentiallyAsync(snapshot, token);
 
-        int workers = Math.Min(MaxThumbnailDecodeWorkers, Math.Max(1, total));
+        int workers = Math.Max(1, Math.Min(Math.Min(MaxThumbnailDecodeWorkers, Environment.ProcessorCount), total));
+        int uiBatchSize = Math.Clamp(total / 48, 16, 48);
+        var decoded = new ConcurrentQueue<DecodedThumbnail>();
         int done = 0;
 
         try
@@ -248,15 +251,19 @@ public partial class MainWindow : Window
                         thumbnail = null;
                     }
 
-                    await Dispatcher.InvokeAsync(
-                        () =>
-                        {
-                            tile.Thumbnail = thumbnail;
-                            int completed = Interlocked.Increment(ref done);
-                            UpdateThumbnailProgress(completed, total);
-                        },
-                        DispatcherPriority.Background,
-                        itemToken);
+                    decoded.Enqueue(new DecodedThumbnail(tile, thumbnail));
+                    int completed = Interlocked.Increment(ref done);
+                    if (completed % uiBatchSize == 0 || completed == total)
+                    {
+                        await Dispatcher.InvokeAsync(
+                            () =>
+                            {
+                                DrainDecodedThumbnails(decoded);
+                                UpdateThumbnailProgress(completed, total);
+                            },
+                            DispatcherPriority.Background,
+                            itemToken);
+                    }
                 });
         }
         catch (OperationCanceledException)
@@ -269,7 +276,21 @@ public partial class MainWindow : Window
             watch.Stop();
         }
 
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                DrainDecodedThumbnails(decoded);
+                UpdateThumbnailProgress(done, total);
+            },
+            DispatcherPriority.Background);
+
         return new ThumbnailLoadMetrics(total, workers, done, watch.ElapsedMilliseconds);
+    }
+
+    private static void DrainDecodedThumbnails(ConcurrentQueue<DecodedThumbnail> decoded)
+    {
+        while (decoded.TryDequeue(out var item))
+            item.Tile.Thumbnail = item.Thumbnail;
     }
 
     private async Task<ThumbnailLoadMetrics> LoadThumbnailsSequentiallyAsync(IReadOnlyList<Tile> snapshot, CancellationToken token)
@@ -2353,6 +2374,8 @@ public sealed class LoadMetrics
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
+
+internal readonly record struct DecodedThumbnail(Tile Tile, BitmapSource? Thumbnail);
 
 // ─────────── Tile view model ───────────
 public sealed class Tile : INotifyPropertyChanged
