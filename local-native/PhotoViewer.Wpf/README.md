@@ -26,6 +26,7 @@ browse and practical viewer slice:
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
 - `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
+- `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
@@ -316,6 +317,18 @@ the selected real image in the accepted `0..5` model; `--favorite-level-smoke`
 now proves that path by moving `0 -> 1 -> 2 -> 1 -> 0 -> 4`, verifying the clear
 removes the store entry, enabling `Favorites only`, and reloading a second WPF
 window from the same temporary favorites JSON with level `4` preserved.
+
+## WPF M23 Favorite Filter Polish Slice
+
+The #254 slice wires the browser-aligned read-only favorite filter controls:
+`Favorites only`, `Unrated only`, and `Lv 1+` through `Lv 5+`. Favorite-only
+uses the selected threshold, unrated-only shows level `0` images, and those two
+filter modes are mutually exclusive. The threshold and active mode persist
+through the existing WPF state JSON while favorite levels continue to live only
+in the accepted shared favorites JSON map. `--favorite-filter-smoke` creates a
+temporary four-image fixture, assigns levels `0/1/3/5`, verifies `Lv 1+`,
+`Lv 3+`, `Lv 5+`, unrated-only, clear, selection fallback, and reload
+persistence without touching user favorites or seen state.
 
 ## WPF M10 Favorite Import Policy Slice
 

@@ -47,6 +47,8 @@ public partial class MainWindow : Window
     private const string DatePreset7DaysValue = "7d";
     private const string DatePreset30DaysValue = "30d";
     private const string DatePresetThisYearValue = "this-year";
+    private const int MinFavoriteFilterLevel = 1;
+    private const int MaxFavoriteFilterLevel = 5;
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -75,6 +77,7 @@ public partial class MainWindow : Window
     private bool _favoritesWriteBlocked;
     private bool _seenWriteBlocked;
     private bool _syncingSelection;
+    private bool _syncingFavoriteFilterControls;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
@@ -89,6 +92,7 @@ public partial class MainWindow : Window
     private string _datePreset = DatePresetNoneValue;
     private DateTime? _dateFromLocal;
     private DateTime? _dateToLocal;
+    private int _favoriteFilterLevel = MinFavoriteFilterLevel;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -1836,6 +1840,20 @@ public partial class MainWindow : Window
         ApplyFiltersForCurrentFilterChange();
     }
 
+    private void FavoriteFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing || _syncingFavoriteFilterControls) return;
+
+        bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
+        bool unfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true;
+        if (sender == FavoriteOnlyFilter && favoritesOnly)
+            unfavoriteOnly = false;
+        else if (sender == UnfavoriteOnlyFilter && unfavoriteOnly)
+            favoritesOnly = false;
+
+        SetFavoriteFilterState(favoritesOnly, unfavoriteOnly, apply: true, persist: true);
+    }
+
     private void ToggleFolderBucket_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: FolderBucketView bucket })
@@ -1896,6 +1914,105 @@ public partial class MainWindow : Window
         RefreshFolderBucketViews();
         ApplyFilters();
         SaveState();
+    }
+
+    private static int NormalizeFavoriteFilterLevel(int level)
+        => Math.Clamp(level, MinFavoriteFilterLevel, MaxFavoriteFilterLevel);
+
+    private bool SetFavoriteFilterLevel(int level)
+    {
+        int normalized = NormalizeFavoriteFilterLevel(level);
+        bool changed = _favoriteFilterLevel != normalized;
+        _favoriteFilterLevel = normalized;
+        SyncFavoriteFilterControls();
+
+        if (changed && !_initializing)
+        {
+            ApplyFilters();
+            SaveState();
+        }
+
+        return changed;
+    }
+
+    private void SetFavoriteFilterState(bool favoritesOnly, bool unfavoriteOnly, bool apply, bool persist)
+    {
+        if (favoritesOnly && unfavoriteOnly)
+            unfavoriteOnly = false;
+
+        if (FavoriteOnlyFilter is not null && UnfavoriteOnlyFilter is not null)
+        {
+            _syncingFavoriteFilterControls = true;
+            try
+            {
+                FavoriteOnlyFilter.IsChecked = favoritesOnly;
+                UnfavoriteOnlyFilter.IsChecked = unfavoriteOnly;
+            }
+            finally
+            {
+                _syncingFavoriteFilterControls = false;
+            }
+        }
+
+        SyncFavoriteFilterControls();
+
+        if (apply)
+            ApplyFilters();
+        if (persist && !_initializing)
+            SaveState();
+    }
+
+    private void SyncFavoriteFilterControls()
+    {
+        if (FavoriteLevel1Filter is null
+            || FavoriteLevel2Filter is null
+            || FavoriteLevel3Filter is null
+            || FavoriteLevel4Filter is null
+            || FavoriteLevel5Filter is null)
+        {
+            return;
+        }
+
+        bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
+        bool unfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true;
+
+        _syncingFavoriteFilterControls = true;
+        try
+        {
+            FavoriteLevel1Filter.IsChecked = _favoriteFilterLevel == 1;
+            FavoriteLevel2Filter.IsChecked = _favoriteFilterLevel == 2;
+            FavoriteLevel3Filter.IsChecked = _favoriteFilterLevel == 3;
+            FavoriteLevel4Filter.IsChecked = _favoriteFilterLevel == 4;
+            FavoriteLevel5Filter.IsChecked = _favoriteFilterLevel == 5;
+        }
+        finally
+        {
+            _syncingFavoriteFilterControls = false;
+        }
+
+        if (FavoriteLevelFilterPanel is not null)
+            FavoriteLevelFilterPanel.IsEnabled = favoritesOnly;
+
+        if (FavoriteFilterSummary is null)
+            return;
+
+        FavoriteFilterSummary.Text = favoritesOnly
+            ? $"Favorites Lv {_favoriteFilterLevel}+"
+            : unfavoriteOnly
+                ? "Unrated only"
+                : "All ratings";
+    }
+
+    private void FavoriteLevel1_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(1);
+    private void FavoriteLevel2_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(2);
+    private void FavoriteLevel3_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(3);
+    private void FavoriteLevel4_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(4);
+    private void FavoriteLevel5_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(5);
+
+    private void FavoriteLevel_Checked(int level)
+    {
+        if (_initializing || _syncingFavoriteFilterControls) return;
+        SetFavoriteFilterLevel(level);
     }
 
     private void PruneHiddenFolderBucketsToCurrentSet()
@@ -2039,12 +2156,13 @@ public partial class MainWindow : Window
         var previous = SelectedTile();
         string query = SearchInput?.Text?.Trim() ?? "";
         bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
+        bool unfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true;
         bool enhancedOnly = EnhancedOnlyFilter?.IsChecked == true;
         bool unseenOnly = UnseenOnlyFilter?.IsChecked == true;
 
         var filtered = SortTiles(_allTiles
             .Where(tile => MatchesSearch(tile, query))
-            .Where(tile => !favoritesOnly || tile.Fav > 0)
+            .Where(tile => MatchesFavoriteFilter(tile, favoritesOnly, unfavoriteOnly))
             .Where(tile => !enhancedOnly || tile.Enhanced)
             .Where(tile => !unseenOnly || tile.Unseen)
             .Where(MatchesFolderBucketFilter)
@@ -2194,6 +2312,15 @@ public partial class MainWindow : Window
 
     private static bool ContainsText(string? value, string token)
         => !string.IsNullOrEmpty(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesFavoriteFilter(Tile tile, bool favoritesOnly, bool unfavoriteOnly)
+    {
+        if (favoritesOnly)
+            return tile.Fav >= _favoriteFilterLevel;
+        if (unfavoriteOnly)
+            return tile.Fav <= 0;
+        return true;
+    }
 
     private bool MatchesFolderBucketFilter(Tile tile)
         => !tile.IsRealFile
@@ -2968,7 +3095,11 @@ public partial class MainWindow : Window
             FolderCountText.Text = existing > 0 ? "Last folder set saved" : "Last folder set unavailable";
         }
 
-        if (state is null) return;
+        if (state is null)
+        {
+            SyncFavoriteFilterControls();
+            return;
+        }
 
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
@@ -2980,6 +3111,10 @@ public partial class MainWindow : Window
         _sortBy = NormalizeSortBy(state.SortBy);
         SyncSortButtons();
         RestoreDateFilter(state);
+        _favoriteFilterLevel = NormalizeFavoriteFilterLevel(state.FavoriteFilterLevel <= 0
+            ? MinFavoriteFilterLevel
+            : state.FavoriteFilterLevel);
+        SetFavoriteFilterState(state.ShowFavoritesOnly, !state.ShowFavoritesOnly && state.ShowUnfavoriteOnly, apply: false, persist: false);
         _hiddenFolderBuckets.Clear();
         foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
             _hiddenFolderBuckets.Add(folder);
@@ -3024,6 +3159,9 @@ public partial class MainWindow : Window
                 DatePreset = _datePreset,
                 DateFrom = FormatStateDate(_dateFromLocal),
                 DateTo = FormatStateDate(_dateToLocal),
+                ShowFavoritesOnly = FavoriteOnlyFilter?.IsChecked == true,
+                ShowUnfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true,
+                FavoriteFilterLevel = _favoriteFilterLevel,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
             };
@@ -3353,6 +3491,9 @@ public partial class MainWindow : Window
     public string DatePresetForSmoke => _datePreset;
     public string? DateFromForSmoke => FormatStateDate(_dateFromLocal);
     public string? DateToForSmoke => FormatStateDate(_dateToLocal);
+    public bool ShowFavoritesOnlyForSmoke => FavoriteOnlyFilter?.IsChecked == true;
+    public bool ShowUnfavoriteOnlyForSmoke => UnfavoriteOnlyFilter?.IsChecked == true;
+    public int FavoriteFilterLevelForSmoke => _favoriteFilterLevel;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
@@ -3384,6 +3525,7 @@ public partial class MainWindow : Window
     public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
     public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
+    public bool SetFavoriteFilterLevelForSmoke(int level) => SetFavoriteFilterLevel(level);
     public bool SetFolderBucketHiddenForSmoke(string key, bool hidden) => SetFolderBucketHidden(key, hidden);
     public void ShowAllFolderBucketsForSmoke()
     {
@@ -3445,8 +3587,17 @@ public partial class MainWindow : Window
 
     public void SetFavoriteOnlyFilterForSmoke(bool enabled)
     {
-        FavoriteOnlyFilter.IsChecked = enabled;
-        ApplyFilters();
+        SetFavoriteFilterState(enabled, false, apply: true, persist: true);
+    }
+
+    public void SetUnfavoriteOnlyFilterForSmoke(bool enabled)
+    {
+        SetFavoriteFilterState(false, enabled, apply: true, persist: true);
+    }
+
+    public void ClearFavoriteFiltersForSmoke()
+    {
+        SetFavoriteFilterState(false, false, apply: true, persist: true);
     }
 
     public void SetEnhancedOnlyFilterForSmoke(bool enabled)
@@ -3520,6 +3671,9 @@ public sealed class ViewerState
     public string? DatePreset { get; set; }
     public string? DateFrom { get; set; }
     public string? DateTo { get; set; }
+    public bool ShowFavoritesOnly { get; set; }
+    public bool ShowUnfavoriteOnly { get; set; }
+    public int FavoriteFilterLevel { get; set; } = 1;
     public List<string>? HiddenFolderBuckets { get; set; }
 }
 

@@ -174,15 +174,19 @@
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
                 <TextBlock Text="FILTERS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
-                <CheckBox x:Name="FavoriteOnlyFilter" Content="Favorites only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-                <WrapPanel Margin="0,0,0,6">
+                <CheckBox x:Name="FavoriteOnlyFilter" Content="Favorites only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="FavoriteFilter_Changed" Unchecked="FavoriteFilter_Changed"/>
+                <CheckBox x:Name="UnfavoriteOnlyFilter" Content="Unrated only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="FavoriteFilter_Changed" Unchecked="FavoriteFilter_Changed"/>
+                <WrapPanel x:Name="FavoriteLevelFilterPanel" Margin="0,0,0,6">
                   <WrapPanel.Resources>
-                    <Style TargetType="ToggleButton" BasedOn="{StaticResource Pill}"><Setter Property="Margin" Value="0,0,6,0"/></Style>
+                    <Style TargetType="RadioButton" BasedOn="{StaticResource Pill}"><Setter Property="Margin" Value="0,0,6,0"/></Style>
                   </WrapPanel.Resources>
-                  <ToggleButton Content="★ 1+" IsChecked="True"/>
-                  <ToggleButton Content="★ 2+"/>
-                  <ToggleButton Content="★ 3+"/>
+                  <RadioButton x:Name="FavoriteLevel1Filter" GroupName="favoriteLevelFilter" Content="Lv 1+" IsChecked="True" Checked="FavoriteLevel1_Checked"/>
+                  <RadioButton x:Name="FavoriteLevel2Filter" GroupName="favoriteLevelFilter" Content="Lv 2+" Checked="FavoriteLevel2_Checked"/>
+                  <RadioButton x:Name="FavoriteLevel3Filter" GroupName="favoriteLevelFilter" Content="Lv 3+" Checked="FavoriteLevel3_Checked"/>
+                  <RadioButton x:Name="FavoriteLevel4Filter" GroupName="favoriteLevelFilter" Content="Lv 4+" Checked="FavoriteLevel4_Checked"/>
+                  <RadioButton x:Name="FavoriteLevel5Filter" GroupName="favoriteLevelFilter" Content="Lv 5+" Checked="FavoriteLevel5_Checked"/>
                 </WrapPanel>
+                <TextBlock x:Name="FavoriteFilterSummary" Text="All ratings" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,6"/>
                 <CheckBox x:Name="EnhancedOnlyFilter" Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="Filter_Changed" Unchecked="Filter_Changed" ToolTip="Read-only filter from .cache/enhance/jobs.json"/>
                 <CheckBox x:Name="UnseenOnlyFilter" Content="Unseen only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
                 <TextBlock Text="DATE" Foreground="{StaticResource TextTertiary}" FontSize="9.5" FontWeight="Bold" Margin="0,0,0,4"/>
