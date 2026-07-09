@@ -1,0 +1,2479 @@
+{
+  "schema": 1,
+  "kind": "photoviewer-perf-baseline",
+  "recordedAt": "2026-07-09T12:17:29.859Z",
+  "budgetsRef": "docs/performance/perf-budgets.json",
+  "environment": {
+    "commitSha": "837995843e048cc8582d88d547abe294449fcf94",
+    "nodeVersion": "v24.15.0",
+    "pnpmVersion": "unknown",
+    "platform": "win32",
+    "platformRelease": "10.0.26200",
+    "arch": "x64",
+    "windowsVersion": "Microsoft Windows 11 Home",
+    "hostname": "m",
+    "cpuModel": "Intel(R) Core(TM) i7-14700F",
+    "totalMemoryBytes": 34099961856,
+    "timestamp": "2026-07-09T12:17:29.859Z",
+    "buildMode": "production",
+    "buildCommand": "pnpm build",
+    "cacheState": "unknown",
+    "productionBaseUrl": "http://127.0.0.1:3100"
+  },
+  "fixture": {
+    "status": "runtime_dir",
+    "manifestPath": null,
+    "fileCount": null,
+    "totalBytes": null,
+    "dimensions": null,
+    "formats": null,
+    "maxDirectoryDepth": null,
+    "malformedFileCount": null,
+    "lockedFileCount": null,
+    "reason": "No fixture manifest supplied. Provide --fixture-manifest when representative test folders are defined.",
+    "runtimeDir": "C:\\Users\\a9ui\\Desktop\\Tools\\Projects\\H000025_PhotoViewer\\.cache\\native-fixture"
+  },
+  "scenarioNames": [
+    "launch",
+    "scan",
+    "thumbnail",
+    "modal",
+    "api",
+    "heavyWork",
+    "runtime"
+  ],
+  "scenarios": {
+    "launch": {
+      "name": "launch",
+      "status": "measured",
+      "requiredObservations": {
+        "cold": 10,
+        "warm": 10
+      },
+      "observations": [
+        {
+          "kind": "production-browser-launch",
+          "wallMs": 149,
+          "navigation": {
+            "domContentLoadedMs": 38,
+            "loadEventMs": 105.8
+          }
+        }
+      ],
+      "metrics": {
+        "coldStartToShellInteractiveMs": {
+          "name": "coldStartToShellInteractiveMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "coldStartToFirstVisibleImageMs": {
+          "name": "coldStartToFirstVisibleImageMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "coldStartToViewportReadyMs": {
+          "name": "coldStartToViewportReadyMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "warmStartToShellInteractiveMs": {
+          "name": "warmStartToShellInteractiveMs",
+          "status": "measured",
+          "value": 149,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-launch",
+              "wallMs": 149,
+              "navigation": {
+                "domContentLoadedMs": 38,
+                "loadEventMs": 105.8
+              }
+            }
+          ]
+        },
+        "warmStartToFirstVisibleImageMs": {
+          "name": "warmStartToFirstVisibleImageMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "warmStartToViewportReadyMs": {
+          "name": "warmStartToViewportReadyMs",
+          "status": "measured",
+          "value": 38,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-launch",
+              "wallMs": 149,
+              "navigation": {
+                "domContentLoadedMs": 38,
+                "loadEventMs": 105.8
+              }
+            }
+          ]
+        }
+      }
+    },
+    "scan": {
+      "name": "scan",
+      "status": "measured",
+      "requiredObservations": 5,
+      "observations": [
+        {
+          "kind": "production-browser-scan",
+          "firstProgressMs": 27.7,
+          "maxProgressGapMs": 14.1,
+          "fullCompletionMs": 41.9,
+          "resultCount": 4
+        }
+      ],
+      "metrics": {
+        "firstCorrectResultMs": {
+          "name": "firstCorrectResultMs",
+          "status": "measured",
+          "value": 27.7,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-scan",
+              "firstProgressMs": 27.7,
+              "maxProgressGapMs": 14.1,
+              "fullCompletionMs": 41.9,
+              "resultCount": 4
+            }
+          ]
+        },
+        "maxProgressGapMs": {
+          "name": "maxProgressGapMs",
+          "status": "measured",
+          "value": 14.1,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-scan",
+              "firstProgressMs": 27.7,
+              "maxProgressGapMs": 14.1,
+              "fullCompletionMs": 41.9,
+              "resultCount": 4
+            }
+          ]
+        },
+        "fullCompletionMs": {
+          "name": "fullCompletionMs",
+          "status": "measured",
+          "value": 41.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-scan",
+              "firstProgressMs": 27.7,
+              "maxProgressGapMs": 14.1,
+              "fullCompletionMs": 41.9,
+              "resultCount": 4
+            }
+          ]
+        },
+        "resultCount": {
+          "name": "resultCount",
+          "status": "measured",
+          "value": 4,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-scan",
+              "firstProgressMs": 27.7,
+              "maxProgressGapMs": 14.1,
+              "fullCompletionMs": 41.9,
+              "resultCount": 4
+            }
+          ]
+        },
+        "cancellationResponsive": {
+          "name": "cancellationResponsive",
+          "status": "measured",
+          "value": 1,
+          "unit": "boolean",
+          "observations": [
+            {
+              "kind": "production-browser-scan",
+              "firstProgressMs": 27.7,
+              "maxProgressGapMs": 14.1,
+              "fullCompletionMs": 41.9,
+              "resultCount": 4
+            }
+          ]
+        }
+      },
+      "budgets": {
+        "maxProgressGapMs": 500
+      }
+    },
+    "thumbnail": {
+      "name": "thumbnail",
+      "status": "measured",
+      "requiredObservations": 30,
+      "observations": [
+        {
+          "kind": "production-browser-thumbnail-fetch",
+          "index": 0,
+          "durationMs": 5.7,
+          "ok": true,
+          "bytes": 112
+        },
+        {
+          "kind": "production-browser-thumbnail-fetch",
+          "index": 1,
+          "durationMs": 7.9,
+          "ok": true,
+          "bytes": 74
+        },
+        {
+          "kind": "production-browser-thumbnail-fetch",
+          "index": 2,
+          "durationMs": 6.8,
+          "ok": true,
+          "bytes": 76
+        },
+        {
+          "kind": "production-browser-thumbnail-fetch",
+          "index": 3,
+          "durationMs": 5.3,
+          "ok": true,
+          "bytes": 82
+        }
+      ],
+      "metrics": {
+        "firstVisibleThumbnailMs": {
+          "name": "firstVisibleThumbnailMs",
+          "status": "measured",
+          "value": 5.7,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        },
+        "viewportFillMs": {
+          "name": "viewportFillMs",
+          "status": "measured",
+          "value": 7.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        },
+        "maxQueuedWork": {
+          "name": "maxQueuedWork",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        },
+        "maxInFlightWork": {
+          "name": "maxInFlightWork",
+          "status": "measured",
+          "value": 1,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        },
+        "staleCancellationCount": {
+          "name": "staleCancellationCount",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        },
+        "eventualCompletionMs": {
+          "name": "eventualCompletionMs",
+          "status": "measured",
+          "value": 8,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-thumbnail-fetch",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            }
+          ]
+        }
+      }
+    },
+    "modal": {
+      "name": "modal",
+      "status": "measured",
+      "requiredObservations": 30,
+      "observations": [
+        {
+          "kind": "production-browser-display-fetch-modal-proxy",
+          "index": 0,
+          "uncachedMs": 2.8,
+          "cachedMs": 2.2,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-display-fetch-modal-proxy",
+          "index": 1,
+          "uncachedMs": 2.2,
+          "cachedMs": 1.8,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-display-fetch-modal-proxy",
+          "index": 2,
+          "uncachedMs": 1.9,
+          "cachedMs": 1.9,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-display-fetch-modal-proxy",
+          "index": 3,
+          "uncachedMs": 2.4,
+          "cachedMs": 2.3,
+          "ok": true
+        }
+      ],
+      "metrics": {
+        "cachedInputToDisplayedImageP95Ms": {
+          "name": "cachedInputToDisplayedImageP95Ms",
+          "status": "measured",
+          "value": 2.3,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            }
+          ]
+        },
+        "uncachedInputToLoadingP95Ms": {
+          "name": "uncachedInputToLoadingP95Ms",
+          "status": "measured",
+          "value": 0,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            }
+          ]
+        },
+        "uncachedInputToCorrectImageP95Ms": {
+          "name": "uncachedInputToCorrectImageP95Ms",
+          "status": "measured",
+          "value": 2.8,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-display-fetch-modal-proxy",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            }
+          ]
+        }
+      },
+      "budgets": {
+        "cachedInputToDisplayedP95Ms": 100,
+        "uncachedInputToLoadingP95Ms": 100,
+        "allowWrongImageFlash": false
+      }
+    },
+    "api": {
+      "name": "api",
+      "status": "measured",
+      "requiredObservations": 30,
+      "observations": [
+        {
+          "kind": "production-browser-api-search",
+          "index": 0,
+          "durationMs": 98.9,
+          "total": 4,
+          "resultCount": 4
+        },
+        {
+          "kind": "production-browser-api-search",
+          "index": 1,
+          "durationMs": 2.6,
+          "total": 4,
+          "resultCount": 4
+        },
+        {
+          "kind": "production-browser-api-search",
+          "index": 2,
+          "durationMs": 2.2,
+          "total": 4,
+          "resultCount": 4
+        },
+        {
+          "kind": "production-browser-api-image-thumb",
+          "index": 0,
+          "durationMs": 5.7,
+          "ok": true,
+          "bytes": 112
+        },
+        {
+          "kind": "production-browser-api-image-thumb",
+          "index": 1,
+          "durationMs": 7.9,
+          "ok": true,
+          "bytes": 74
+        },
+        {
+          "kind": "production-browser-api-image-thumb",
+          "index": 2,
+          "durationMs": 6.8,
+          "ok": true,
+          "bytes": 76
+        },
+        {
+          "kind": "production-browser-api-image-thumb",
+          "index": 3,
+          "durationMs": 5.3,
+          "ok": true,
+          "bytes": 82
+        },
+        {
+          "kind": "production-browser-api-image-display",
+          "index": 0,
+          "uncachedMs": 2.8,
+          "cachedMs": 2.2,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-api-image-display",
+          "index": 1,
+          "uncachedMs": 2.2,
+          "cachedMs": 1.8,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-api-image-display",
+          "index": 2,
+          "uncachedMs": 1.9,
+          "cachedMs": 1.9,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-api-image-display",
+          "index": 3,
+          "uncachedMs": 2.4,
+          "cachedMs": 2.3,
+          "ok": true
+        },
+        {
+          "kind": "production-browser-api-thumbnail-warm",
+          "durationMs": 8
+        }
+      ],
+      "routes": [
+        "browse",
+        "scan",
+        "search",
+        "image",
+        "thumbnailWarm",
+        "settings",
+        "favorites",
+        "tags",
+        "delete",
+        "open"
+      ],
+      "metrics": {
+        "browse.p50Ms": {
+          "name": "browse.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "browse.p95Ms": {
+          "name": "browse.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "browse.maxMs": {
+          "name": "browse.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "browse.errorCount": {
+          "name": "browse.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "browse.resultCount": {
+          "name": "browse.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "browse.payloadBytes": {
+          "name": "browse.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.p50Ms": {
+          "name": "scan.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.p95Ms": {
+          "name": "scan.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.maxMs": {
+          "name": "scan.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.errorCount": {
+          "name": "scan.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.resultCount": {
+          "name": "scan.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "scan.payloadBytes": {
+          "name": "scan.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "search.p50Ms": {
+          "name": "search.p50Ms",
+          "status": "measured",
+          "value": 2.6,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "search.p95Ms": {
+          "name": "search.p95Ms",
+          "status": "measured",
+          "value": 98.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "search.maxMs": {
+          "name": "search.maxMs",
+          "status": "measured",
+          "value": 98.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "search.errorCount": {
+          "name": "search.errorCount",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "search.resultCount": {
+          "name": "search.resultCount",
+          "status": "measured",
+          "value": 4,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "search.payloadBytes": {
+          "name": "search.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "image.p50Ms": {
+          "name": "image.p50Ms",
+          "status": "measured",
+          "value": 2.2,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "image.p95Ms": {
+          "name": "image.p95Ms",
+          "status": "measured",
+          "value": 2.8,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "image.maxMs": {
+          "name": "image.maxMs",
+          "status": "measured",
+          "value": 2.8,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "image.errorCount": {
+          "name": "image.errorCount",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "image.resultCount": {
+          "name": "image.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "image.payloadBytes": {
+          "name": "image.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "thumbnailWarm.p50Ms": {
+          "name": "thumbnailWarm.p50Ms",
+          "status": "measured",
+          "value": 5.7,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "thumbnailWarm.p95Ms": {
+          "name": "thumbnailWarm.p95Ms",
+          "status": "measured",
+          "value": 7.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "thumbnailWarm.maxMs": {
+          "name": "thumbnailWarm.maxMs",
+          "status": "measured",
+          "value": 7.9,
+          "unit": "ms",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "thumbnailWarm.errorCount": {
+          "name": "thumbnailWarm.errorCount",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-api-search",
+              "index": 0,
+              "durationMs": 98.9,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 1,
+              "durationMs": 2.6,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-search",
+              "index": 2,
+              "durationMs": 2.2,
+              "total": 4,
+              "resultCount": 4
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 0,
+              "durationMs": 5.7,
+              "ok": true,
+              "bytes": 112
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 1,
+              "durationMs": 7.9,
+              "ok": true,
+              "bytes": 74
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 2,
+              "durationMs": 6.8,
+              "ok": true,
+              "bytes": 76
+            },
+            {
+              "kind": "production-browser-api-image-thumb",
+              "index": 3,
+              "durationMs": 5.3,
+              "ok": true,
+              "bytes": 82
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 0,
+              "uncachedMs": 2.8,
+              "cachedMs": 2.2,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 1,
+              "uncachedMs": 2.2,
+              "cachedMs": 1.8,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 2,
+              "uncachedMs": 1.9,
+              "cachedMs": 1.9,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-image-display",
+              "index": 3,
+              "uncachedMs": 2.4,
+              "cachedMs": 2.3,
+              "ok": true
+            },
+            {
+              "kind": "production-browser-api-thumbnail-warm",
+              "durationMs": 8
+            }
+          ]
+        },
+        "thumbnailWarm.resultCount": {
+          "name": "thumbnailWarm.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "thumbnailWarm.payloadBytes": {
+          "name": "thumbnailWarm.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.p50Ms": {
+          "name": "settings.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.p95Ms": {
+          "name": "settings.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.maxMs": {
+          "name": "settings.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.errorCount": {
+          "name": "settings.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.resultCount": {
+          "name": "settings.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "settings.payloadBytes": {
+          "name": "settings.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.p50Ms": {
+          "name": "favorites.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.p95Ms": {
+          "name": "favorites.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.maxMs": {
+          "name": "favorites.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.errorCount": {
+          "name": "favorites.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.resultCount": {
+          "name": "favorites.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "favorites.payloadBytes": {
+          "name": "favorites.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.p50Ms": {
+          "name": "tags.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.p95Ms": {
+          "name": "tags.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.maxMs": {
+          "name": "tags.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.errorCount": {
+          "name": "tags.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.resultCount": {
+          "name": "tags.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "tags.payloadBytes": {
+          "name": "tags.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.p50Ms": {
+          "name": "delete.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.p95Ms": {
+          "name": "delete.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.maxMs": {
+          "name": "delete.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.errorCount": {
+          "name": "delete.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.resultCount": {
+          "name": "delete.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "delete.payloadBytes": {
+          "name": "delete.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.p50Ms": {
+          "name": "open.p50Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.p95Ms": {
+          "name": "open.p95Ms",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.maxMs": {
+          "name": "open.maxMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.errorCount": {
+          "name": "open.errorCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.resultCount": {
+          "name": "open.resultCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "open.payloadBytes": {
+          "name": "open.payloadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        }
+      },
+      "budgets": {
+        "tailMetric": "p95",
+        "criticalRegressionLimit": 0.1
+      }
+    },
+    "heavyWork": {
+      "name": "heavyWork",
+      "status": "measured",
+      "requiredObservations": 1,
+      "observations": [
+        {
+          "kind": "production-browser-heavy-work-check",
+          "count": 370,
+          "running": 0,
+          "pending": 0
+        }
+      ],
+      "metrics": {
+        "ordinaryBrowsingEnhancementEnqueues": {
+          "name": "ordinaryBrowsingEnhancementEnqueues",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-heavy-work-check",
+              "count": 370,
+              "running": 0,
+              "pending": 0
+            }
+          ]
+        },
+        "ordinaryBrowsingWorkerStarts": {
+          "name": "ordinaryBrowsingWorkerStarts",
+          "status": "measured",
+          "value": 0,
+          "unit": "count",
+          "observations": [
+            {
+              "kind": "production-browser-heavy-work-check",
+              "count": 370,
+              "running": 0,
+              "pending": 0
+            }
+          ]
+        }
+      },
+      "budgets": {
+        "ordinaryBrowsingEnhancementEnqueues": 0,
+        "ordinaryBrowsingWorkerStarts": 0
+      }
+    },
+    "runtime": {
+      "name": "runtime",
+      "status": "pending_fixture",
+      "requiredObservations": 1,
+      "observations": [],
+      "metrics": {
+        "cpuTimeMs": {
+          "name": "cpuTimeMs",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "peakWorkingSetBytes": {
+          "name": "peakWorkingSetBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "repeatedNavigationMemoryBytes": {
+          "name": "repeatedNavigationMemoryBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "diskReadBytes": {
+          "name": "diskReadBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "diskWriteBytes": {
+          "name": "diskWriteBytes",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        },
+        "uiLongTaskCount": {
+          "name": "uiLongTaskCount",
+          "status": "pending_fixture",
+          "value": null,
+          "unit": null,
+          "observations": []
+        }
+      }
+    }
+  },
+  "rawObservations": [
+    {
+      "kind": "production-browser-launch",
+      "wallMs": 149,
+      "navigation": {
+        "domContentLoadedMs": 38,
+        "loadEventMs": 105.8
+      }
+    },
+    {
+      "kind": "production-browser-scan",
+      "firstProgressMs": 27.7,
+      "maxProgressGapMs": 14.1,
+      "fullCompletionMs": 41.9,
+      "resultCount": 4
+    },
+    {
+      "kind": "production-browser-thumbnail-fetch",
+      "index": 0,
+      "durationMs": 5.7,
+      "ok": true,
+      "bytes": 112
+    },
+    {
+      "kind": "production-browser-thumbnail-fetch",
+      "index": 1,
+      "durationMs": 7.9,
+      "ok": true,
+      "bytes": 74
+    },
+    {
+      "kind": "production-browser-thumbnail-fetch",
+      "index": 2,
+      "durationMs": 6.8,
+      "ok": true,
+      "bytes": 76
+    },
+    {
+      "kind": "production-browser-thumbnail-fetch",
+      "index": 3,
+      "durationMs": 5.3,
+      "ok": true,
+      "bytes": 82
+    },
+    {
+      "kind": "production-browser-display-fetch-modal-proxy",
+      "index": 0,
+      "uncachedMs": 2.8,
+      "cachedMs": 2.2,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-display-fetch-modal-proxy",
+      "index": 1,
+      "uncachedMs": 2.2,
+      "cachedMs": 1.8,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-display-fetch-modal-proxy",
+      "index": 2,
+      "uncachedMs": 1.9,
+      "cachedMs": 1.9,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-display-fetch-modal-proxy",
+      "index": 3,
+      "uncachedMs": 2.4,
+      "cachedMs": 2.3,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-api-search",
+      "index": 0,
+      "durationMs": 98.9,
+      "total": 4,
+      "resultCount": 4
+    },
+    {
+      "kind": "production-browser-api-search",
+      "index": 1,
+      "durationMs": 2.6,
+      "total": 4,
+      "resultCount": 4
+    },
+    {
+      "kind": "production-browser-api-search",
+      "index": 2,
+      "durationMs": 2.2,
+      "total": 4,
+      "resultCount": 4
+    },
+    {
+      "kind": "production-browser-api-image-thumb",
+      "index": 0,
+      "durationMs": 5.7,
+      "ok": true,
+      "bytes": 112
+    },
+    {
+      "kind": "production-browser-api-image-thumb",
+      "index": 1,
+      "durationMs": 7.9,
+      "ok": true,
+      "bytes": 74
+    },
+    {
+      "kind": "production-browser-api-image-thumb",
+      "index": 2,
+      "durationMs": 6.8,
+      "ok": true,
+      "bytes": 76
+    },
+    {
+      "kind": "production-browser-api-image-thumb",
+      "index": 3,
+      "durationMs": 5.3,
+      "ok": true,
+      "bytes": 82
+    },
+    {
+      "kind": "production-browser-api-image-display",
+      "index": 0,
+      "uncachedMs": 2.8,
+      "cachedMs": 2.2,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-api-image-display",
+      "index": 1,
+      "uncachedMs": 2.2,
+      "cachedMs": 1.8,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-api-image-display",
+      "index": 2,
+      "uncachedMs": 1.9,
+      "cachedMs": 1.9,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-api-image-display",
+      "index": 3,
+      "uncachedMs": 2.4,
+      "cachedMs": 2.3,
+      "ok": true
+    },
+    {
+      "kind": "production-browser-api-thumbnail-warm",
+      "durationMs": 8
+    },
+    {
+      "kind": "production-browser-heavy-work-check",
+      "count": 370,
+      "running": 0,
+      "pending": 0
+    }
+  ],
+  "summary": {
+    "overall": "measured",
+    "measuredScenarioCount": 6,
+    "pendingScenarioCount": 1,
+    "fixtureStatus": "runtime_dir"
+  }
+}
