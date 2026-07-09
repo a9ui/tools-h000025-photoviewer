@@ -73,6 +73,7 @@ internal sealed class MainForm : Form
     private readonly CheckBox _previewVisible = new();
     private readonly CheckBox _detailsVisible = new();
     private readonly CheckBox _enhancedPreview = new();
+    private readonly Label _enhancementStatusLabel = new();
     private readonly CheckedListBox _folderBuckets = new();
     private readonly Button _showAllFoldersButton = new();
     private readonly Button _hideAllFoldersButton = new();
@@ -986,6 +987,12 @@ internal sealed class MainForm : Form
             await LoadSelectedPreviewAsync();
         };
 
+        _enhancementStatusLabel.Text = "Enhance: none";
+        _enhancementStatusLabel.AutoSize = true;
+        _enhancementStatusLabel.TextAlign = ContentAlignment.MiddleLeft;
+        _enhancementStatusLabel.Padding = new Padding(4, 6, 0, 0);
+        ApplyTextFitSize(_enhancementStatusLabel, 118);
+
         displayControls.Controls.Add(sortLabel);
         displayControls.Controls.Add(_sortMode);
         displayControls.Controls.Add(_reshuffleButton);
@@ -1004,6 +1011,7 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(_previewVisible);
         displayControls.Controls.Add(_detailsVisible);
         displayControls.Controls.Add(_enhancedPreview);
+        displayControls.Controls.Add(_enhancementStatusLabel);
 
         var split = new SplitContainer
         {
@@ -1610,6 +1618,20 @@ internal sealed class MainForm : Form
         Require(enhancedToggleSmoke.ValidToggle, "valid enhanced output did not toggle preview display");
         Require(enhancedToggleSmoke.DetailToggle, "valid enhanced output did not toggle detail display");
         Require(enhancedToggleSmoke.InvalidFallback, "invalid enhanced output did not fall back safely");
+        var enhancementStatusTargets = _visibleImages
+            .Where(image => !string.IsNullOrWhiteSpace(image.AbsolutePath))
+            .DistinctBy(image => image.AbsolutePath, StringComparer.OrdinalIgnoreCase)
+            .Take(4)
+            .ToArray();
+        Require(enhancementStatusTargets.Length == 4, "enhancement status smoke needs four fixture images");
+        var enhancementStatusSmoke = await RunEnhancementStatusSmokeAsync(
+            enhancementStatusTargets[0],
+            enhancementStatusTargets[1],
+            enhancementStatusTargets[2],
+            enhancementStatusTargets[3]);
+        Require(enhancementStatusSmoke.SelectedStatuses, "enhancement status labels did not cover selected image states");
+        Require(enhancementStatusSmoke.SummaryCounts, "enhancement status summary counts failed");
+        Require(enhancementStatusSmoke.AbsentFallback, "enhancement absent status failed");
         var metadataTarget = _visibleImages.FirstOrDefault(static image =>
             image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
             image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
@@ -1949,6 +1971,9 @@ internal sealed class MainForm : Form
             EnhancedPreviewToggle: enhancedToggleSmoke.ValidToggle,
             EnhancedDetailToggle: enhancedToggleSmoke.DetailToggle,
             EnhancedInvalidFallback: enhancedToggleSmoke.InvalidFallback,
+            EnhancementStatusSurface: enhancementStatusSmoke.SelectedStatuses,
+            EnhancementStatusCounts: enhancementStatusSmoke.SummaryCounts,
+            EnhancementStatusAbsentFallback: enhancementStatusSmoke.AbsentFallback,
             ClearSearch: clearSearch,
             FolderShowSelected: folderShowSelected,
             FolderHideSelected: folderHideSelected,
@@ -3334,6 +3359,20 @@ internal sealed class MainForm : Form
         return true;
     }
 
+    private static string FormatEnhancementStatusText(NativeEnhancementStatus status)
+    {
+        var label = status.Status switch
+        {
+            NativeEnhancementJobStatus.PendingOrRunning => "active",
+            NativeEnhancementJobStatus.SucceededDisplayable => "ready",
+            NativeEnhancementJobStatus.SucceededInvalidOutput => "invalid",
+            NativeEnhancementJobStatus.Failed => "failed",
+            NativeEnhancementJobStatus.Unknown => "unknown",
+            _ => "none",
+        };
+        return $"Enhance: {label}";
+    }
+
     private async Task LoadSelectedPreviewAsync()
     {
         _hoverPreviewPath = "";
@@ -3454,6 +3493,68 @@ internal sealed class MainForm : Form
         }
     }
 
+    private async Task<EnhancementStatusSmokeResult> RunEnhancementStatusSmokeAsync(
+        NativeImageRecord readyTarget,
+        NativeImageRecord invalidTarget,
+        NativeImageRecord activeTarget,
+        NativeImageRecord failedTarget)
+    {
+        var originalJobsPath = _enhancementJobsPath;
+        var smokeRoot = Path.Combine(_projectRoot, ".cache", "native-enhancement-status-smoke", $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}");
+        var readyOutputPath = Path.Combine(smokeRoot, "ready-enhanced.webp");
+        var invalidOutputPath = Path.Combine(smokeRoot, "invalid-enhanced.webp");
+        var jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        var emptyJobsPath = Path.Combine(smokeRoot, "empty-jobs.json");
+        Directory.CreateDirectory(smokeRoot);
+        NativeWebpDecodeSmoke.WriteValidWebp(readyOutputPath);
+        File.WriteAllText(invalidOutputPath, "not a usable webp fixture", System.Text.Encoding.ASCII);
+        File.WriteAllText(jobsPath, BuildEnhancementStatusSmokeJobsJson(readyTarget, readyOutputPath, invalidTarget, invalidOutputPath, activeTarget, failedTarget));
+        File.WriteAllText(emptyJobsPath, "{\"version\":1,\"jobs\":[]}" + Environment.NewLine);
+
+        try
+        {
+            _enhancementJobsPath = jobsPath;
+
+            SelectImage(readyTarget.AbsolutePath);
+            await LoadSelectedPreviewAsync();
+            var readyStatus = _enhancementStatusLabel.Text.Contains("ready", StringComparison.OrdinalIgnoreCase);
+
+            SelectImage(invalidTarget.AbsolutePath);
+            await LoadSelectedPreviewAsync();
+            var invalidStatus = _enhancementStatusLabel.Text.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+            SelectImage(activeTarget.AbsolutePath);
+            await LoadSelectedPreviewAsync();
+            var activeStatus = _enhancementStatusLabel.Text.Contains("active", StringComparison.OrdinalIgnoreCase);
+
+            SelectImage(failedTarget.AbsolutePath);
+            await LoadSelectedPreviewAsync();
+            var failedStatus = _enhancementStatusLabel.Text.Contains("failed", StringComparison.OrdinalIgnoreCase);
+
+            var summary = NativeEnhancementState.LoadSummary(_projectRoot, _enhancementJobsPath);
+            var summaryCounts = summary.Total == 5 &&
+                summary.SucceededDisplayable == 1 &&
+                summary.SucceededInvalidOutput == 1 &&
+                summary.PendingOrRunning == 1 &&
+                summary.Failed == 1 &&
+                summary.Unknown == 1;
+
+            _enhancementJobsPath = emptyJobsPath;
+            UpdateSelectionActions();
+            var absentStatus = _enhancementStatusLabel.Text.Contains("none", StringComparison.OrdinalIgnoreCase);
+
+            return new EnhancementStatusSmokeResult(
+                readyStatus && invalidStatus && activeStatus && failedStatus && absentStatus,
+                summaryCounts,
+                absentStatus);
+        }
+        finally
+        {
+            _enhancementJobsPath = originalJobsPath;
+            SetEnhancedPreviewChecked(false);
+        }
+    }
+
     private void SetEnhancedPreviewChecked(bool value)
     {
         _updatingEnhancedPreview = true;
@@ -3499,6 +3600,54 @@ internal sealed class MainForm : Form
             },
             status = "succeeded",
             progress = 100,
+            outputPath,
+        };
+    }
+
+    private static string BuildEnhancementStatusSmokeJobsJson(
+        NativeImageRecord readyTarget,
+        string readyOutputPath,
+        NativeImageRecord invalidTarget,
+        string invalidOutputPath,
+        NativeImageRecord activeTarget,
+        NativeImageRecord failedTarget)
+    {
+        var payload = new
+        {
+            version = 1,
+            jobs = new object[]
+            {
+                BuildEnhancementStatusSmokeJob("native-status-ready", readyTarget, "succeeded", readyOutputPath),
+                BuildEnhancementStatusSmokeJob("native-status-invalid", invalidTarget, "succeeded", invalidOutputPath),
+                BuildEnhancementStatusSmokeJob("native-status-active", activeTarget, "running", ""),
+                BuildEnhancementStatusSmokeJob("native-status-failed", failedTarget, "failed", ""),
+                new
+                {
+                    id = "native-status-unknown",
+                    sourceId = "__native-status-unknown__",
+                    sourcePath = "__native-status-unknown__",
+                    status = "paused",
+                    outputPath = "",
+                },
+            },
+        };
+        return JsonSerializer.Serialize(payload) + Environment.NewLine;
+    }
+
+    private static object BuildEnhancementStatusSmokeJob(string id, NativeImageRecord image, string status, string outputPath)
+    {
+        return new
+        {
+            id,
+            sourceId = image.AbsolutePath,
+            sourcePath = image.AbsolutePath,
+            sourceSignature = new
+            {
+                size = image.SizeBytes,
+                mtimeMs = new DateTimeOffset(image.ModifiedAtUtc).ToUnixTimeMilliseconds(),
+            },
+            status,
+            progress = string.Equals(status, "succeeded", StringComparison.OrdinalIgnoreCase) ? 100 : 40,
             outputPath,
         };
     }
@@ -4857,6 +5006,9 @@ internal sealed class MainForm : Form
         }
 
         _enhancedPreview.Enabled = canDisplayEnhancedOutput;
+        _enhancementStatusLabel.Text = selected is null
+            ? "Enhance: none"
+            : FormatEnhancementStatusText(NativeEnhancementState.GetStatusForSource(_projectRoot, selected.AbsolutePath, _enhancementJobsPath));
         _favoriteLevel.Enabled = selectedCount > 0;
         _selectionLabel.Text = selectedCount > 0
             ? $"Selected {selectedCount:n0} / {_visibleImages.Count:n0}"
@@ -6391,6 +6543,9 @@ internal sealed class MainForm : Form
             $"enhancedPreviewToggle={BoolText(report.EnhancedPreviewToggle)}",
             $"enhancedDetailToggle={BoolText(report.EnhancedDetailToggle)}",
             $"enhancedInvalidFallback={BoolText(report.EnhancedInvalidFallback)}",
+            $"enhancementStatusSurface={BoolText(report.EnhancementStatusSurface)}",
+            $"enhancementStatusCounts={BoolText(report.EnhancementStatusCounts)}",
+            $"enhancementStatusAbsentFallback={BoolText(report.EnhancementStatusAbsentFallback)}",
             $"clearSearch={BoolText(report.ClearSearch)}",
             $"detailModal={BoolText(report.DetailModal)}",
             $"detailNavigation={BoolText(report.DetailNavigation)}",
@@ -7394,6 +7549,9 @@ internal sealed class MainForm : Form
         bool EnhancedPreviewToggle,
         bool EnhancedDetailToggle,
         bool EnhancedInvalidFallback,
+        bool EnhancementStatusSurface,
+        bool EnhancementStatusCounts,
+        bool EnhancementStatusAbsentFallback,
         bool ClearSearch,
         bool FolderShowSelected,
         bool FolderHideSelected,
@@ -7432,6 +7590,11 @@ internal sealed class MainForm : Form
         bool ValidToggle,
         bool DetailToggle,
         bool InvalidFallback);
+
+    private sealed record EnhancementStatusSmokeResult(
+        bool SelectedStatuses,
+        bool SummaryCounts,
+        bool AbsentFallback);
 
     private sealed record NativeFolderSetSmokeReport(
         int Roots,

@@ -4,6 +4,30 @@ namespace PhotoViewer.Native;
 
 internal sealed record NativeEnhancedOutput(string SourcePath, string OutputPath);
 
+internal enum NativeEnhancementJobStatus
+{
+    Absent,
+    PendingOrRunning,
+    SucceededDisplayable,
+    SucceededInvalidOutput,
+    Failed,
+    Unknown,
+}
+
+internal sealed record NativeEnhancementStatus(
+    NativeEnhancementJobStatus Status,
+    string SourcePath,
+    string OutputPath,
+    string RawStatus);
+
+internal sealed record NativeEnhancementSummary(
+    int Total,
+    int PendingOrRunning,
+    int SucceededDisplayable,
+    int SucceededInvalidOutput,
+    int Failed,
+    int Unknown);
+
 internal static class NativeEnhancementState
 {
     public static string JobsFilePath(string projectRoot)
@@ -71,6 +95,151 @@ internal static class NativeEnhancementState
         }
 
         return outputs;
+    }
+
+    public static NativeEnhancementStatus GetStatusForSource(string projectRoot, string sourcePath, string? jobsPath = null)
+    {
+        var status = new NativeEnhancementStatus(
+            NativeEnhancementJobStatus.Absent,
+            sourcePath,
+            "",
+            "");
+        var normalizedSource = ResolveJobPath(projectRoot, sourcePath);
+        foreach (var job in LoadJobs(projectRoot, jobsPath))
+        {
+            if (!JobMatchesSource(job, normalizedSource))
+            {
+                continue;
+            }
+
+            status = ToStatus(job);
+        }
+
+        return status;
+    }
+
+    public static NativeEnhancementSummary LoadSummary(string projectRoot, string? jobsPath = null)
+    {
+        var total = 0;
+        var pendingOrRunning = 0;
+        var succeededDisplayable = 0;
+        var succeededInvalidOutput = 0;
+        var failed = 0;
+        var unknown = 0;
+
+        foreach (var job in LoadJobs(projectRoot, jobsPath))
+        {
+            total++;
+            switch (ToStatus(job).Status)
+            {
+                case NativeEnhancementJobStatus.PendingOrRunning:
+                    pendingOrRunning++;
+                    break;
+                case NativeEnhancementJobStatus.SucceededDisplayable:
+                    succeededDisplayable++;
+                    break;
+                case NativeEnhancementJobStatus.SucceededInvalidOutput:
+                    succeededInvalidOutput++;
+                    break;
+                case NativeEnhancementJobStatus.Failed:
+                    failed++;
+                    break;
+                case NativeEnhancementJobStatus.Unknown:
+                    unknown++;
+                    break;
+            }
+        }
+
+        return new NativeEnhancementSummary(
+            total,
+            pendingOrRunning,
+            succeededDisplayable,
+            succeededInvalidOutput,
+            failed,
+            unknown);
+    }
+
+    private static IEnumerable<NativeEnhancementJob> LoadJobs(string projectRoot, string? jobsPath)
+    {
+        var loadedJobs = new List<NativeEnhancementJob>();
+        var path = string.IsNullOrWhiteSpace(jobsPath) ? JobsFilePath(projectRoot) : jobsPath;
+        if (!File.Exists(path))
+        {
+            return loadedJobs;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (!document.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
+            {
+                return loadedJobs;
+            }
+
+            foreach (var job in jobs.EnumerateArray())
+            {
+                var sourcePath = ResolveJobPath(projectRoot, ReadString(job, "sourcePath"));
+                var outputPath = ResolveJobPath(projectRoot, ReadString(job, "outputPath"));
+                loadedJobs.Add(new NativeEnhancementJob(
+                    ReadString(job, "sourceId"),
+                    sourcePath,
+                    outputPath,
+                    ReadString(job, "status"),
+                    SourceSignatureMatches(sourcePath, job)));
+            }
+        }
+        catch (JsonException)
+        {
+            return loadedJobs;
+        }
+        catch (IOException)
+        {
+            return loadedJobs;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return loadedJobs;
+        }
+
+        return loadedJobs;
+    }
+
+    private static NativeEnhancementStatus ToStatus(NativeEnhancementJob job)
+    {
+        if (string.Equals(job.RawStatus, "succeeded", StringComparison.OrdinalIgnoreCase))
+        {
+            var displayable = job.SourceSignatureMatches &&
+                !string.IsNullOrWhiteSpace(job.OutputPath) &&
+                File.Exists(job.OutputPath) &&
+                NativeImageDecoder.CanDecode(job.OutputPath, out _);
+            return new NativeEnhancementStatus(
+                displayable ? NativeEnhancementJobStatus.SucceededDisplayable : NativeEnhancementJobStatus.SucceededInvalidOutput,
+                job.SourcePath,
+                job.OutputPath,
+                job.RawStatus);
+        }
+
+        if (string.Equals(job.RawStatus, "failed", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.RawStatus, "error", StringComparison.OrdinalIgnoreCase))
+        {
+            return new NativeEnhancementStatus(NativeEnhancementJobStatus.Failed, job.SourcePath, job.OutputPath, job.RawStatus);
+        }
+
+        if (string.Equals(job.RawStatus, "pending", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.RawStatus, "queued", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.RawStatus, "running", StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.RawStatus, "processing", StringComparison.OrdinalIgnoreCase))
+        {
+            return new NativeEnhancementStatus(NativeEnhancementJobStatus.PendingOrRunning, job.SourcePath, job.OutputPath, job.RawStatus);
+        }
+
+        return new NativeEnhancementStatus(NativeEnhancementJobStatus.Unknown, job.SourcePath, job.OutputPath, job.RawStatus);
+    }
+
+    private static bool JobMatchesSource(NativeEnhancementJob job, string sourcePath)
+    {
+        return string.Equals(job.SourceId, sourcePath, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(job.SourcePath, sourcePath, StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool IsSucceededOutputJob(JsonElement job)
@@ -157,4 +326,11 @@ internal static class NativeEnhancementState
 
         return true;
     }
+
+    private sealed record NativeEnhancementJob(
+        string SourceId,
+        string SourcePath,
+        string OutputPath,
+        string RawStatus,
+        bool SourceSignatureMatches);
 }
