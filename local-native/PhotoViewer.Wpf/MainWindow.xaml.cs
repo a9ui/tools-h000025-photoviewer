@@ -30,6 +30,8 @@ public partial class MainWindow : Window
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
     private const int MaxRecentFolderSets = 8;
+    private const double DefaultCardWidth = 190;
+    private const double CardWidthStep = 15;
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -37,6 +39,9 @@ public partial class MainWindow : Window
     };
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
+    private readonly ObservableCollection<string> _landingFolderSet = new();
+    private readonly ObservableCollection<string> _activeFolderSetView = new();
+    private readonly ObservableCollection<RecentFolderSetView> _recentFolderSetViews = new();
     private readonly List<Tile> _allTiles = new();
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -50,6 +55,8 @@ public partial class MainWindow : Window
     private bool _seenWriteBlocked;
     private bool _syncingSelection;
     private string? _currentFolder;
+    private List<string> _currentFolderSet = [];
+    private List<string> _lastFolderSet = [];
     private string? _restoredSelectedPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
@@ -60,6 +67,9 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        LandingFolderSetList.ItemsSource = _landingFolderSet;
+        SidebarFolderSetList.ItemsSource = _activeFolderSetView;
+        RecentFolderSetList.ItemsSource = _recentFolderSetViews;
         RestoreState();
         BuildSampleTiles();
         _allTiles.AddRange(_tiles);
@@ -77,6 +87,8 @@ public partial class MainWindow : Window
         };
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
+        RefreshLandingFolderSetUi();
+        SetPhase(landing: true);
         _initializing = false;
     }
 
@@ -93,29 +105,41 @@ public partial class MainWindow : Window
     {
         var dialog = new OpenFolderDialog
         {
-            Title = "Select an image folder",
-            Multiselect = false,
+            Title = "Select image folders",
+            Multiselect = true,
         };
 
         if (dialog.ShowDialog(this) == true)
-            await LoadFolderAsync(dialog.FolderName);
+        {
+            var folders = dialog.FolderNames.Length > 0 ? dialog.FolderNames : [dialog.FolderName];
+            AppendLandingFolders(folders);
+            SetPhase(landing: true);
+            await Task.CompletedTask;
+        }
     }
 
     public async Task LoadFolderAsync(string folder)
+        => await LoadFolderSetAsync([folder]);
+
+    public async Task LoadFolderSetAsync(IEnumerable<string> folders)
     {
         var totalWatch = Stopwatch.StartNew();
         LastLoadMetrics = null;
         _previewUpdateCount = 0;
         _previewMs = 0;
-        string resolvedFolder;
-        try
+        var requestedFolderSet = NormalizeFolderSet(folders);
+        var existingFolderSet = requestedFolderSet.Where(Directory.Exists).ToList();
+        if (existingFolderSet.Count == 0)
         {
-            resolvedFolder = Path.GetFullPath(folder);
-        }
-        catch
-        {
+            SetLandingFolderSet(requestedFolderSet);
+            LandingFolderStatusText.Text = requestedFolderSet.Count == 0
+                ? "No folders selected yet."
+                : "Selected folders are unavailable.";
+            SetPhase(landing: true);
             return;
         }
+
+        string resolvedFolderSummary = FormatFolderSetSummary(existingFolderSet);
 
         _loadCts?.Cancel();
         var cts = new CancellationTokenSource();
@@ -127,14 +151,16 @@ public partial class MainWindow : Window
         ScanBar.Value = 0;
         ScanPercent.Text = "0%";
         ScanLabel.Text = "Scanning...";
-        ScanMessage.Text = resolvedFolder;
+        ScanMessage.Text = resolvedFolderSummary;
 
         IReadOnlyList<FileInfo> files;
         var scanWatch = Stopwatch.StartNew();
         try
         {
             files = await Task.Run(
-                () => EnumerateImageFiles(resolvedFolder)
+                () => existingFolderSet
+                    .SelectMany(EnumerateImageFiles)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Select(path => new FileInfo(path))
                     .OrderByDescending(file => file.LastWriteTimeUtc)
                     .Take(MaxLoadedImages)
@@ -155,7 +181,9 @@ public partial class MainWindow : Window
         _suppressStateSave = true;
         try
         {
-            _currentFolder = resolvedFolder;
+            _currentFolderSet = existingFolderSet;
+            _currentFolder = _currentFolderSet.FirstOrDefault();
+            SetLandingFolderSet(_currentFolderSet);
             LoadFavorites();
             LoadSeenState();
             _allTiles.Clear();
@@ -165,7 +193,7 @@ public partial class MainWindow : Window
                 _allTiles.Add(MakeFileTile(file, width));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
 
-            FolderPathText.Text = resolvedFolder;
+            FolderPathText.Text = resolvedFolderSummary;
             ApplyFilters(selectFirst: false);
             UpdateFolderStats();
         }
@@ -180,7 +208,7 @@ public partial class MainWindow : Window
             SaveState();
             totalWatch.Stop();
             LastLoadMetrics = LoadMetrics.Create(
-                resolvedFolder,
+                resolvedFolderSummary,
                 files.Count,
                 scanWatch.ElapsedMilliseconds,
                 materializeWatch.ElapsedMilliseconds,
@@ -195,7 +223,7 @@ public partial class MainWindow : Window
             ScanBar.Value = 0;
             ScanPercent.Text = "0%";
             ScanLabel.Text = "No images found";
-            ScanMessage.Text = "Choose another folder.";
+            ScanMessage.Text = "Choose another folder set.";
             return;
         }
 
@@ -206,7 +234,7 @@ public partial class MainWindow : Window
         var thumbnails = await LoadThumbnailsAsync(cts.Token);
         totalWatch.Stop();
         LastLoadMetrics = LoadMetrics.Create(
-            resolvedFolder,
+            resolvedFolderSummary,
             files.Count,
             scanWatch.ElapsedMilliseconds,
             materializeWatch.ElapsedMilliseconds,
@@ -217,6 +245,110 @@ public partial class MainWindow : Window
             _previewUpdateCount,
             totalWatch.ElapsedMilliseconds);
         UpdateGridMetrics(LastLoadMetrics);
+    }
+
+    private int AppendLandingFolders(IEnumerable<string> folders)
+    {
+        var existing = NormalizeFolderSet(folders)
+            .Where(Directory.Exists)
+            .ToList();
+        int added = 0;
+        foreach (string folder in existing)
+        {
+            if (_landingFolderSet.Any(candidate => string.Equals(candidate, folder, StringComparison.OrdinalIgnoreCase)))
+                continue;
+            _landingFolderSet.Add(folder);
+            added++;
+        }
+
+        RefreshLandingFolderSetUi();
+        return added;
+    }
+
+    private void SetLandingFolderSet(IEnumerable<string> folders)
+    {
+        _landingFolderSet.Clear();
+        foreach (string folder in NormalizeFolderSet(folders))
+            _landingFolderSet.Add(folder);
+        RefreshLandingFolderSetUi();
+    }
+
+    private IReadOnlyList<string> LandingFolderSetSnapshot()
+        => _landingFolderSet.ToList();
+
+    private async Task OpenLandingFolderSetAsync()
+    {
+        var folderSet = LandingFolderSetSnapshot();
+        if (folderSet.Count == 0)
+        {
+            await ChooseAndLoadFolderAsync();
+            return;
+        }
+
+        await LoadFolderSetAsync(folderSet);
+    }
+
+    private void RefreshLandingFolderSetUi()
+    {
+        if (LandingFolderStatusText is not null)
+        {
+            int existingCount = _landingFolderSet.Count(Directory.Exists);
+            LandingFolderStatusText.Text = _landingFolderSet.Count == 0
+                ? "No folders selected yet."
+                : $"{existingCount:N0} usable / {_landingFolderSet.Count:N0} selected folder(s)";
+        }
+
+        if (OpenFolderSetButton is not null)
+            OpenFolderSetButton.IsEnabled = _landingFolderSet.Count > 0;
+
+        RefreshActiveFolderSetView();
+        RefreshRecentFolderSetViews();
+    }
+
+    private void RefreshActiveFolderSetView()
+    {
+        if (SidebarFolderSetList is null)
+            return;
+
+        _activeFolderSetView.Clear();
+        var source = _currentFolderSet.Count > 0 ? _currentFolderSet : _landingFolderSet.ToList();
+        foreach (string folder in source)
+            _activeFolderSetView.Add(folder);
+    }
+
+    private void RefreshRecentFolderSetViews()
+    {
+        if (RecentFolderSetList is null)
+            return;
+
+        var read = ReadSharedRecentFolders();
+        _lastFolderSet = read.Recent.LastFolderSet;
+        if (LastFolderSetText is not null)
+            LastFolderSetText.Text = _lastFolderSet.Count == 0
+                ? "  No saved folder set"
+                : "  " + FormatFolderSetSummary(_lastFolderSet);
+
+        _recentFolderSetViews.Clear();
+        foreach (var folderSet in read.Recent.RecentFolderSets)
+        {
+            _recentFolderSetViews.Add(new RecentFolderSetView
+            {
+                FolderSet = folderSet,
+                Display = FormatFolderSetSummary(folderSet),
+                Detail = FormatRecentFolderSet(folderSet),
+            });
+        }
+    }
+
+    private static string FormatFolderSetSummary(IReadOnlyList<string> folderSet)
+    {
+        var normalized = NormalizeFolderSet(folderSet);
+        return normalized.Count switch
+        {
+            0 => "No folder set",
+            1 => normalized[0],
+            _ => $"{normalized[0]} (+{normalized.Count - 1})",
+        };
     }
 
     private async Task<ThumbnailLoadMetrics> LoadThumbnailsAsync(CancellationToken token)
@@ -1832,7 +1964,7 @@ public partial class MainWindow : Window
         int visible = _tiles.Count;
         int total = _allTiles.Count;
         string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
-        string folderText = string.IsNullOrWhiteSpace(_currentFolder) ? "sample" : "1 folder";
+        string folderText = _currentFolderSet.Count == 0 ? "sample" : $"{_currentFolderSet.Count:N0} folder(s)";
         HeaderStats.Text = $"{selected:N0} selected - {imageText} - {folderText}";
     }
 
@@ -1855,6 +1987,48 @@ public partial class MainWindow : Window
             t.CardWidth = e.NewValue;
         if (!_initializing)
             SaveState();
+    }
+
+    private void ZoomOut_Click(object sender, RoutedEventArgs e) => AdjustCardWidth(-1);
+    private void ZoomIn_Click(object sender, RoutedEventArgs e) => AdjustCardWidth(1);
+    private void ZoomReset_Click(object sender, RoutedEventArgs e) => ResetCardWidth();
+
+    private bool AdjustCardWidth(int steps)
+    {
+        double before = SizeSlider.Value;
+        SetCardWidth(before + (CardWidthStep * steps));
+        return Math.Abs(SizeSlider.Value - before) > 0.01;
+    }
+
+    private bool ResetCardWidth()
+    {
+        double before = SizeSlider.Value;
+        SetCardWidth(DefaultCardWidth);
+        return Math.Abs(SizeSlider.Value - before) > 0.01;
+    }
+
+    private void SetCardWidth(double value)
+    {
+        SizeSlider.Value = Math.Clamp(value, SizeSlider.Minimum, SizeSlider.Maximum);
+    }
+
+    private static bool IsZoomModifierActive()
+        => (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0;
+
+    private bool TryHandleZoomKey(KeyEventArgs e)
+    {
+        if (!IsZoomModifierActive())
+            return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key is Key.Add or Key.OemPlus)
+            return AdjustCardWidth(1);
+        if (key is Key.Subtract or Key.OemMinus)
+            return AdjustCardWidth(-1);
+        if (key is Key.D0 or Key.NumPad0)
+            return ResetCardWidth();
+
+        return false;
     }
 
     // ─────────── Panel toggles ───────────
@@ -1902,20 +2076,58 @@ public partial class MainWindow : Window
         Landing.Visibility = landing ? Visibility.Visible : Visibility.Collapsed;
     }
 
-    private async void StartScan_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
+    private async void StartScan_Click(object sender, RoutedEventArgs e) => await OpenLandingFolderSetAsync();
+
+    private void AddPastedFolders_Click(object sender, RoutedEventArgs e)
+    {
+        int added = AppendLandingFolders(SplitFolderSet(PastedFoldersInput.Text));
+        if (added > 0)
+            PastedFoldersInput.Clear();
+        else if (LandingFolderStatusText is not null)
+            LandingFolderStatusText.Text = "No usable pasted folders were added.";
+    }
+
+    private void RemoveLandingFolder_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: string folder })
+            return;
+
+        for (int i = _landingFolderSet.Count - 1; i >= 0; i--)
+        {
+            if (string.Equals(_landingFolderSet[i], folder, StringComparison.OrdinalIgnoreCase))
+                _landingFolderSet.RemoveAt(i);
+        }
+
+        RefreshLandingFolderSetUi();
+    }
+
+    private async void RecentFolderSet_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: RecentFolderSetView recent })
+            return;
+
+        SetLandingFolderSet(recent.FolderSet);
+        await LoadFolderSetAsync(recent.FolderSet);
+    }
 
     private async void RefreshActiveFolder_Click(object sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder))
-            await LoadFolderAsync(_currentFolder);
+        if (_currentFolderSet.Any(Directory.Exists))
+            await LoadFolderSetAsync(_currentFolderSet);
         else
             await ChooseAndLoadFolderAsync();
     }
 
     private async void OpenLastFolder_Click(object sender, RoutedEventArgs e)
     {
-        if (!string.IsNullOrWhiteSpace(_currentFolder) && Directory.Exists(_currentFolder))
-            await LoadFolderAsync(_currentFolder);
+        var lastFolderSet = _lastFolderSet.Count > 0
+            ? _lastFolderSet
+            : ReadSharedRecentFolders().Recent.LastFolderSet;
+        if (lastFolderSet.Count > 0)
+        {
+            SetLandingFolderSet(lastFolderSet);
+            await LoadFolderSetAsync(lastFolderSet);
+        }
         else
             await ChooseAndLoadFolderAsync();
     }
@@ -2080,15 +2292,20 @@ public partial class MainWindow : Window
     private void RestoreState()
     {
         var state = ReadState();
-        string? lastFolder = state?.LastFolder;
-        if (string.IsNullOrWhiteSpace(lastFolder))
-            lastFolder = ReadSharedRecentFolders().Recent.LastFolderSet.FirstOrDefault();
+        var lastFolderSet = NormalizeFolderSet(state?.LastFolderSet ?? []);
+        if (lastFolderSet.Count == 0 && !string.IsNullOrWhiteSpace(state?.LastFolder))
+            lastFolderSet = NormalizeFolderSet([state.LastFolder]);
+        if (lastFolderSet.Count == 0)
+            lastFolderSet = ReadSharedRecentFolders().Recent.LastFolderSet;
 
-        if (!string.IsNullOrWhiteSpace(lastFolder))
+        if (lastFolderSet.Count > 0)
         {
-            _currentFolder = lastFolder;
-            FolderPathText.Text = lastFolder;
-            FolderCountText.Text = Directory.Exists(lastFolder) ? "Last folder saved" : "Last folder unavailable";
+            _currentFolderSet = lastFolderSet;
+            _currentFolder = _currentFolderSet.FirstOrDefault();
+            SetLandingFolderSet(lastFolderSet);
+            FolderPathText.Text = FormatFolderSetSummary(lastFolderSet);
+            int existing = lastFolderSet.Count(Directory.Exists);
+            FolderCountText.Text = existing > 0 ? "Last folder set saved" : "Last folder set unavailable";
         }
 
         if (state is null) return;
@@ -2127,14 +2344,15 @@ public partial class MainWindow : Window
             var state = new ViewerState
             {
                 LastFolder = _currentFolder,
+                LastFolderSet = _currentFolderSet.Count > 0 ? _currentFolderSet : null,
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(ResolvedStatePath, json);
-            if (!string.IsNullOrWhiteSpace(_currentFolder))
-                SaveSharedRecentFolder(_currentFolder);
+            if (_currentFolderSet.Count > 0)
+                SaveSharedRecentFolderSet(_currentFolderSet);
         }
         catch
         {
@@ -2270,8 +2488,11 @@ public partial class MainWindow : Window
     }
 
     private static bool SaveSharedRecentFolder(string folder)
+        => SaveSharedRecentFolderSet([folder]);
+
+    private static bool SaveSharedRecentFolderSet(IEnumerable<string> folders)
     {
-        var folderSet = NormalizeFolderSet([folder]);
+        var folderSet = NormalizeFolderSet(folders);
         if (folderSet.Count == 0)
             return true;
 
@@ -2327,6 +2548,12 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if (TryHandleZoomKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (Modal.Visibility == Visibility.Visible)
         {
             if (e.Key == Key.Left)
@@ -2361,6 +2588,18 @@ public partial class MainWindow : Window
         if (e.Key == Key.Escape && CloseTopmostOverlay())
             e.Handled = true;
         base.OnPreviewKeyDown(e);
+    }
+
+    protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
+    {
+        if (IsZoomModifierActive())
+        {
+            AdjustCardWidth(e.Delta > 0 ? 1 : -1);
+            e.Handled = true;
+            return;
+        }
+
+        base.OnPreviewMouseWheel(e);
     }
 
     // ─────────── Window chrome buttons ───────────
@@ -2400,6 +2639,10 @@ public partial class MainWindow : Window
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
     public string? CurrentFolderForSmoke => _currentFolder;
+    public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
+    public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
+    public int RecentFolderSetCountForSmoke => _recentFolderSetViews.Count;
+    public string LastFolderSetDisplayForSmoke => LastFolderSetText.Text;
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
@@ -2413,11 +2656,39 @@ public partial class MainWindow : Window
     public int GridWindowStartIndexForSmoke => _gridStartIndex;
     public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
+    public double CardWidthForSmoke => SizeSlider.Value;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
+    public bool ZoomInForSmoke() => AdjustCardWidth(1);
+    public bool ZoomOutForSmoke() => AdjustCardWidth(-1);
+    public bool ZoomResetForSmoke() => ResetCardWidth();
+    public bool ZoomWheelForSmoke(int delta)
+    {
+        return AdjustCardWidth(delta > 0 ? 1 : -1);
+    }
+
+    public bool ZoomShortcutForSmoke(string shortcut)
+    {
+        return shortcut.ToLowerInvariant() switch
+        {
+            "plus" or "+" or "=" => AdjustCardWidth(1),
+            "minus" or "-" => AdjustCardWidth(-1),
+            "zero" or "0" => ResetCardWidth(),
+            _ => false,
+        };
+    }
+
+    public bool AllCardWidthsMatchForSmoke(double width)
+        => _allTiles.All(tile => Math.Abs(tile.CardWidth - width) < 0.01);
+
+    public int AppendPastedFoldersForSmoke(string folderText)
+        => AppendLandingFolders(SplitFolderSet(folderText));
+
+    public void SetLandingFolderSetForSmoke(IEnumerable<string> folders)
+        => SetLandingFolderSet(folders);
 
     public bool SetSelectedFavoriteLevelForSmoke(int level)
     {
@@ -2485,9 +2756,17 @@ public partial class MainWindow : Window
 public sealed class ViewerState
 {
     public string? LastFolder { get; set; }
+    public List<string>? LastFolderSet { get; set; }
     public string? SearchQuery { get; set; }
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
+}
+
+public sealed class RecentFolderSetView
+{
+    public List<string> FolderSet { get; init; } = [];
+    public string Display { get; init; } = "";
+    public string Detail { get; init; } = "";
 }
 
 public sealed class SharedRecentFoldersState
