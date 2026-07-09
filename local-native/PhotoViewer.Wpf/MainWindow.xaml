@@ -367,15 +367,13 @@
             <RowDefinition Height="*"/>
           </Grid.RowDefinitions>
 
-          <!-- tabs -->
-          <StackPanel Grid.Row="0" Orientation="Horizontal">
-            <Border Background="{StaticResource AccentGlass}" Padding="12,0" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
+          <!-- preview label -->
+          <DockPanel Grid.Row="0" LastChildFill="True">
+            <Border DockPanel.Dock="Left" Background="{StaticResource AccentGlass}" Padding="12,0" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
               <TextBlock x:Name="PreviewTabName" Text="00427-portrait.png" Foreground="{StaticResource TextPrimary}" FontSize="12" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" MaxWidth="150"/>
             </Border>
-            <Border Padding="12,0" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,0,1,0">
-              <TextBlock Text="00391-elf.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
-            </Border>
-          </StackPanel>
+            <TextBlock Text="Preview" Foreground="{StaticResource TextTertiary}" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"/>
+          </DockPanel>
 
           <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="14">
@@ -391,7 +389,7 @@
 
               <!-- actions -->
               <Grid Margin="0,0,0,14">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
                   <StackPanel Orientation="Horizontal">
                     <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (X)" Click="FavoriteDecrease_Click"/>
@@ -410,7 +408,10 @@
                     <TextBlock Text="Open"/>
                   </StackPanel>
                 </Button>
-                <Button Grid.Column="2" Style="{StaticResource DangerButton}" Width="40" ToolTip="Delete/recycle is deferred" IsEnabled="False" Opacity="0.45">
+                <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="52" Margin="0,0,8,0" ToolTip="Open selected preview tab" Click="OpenSelectedPreviewTab_Click">
+                  <TextBlock Text="Tab"/>
+                </Button>
+                <Button Grid.Column="3" Style="{StaticResource DangerButton}" Width="40" ToolTip="Delete/recycle is deferred" IsEnabled="False" Opacity="0.45">
                   <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
                 </Button>
               </Grid>
@@ -463,30 +464,36 @@
     <Border Grid.Row="2" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,1,0,0">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
-          <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)"/>
-          <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all"/>
+          <Button x:Name="RestorePreviewTabButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)" Click="RestorePreviewTab_Click"/>
+          <Button x:Name="CloseAllPreviewTabsButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all" Click="CloseAllPreviewTabs_Click"/>
         </StackPanel>
-        <StackPanel Orientation="Horizontal">
-          <Border Background="{StaticResource AccentGlass}" Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <Path Data="M12,2 l2.4,7.4 H22 l-6,4.4 l2.3,7.2 l-6.3,-4.6 l-6.3,4.6 L8,13.8 L2,9.4 h7.6 z" Fill="#FACC15" Stretch="Uniform" Width="12" Height="12" Margin="0,0,6,0"/>
-              <TextBlock x:Name="BottomSelectedTabName" Text="00427-portrait.png" Foreground="{StaticResource TextPrimary}" FontSize="12" VerticalAlignment="Center"/>
-              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
-            </StackPanel>
-          </Border>
-          <Border Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <TextBlock Text="00391-elf.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
-              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
-            </StackPanel>
-          </Border>
-          <Border Padding="12,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
-            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-              <TextBlock Text="00355-castle.png" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
-              <TextBlock Text="✕" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="8,0,0,0"/>
-            </StackPanel>
-          </Border>
-        </StackPanel>
+        <Grid>
+          <TextBlock x:Name="PreviewTabsEmptyText" Text="No preview tabs" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center" Margin="8,0"/>
+          <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
+            <ItemsControl x:Name="PreviewTabList">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate>
+                  <StackPanel Orientation="Horizontal"/>
+                </ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <Border Padding="6,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                      <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" ToolTip="{Binding Path}">
+                        <StackPanel Orientation="Horizontal">
+                          <TextBlock Text="{Binding ActiveMarker}" Foreground="{StaticResource FavoriteText}" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
+                          <TextBlock Text="{Binding FileName}" Foreground="{Binding Foreground}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" VerticalAlignment="Center"/>
+                        </StackPanel>
+                      </Button>
+                      <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="12" Content="x" Tag="{Binding}" Click="ClosePreviewTab_Click" ToolTip="Close tab"/>
+                    </StackPanel>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </Grid>
       </DockPanel>
     </Border>
 

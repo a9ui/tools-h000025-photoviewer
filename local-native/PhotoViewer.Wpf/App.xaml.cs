@@ -35,6 +35,13 @@ public partial class App : Application
             return;
         }
 
+        int previewTabsSmokeIdx = Array.IndexOf(e.Args, "--preview-tabs-smoke");
+        if (previewTabsSmokeIdx >= 0 && previewTabsSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePreviewTabsSmoke(e.Args[previewTabsSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int gridRealizationSmokeIdx = Array.IndexOf(e.Args, "--grid-realization-smoke");
         if (gridRealizationSmokeIdx >= 0 && gridRealizationSmokeIdx + 1 < e.Args.Length)
         {
@@ -3158,6 +3165,168 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePreviewTabsSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WritePreviewTabsSmokeResult(resultPath, new PreviewTabsSmokeResult { Ok = false, Message = "missing required --folder", Folder = folder });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length < 3)
+        {
+            WritePreviewTabsSmokeResult(resultPath, new PreviewTabsSmokeResult { Ok = false, Message = "preview tabs smoke requires at least 3 fixture images", Folder = fullFolder });
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-preview-tabs-smoke-" + Guid.NewGuid().ToString("N"));
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PreviewTabsSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(fullFolder);
+                win.SetSortByForSmoke("name");
+                string firstName = fixtureNames[0];
+                string secondName = fixtureNames[1];
+
+                bool selectedFirst = win.SelectFileNameForSmoke(firstName);
+                bool openedFirst = win.OpenSelectedPreviewTabForSmoke();
+                int countAfterFirst = win.PreviewTabCountForSmoke;
+                string? activeAfterFirst = win.ActivePreviewTabNameForSmoke;
+                List<string> tabsAfterFirst = win.PreviewTabNamesForSmoke;
+
+                bool selectedSecond = win.SelectFileNameForSmoke(secondName);
+                bool openedSecond = win.OpenSelectedPreviewTabForSmoke();
+                int countAfterSecond = win.PreviewTabCountForSmoke;
+                string? activeAfterSecond = win.ActivePreviewTabNameForSmoke;
+                List<string> tabsAfterSecond = win.PreviewTabNamesForSmoke;
+
+                bool activatedFirst = win.ActivatePreviewTabForSmoke(firstName);
+                string? selectedAfterActivateFirst = win.SelectedFileNameForSmoke;
+                string? activeAfterActivateFirst = win.ActivePreviewTabNameForSmoke;
+
+                bool closedFirst = win.ClosePreviewTabForSmoke(firstName);
+                int countAfterCloseFirst = win.PreviewTabCountForSmoke;
+                int closedStackAfterCloseFirst = win.ClosedPreviewTabCountForSmoke;
+                string? activeAfterCloseFirst = win.ActivePreviewTabNameForSmoke;
+                string? selectedAfterCloseFirst = win.SelectedFileNameForSmoke;
+
+                bool restoredFirst = win.RestoreLastClosedPreviewTabForSmoke();
+                int countAfterRestore = win.PreviewTabCountForSmoke;
+                string? activeAfterRestore = win.ActivePreviewTabNameForSmoke;
+                string? selectedAfterRestore = win.SelectedFileNameForSmoke;
+                List<string> tabsAfterRestore = win.PreviewTabNamesForSmoke;
+
+                win.CloseAllPreviewTabsForSmoke();
+                int countAfterCloseAll = win.PreviewTabCountForSmoke;
+                int closedStackAfterCloseAll = win.ClosedPreviewTabCountForSmoke;
+
+                bool restoredAfterCloseAll = win.RestoreLastClosedPreviewTabForSmoke();
+                int countAfterRestoreAll = win.PreviewTabCountForSmoke;
+                string? activeAfterRestoreAll = win.ActivePreviewTabNameForSmoke;
+                string? selectedAfterRestoreAll = win.SelectedFileNameForSmoke;
+                win.Close();
+
+                bool ok = selectedFirst
+                    && openedFirst
+                    && countAfterFirst == 1
+                    && string.Equals(activeAfterFirst, firstName, StringComparison.OrdinalIgnoreCase)
+                    && tabsAfterFirst.SequenceEqual([firstName], StringComparer.OrdinalIgnoreCase)
+                    && selectedSecond
+                    && openedSecond
+                    && countAfterSecond == 2
+                    && string.Equals(activeAfterSecond, secondName, StringComparison.OrdinalIgnoreCase)
+                    && tabsAfterSecond.SequenceEqual([firstName, secondName], StringComparer.OrdinalIgnoreCase)
+                    && activatedFirst
+                    && string.Equals(activeAfterActivateFirst, firstName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterActivateFirst, firstName, StringComparison.OrdinalIgnoreCase)
+                    && closedFirst
+                    && countAfterCloseFirst == 1
+                    && closedStackAfterCloseFirst == 1
+                    && string.Equals(activeAfterCloseFirst, secondName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterCloseFirst, secondName, StringComparison.OrdinalIgnoreCase)
+                    && restoredFirst
+                    && countAfterRestore == 2
+                    && string.Equals(activeAfterRestore, firstName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterRestore, firstName, StringComparison.OrdinalIgnoreCase)
+                    && tabsAfterRestore.SequenceEqual([secondName, firstName], StringComparer.OrdinalIgnoreCase)
+                    && countAfterCloseAll == 0
+                    && closedStackAfterCloseAll >= 2
+                    && restoredAfterCloseAll
+                    && countAfterRestoreAll == 1
+                    && !string.IsNullOrWhiteSpace(activeAfterRestoreAll)
+                    && string.Equals(selectedAfterRestoreAll, activeAfterRestoreAll, StringComparison.OrdinalIgnoreCase);
+
+                result = new PreviewTabsSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "preview tabs open, activate, close, restore, close-all, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
+                    Folder = fullFolder,
+                    StatePath = statePath,
+                    SeenPath = seenPath,
+                    FavoritesPath = favoritesPath,
+                    FirstName = firstName,
+                    SecondName = secondName,
+                    CountAfterFirst = countAfterFirst,
+                    ActiveAfterFirst = activeAfterFirst,
+                    TabsAfterFirst = tabsAfterFirst,
+                    CountAfterSecond = countAfterSecond,
+                    ActiveAfterSecond = activeAfterSecond,
+                    TabsAfterSecond = tabsAfterSecond,
+                    ActiveAfterActivateFirst = activeAfterActivateFirst,
+                    SelectedAfterActivateFirst = selectedAfterActivateFirst,
+                    CountAfterCloseFirst = countAfterCloseFirst,
+                    ClosedStackAfterCloseFirst = closedStackAfterCloseFirst,
+                    ActiveAfterCloseFirst = activeAfterCloseFirst,
+                    SelectedAfterCloseFirst = selectedAfterCloseFirst,
+                    CountAfterRestore = countAfterRestore,
+                    ActiveAfterRestore = activeAfterRestore,
+                    SelectedAfterRestore = selectedAfterRestore,
+                    TabsAfterRestore = tabsAfterRestore,
+                    CountAfterCloseAll = countAfterCloseAll,
+                    ClosedStackAfterCloseAll = closedStackAfterCloseAll,
+                    CountAfterRestoreAll = countAfterRestoreAll,
+                    ActiveAfterRestoreAll = activeAfterRestoreAll,
+                    SelectedAfterRestoreAll = selectedAfterRestoreAll,
+                };
+            }
+            catch (Exception ex)
+            {
+                win.Close();
+                result = new PreviewTabsSmokeResult { Ok = false, Message = ex.Message, Folder = fullFolder, StatePath = statePath, SeenPath = seenPath, FavoritesPath = favoritesPath };
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePreviewTabsSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureStateSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -3985,6 +4154,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WritePreviewTabsSmokeResult(string path, PreviewTabsSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteGridRealizationSmokeResult(string path, GridRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -4150,6 +4326,39 @@ public partial class App : Application
         bool ModalVisible,
         string? PersistedName,
         string? PersistedPath);
+
+    private sealed class PreviewTabsSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? StatePath { get; init; }
+        public string? SeenPath { get; init; }
+        public string? FavoritesPath { get; init; }
+        public string? FirstName { get; init; }
+        public string? SecondName { get; init; }
+        public int CountAfterFirst { get; init; }
+        public string? ActiveAfterFirst { get; init; }
+        public List<string> TabsAfterFirst { get; init; } = [];
+        public int CountAfterSecond { get; init; }
+        public string? ActiveAfterSecond { get; init; }
+        public List<string> TabsAfterSecond { get; init; } = [];
+        public string? ActiveAfterActivateFirst { get; init; }
+        public string? SelectedAfterActivateFirst { get; init; }
+        public int CountAfterCloseFirst { get; init; }
+        public int ClosedStackAfterCloseFirst { get; init; }
+        public string? ActiveAfterCloseFirst { get; init; }
+        public string? SelectedAfterCloseFirst { get; init; }
+        public int CountAfterRestore { get; init; }
+        public string? ActiveAfterRestore { get; init; }
+        public string? SelectedAfterRestore { get; init; }
+        public List<string> TabsAfterRestore { get; init; } = [];
+        public int CountAfterCloseAll { get; init; }
+        public int ClosedStackAfterCloseAll { get; init; }
+        public int CountAfterRestoreAll { get; init; }
+        public string? ActiveAfterRestoreAll { get; init; }
+        public string? SelectedAfterRestoreAll { get; init; }
+    }
 
     private sealed record FavoriteSmokeResult(
         bool Ok,

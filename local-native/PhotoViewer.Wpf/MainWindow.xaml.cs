@@ -59,7 +59,9 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<string> _landingFolderSet = new();
     private readonly ObservableCollection<FolderBucketView> _folderBucketViews = new();
     private readonly ObservableCollection<RecentFolderSetView> _recentFolderSetViews = new();
+    private readonly ObservableCollection<PreviewTabView> _previewTabs = new();
     private readonly List<Tile> _allTiles = new();
+    private readonly List<Tile> _closedPreviewTabs = new();
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
@@ -82,6 +84,7 @@ public partial class MainWindow : Window
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
     private string? _restoredSelectedPath;
+    private string? _activePreviewTabPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private int _previewUpdateCount;
@@ -101,6 +104,7 @@ public partial class MainWindow : Window
         LandingFolderSetList.ItemsSource = _landingFolderSet;
         SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
+        PreviewTabList.ItemsSource = _previewTabs;
         RestoreState();
         BuildSampleTiles();
         _allTiles.AddRange(_tiles);
@@ -120,6 +124,7 @@ public partial class MainWindow : Window
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
         RefreshLandingFolderSetUi();
+        RefreshPreviewTabs();
         SetPhase(landing: true);
         _initializing = false;
     }
@@ -1810,7 +1815,6 @@ public partial class MainWindow : Window
         PreviewArtGlow.Fill = t.ArtGlow;
         PreviewFileName.Text = t.FileName;
         PreviewTabName.Text = t.FileName;
-        BottomSelectedTabName.Text = t.FileName;
         PreviewSizeText.Text = t.IsRealFile && TryReadBitmapSize(t.Path, out var width, out var height)
             ? $"{width} x {height}"
             : t.SizeText;
@@ -2116,6 +2120,135 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private void OpenSelectedPreviewTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (SelectedTile() is { IsRealFile: true } tile)
+            OpenPreviewTab(tile, makeActive: true);
+    }
+
+    private void ActivatePreviewTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab })
+            ActivatePreviewTab(tab.Path);
+    }
+
+    private void ClosePreviewTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab })
+            ClosePreviewTab(tab.Path);
+    }
+
+    private void RestorePreviewTab_Click(object sender, RoutedEventArgs e) => RestoreLastClosedPreviewTab();
+
+    private void CloseAllPreviewTabs_Click(object sender, RoutedEventArgs e) => CloseAllPreviewTabs();
+
+    private bool OpenPreviewTab(Tile tile, bool makeActive)
+    {
+        if (!tile.IsRealFile)
+            return false;
+
+        if (_previewTabs.All(tab => !string.Equals(tab.Path, tile.Path, StringComparison.OrdinalIgnoreCase)))
+            _previewTabs.Add(new PreviewTabView(tile.Path, tile.FileName));
+
+        _closedPreviewTabs.RemoveAll(closed => string.Equals(closed.Path, tile.Path, StringComparison.OrdinalIgnoreCase));
+
+        if (makeActive)
+            return ActivatePreviewTab(tile.Path);
+
+        RefreshPreviewTabs();
+        return true;
+    }
+
+    private bool ActivatePreviewTab(string path)
+    {
+        var tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (tile is null)
+            return false;
+
+        _activePreviewTabPath = tile.Path;
+        SelectTile(tile);
+        RefreshPreviewTabs();
+        SaveState();
+        return true;
+    }
+
+    private bool ClosePreviewTab(string path)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (tab is null)
+            return false;
+
+        _previewTabs.Remove(tab);
+        if (_allTiles.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase)) is { } closed)
+        {
+            _closedPreviewTabs.RemoveAll(candidate => string.Equals(candidate.Path, closed.Path, StringComparison.OrdinalIgnoreCase));
+            _closedPreviewTabs.Insert(0, closed);
+            if (_closedPreviewTabs.Count > 30)
+                _closedPreviewTabs.RemoveRange(30, _closedPreviewTabs.Count - 30);
+        }
+
+        if (string.Equals(_activePreviewTabPath, path, StringComparison.OrdinalIgnoreCase))
+        {
+            _activePreviewTabPath = null;
+            if (_previewTabs.LastOrDefault() is { } next)
+                ActivatePreviewTab(next.Path);
+            else
+                RefreshPreviewTabs();
+        }
+        else
+        {
+            RefreshPreviewTabs();
+        }
+
+        return true;
+    }
+
+    private bool RestoreLastClosedPreviewTab()
+    {
+        while (_closedPreviewTabs.Count > 0)
+        {
+            var tile = _closedPreviewTabs[0];
+            _closedPreviewTabs.RemoveAt(0);
+            if (_tiles.Contains(tile))
+                return OpenPreviewTab(tile, makeActive: true);
+        }
+
+        RefreshPreviewTabs();
+        return false;
+    }
+
+    private void CloseAllPreviewTabs()
+    {
+        foreach (var tab in _previewTabs.ToList())
+        {
+            if (_allTiles.FirstOrDefault(candidate => string.Equals(candidate.Path, tab.Path, StringComparison.OrdinalIgnoreCase)) is { } tile)
+            {
+                _closedPreviewTabs.RemoveAll(candidate => string.Equals(candidate.Path, tile.Path, StringComparison.OrdinalIgnoreCase));
+                _closedPreviewTabs.Insert(0, tile);
+            }
+        }
+
+        if (_closedPreviewTabs.Count > 30)
+            _closedPreviewTabs.RemoveRange(30, _closedPreviewTabs.Count - 30);
+
+        _previewTabs.Clear();
+        _activePreviewTabPath = null;
+        RefreshPreviewTabs();
+    }
+
+    private void RefreshPreviewTabs()
+    {
+        foreach (var tab in _previewTabs)
+            tab.IsActive = string.Equals(tab.Path, _activePreviewTabPath, StringComparison.OrdinalIgnoreCase);
+
+        if (PreviewTabsEmptyText is not null)
+            PreviewTabsEmptyText.Visibility = _previewTabs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (CloseAllPreviewTabsButton is not null)
+            CloseAllPreviewTabsButton.IsEnabled = _previewTabs.Count > 0;
+        if (RestorePreviewTabButton is not null)
+            RestorePreviewTabButton.IsEnabled = _closedPreviewTabs.Count > 0;
+    }
+
     private void QuickSearch_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not ToggleButton button) return;
@@ -2402,7 +2535,6 @@ public partial class MainWindow : Window
         PreviewArtGlow.Visibility = Visibility.Visible;
         PreviewFileName.Text = "No matching image";
         PreviewTabName.Text = "No selection";
-        BottomSelectedTabName.Text = "No selection";
         PreviewSizeText.Text = "-";
         PreviewModelText.Text = "-";
         PreviewDateText.Text = "-";
@@ -3364,6 +3496,16 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (key == Key.T
+            && (Keyboard.Modifiers & ModifierKeys.Shift) != 0
+            && (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0
+            && RestoreLastClosedPreviewTab())
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (TryHandleZoomKey(e))
         {
             e.Handled = true;
@@ -3475,6 +3617,10 @@ public partial class MainWindow : Window
     public int EnhancedCandidateCountForSmoke => _enhancedCandidateCount;
     public bool EnhancementReadOkForSmoke => _enhancementReadOk;
     public string? EnhancementReadErrorForSmoke => _enhancementReadError;
+    public int PreviewTabCountForSmoke => _previewTabs.Count;
+    public int ClosedPreviewTabCountForSmoke => _closedPreviewTabs.Count;
+    public string? ActivePreviewTabNameForSmoke => _previewTabs.FirstOrDefault(tab => tab.IsActive)?.FileName;
+    public List<string> PreviewTabNamesForSmoke => _previewTabs.Select(static tab => tab.FileName).ToList();
     public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
     public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
@@ -3496,6 +3642,21 @@ public partial class MainWindow : Window
     public int FavoriteFilterLevelForSmoke => _favoriteFilterLevel;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
+    public bool OpenSelectedPreviewTabForSmoke() => SelectedTile() is { IsRealFile: true } tile && OpenPreviewTab(tile, makeActive: true);
+    public bool ActivatePreviewTabForSmoke(string fileName)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && ActivatePreviewTab(tab.Path);
+    }
+
+    public bool ClosePreviewTabForSmoke(string fileName)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && ClosePreviewTab(tab.Path);
+    }
+
+    public bool RestoreLastClosedPreviewTabForSmoke() => RestoreLastClosedPreviewTab();
+    public void CloseAllPreviewTabsForSmoke() => CloseAllPreviewTabs();
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
@@ -3705,6 +3866,37 @@ public sealed class FolderBucketView
     public string CountText => Count.ToString("N0");
     public string VisibilityText => Hidden ? "Hidden" : "Shown";
     public double Opacity => Hidden ? 0.48 : 1.0;
+}
+
+public sealed class PreviewTabView : INotifyPropertyChanged
+{
+    private bool _isActive;
+
+    public PreviewTabView(string path, string fileName)
+    {
+        Path = path;
+        FileName = fileName;
+    }
+
+    public string Path { get; }
+    public string FileName { get; }
+    public string ActiveMarker => IsActive ? "*" : "";
+    public Brush Foreground => IsActive ? Brushes.White : Brushes.LightGray;
+
+    public bool IsActive
+    {
+        get => _isActive;
+        set
+        {
+            if (_isActive == value) return;
+            _isActive = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsActive)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ActiveMarker)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Foreground)));
+        }
+    }
+
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public readonly record struct FolderBucketIdentity(string Key, string Label);
