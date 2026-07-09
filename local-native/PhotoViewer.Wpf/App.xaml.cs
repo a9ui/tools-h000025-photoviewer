@@ -61,6 +61,13 @@ public partial class App : Application
             return;
         }
 
+        int seenSmokeIdx = Array.IndexOf(e.Args, "--seen-smoke");
+        if (seenSmokeIdx >= 0 && seenSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSeenSmoke(e.Args[seenSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -667,6 +674,143 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSeenSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? seenPath = ArgValue(args, "--seen-path");
+        string? favoritesPath = ArgValue(args, "--favorites-path");
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(seenPath))
+        {
+            WriteSeenSmokeResult(
+                resultPath,
+                new SeenSmokeResult(
+                    false,
+                    "missing required --folder or --seen-path",
+                    folder,
+                    seenPath,
+                    favoritesPath,
+                    null,
+                    null,
+                    0,
+                    0,
+                    false,
+                    false,
+                    0,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0));
+            Shutdown(1);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        if (!string.IsNullOrWhiteSpace(favoritesPath))
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+        first.SuppressStatePersistence();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            SeenSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                first.SetSearchQuery("", persist: false);
+
+                string? selectedName = first.SelectedFileNameForSmoke;
+                string? selectedPath = first.SelectedPathForSmoke;
+                int initialUnseen = first.LastInitialUnseenCountForSmoke;
+                int unseenAfterSelection = first.UnseenCountForSmoke;
+                bool selectedMarkedSeen = selectedPath is not null && !first.SelectedUnseenForSmoke && ReadSeenFlag(seenPath, selectedPath);
+                int seenStoreAfterSelection = first.SeenStoreCountForSmoke;
+                int favoriteCountAfterSelection = first.FavoriteStoreCountForSmoke;
+                long firstLoadTotalMs = first.LastLoadMetrics?.TotalMs ?? 0;
+                int firstThumbnailsCompleted = first.LastLoadMetrics?.ThumbnailsCompleted ?? 0;
+
+                first.SetUnseenOnlyFilterForSmoke(true);
+                int unseenOnlyAfterSelection = first.FilteredCountForSmoke;
+                first.Close();
+
+                bool persistedSeen = selectedPath is not null && ReadSeenFlag(seenPath, selectedPath);
+
+                var second = HiddenWindow();
+                second.Show();
+                second.SuppressStatePersistence();
+                await second.LoadFolderAsync(folder);
+                second.SetSearchQuery("", persist: false);
+                bool reloadedSelected = !string.IsNullOrWhiteSpace(selectedName) && second.SelectFileNameForSmoke(selectedName);
+                bool reloadedSelectedSeen = selectedPath is not null && ReadSeenFlag(seenPath, selectedPath) && !second.SelectedUnseenForSmoke;
+                int reloadInitialUnseen = second.LastInitialUnseenCountForSmoke;
+                int reloadUnseenAfterSelection = second.UnseenCountForSmoke;
+                int reloadSeenStoreCount = second.SeenStoreCountForSmoke;
+                int reloadFavoriteCount = second.FavoriteStoreCountForSmoke;
+                second.SetUnseenOnlyFilterForSmoke(true);
+                int reloadUnseenOnlyCount = second.FilteredCountForSmoke;
+                second.Close();
+
+                bool ok = initialUnseen > 0
+                    && selectedPath is not null
+                    && selectedMarkedSeen
+                    && unseenAfterSelection == initialUnseen - 1
+                    && unseenOnlyAfterSelection == unseenAfterSelection
+                    && persistedSeen
+                    && reloadedSelected
+                    && reloadedSelectedSeen
+                    && reloadInitialUnseen == unseenAfterSelection
+                    && reloadUnseenAfterSelection == unseenAfterSelection
+                    && reloadUnseenOnlyCount == unseenAfterSelection
+                    && reloadSeenStoreCount == seenStoreAfterSelection
+                    && reloadFavoriteCount == favoriteCountAfterSelection
+                    && firstLoadTotalMs > 0
+                    && firstThumbnailsCompleted == initialUnseen;
+
+                result = new SeenSmokeResult(
+                    ok,
+                    ok ? "real-folder seen/unseen state, filter, persistence, reload, and favorite-store isolation passed" : "seen/unseen smoke did not meet expected policy",
+                    folder,
+                    seenPath,
+                    favoritesPath,
+                    selectedName,
+                    selectedPath,
+                    initialUnseen,
+                    unseenAfterSelection,
+                    selectedMarkedSeen,
+                    persistedSeen,
+                    unseenOnlyAfterSelection,
+                    seenStoreAfterSelection,
+                    favoriteCountAfterSelection,
+                    reloadedSelected,
+                    reloadInitialUnseen,
+                    reloadUnseenAfterSelection,
+                    reloadedSelectedSeen,
+                    reloadUnseenOnlyCount,
+                    reloadSeenStoreCount,
+                    reloadFavoriteCount,
+                    firstLoadTotalMs,
+                    firstThumbnailsCompleted);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new SeenSmokeResult(false, ex.Message, folder, seenPath, favoritesPath, null, null, 0, 0, false, false, 0, 0, 0, false, 0, 0, false, 0, 0, 0, 0, 0);
+            }
+
+            WriteSeenSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureScrollRealizationSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -1137,6 +1281,35 @@ public partial class App : Application
         return 0;
     }
 
+    private static bool ReadSeenFlag(string seenPath, string selectedPath)
+    {
+        try
+        {
+            if (!File.Exists(seenPath))
+                return false;
+
+            string normalizedSelected = NormalizeFavoritePath(selectedPath);
+            using var document = System.Text.Json.JsonDocument.Parse(File.ReadAllText(seenPath));
+            if (document.RootElement.ValueKind != System.Text.Json.JsonValueKind.Object)
+                return false;
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (!string.Equals(NormalizeFavoritePath(property.Name), normalizedSelected, StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                return property.Value.ValueKind == System.Text.Json.JsonValueKind.True
+                    || (property.Value.ValueKind == System.Text.Json.JsonValueKind.Number && property.Value.TryGetInt32(out int numeric) && numeric != 0)
+                    || (property.Value.ValueKind == System.Text.Json.JsonValueKind.String && bool.TryParse(property.Value.GetString(), out bool parsed) && parsed);
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
     private static string NormalizeFavoritePath(string path)
     {
         try
@@ -1185,6 +1358,13 @@ public partial class App : Application
     }
 
     private static void WriteFavoriteImportSmokeResult(string path, FavoriteImportSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteSeenSmokeResult(string path, SeenSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -1310,6 +1490,31 @@ public partial class App : Application
         int ReloadedFilteredCount,
         Dictionary<string, int> PersistedLevels,
         Dictionary<string, int> ReloadedLevels);
+
+    private sealed record SeenSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? SeenPath,
+        string? FavoritesPath,
+        string? SelectedName,
+        string? SelectedPath,
+        int InitialUnseen,
+        int UnseenAfterSelection,
+        bool SelectedMarkedSeen,
+        bool PersistedSeen,
+        int UnseenOnlyAfterSelection,
+        int SeenStoreCountAfterSelection,
+        int FavoriteStoreCountAfterSelection,
+        bool ReloadedSelected,
+        int ReloadInitialUnseen,
+        int ReloadUnseenAfterSelection,
+        bool ReloadedSelectedSeen,
+        int ReloadUnseenOnlyCount,
+        int ReloadSeenStoreCount,
+        int ReloadFavoriteStoreCount,
+        long FirstLoadTotalMs,
+        int FirstThumbnailsCompleted);
 
     private sealed record GridRealizationSmokeResult(
         bool Ok,
