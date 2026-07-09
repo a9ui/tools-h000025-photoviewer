@@ -1,0 +1,647 @@
+<meta charset="utf-8" />
+<title>PhotoViewer — Local Native UI Mockup</title>
+<!--
+  PhotoViewer local-native UI mockup (shell only).
+  Faithful port of the Next.js browser build's visual system (src/app/globals.css)
+  into a static reference for the WinForms local-native app.
+  Single self-contained file: opens directly in a browser AND renders as an Artifact.
+  No external assets, no network. Card artwork is procedurally generated (CSS gradients).
+-->
+<style>
+  :root {
+    --sidebar-width: 240px;
+    --right-width: 340px;
+    --bg-primary: #08080c;
+    --bg-secondary: #101018;
+    --bg-tertiary: #181824;
+    --bg-elevated: #1c1c2e;
+    --glass-bg: rgba(16, 16, 24, 0.75);
+    --glass-border: rgba(255, 255, 255, 0.06);
+    --glass-border-hover: rgba(255, 255, 255, 0.12);
+    --text-primary: #eef0f6;
+    --text-secondary: #7a7f9a;
+    --text-tertiary: #50546e;
+    --accent: #6366f1;
+    --accent-light: #818cf8;
+    --accent-glow: rgba(99, 102, 241, 0.25);
+    --accent-soft: rgba(99, 102, 241, 0.1);
+    --favorite: #f43f5e;
+    --danger: #ef4444;
+    --success: #10b981;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-full: 9999px;
+    --shadow-sm: 0 1px 3px rgba(0,0,0,0.4);
+    --shadow-md: 0 4px 16px rgba(0,0,0,0.5);
+    --shadow-lg: 0 12px 40px rgba(0,0,0,0.6);
+    --shadow-glow: 0 0 30px var(--accent-glow);
+    --fast: 0.15s cubic-bezier(0.4, 0, 0.2, 1);
+    --smooth: 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", Consolas, "Liberation Mono", monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+
+  * , *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  html, body {
+    height: 100%;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-family: var(--sans);
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  ::-webkit-scrollbar { width: 8px; height: 8px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+  button { background: none; border: none; color: inherit; font: inherit; cursor: pointer; }
+  input, textarea, select { font: inherit; outline: none; color: inherit; }
+  svg { display: block; }
+
+  /* ───────── App shell ───────── */
+  .viewer { height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+
+  .viewer-header {
+    z-index: 100;
+    padding: 0.75rem 1.25rem;
+    background: rgba(8, 8, 12, 0.85);
+    -webkit-backdrop-filter: blur(20px);
+    backdrop-filter: blur(20px);
+    border-bottom: 1px solid var(--glass-border);
+    display: flex; align-items: center; gap: 0.85rem;
+    flex-shrink: 0;
+  }
+  .viewer-logo {
+    font-size: 1.15rem; font-weight: 700; white-space: nowrap; cursor: pointer;
+    background: linear-gradient(135deg, #818cf8, #c084fc);
+    -webkit-background-clip: text; background-clip: text; color: transparent;
+    letter-spacing: -0.01em;
+  }
+
+  .icon-btn {
+    display: flex; align-items: center; justify-content: center;
+    width: 36px; height: 36px; border-radius: var(--radius-sm);
+    color: var(--text-secondary); transition: all var(--fast); flex-shrink: 0;
+  }
+  .icon-btn:hover { background: rgba(255,255,255,0.08); color: var(--text-primary); }
+  .icon-btn.active { background: rgba(99, 102, 241, 0.16); color: var(--accent-light); }
+  .icon-btn.album-add { color: #6ee7b7; }
+
+  /* Search */
+  .search-bar {
+    flex: 1; min-width: 0; max-width: 640px;
+    height: 40px; display: flex; align-items: center; gap: 0.55rem;
+    padding: 0 0.85rem; border-radius: var(--radius-full);
+    background: var(--bg-secondary); border: 1px solid var(--glass-border);
+    transition: border-color var(--fast), box-shadow var(--fast);
+  }
+  .search-bar:focus-within { border-color: var(--accent); box-shadow: var(--shadow-glow); }
+  .search-bar svg { color: var(--text-tertiary); flex-shrink: 0; }
+  .search-chip {
+    display: inline-flex; align-items: center; gap: 0.3rem; flex-shrink: 0;
+    height: 24px; padding: 0 0.35rem 0 0.6rem; border-radius: var(--radius-full);
+    background: var(--accent-soft); border: 1px solid rgba(99,102,241,0.4);
+    color: var(--accent-light); font-size: 0.76rem; font-weight: 500;
+  }
+  .search-chip button { color: var(--accent-light); opacity: 0.8; font-size: 0.9rem; line-height: 1; }
+  .search-bar input { flex: 1; min-width: 40px; background: none; border: none; color: var(--text-primary); font-size: 0.9rem; }
+  .search-bar input::placeholder { color: var(--text-tertiary); }
+
+  .header-stats {
+    font-size: 0.78rem; color: var(--text-tertiary); white-space: nowrap;
+    font-variant-numeric: tabular-nums; margin-left: 0.25rem;
+  }
+  .header-spacer { flex: 1; }
+
+  /* ───────── Body ───────── */
+  .viewer-body { display: flex; flex: 1; overflow: hidden; min-height: 0; }
+
+  /* Sidebar */
+  .sidebar {
+    width: var(--sidebar-width); min-width: var(--sidebar-width); flex-shrink: 0;
+    height: 100%; overflow-y: auto; background: var(--bg-secondary);
+    border-right: 1px solid var(--glass-border); display: flex; flex-direction: column;
+  }
+  .viewer.sidebar-hidden .sidebar { display: none; }
+  .sidebar-section { padding: 0.9rem 1rem 0.8rem; border-bottom: 1px solid rgba(255,255,255,0.04); }
+  .sidebar-section-header {
+    display: flex; align-items: center; gap: 0.4rem; width: 100%;
+    font-size: 0.68rem; font-weight: 600; text-transform: uppercase; letter-spacing: 0.08em;
+    color: var(--text-tertiary); margin-bottom: 0.6rem; text-align: left;
+  }
+  .sidebar-section-header.toggle { cursor: pointer; }
+  .sidebar-section-header.toggle:hover { color: var(--text-secondary); }
+  .sidebar-section-header .chev { margin-left: auto; transition: transform var(--fast); }
+  .sidebar-path { font-size: 0.84rem; font-weight: 500; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 0.25rem; }
+  .sidebar-meta { font-size: 0.74rem; color: var(--text-tertiary); margin-bottom: 0.5rem; font-variant-numeric: tabular-nums; }
+  .sidebar-link { display: inline-flex; align-items: center; gap: 0.35rem; font-size: 0.79rem; color: var(--accent-light); margin-right: 0.9rem; transition: color var(--fast); }
+  .sidebar-link:hover { color: var(--text-primary); }
+
+  .sidebar-active-album {
+    display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 0.2rem 0.5rem;
+    padding: 0.5rem 0.6rem; border-radius: var(--radius-sm); margin-top: 0.6rem;
+    border: 1px solid rgba(16,185,129,0.34); background: rgba(16,185,129,0.08);
+  }
+  .sidebar-active-album span, .sidebar-active-album em { color: var(--text-tertiary); font-size: 0.66rem; font-style: normal; }
+  .sidebar-active-album strong { color: var(--text-primary); font-size: 0.8rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .album-group-label { margin: 0.65rem 0 0.35rem; color: var(--text-tertiary); font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; }
+  .album-item {
+    display: grid; grid-template-columns: auto minmax(0,1fr) auto; align-items: center; gap: 0.45rem;
+    width: 100%; min-height: 30px; padding: 0.32rem 0.5rem; margin-bottom: 0.3rem;
+    border-radius: var(--radius-sm); border: 1px solid rgba(255,255,255,0.05);
+    background: rgba(255,255,255,0.02); color: var(--text-secondary); text-align: left; transition: all var(--fast);
+  }
+  .album-item:hover { border-color: var(--glass-border-hover); background: rgba(255,255,255,0.05); color: var(--text-primary); }
+  .album-item.is-active { border-color: rgba(16,185,129,0.45); background: rgba(16,185,129,0.1); color: var(--text-primary); }
+  .album-item span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.77rem; }
+  .album-item em { color: var(--text-tertiary); font-size: 0.66rem; font-style: normal; font-variant-numeric: tabular-nums; }
+  .album-item svg { color: #facc15; }
+
+  .pills { display: flex; flex-wrap: wrap; gap: 0.4rem; }
+  .pill {
+    padding: 0.3rem 0.7rem; border-radius: var(--radius-full);
+    border: 1px solid var(--glass-border); background: var(--bg-tertiary);
+    color: var(--text-secondary); font-size: 0.76rem; transition: all var(--fast);
+  }
+  .pill:hover { border-color: var(--glass-border-hover); color: var(--text-primary); background: var(--bg-elevated); }
+  .pill.is-active { border-color: rgba(99,102,241,0.5); background: var(--accent-soft); color: var(--accent-light); }
+
+  .row-toggle { display: flex; align-items: center; gap: 0.5rem; font-size: 0.81rem; color: var(--text-secondary); cursor: pointer; min-height: 30px; }
+  .row-toggle input { accent-color: var(--accent); width: 15px; height: 15px; }
+  .fav-levels { display: flex; flex-wrap: wrap; gap: 0.35rem; margin-top: 0.15rem; }
+  .fav-chip {
+    display: inline-flex; align-items: center; gap: 0.25rem; min-height: 26px;
+    padding: 0 0.5rem; border-radius: var(--radius-full); font-size: 0.72rem;
+    border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); color: var(--text-secondary);
+    transition: all var(--fast);
+  }
+  .fav-chip:hover { border-color: var(--glass-border-hover); color: var(--text-primary); }
+  .fav-chip.is-active { border-color: rgba(244,63,94,0.5); background: rgba(244,63,94,0.12); color: #fecdd3; }
+  .fav-chip svg { fill: var(--favorite); }
+
+  .date-range { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-top: 0.5rem; }
+  .date-field { display: flex; flex-direction: column; gap: 0.25rem; }
+  .date-field span { font-size: 0.66rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.05em; }
+  .date-input { height: 32px; padding: 0 0.5rem; border-radius: var(--radius-sm); background: var(--bg-tertiary); border: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 0.76rem; font-variant-numeric: tabular-nums; }
+  .date-input:focus { border-color: var(--accent); }
+
+  .folder-list { display: flex; flex-direction: column; gap: 0.2rem; }
+  .folder-item {
+    display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 0.4rem;
+    padding: 0.35rem 0.4rem; border-radius: var(--radius-sm); transition: background var(--fast); cursor: pointer;
+  }
+  .folder-item:hover { background: rgba(255,255,255,0.03); }
+  .folder-item.is-selected { background: rgba(99,102,241,0.1); }
+  .folder-item input { accent-color: var(--accent); width: 14px; height: 14px; }
+  .folder-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.79rem; color: var(--text-secondary); }
+  .folder-item.is-selected .folder-label { color: var(--text-primary); }
+  .folder-count { font-size: 0.68rem; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+  .folder-eye { width: 22px; height: 22px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); transition: all var(--fast); }
+  .folder-eye:hover { color: var(--text-primary); background: rgba(255,255,255,0.06); }
+  .folder-eye.is-visible { color: var(--accent-light); }
+  .folder-item.is-hidden .folder-label { color: var(--text-tertiary); text-decoration: line-through; opacity: 0.6; }
+
+  .seg { display: flex; gap: 0.3rem; background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); padding: 3px; }
+  .seg button { flex: 1; height: 28px; border-radius: 6px; font-size: 0.75rem; color: var(--text-secondary); transition: all var(--fast); }
+  .seg button.is-active { background: var(--accent); color: #fff; font-weight: 600; }
+  .disp-row { display: grid; grid-template-columns: auto 1fr; align-items: center; gap: 0.6rem; margin-top: 0.55rem; }
+  .disp-row > span { font-size: 0.72rem; color: var(--text-tertiary); }
+  .native-select { height: 30px; padding: 0 0.5rem; border-radius: var(--radius-sm); background: var(--bg-tertiary); border: 1px solid var(--glass-border); color: var(--text-secondary); font-size: 0.76rem; }
+  .slider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 2px; background: var(--bg-elevated); }
+  .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; border-radius: 50%; background: var(--accent-light); box-shadow: 0 0 0 3px rgba(99,102,241,0.25); cursor: pointer; }
+
+  /* Main grid */
+  .viewer-main { flex: 1; overflow-y: auto; min-width: 0; min-height: 0; scrollbar-gutter: stable; }
+  .grid-container { padding: 1.35rem 1.5rem 3rem; }
+  .date-section-header { display: flex; align-items: center; gap: 0.75rem; color: rgba(255,255,255,0.82); font-size: 0.9rem; font-weight: 700; margin: 1.4rem 0 0.9rem; }
+  .date-section-header:first-child { margin-top: 0; }
+  .date-section-header i { flex: 1; height: 1px; background: linear-gradient(to right, rgba(255,255,255,0.34), rgba(255,255,255,0.04)); }
+  .date-section-header small { color: var(--text-tertiary); font-weight: 500; font-size: 0.74rem; font-variant-numeric: tabular-nums; }
+
+  .image-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 190px), 1fr)); gap: 1rem; }
+
+  .image-card {
+    position: relative; border-radius: var(--radius-md); overflow: hidden;
+    background: var(--bg-secondary); aspect-ratio: 2/3; cursor: pointer;
+    transition: transform 0.12s ease, box-shadow 0.12s ease;
+  }
+  .image-card:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+  .image-card.is-selected { outline: 2px solid var(--accent-light); box-shadow: 0 0 0 3px rgba(99,102,241,0.25); }
+  .image-card .art { position: absolute; inset: 0; }
+  .image-card.is-unseen::before {
+    content: ''; position: absolute; top: 0.5rem; left: 0.5rem; z-index: 6;
+    width: 8px; height: 8px; border-radius: 50%; background: var(--accent-light);
+    box-shadow: 0 0 8px var(--accent-glow), 0 0 0 3px rgba(8,8,12,0.5);
+  }
+  .card-overlay {
+    position: absolute; inset: 0; z-index: 4; padding: 0.7rem; display: flex; flex-direction: column; justify-content: flex-end;
+    background: linear-gradient(to top, rgba(0,0,0,0.72) 0%, transparent 52%);
+    opacity: 0; transition: opacity var(--fast);
+  }
+  .image-card:hover .card-overlay { opacity: 1; }
+  .card-filename { font-size: 0.74rem; font-weight: 500; color: rgba(255,255,255,0.92); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .card-fav-count {
+    position: absolute; top: 0.45rem; right: 0.45rem; z-index: 6; min-width: 28px; height: 22px;
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.2rem; padding: 0 0.4rem;
+    border-radius: var(--radius-full); background: rgba(0,0,0,0.62); border: 1px solid rgba(244,63,94,0.45);
+    color: #fecdd3; font-size: 0.68rem; font-weight: 800; font-variant-numeric: tabular-nums;
+  }
+  .card-fav-count svg { fill: var(--favorite); }
+
+  .spinner { width: 30px; height: 30px; border: 3px solid var(--glass-border); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.8s linear infinite; margin: 1.5rem auto 0; opacity: 0.7; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Right preview */
+  .preview-panel { width: var(--right-width); min-width: var(--right-width); flex-shrink: 0; height: 100%; border-left: 1px solid var(--glass-border); background: var(--bg-secondary); display: flex; flex-direction: column; overflow: hidden; }
+  .viewer.right-hidden .preview-panel { display: none; }
+  .preview-tabs { display: flex; align-items: stretch; height: 38px; border-bottom: 1px solid var(--glass-border); flex-shrink: 0; }
+  .preview-tab { padding: 0 0.75rem; display: inline-flex; align-items: center; gap: 0.4rem; font-size: 0.76rem; color: var(--text-tertiary); border-right: 1px solid rgba(255,255,255,0.05); max-width: 150px; }
+  .preview-tab.active { background: rgba(99,102,241,0.16); color: var(--text-primary); }
+  .preview-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .preview-scroll { flex: 1; overflow-y: auto; }
+  .preview-image-wrap { padding: 0.85rem; }
+  .preview-image { width: 100%; border-radius: var(--radius-md); aspect-ratio: 2/3; object-fit: cover; cursor: zoom-in; box-shadow: var(--shadow-md); }
+  .preview-actions { display: flex; gap: 0.4rem; padding: 0 0.85rem 0.85rem; }
+  .btn {
+    flex: 1; height: 34px; border-radius: var(--radius-sm); font-size: 0.76rem; font-weight: 500;
+    display: inline-flex; align-items: center; justify-content: center; gap: 0.35rem;
+    border: 1px solid var(--glass-border); background: rgba(255,255,255,0.03); color: var(--text-secondary); transition: all var(--fast);
+  }
+  .btn:hover { border-color: var(--glass-border-hover); color: var(--text-primary); background: rgba(255,255,255,0.07); }
+  .btn.danger:hover { border-color: rgba(239,68,68,0.6); color: #fecaca; background: rgba(239,68,68,0.14); }
+  .fav-stepper { display: inline-flex; align-items: center; border: 1px solid rgba(244,63,94,0.4); border-radius: var(--radius-sm); overflow: hidden; }
+  .fav-stepper button { width: 30px; height: 34px; color: #fecdd3; background: rgba(244,63,94,0.1); }
+  .fav-stepper button:hover { background: rgba(244,63,94,0.22); }
+  .fav-stepper .val { width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; gap: 0.2rem; font-size: 0.78rem; font-weight: 700; color: #fecdd3; font-variant-numeric: tabular-nums; }
+  .fav-stepper .val svg { fill: var(--favorite); }
+
+  .meta { padding: 0 0.85rem 1.2rem; display: flex; flex-direction: column; gap: 0.55rem; }
+  .meta-title { font-size: 0.86rem; font-weight: 600; color: var(--text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .meta-grid { display: grid; grid-template-columns: auto 1fr; gap: 0.3rem 0.75rem; }
+  .meta-grid dt { font-size: 0.72rem; color: var(--text-tertiary); text-transform: uppercase; letter-spacing: 0.04em; }
+  .meta-grid dd { font-size: 0.78rem; color: var(--text-secondary); font-variant-numeric: tabular-nums; word-break: break-word; }
+  .meta-grid dd.mono { font-family: var(--mono); font-size: 0.74rem; }
+  .meta-block { margin-top: 0.4rem; }
+  .meta-block-label { font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-tertiary); margin-bottom: 0.3rem; display: flex; align-items: center; justify-content: space-between; }
+  .meta-block-label button { font-size: 0.66rem; color: var(--accent-light); }
+  .meta-text { font-size: 0.77rem; line-height: 1.5; color: var(--text-secondary); background: var(--bg-tertiary); border: 1px solid var(--glass-border); border-radius: var(--radius-sm); padding: 0.55rem 0.6rem; max-height: 130px; overflow-y: auto; }
+  .meta-text.neg { color: #fca5a5; }
+
+  /* Bottom preview tabs */
+  .bottom-tabs { height: 40px; border-top: 1px solid var(--glass-border); background: var(--bg-secondary); flex-shrink: 0; display: flex; align-items: stretch; }
+  .bottom-actions { display: flex; align-items: center; gap: 0.35rem; padding: 0 0.5rem; border-right: 1px solid rgba(255,255,255,0.06); }
+  .bottom-action-btn { height: 26px; padding: 0 0.55rem; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: rgba(255,255,255,0.04); color: var(--text-secondary); font-size: 0.7rem; }
+  .bottom-action-btn:hover { border-color: var(--glass-border-hover); color: var(--text-primary); }
+  .bottom-tabs-scroll { display: flex; align-items: center; overflow-x: auto; flex: 1; min-width: 0; }
+  .bottom-tab { height: 100%; min-width: 150px; max-width: 240px; padding: 0 0.6rem; display: inline-flex; align-items: center; gap: 0.5rem; border-right: 1px solid rgba(255,255,255,0.04); color: var(--text-tertiary); }
+  .bottom-tab.active { background: rgba(99,102,241,0.16); color: var(--text-primary); }
+  .bottom-tab .pin { color: #facc15; }
+  .bottom-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.76rem; flex: 1; }
+  .bottom-tab .x { color: var(--text-tertiary); font-size: 0.9rem; line-height: 1; }
+  .bottom-tab .x:hover { color: var(--text-primary); }
+
+  /* Modal */
+  .modal-overlay { position: fixed; inset: 0; z-index: 500; display: none; align-items: center; justify-content: center; }
+  .modal-overlay.open { display: flex; animation: fade 0.2s ease; }
+  @keyframes fade { from { opacity: 0; } to { opacity: 1; } }
+  .modal-backdrop { position: absolute; inset: 0; background: rgba(4,4,7,0.92); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .modal-body { position: relative; width: 100%; height: 100%; display: flex; flex-direction: column; }
+  .modal-topbar { position: relative; z-index: 3; display: flex; align-items: center; gap: 0.6rem; padding: 0.75rem 1.1rem; }
+  .modal-title { font-size: 0.85rem; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .modal-topbar .grow { flex: 1; }
+  .modal-tool { width: 38px; height: 38px; border-radius: var(--radius-sm); display: flex; align-items: center; justify-content: center; color: var(--text-secondary); background: rgba(255,255,255,0.04); border: 1px solid var(--glass-border); transition: all var(--fast); }
+  .modal-tool:hover { color: var(--text-primary); background: rgba(255,255,255,0.1); }
+  .modal-tool.fav { color: #fecdd3; border-color: rgba(244,63,94,0.4); }
+  .modal-image-area { flex: 1; position: relative; display: flex; align-items: center; justify-content: center; padding: 0 4.5rem 1.5rem; min-height: 0; }
+  .modal-image-area img { max-width: 100%; max-height: 100%; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+  .modal-edge { position: absolute; top: 0; bottom: 0; width: 4.5rem; display: flex; align-items: center; justify-content: center; color: var(--text-tertiary); z-index: 3; }
+  .modal-edge.left { left: 0; } .modal-edge.right { right: 0; }
+  .modal-edge span { width: 44px; height: 44px; border-radius: 50%; display: flex; align-items: center; justify-content: center; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); transition: all var(--fast); }
+  .modal-edge:hover span { color: var(--text-primary); background: rgba(255,255,255,0.12); transform: scale(1.08); }
+  .modal-zoom-badge { position: absolute; bottom: 1.5rem; left: 50%; transform: translateX(-50%); font-size: 0.74rem; color: var(--text-tertiary); background: rgba(0,0,0,0.5); padding: 0.25rem 0.7rem; border-radius: var(--radius-full); font-variant-numeric: tabular-nums; }
+
+  .kbd { font-family: var(--mono); font-size: 0.68rem; padding: 0.08rem 0.35rem; border-radius: 4px; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: var(--text-secondary); }
+
+  @media (max-width: 1100px) { .preview-panel { --right-width: 300px; } }
+  @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+</style>
+
+<div class="viewer" id="app">
+  <!-- ═══════════ Header ═══════════ -->
+  <header class="viewer-header">
+    <button class="icon-btn active" id="toggleSidebar" title="Hide sidebar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="9" y1="3" x2="9" y2="21"/></svg>
+    </button>
+    <span class="viewer-logo">PhotoViewer</span>
+    <button class="icon-btn" title="Refresh active folder (Shift-click: full verify)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+    </button>
+
+    <div class="search-bar">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      <span class="search-chip">1girl, portrait <button title="Remove">×</button></span>
+      <input type="text" placeholder="Search prompt, model, seed…" />
+    </div>
+
+    <button class="icon-btn album-add" title="Add selected to album (A)">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+    </button>
+    <span class="header-stats" id="headerStats">3 selected · 12,480 images · 4 folders</span>
+    <span class="header-spacer"></span>
+    <button class="icon-btn active" id="toggleRight" title="Hide right panel">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="15" y1="3" x2="15" y2="21"/></svg>
+    </button>
+    <button class="icon-btn" title="Enhance queue">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3l1.9 5.8L20 10l-5.8 1.9L12 18l-1.9-5.8L4 10l5.8-1.9z"/></svg>
+    </button>
+  </header>
+
+  <div class="viewer-body">
+    <!-- ═══════════ Sidebar ═══════════ -->
+    <aside class="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-section-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/></svg>
+          <span>Folder</span>
+        </div>
+        <p class="sidebar-path" title="D:\SD\outputs (+3 more)">D:\SD\outputs <em style="color:var(--text-tertiary);font-style:normal;">(+3)</em></p>
+        <p class="sidebar-meta" id="sidebarMeta">12,480 images indexed</p>
+        <button class="sidebar-link">Add folder</button>
+        <button class="sidebar-link">Change folder</button>
+      </div>
+
+      <div class="sidebar-section">
+        <button class="sidebar-section-header toggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Albums</span>
+          <svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <button class="sidebar-link">Album library</button>
+        <div class="sidebar-active-album">
+          <span>Viewing</span><span></span>
+          <strong>Best of 2026</strong>
+          <em>842 images</em>
+        </div>
+        <div class="album-group-label">Pinned</div>
+        <button class="album-item is-active">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/></svg>
+          <span>Best of 2026</span><em>842</em>
+        </button>
+        <button class="album-item">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/></svg>
+          <span>Character refs</span><em>318</em>
+        </button>
+        <div class="album-group-label">Recent</div>
+        <button class="album-item"><span style="grid-column:1/3;">Landscape studies</span><em>127</em></button>
+        <button class="album-item"><span style="grid-column:1/3;">To upscale</span><em>54</em></button>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header"><span>Quick Search</span></div>
+        <div class="pills">
+          <button class="pill is-active">Portrait</button>
+          <button class="pill">Landscape</button>
+          <button class="pill">Anime</button>
+          <button class="pill">Photoreal</button>
+          <button class="pill">Clear</button>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header"><span>Filters</span></div>
+        <label class="row-toggle"><input type="checkbox" checked /><span>Favorites only</span></label>
+        <div class="fav-levels">
+          <button class="fav-chip is-active"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z"/></svg>1+</button>
+          <button class="fav-chip"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z"/></svg>2+</button>
+          <button class="fav-chip"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z"/></svg>3+</button>
+        </div>
+        <label class="row-toggle"><input type="checkbox" /><span>Enhanced only</span></label>
+        <label class="row-toggle"><input type="checkbox" /><span>Unseen only</span></label>
+        <div class="date-range">
+          <div class="date-field"><span>From</span><input class="date-input" value="2026-01-01" /></div>
+          <div class="date-field"><span>To</span><input class="date-input" value="2026-07-08" /></div>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <button class="sidebar-section-header toggle"><span>Folders</span>
+          <svg class="chev" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <div class="folder-list">
+          <label class="folder-item is-selected"><input type="checkbox" checked /><span class="folder-label">outputs\txt2img</span><span class="folder-count">6,204</span><button class="folder-eye is-visible" title="Visible"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+          <label class="folder-item is-selected"><input type="checkbox" checked /><span class="folder-label">outputs\img2img</span><span class="folder-count">3,118</span><button class="folder-eye is-visible" title="Visible"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+          <label class="folder-item"><input type="checkbox" /><span class="folder-label">outputs\extras</span><span class="folder-count">1,942</span><button class="folder-eye is-visible" title="Visible"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></button></label>
+          <label class="folder-item is-hidden"><input type="checkbox" /><span class="folder-label">archive\2025</span><span class="folder-count">1,216</span><button class="folder-eye" title="Hidden"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10 10 0 0 1 12 20C5 20 1 12 1 12a18 18 0 0 1 5.06-5.94M9.9 4.24A9 9 0 0 1 12 4c7 0 11 8 11 8a18 18 0 0 1-2.16 3.19M1 1l22 22"/></svg></button></label>
+        </div>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-section-header"><span>Sort</span></div>
+        <select class="native-select" style="width:100%">
+          <option>Date · Newest first</option>
+          <option>Date · Oldest first</option>
+          <option>Name · A → Z</option>
+          <option>Favorite level</option>
+          <option>Random</option>
+        </select>
+      </div>
+
+      <div class="sidebar-section" style="border-bottom:none;">
+        <div class="sidebar-section-header"><span>Display</span></div>
+        <div class="disp-row"><span>Mode</span>
+          <div class="seg"><button class="is-active" id="modeGrid">Grid</button><button id="modeList">List</button></div>
+        </div>
+        <div class="disp-row"><span>Style</span>
+          <div class="seg"><button class="is-active">Standard</button><button>Compact</button><button>Poster</button></div>
+        </div>
+        <div class="disp-row"><span>Aspect</span>
+          <select class="native-select"><option>Portrait 2:3</option><option>Square</option><option>Original</option></select>
+        </div>
+        <div class="disp-row"><span>Size</span>
+          <input class="slider" type="range" min="130" max="280" value="190" id="sizeSlider" />
+        </div>
+      </div>
+    </aside>
+
+    <!-- ═══════════ Main grid ═══════════ -->
+    <main class="viewer-main">
+      <div class="grid-container">
+        <div class="date-section-header"><span>Today</span><small>2026-07-08 · 24 images</small><i></i></div>
+        <div class="image-grid" id="gridToday"></div>
+
+        <div class="date-section-header"><span>Yesterday</span><small>2026-07-07 · 18 images</small><i></i></div>
+        <div class="image-grid" id="gridYesterday"></div>
+
+        <div class="spinner"></div>
+      </div>
+    </main>
+
+    <!-- ═══════════ Right preview ═══════════ -->
+    <aside class="preview-panel">
+      <div class="preview-tabs">
+        <div class="preview-tab active">
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/></svg>
+          <span>00427-portrait.png</span>
+        </div>
+        <div class="preview-tab"><span>00391-elf.png</span></div>
+      </div>
+      <div class="preview-scroll">
+        <div class="preview-image-wrap">
+          <div class="preview-image" id="previewArt" title="Click to open full view"></div>
+        </div>
+        <div class="preview-actions">
+          <div class="fav-stepper">
+            <button title="Decrease (X)">−</button>
+            <span class="val">3<svg width="11" height="11" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z" fill="#f43f5e"/></svg></span>
+            <button title="Increase (F)">+</button>
+          </div>
+          <button class="btn" id="openExternal"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>Open</button>
+          <button class="btn danger" title="Move to Recycle Bin (Del)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg></button>
+        </div>
+        <div class="meta">
+          <div class="meta-title">00427-portrait.png</div>
+          <dl class="meta-grid">
+            <dt>Size</dt><dd>832 × 1216</dd>
+            <dt>Model</dt><dd>animagineXL_v31</dd>
+            <dt>Sampler</dt><dd>Euler a</dd>
+            <dt>Steps</dt><dd>28</dd>
+            <dt>CFG</dt><dd>6.5</dd>
+            <dt>Seed</dt><dd class="mono">3874219055</dd>
+            <dt>Date</dt><dd>2026-07-08 14:22</dd>
+          </dl>
+          <div class="meta-block">
+            <div class="meta-block-label">Prompt <button>Copy</button></div>
+            <div class="meta-text">masterpiece, best quality, 1girl, portrait, silver hair, intricate detail, soft rim lighting, cinematic, depth of field, looking at viewer, ornate jacket, snowy background</div>
+          </div>
+          <div class="meta-block">
+            <div class="meta-block-label">Negative <button>Copy</button></div>
+            <div class="meta-text neg">lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, worst quality, jpeg artifacts, watermark, signature</div>
+          </div>
+        </div>
+      </div>
+    </aside>
+  </div>
+
+  <!-- ═══════════ Bottom preview tabs ═══════════ -->
+  <div class="bottom-tabs">
+    <div class="bottom-actions">
+      <button class="bottom-action-btn" title="Reopen last closed (Ctrl+Shift+T)">Reopen</button>
+      <button class="bottom-action-btn">Close all</button>
+    </div>
+    <div class="bottom-tabs-scroll">
+      <div class="bottom-tab active"><svg class="pin" width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2l2.4 7.4H22l-6 4.4 2.3 7.2-6.3-4.6-6.3 4.6L7.9 13.8 2 9.4h7.6z"/></svg><span>00427-portrait.png</span><button class="x">×</button></div>
+      <div class="bottom-tab"><span>00391-elf.png</span><button class="x">×</button></div>
+      <div class="bottom-tab"><span>00355-castle.png</span><button class="x">×</button></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════ Full-screen modal ═══════════ -->
+<div class="modal-overlay" id="modal">
+  <div class="modal-backdrop" id="modalBackdrop"></div>
+  <div class="modal-body">
+    <div class="modal-topbar">
+      <span class="modal-title">00427-portrait.png · 832 × 1216 · animagineXL_v31</span>
+      <span class="grow"></span>
+      <button class="modal-tool" title="Zoom out">−</button>
+      <button class="modal-tool" title="Reset (0)">1:1</button>
+      <button class="modal-tool" title="Zoom in">+</button>
+      <button class="modal-tool" title="Flip horizontal (H)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v18M6 8l-4 4 4 4M18 8l4 4-4 4"/></svg></button>
+      <button class="modal-tool fav" title="Favorite up (F)"><svg width="16" height="16" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z" fill="#f43f5e"/></svg></button>
+      <button class="modal-tool" title="Open externally"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></button>
+      <button class="modal-tool" id="modalClose" title="Close (Esc)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>
+    </div>
+    <div class="modal-image-area">
+      <div class="modal-edge left" title="Previous (←)"><span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="15 18 9 12 15 6"/></svg></span></div>
+      <img id="modalImg" alt="Full preview" />
+      <div class="modal-edge right" title="Next (→)"><span><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="9 18 15 12 9 6"/></svg></span></div>
+      <div class="modal-zoom-badge">100%  ·  <span class="kbd">←</span> <span class="kbd">→</span> navigate  ·  <span class="kbd">Esc</span> close</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  // Procedural "SD illustration" placeholder art — self-contained, no external assets.
+  const palettes = [
+    ['#f0abfc','#818cf8','#0b1026'], ['#fca5a5','#7c3aed','#0a0a14'],
+    ['#fcd34d','#fb7185','#160b1a'], ['#67e8f9','#3b82f6','#020617'],
+    ['#a7f3d0','#10b981','#04120c'], ['#fdba74','#ef4444','#1a0808'],
+    ['#c4b5fd','#6366f1','#0a0a1a'], ['#f9a8d4','#db2777','#1a0714'],
+    ['#93c5fd','#1e40af','#020814'], ['#fef08a','#a16207','#141002'],
+  ];
+  function artFor(i) {
+    const p = palettes[i % palettes.length];
+    const a1 = 15 + (i * 53) % 70, a2 = 20 + (i * 91) % 60;
+    return `radial-gradient(120% 90% at ${a1}% ${a2}%, ${p[0]}cc 0%, transparent 42%),`
+         + `radial-gradient(90% 120% at ${100-a2}% ${100-a1}%, ${p[1]}bb 0%, transparent 48%),`
+         + `linear-gradient(${(i*47)%360}deg, ${p[2]}, ${p[1]}55 60%, ${p[2]})`;
+  }
+
+  const names = ['portrait','elf','castle','mecha','sunset','samurai','forest','android','harbor','witch','dragon','street','angel','ruins','neon','garden','knight','ocean','temple','cyber','moon','fox','rain','glass'];
+  function card(i, section, opts = {}) {
+    const el = document.createElement('div');
+    el.className = 'image-card' + (opts.selected ? ' is-selected' : '') + (opts.unseen ? ' is-unseen' : '');
+    const num = String((section === 'y' ? 391 : 427) - i).padStart(5, '0');
+    const fn = `${num}-${names[(i + (section==='y'?6:0)) % names.length]}.png`;
+    el.innerHTML =
+      `<div class="art" style="background:${artFor(i + (section==='y'?4:0))};background-blend-mode:screen;"></div>`
+      + (opts.fav ? `<div class="card-fav-count"><svg width="10" height="10" viewBox="0 0 24 24"><path d="M12 21C-4 10 3-2 12 5 21-2 28 10 12 21z" fill="#f43f5e"/></svg>${opts.fav}</div>` : '')
+      + `<div class="card-overlay"><div class="card-filename">${fn}</div></div>`;
+    el.addEventListener('click', () => {
+      document.querySelectorAll('.image-card.is-selected').forEach(c => c.classList.remove('is-selected'));
+      el.classList.add('is-selected');
+      document.getElementById('previewArt').style.background = artFor(i + (section==='y'?4:0));
+      document.getElementById('previewArt').style.backgroundBlendMode = 'screen';
+    });
+    return el;
+  }
+
+  const today = document.getElementById('gridToday');
+  const yest = document.getElementById('gridYesterday');
+  const todaySpec = [{unseen:1,fav:3,selected:1},{unseen:1},{fav:1},{},{unseen:1},{fav:5},{},{},{fav:2},{},{unseen:1},{}];
+  const yestSpec  = [{fav:2},{},{},{fav:1},{},{unseen:1},{},{fav:4},{},{}];
+  todaySpec.forEach((o,i)=>today.appendChild(card(i,'t',o)));
+  yestSpec.forEach((o,i)=>yest.appendChild(card(i,'y',o)));
+
+  // Seed the right-preview artwork
+  const pv = document.getElementById('previewArt');
+  pv.style.background = artFor(0); pv.style.backgroundBlendMode = 'screen';
+
+  // Interactions
+  document.getElementById('toggleSidebar').addEventListener('click', e => {
+    document.getElementById('app').classList.toggle('sidebar-hidden');
+    e.currentTarget.classList.toggle('active');
+  });
+  document.getElementById('toggleRight').addEventListener('click', e => {
+    document.getElementById('app').classList.toggle('right-hidden');
+    e.currentTarget.classList.toggle('active');
+  });
+  document.getElementById('sizeSlider').addEventListener('input', e => {
+    document.documentElement.style.setProperty('--card-min', e.target.value + 'px');
+  });
+  document.querySelectorAll('.pill').forEach(p => p.addEventListener('click', () => {
+    document.querySelectorAll('.pill').forEach(x => x.classList.remove('is-active'));
+    if (p.textContent.trim() !== 'Clear') p.classList.add('is-active');
+  }));
+
+  // Modal open/close
+  const modal = document.getElementById('modal');
+  const modalImg = document.getElementById('modalImg');
+  function openModal() {
+    modalImg.style.width = 'min(48vh, 90vw)';
+    modalImg.style.aspectRatio = '2/3';
+    modalImg.style.background = getComputedStyle(pv).background.split(') ')[0] || artFor(0);
+    modalImg.style.background = artFor(0);
+    modalImg.style.backgroundBlendMode = 'screen';
+    modal.classList.add('open');
+  }
+  function closeModal() { modal.classList.remove('open'); }
+  pv.addEventListener('click', openModal);
+  document.getElementById('modalClose').addEventListener('click', closeModal);
+  document.getElementById('modalBackdrop').addEventListener('click', closeModal);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
+</script>
