@@ -6,6 +6,13 @@ internal sealed record NativeSharedFavoriteWriteResult(bool Succeeded, string Wa
 
 internal sealed record NativeSharedSeenWriteResult(bool Succeeded, string Warning);
 
+internal sealed record NativeSharedRecentWriteResult(bool Succeeded, string Warning);
+
+internal sealed record NativeSharedRecentFolders(
+    IReadOnlyList<string> LastFolderSet,
+    IReadOnlyList<IReadOnlyList<string>> RecentFolderSets
+);
+
 internal sealed record NativeStateSummary(
     string ProjectRoot,
     int FavoriteCount,
@@ -353,6 +360,131 @@ internal static class NativeStateBridge
         return Path.Combine(projectRoot, ".cache", "seen.json");
     }
 
+    public static NativeSharedRecentFolders LoadRecentFolders(
+        string projectRoot,
+        ICollection<NativeImportWarning>? warnings = null)
+    {
+        var path = RecentFoldersPath(projectRoot);
+        if (!File.Exists(path))
+        {
+            return new NativeSharedRecentFolders([], []);
+        }
+
+        try
+        {
+            using var stream = File.OpenRead(path);
+            using var doc = JsonDocument.Parse(stream);
+            if (doc.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                AddWarning(
+                    warnings,
+                    "recent-folders",
+                    path,
+                    "unexpected-shape",
+                    "recent-folders.json was readable JSON but not an object.",
+                    "Recent folders were skipped; fix or regenerate .cache/recent-folders.json, then run Import again.");
+                return new NativeSharedRecentFolders([], []);
+            }
+
+            var lastFolderSet = doc.RootElement.TryGetProperty("lastFolderSet", out var last)
+                ? ReadFolderSet(last)
+                : [];
+            var recentFolderSets = doc.RootElement.TryGetProperty("recentFolderSets", out var recent)
+                ? ReadFolderSets(recent)
+                : [];
+
+            return new NativeSharedRecentFolders(lastFolderSet, recentFolderSets);
+        }
+        catch (JsonException ex)
+        {
+            AddWarning(
+                warnings,
+                "recent-folders",
+                path,
+                "malformed-json",
+                ex.Message,
+                "Recent folders were skipped; fix or regenerate .cache/recent-folders.json, then run Import again.");
+            return new NativeSharedRecentFolders([], []);
+        }
+        catch (Exception ex) when (IsRecoverableReadException(ex))
+        {
+            AddWarning(
+                warnings,
+                "recent-folders",
+                path,
+                "unreadable",
+                ex.Message,
+                "Recent folders were skipped; check file permissions or replace .cache/recent-folders.json, then run Import again.");
+            return new NativeSharedRecentFolders([], []);
+        }
+    }
+
+    public static NativeSharedRecentWriteResult WriteRecentFolderSet(string projectRoot, IEnumerable<string> roots)
+    {
+        var path = RecentFoldersPath(projectRoot);
+        var normalized = NativeFolderSet.NormalizeDistinct(roots);
+        if (normalized.Count == 0)
+        {
+            return new NativeSharedRecentWriteResult(true, "");
+        }
+
+        var recentSets = new List<IReadOnlyList<string>> { normalized };
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var doc = JsonDocument.Parse(stream);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return new NativeSharedRecentWriteResult(false, "shared recent folders skipped: recent-folders.json is not an object");
+                }
+
+                if (doc.RootElement.TryGetProperty("recentFolderSets", out var recent))
+                {
+                    recentSets.AddRange(ReadFolderSets(recent));
+                }
+            }
+            catch (JsonException ex)
+            {
+                return new NativeSharedRecentWriteResult(false, $"shared recent folders skipped: malformed recent-folders.json ({ex.Message})");
+            }
+            catch (Exception ex) when (IsRecoverableReadException(ex))
+            {
+                return new NativeSharedRecentWriteResult(false, $"shared recent folders skipped: recent-folders.json was not readable ({ex.Message})");
+            }
+        }
+
+        var merged = NormalizeRecentFolderSets(recentSets);
+        var shared = new
+        {
+            version = 1,
+            lastFolderSet = normalized,
+            recentFolderSets = merged,
+            updatedAtUtc = DateTime.UtcNow.ToString("O"),
+        };
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var json = JsonSerializer.Serialize(shared, new JsonSerializerOptions { WriteIndented = true });
+            var tempPath = $"{path}.{Environment.ProcessId}.{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.tmp";
+            File.WriteAllText(tempPath, json + Environment.NewLine);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch (Exception ex) when (IsRecoverableWriteException(ex))
+        {
+            return new NativeSharedRecentWriteResult(false, $"shared recent folders write failed: {ex.Message}");
+        }
+
+        return new NativeSharedRecentWriteResult(true, "");
+    }
+
+    public static string RecentFoldersPath(string projectRoot)
+    {
+        return Path.Combine(projectRoot, ".cache", "recent-folders.json");
+    }
+
     public static List<NativeAlbumRecord> LoadAlbums(
         string projectRoot,
         ICollection<NativeImportWarning>? warnings = null)
@@ -552,6 +684,78 @@ internal static class NativeStateBridge
         return element.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Array
             ? value.GetArrayLength()
             : null;
+    }
+
+    private static List<string> ReadFolderSet(JsonElement element)
+    {
+        if (element.ValueKind == JsonValueKind.String)
+        {
+            return NativeFolderSet.Parse(element.GetString());
+        }
+
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var roots = new List<string>();
+        foreach (var item in element.EnumerateArray())
+        {
+            if (item.ValueKind == JsonValueKind.String)
+            {
+                roots.Add(item.GetString() ?? "");
+            }
+        }
+
+        return NativeFolderSet.NormalizeDistinct(roots);
+    }
+
+    private static List<IReadOnlyList<string>> ReadFolderSets(JsonElement element)
+    {
+        if (element.ValueKind != JsonValueKind.Array)
+        {
+            return [];
+        }
+
+        var sets = new List<IReadOnlyList<string>>();
+        foreach (var item in element.EnumerateArray())
+        {
+            var folderSet = ReadFolderSet(item);
+            if (folderSet.Count > 0)
+            {
+                sets.Add(folderSet);
+            }
+        }
+
+        return NormalizeRecentFolderSets(sets);
+    }
+
+    private static List<IReadOnlyList<string>> NormalizeRecentFolderSets(IEnumerable<IReadOnlyList<string>> folderSets)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var normalized = new List<IReadOnlyList<string>>();
+        foreach (var folderSet in folderSets)
+        {
+            var roots = NativeFolderSet.NormalizeDistinct(folderSet);
+            if (roots.Count == 0)
+            {
+                continue;
+            }
+
+            var key = NativeFolderSet.FormatForSetting(roots);
+            if (!seen.Add(key))
+            {
+                continue;
+            }
+
+            normalized.Add(roots);
+            if (normalized.Count >= 8)
+            {
+                break;
+            }
+        }
+
+        return normalized;
     }
 
     private static IEnumerable<string> ReadAlbumImagePaths(JsonElement album)

@@ -169,6 +169,7 @@ internal sealed class NativeImageStore
         var warnings = new List<NativeImportWarning>();
         var favorites = NativeStateBridge.LoadFavorites(_projectRoot, warnings);
         var sharedSeen = NativeStateBridge.LoadSeen(_projectRoot, warnings);
+        var sharedRecentFolders = NativeStateBridge.LoadRecentFolders(_projectRoot, warnings);
         var albums = NativeStateBridge.LoadAlbums(_projectRoot, warnings);
         var browserState = NativeStateBridge.LoadBrowserStateExport(_projectRoot, browserStateExportPath, warnings);
         var resolvedBrowserStateExportPath = NativeStateBridge.ResolveBrowserStateExportPath(_projectRoot, browserStateExportPath) ?? "";
@@ -273,6 +274,7 @@ internal sealed class NativeImageStore
         }
 
         var sharedSeenCount = ImportSharedSeenImages(connection, transaction, sharedSeen, importedAt);
+        var sharedRecentFolderSetImported = ImportSharedRecentFolders(connection, transaction, sharedRecentFolders, importedAt);
 
         UpsertSetting(connection, transaction, "browser_settings_found", settingsFound ? "1" : "0", importedAt);
         UpsertSetting(connection, transaction, "browser_settings_imported", browserSettingsJson is null ? "0" : "1", importedAt);
@@ -289,6 +291,8 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "browser_state_export_imported", !browserStateImportFailed && !string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath) ? "1" : "0", importedAt);
         UpsertSetting(connection, transaction, "browser_seen_image_count", importedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
         UpsertSetting(connection, transaction, "shared_seen_image_count", sharedSeenCount.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
+        UpsertSetting(connection, transaction, "shared_recent_folder_set_imported", sharedRecentFolderSetImported ? "1" : "0", importedAt);
+        UpsertSetting(connection, transaction, "shared_recent_folder_set_count", sharedRecentFolders.RecentFolderSets.Count.ToString(System.Globalization.CultureInfo.InvariantCulture), importedAt);
         if (!string.IsNullOrWhiteSpace(resolvedBrowserStateExportPath))
         {
             UpsertSetting(connection, transaction, "browser_state_export_path", resolvedBrowserStateExportPath, importedAt);
@@ -719,6 +723,8 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(normalized), now);
         UpsertSetting(connection, transaction, "recent_folder", normalized[0], now);
         transaction.Commit();
+
+        _ = NativeStateBridge.WriteRecentFolderSet(_projectRoot, normalized);
     }
 
     public string GetSetting(string key, string defaultValue)
@@ -1011,6 +1017,33 @@ internal sealed class NativeImageStore
         }
 
         return imported.Count;
+    }
+
+    private static bool ImportSharedRecentFolders(
+        SqliteConnection connection,
+        SqliteTransaction transaction,
+        NativeSharedRecentFolders sharedRecentFolders,
+        DateTime importedAt)
+    {
+        if (HasNativeRecentFolderState(connection, transaction))
+        {
+            return false;
+        }
+
+        var selected = NativeFolderSet.NormalizeDistinct(sharedRecentFolders.LastFolderSet);
+        if (selected.Count == 0 && sharedRecentFolders.RecentFolderSets.Count > 0)
+        {
+            selected = NativeFolderSet.NormalizeDistinct(sharedRecentFolders.RecentFolderSets[0]);
+        }
+
+        if (selected.Count == 0)
+        {
+            return false;
+        }
+
+        UpsertSetting(connection, transaction, "recent_folder_set", NativeFolderSet.FormatForSetting(selected), importedAt);
+        UpsertSetting(connection, transaction, "recent_folder", selected[0], importedAt);
+        return true;
     }
 
     private static void ApplyBrowserStateMigrations(
