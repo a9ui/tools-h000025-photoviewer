@@ -105,10 +105,11 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 ```
 
 Favorite import smoke writes a temporary explicit browser-state export and
-imports only `browserLocalStorage.pvu_fav_levels` object-map entries into the
-accepted WPF favorites JSON. It proves import, preserve-existing,
-invalid/zero/missing/unmatched ignore, persistence, reload, and favorites-only
-filtering:
+imports only bounded favorite fields into the accepted WPF favorites JSON:
+`browserLocalStorage.pvu_fav_levels` object-map entries and
+`browserLocalStorage.pvu_favorites` object-map or string-list entries. It proves
+import, preserve-existing, invalid/zero/missing/unmatched ignore, persistence,
+reload, and favorites-only filtering:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-import-smoke "$env:TEMP\photoviewer-wpf-favorite-import-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorite-import-favorites.json" --browser-state-path "$env:TEMP\photoviewer-wpf-favorite-import-browser-state.json"
@@ -233,6 +234,16 @@ levels clamp to `1..5`; zero, invalid, empty-key, and unmatched entries are
 ignored. Broad browser-state import, `pvu_favorites`, albums, delete/recycle,
 and browser `src/**` work remain out of scope.
 
+## WPF M11 Favorite Boolean Import Slice
+
+The #210 slice keeps the same explicit browser-state route and adds
+`browserLocalStorage.pvu_favorites` import into the accepted WPF favorites JSON
+store. Supported shapes are `Record<path-or-file-name, level-or-bool>` and a
+string list of path-or-file-name entries. Numeric levels clamp to `1..5`;
+boolean `true` and list entries import as level `5`; zero, `false`, invalid,
+empty-key, and unmatched entries are ignored. Existing WPF levels, including
+earlier `pvu_fav_levels` imports, are preserved and not overwritten.
+
 ## Files
 
 | File | Role |
@@ -253,8 +264,9 @@ and browser `src/**` work remain out of scope.
   proves it is needed.
 - Favorites use the accepted `.cache/favorites.json` absolute-path map for
   selected-image toggle, level adjustment, favorites-only filtering, and the
-  bounded `pvu_fav_levels` explicit-import smoke. Album mutation, delete, and
-  broad browser-state import are not wired in this WPF surface yet.
+  bounded `pvu_fav_levels` / `pvu_favorites` explicit-import smoke. Album
+  mutation, delete, and broad browser-state import are not wired in this WPF
+  surface yet.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
