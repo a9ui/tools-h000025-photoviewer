@@ -15,6 +15,7 @@ internal sealed class MainForm : Form
     private const int GalleryThumbnailStep = 16;
     private const int GalleryThumbnailDefault = 96;
     private const int GalleryThumbnailReset = GalleryThumbnailMax;
+    private const int BulkOpenExternalTargetLimit = 10;
 
     private readonly TextBox _folderText = new();
     private readonly Button _browseButton = new();
@@ -746,12 +747,12 @@ internal sealed class MainForm : Form
             }
         };
 
-        _openFileButton.Text = "Open File";
-        ApplyTextFitSize(_openFileButton, 86);
+        _openFileButton.Text = "Open File(s)";
+        ApplyTextFitSize(_openFileButton, 104);
         _openFileButton.Click += (_, _) => OpenSelectedFile();
 
-        _openFolderButton.Text = "Open Folder";
-        ApplyTextFitSize(_openFolderButton, 96);
+        _openFolderButton.Text = "Open Folder(s)";
+        ApplyTextFitSize(_openFolderButton, 118);
         _openFolderButton.Click += (_, _) => OpenSelectedFolder();
 
         _deleteButton.Text = "Recycle";
@@ -1526,6 +1527,31 @@ internal sealed class MainForm : Form
         SetSelectedFavoriteLevel(0);
         var bulkFavoriteClear = bulkFavoriteTargets.Length == 2 && bulkFavoriteTargets.All(path => FavoriteLevelForPath(path) == 0);
         Require(bulkFavoriteClear, "bulk favorite clear failed");
+
+        var bulkOpenSelection = _visibleImages
+            .GroupBy(static image => Path.GetDirectoryName(image.AbsolutePath) ?? "", StringComparer.OrdinalIgnoreCase)
+            .Select(static group => group.First())
+            .Take(2)
+            .ToList();
+        if (bulkOpenSelection.Count < 2)
+        {
+            bulkOpenSelection = _visibleImages.Take(2).ToList();
+        }
+
+        SelectImages(bulkOpenSelection.Select(static image => image.AbsolutePath));
+        var bulkOpenSelectedImages = GetSelectedImages();
+        var bulkOpenFileTargets = GetSelectedFileOpenTargets(bulkOpenSelectedImages);
+        var bulkOpenFolderTargets = GetSelectedFolderOpenTargets(bulkOpenSelectedImages);
+        var bulkOpenFiles = bulkOpenSelectedImages.Count >= 2 &&
+            bulkOpenFileTargets.Count == bulkOpenSelectedImages.Count &&
+            TryOpenSelectedFiles(static _ => { }, updateStatus: false);
+        Require(bulkOpenFiles, "bulk open files plan failed");
+        var bulkOpenFolders = bulkOpenSelectedImages.Count >= 2 &&
+            bulkOpenFolderTargets.Count >= 1 &&
+            bulkOpenFolderTargets.Count <= bulkOpenSelectedImages.Count &&
+            TryOpenSelectedFolders(static _ => { }, updateStatus: false);
+        Require(bulkOpenFolders, "bulk open folders plan failed");
+
         SetFavoriteLevelForPath(bulkFavoriteTargets[0], 5);
         ClearImageSelection();
         var backgroundClear = _list.SelectedIndices.Count == 0 && _selectionLabel.Text.Contains("Selected 0", StringComparison.OrdinalIgnoreCase);
@@ -1725,6 +1751,8 @@ internal sealed class MainForm : Form
             MultiSelection: multiSelection,
             BulkFavoriteSet: bulkFavoriteSet,
             BulkFavoriteClear: bulkFavoriteClear,
+            BulkOpenFiles: bulkOpenFiles,
+            BulkOpenFolders: bulkOpenFolders,
             BackgroundClear: backgroundClear,
             FavoriteFilterCounts: favoriteFilterCounts,
             FavoriteLevelFilter: favoriteLevelFilter,
@@ -3424,13 +3452,7 @@ internal sealed class MainForm : Form
 
     private void OpenSelectedFile()
     {
-        var image = GetSelectedImage();
-        if (image is null)
-        {
-            return;
-        }
-
-        OpenExternalPath(image.AbsolutePath);
+        TryOpenSelectedFiles(OpenExternalPath);
     }
 
     private bool CopySelectedMetadata(bool useSystemClipboard = true)
@@ -3655,6 +3677,136 @@ internal sealed class MainForm : Form
         return false;
     }
 
+    private bool TryOpenSelectedFiles(Action<string> openAction, bool updateStatus = true)
+    {
+        var selected = GetSelectedImages();
+        if (selected.Count == 0)
+        {
+            if (updateStatus)
+            {
+                SetStatus("Select image(s) to open.");
+            }
+
+            return false;
+        }
+
+        return TryOpenBulkTargets(
+            GetSelectedFileOpenTargets(selected),
+            selected.Count,
+            "file",
+            "files",
+            openAction,
+            updateStatus);
+    }
+
+    private bool TryOpenSelectedFolders(Action<string> openAction, bool updateStatus = true)
+    {
+        var selected = GetSelectedImages();
+        if (selected.Count == 0)
+        {
+            if (updateStatus)
+            {
+                SetStatus("Select image(s) to open folders.");
+            }
+
+            return false;
+        }
+
+        return TryOpenBulkTargets(
+            GetSelectedFolderOpenTargets(selected),
+            selected.Count,
+            "folder",
+            "folders",
+            openAction,
+            updateStatus);
+    }
+
+    private bool TryOpenBulkTargets(
+        IReadOnlyList<string> targets,
+        int selectedCount,
+        string singularKind,
+        string pluralKind,
+        Action<string> openAction,
+        bool updateStatus)
+    {
+        if (targets.Count == 0)
+        {
+            if (updateStatus)
+            {
+                SetStatus($"No existing selected {singularKind} target.");
+            }
+
+            return false;
+        }
+
+        if (targets.Count > BulkOpenExternalTargetLimit)
+        {
+            if (updateStatus)
+            {
+                SetStatus($"Select {BulkOpenExternalTargetLimit} or fewer {pluralKind} to open externally; selected {selectedCount:n0}, targets {targets.Count:n0}.");
+            }
+
+            return false;
+        }
+
+        try
+        {
+            foreach (var target in targets)
+            {
+                openAction(target);
+            }
+
+            if (updateStatus)
+            {
+                SetStatus(targets.Count == 1
+                    ? $"Opened {singularKind}: {Path.GetFileName(targets[0])}"
+                    : $"Opened {targets.Count:n0} {pluralKind}.");
+            }
+
+            return true;
+        }
+        catch (Exception ex)
+        {
+            if (updateStatus)
+            {
+                SetStatus($"Open {singularKind} failed: {ex.Message}");
+            }
+
+            return false;
+        }
+    }
+
+    private static List<string> GetSelectedFileOpenTargets(IEnumerable<NativeImageRecord> images)
+    {
+        var targets = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var image in images)
+        {
+            if (File.Exists(image.AbsolutePath) && seen.Add(image.AbsolutePath))
+            {
+                targets.Add(image.AbsolutePath);
+            }
+        }
+
+        return targets;
+    }
+
+    private static List<string> GetSelectedFolderOpenTargets(IEnumerable<NativeImageRecord> images)
+    {
+        var targets = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var image in images)
+        {
+            var folder = Path.GetDirectoryName(image.AbsolutePath);
+            if (!string.IsNullOrWhiteSpace(folder) && Directory.Exists(folder) && seen.Add(folder))
+            {
+                targets.Add(folder);
+            }
+        }
+
+        return targets;
+    }
+
     private static void OpenExternalPath(string absolutePath)
     {
         Process.Start(new ProcessStartInfo
@@ -3707,16 +3859,52 @@ internal sealed class MainForm : Form
 
     private void OpenSelectedFolder()
     {
-        var image = GetSelectedImage();
-        if (image is null)
+        var selected = GetSelectedImages();
+        if (selected.Count == 0)
         {
             return;
         }
 
+        if (selected.Count > 1)
+        {
+            TryOpenSelectedFolders(OpenExplorerFolder);
+            return;
+        }
+
+        var image = selected[0];
+        if (!File.Exists(image.AbsolutePath))
+        {
+            SetStatus("Selected file no longer exists.");
+            return;
+        }
+
+        try
+        {
+            OpenExplorerSelectPath(image.AbsolutePath);
+            SetStatus($"Opened folder for: {image.Filename}");
+        }
+        catch (Exception ex)
+        {
+            SetStatus($"Open folder failed: {ex.Message}");
+        }
+    }
+
+    private static void OpenExplorerSelectPath(string absolutePath)
+    {
         Process.Start(new ProcessStartInfo
         {
             FileName = "explorer.exe",
-            Arguments = $"/select,\"{image.AbsolutePath}\"",
+            Arguments = $"/select,\"{absolutePath}\"",
+            UseShellExecute = true,
+        });
+    }
+
+    private static void OpenExplorerFolder(string folder)
+    {
+        Process.Start(new ProcessStartInfo
+        {
+            FileName = "explorer.exe",
+            Arguments = $"\"{folder}\"",
             UseShellExecute = true,
         });
     }
@@ -5145,6 +5333,8 @@ internal sealed class MainForm : Form
             $"multiSelection={BoolText(report.MultiSelection)}",
             $"bulkFavoriteSet={BoolText(report.BulkFavoriteSet)}",
             $"bulkFavoriteClear={BoolText(report.BulkFavoriteClear)}",
+            $"bulkOpenFiles={BoolText(report.BulkOpenFiles)}",
+            $"bulkOpenFolders={BoolText(report.BulkOpenFolders)}",
             $"backgroundClear={BoolText(report.BackgroundClear)}",
             $"favoriteFilterCounts={BoolText(report.FavoriteFilterCounts)}",
             $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
@@ -5954,6 +6144,8 @@ internal sealed class MainForm : Form
         bool MultiSelection,
         bool BulkFavoriteSet,
         bool BulkFavoriteClear,
+        bool BulkOpenFiles,
+        bool BulkOpenFolders,
         bool BackgroundClear,
         bool FavoriteFilterCounts,
         bool FavoriteLevelFilter,
