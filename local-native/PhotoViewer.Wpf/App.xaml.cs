@@ -89,6 +89,20 @@ public partial class App : Application
             return;
         }
 
+        int folderSetSmokeIdx = Array.IndexOf(e.Args, "--folder-set-smoke");
+        if (folderSetSmokeIdx >= 0 && folderSetSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFolderSetSmoke(e.Args[folderSetSmokeIdx + 1], e.Args);
+            return;
+        }
+
+        int gridZoomSmokeIdx = Array.IndexOf(e.Args, "--grid-zoom-smoke");
+        if (gridZoomSmokeIdx >= 0 && gridZoomSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureGridZoomSmoke(e.Args[gridZoomSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1314,6 +1328,226 @@ public partial class App : Application
         };
     }
 
+    private void CaptureFolderSetSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteFolderSetSmokeResult(resultPath, new FolderSetSmokeResult { Ok = false, Message = "missing required --folder", Folder = folder });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            FolderSetSmokeResult result;
+            try
+            {
+                result = await RunFolderSetSmokeAsync(win, fullFolder, smokeRoot);
+            }
+            catch (Exception ex)
+            {
+                win.Close();
+                result = new FolderSetSmokeResult { Ok = false, Message = ex.Message, Folder = folder, ProjectRoot = smokeRoot };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteFolderSetSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static async Task<FolderSetSmokeResult> RunFolderSetSmokeAsync(MainWindow win, string fullFolder, string smokeRoot)
+    {
+        string cacheRoot = Path.Combine(smokeRoot, ".cache");
+        string sharedRecentPath = Path.Combine(cacheRoot, "recent-folders.json");
+        string favoritesPath = Path.Combine(cacheRoot, "favorites.json");
+        string seenPath = Path.Combine(cacheRoot, "seen.json");
+        string statePath = Path.Combine(cacheRoot, "state.json");
+        string secondFolder = PrepareSecondFolderFixture(fullFolder, smokeRoot);
+        string preservedFolder = Path.Combine(smokeRoot, "preserved-folder");
+        string missingFolder = Path.Combine(smokeRoot, "missing-folder");
+        Directory.CreateDirectory(preservedFolder);
+
+        WriteFavoriteSeed(favoritesPath, Path.Combine(fullFolder, "folder-set-favorite-seed.png"), 4);
+        WriteSeenSeed(seenPath, Path.Combine(fullFolder, "folder-set-seen-seed.png"));
+        string favoritesBefore = File.ReadAllText(favoritesPath);
+        var seenBeforeMap = ReadSeenMap(seenPath);
+        WriteSharedRecentSetSeed(sharedRecentPath, [fullFolder, secondFolder], [preservedFolder]);
+
+        var importWindow = HiddenWindow();
+        importWindow.Show();
+        string resolvedRecentPath = importWindow.SharedRecentPathForSmoke;
+        var importedLanding = importWindow.LandingFolderSetForSmoke;
+        int recentCountOnStartup = importWindow.RecentFolderSetCountForSmoke;
+        importWindow.Close();
+
+        win.SetLandingFolderSetForSmoke([fullFolder]);
+        int pastedAdded = win.AppendPastedFoldersForSmoke(string.Join(Environment.NewLine, [secondFolder, missingFolder, fullFolder]));
+        var landingAfterPaste = win.LandingFolderSetForSmoke;
+        await win.LoadFolderSetAsync(landingAfterPaste);
+        var currentFolderSet = win.CurrentFolderSetForSmoke;
+        int filteredAfterLoad = win.FilteredCountForSmoke;
+        string? currentFolder = win.CurrentFolderForSmoke;
+        win.Close();
+
+        SharedRecentSmokeSnapshot afterWrite = ReadSharedRecentSnapshot(sharedRecentPath);
+        ViewerState? stateAfterWrite = ReadPersistedState(statePath);
+        int expectedMinImages = CountDirectSmokeImages(fullFolder) + CountDirectSmokeImages(secondFolder);
+        bool importedSharedLastFolderSet = SameFolderSet(importedLanding, [fullFolder, secondFolder]);
+        bool pastedSecondFolder = pastedAdded == 1 && SameFolderSet(landingAfterPaste, [fullFolder, secondFolder]);
+        bool loadedCurrentFolderSet = SameFolderSet(currentFolderSet, [fullFolder, secondFolder]);
+        bool stateSavedFolderSet = stateAfterWrite?.LastFolderSet is not null && SameFolderSet(stateAfterWrite.LastFolderSet, [fullFolder, secondFolder]);
+        bool wroteSharedLastFolderSet = afterWrite.Ok && SameFolderSet(afterWrite.LastFolderSet, [fullFolder, secondFolder]);
+        bool writeFolderSetInRecent = afterWrite.Ok && SnapshotContainsFolderSet(afterWrite, [fullFolder, secondFolder]);
+        bool additivePreserved = afterWrite.Ok && SnapshotContainsFolderSet(afterWrite, [preservedFolder]);
+        bool favoritesUnchanged = string.Equals(favoritesBefore, File.ReadAllText(favoritesPath), StringComparison.Ordinal);
+        var seenAfterMap = ReadSeenMap(seenPath);
+        bool seenPreserved = seenBeforeMap.Keys.All(path => seenAfterMap.ContainsKey(path));
+
+        bool ok = string.Equals(Path.GetFullPath(resolvedRecentPath), Path.GetFullPath(sharedRecentPath), StringComparison.OrdinalIgnoreCase)
+            && importedSharedLastFolderSet
+            && recentCountOnStartup > 0
+            && pastedSecondFolder
+            && loadedCurrentFolderSet
+            && string.Equals(NormalizeFavoritePath(currentFolder ?? ""), NormalizeFavoritePath(fullFolder), StringComparison.OrdinalIgnoreCase)
+            && filteredAfterLoad >= expectedMinImages
+            && stateSavedFolderSet
+            && wroteSharedLastFolderSet
+            && writeFolderSetInRecent
+            && additivePreserved
+            && favoritesUnchanged
+            && seenPreserved;
+
+        return new FolderSetSmokeResult
+        {
+            Ok = ok,
+            Message = ok ? "folder-set landing, paste, multi-folder load, shared recent write-through, and state persistence passed" : "folder-set smoke did not meet expected policy",
+            Folder = fullFolder,
+            ProjectRoot = smokeRoot,
+            SharedRecentPath = sharedRecentPath,
+            ResolvedRecentPath = resolvedRecentPath,
+            SecondFolder = secondFolder,
+            MissingFolder = missingFolder,
+            ImportedLandingFolderSet = importedLanding,
+            LandingAfterPaste = landingAfterPaste,
+            CurrentFolderSet = currentFolderSet,
+            CurrentFolder = currentFolder,
+            PastedAdded = pastedAdded,
+            RecentCountOnStartup = recentCountOnStartup,
+            FilteredAfterLoad = filteredAfterLoad,
+            ExpectedMinImages = expectedMinImages,
+            StateLastFolderSet = stateAfterWrite?.LastFolderSet ?? [],
+            SharedLastFolderSet = afterWrite.LastFolderSet,
+            RecentFolderSetCountAfterWrite = afterWrite.RecentFolderSets.Count,
+            ImportedSharedLastFolderSet = importedSharedLastFolderSet,
+            PastedSecondFolder = pastedSecondFolder,
+            LoadedCurrentFolderSet = loadedCurrentFolderSet,
+            StateSavedFolderSet = stateSavedFolderSet,
+            WroteSharedLastFolderSet = wroteSharedLastFolderSet,
+            WriteFolderSetInRecent = writeFolderSetInRecent,
+            AdditivePreserved = additivePreserved,
+            FavoritesUnchanged = favoritesUnchanged,
+            SeenPreserved = seenPreserved,
+        };
+    }
+
+    private void CaptureGridZoomSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteGridZoomSmokeResult(resultPath, new GridZoomSmokeResult(false, "missing required --folder", folder, null, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, false, false));
+            Shutdown(1);
+            return;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string statePath = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-state.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            GridZoomSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                double initial = win.CardWidthForSmoke;
+                bool buttonIn = win.ZoomInForSmoke();
+                double afterButtonIn = win.CardWidthForSmoke;
+                bool buttonOut = win.ZoomOutForSmoke();
+                double afterButtonOut = win.CardWidthForSmoke;
+                bool shortcutIn = win.ZoomShortcutForSmoke("plus");
+                double afterShortcutIn = win.CardWidthForSmoke;
+                bool shortcutReset = win.ZoomShortcutForSmoke("0");
+                double afterShortcutReset = win.CardWidthForSmoke;
+                bool wheelIn = win.ZoomWheelForSmoke(120);
+                double afterWheelIn = win.CardWidthForSmoke;
+                bool wheelOut = win.ZoomWheelForSmoke(-120);
+                double afterWheelOut = win.CardWidthForSmoke;
+                bool allWidthsMatch = win.AllCardWidthsMatchForSmoke(afterWheelOut);
+                int filtered = win.FilteredCountForSmoke;
+
+                bool ok = filtered > 0
+                    && buttonIn
+                    && afterButtonIn > initial
+                    && buttonOut
+                    && Math.Abs(afterButtonOut - initial) < 0.01
+                    && shortcutIn
+                    && afterShortcutIn > afterButtonOut
+                    && shortcutReset
+                    && Math.Abs(afterShortcutReset - 190) < 0.01
+                    && wheelIn
+                    && afterWheelIn > afterShortcutReset
+                    && wheelOut
+                    && Math.Abs(afterWheelOut - afterShortcutReset) < 0.01
+                    && allWidthsMatch;
+
+                result = new GridZoomSmokeResult(ok, ok ? "grid zoom buttons, shortcut helper, wheel helper, and tile card-width sync passed" : "grid zoom smoke did not match expected size changes", folder, statePath, filtered, initial, afterButtonIn, afterButtonOut, afterShortcutIn, afterShortcutReset, afterWheelIn, buttonIn, buttonOut, shortcutIn, shortcutReset, wheelIn, wheelOut && allWidthsMatch);
+            }
+            catch (Exception ex)
+            {
+                result = new GridZoomSmokeResult(false, ex.Message, folder, statePath, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, false, false);
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteGridZoomSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
         MainWindow first,
         string fullFolder,
@@ -2134,6 +2368,56 @@ public partial class App : Application
         File.WriteAllText(recentPath, json);
     }
 
+    private static void WriteSharedRecentSetSeed(string recentPath, IReadOnlyList<string> lastFolderSet, IReadOnlyList<string> preservedFolderSet)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(recentPath))!);
+        var seed = new
+        {
+            version = 1,
+            lastFolderSet = NormalizeFolderSetForSmoke(lastFolderSet),
+            recentFolderSets = new[]
+            {
+                NormalizeFolderSetForSmoke(lastFolderSet),
+                NormalizeFolderSetForSmoke(preservedFolderSet),
+            },
+            updatedAtUtc = "2026-07-10T00:00:00Z",
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(seed, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(recentPath, json);
+    }
+
+    private static string PrepareSecondFolderFixture(string sourceFolder, string smokeRoot)
+    {
+        string target = Path.Combine(smokeRoot, "pasted-folder");
+        Directory.CreateDirectory(target);
+        int index = 0;
+        foreach (string file in Directory.EnumerateFiles(sourceFolder).Where(IsSmokeImageFile).Take(2))
+        {
+            string targetFile = Path.Combine(target, $"copy-{index:00}-{Path.GetFileName(file)}");
+            File.Copy(file, targetFile, overwrite: true);
+            index++;
+        }
+        return target;
+    }
+
+    private static int CountDirectSmokeImages(string folder)
+        => Directory.Exists(folder) ? Directory.EnumerateFiles(folder).Count(IsSmokeImageFile) : 0;
+
+    private static bool IsSmokeImageFile(string file)
+    {
+        string[] extensions = [".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif"];
+        return extensions.Contains(Path.GetExtension(file), StringComparer.OrdinalIgnoreCase);
+    }
+
+    private static bool SameFolderSet(IEnumerable<string> actual, IEnumerable<string> expected)
+        => string.Equals(FormatFolderSetForSmoke(actual), FormatFolderSetForSmoke(expected), StringComparison.OrdinalIgnoreCase);
+
+    private static bool SnapshotContainsFolderSet(SharedRecentSmokeSnapshot snapshot, IEnumerable<string> folders)
+    {
+        string expected = FormatFolderSetForSmoke(folders);
+        return snapshot.RecentFolderSets.Any(set => string.Equals(FormatFolderSetForSmoke(set), expected, StringComparison.OrdinalIgnoreCase));
+    }
+
     private static SharedRecentSmokeSnapshot ReadSharedRecentSnapshot(string recentPath)
     {
         try
@@ -2280,6 +2564,20 @@ public partial class App : Application
     }
 
     private static void WriteSharedRecentSmokeResult(string path, SharedRecentSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteFolderSetSmokeResult(string path, FolderSetSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteGridZoomSmokeResult(string path, GridZoomSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -2521,6 +2819,57 @@ public partial class App : Application
         public bool FavoritesUnchangedAfterMalformed { get; init; }
         public bool SeenUnchangedAfterMalformed { get; init; }
     }
+
+    private sealed class FolderSetSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? SharedRecentPath { get; init; }
+        public string? ResolvedRecentPath { get; init; }
+        public string? SecondFolder { get; init; }
+        public string? MissingFolder { get; init; }
+        public string? CurrentFolder { get; init; }
+        public List<string> ImportedLandingFolderSet { get; init; } = [];
+        public List<string> LandingAfterPaste { get; init; } = [];
+        public List<string> CurrentFolderSet { get; init; } = [];
+        public List<string> StateLastFolderSet { get; init; } = [];
+        public List<string> SharedLastFolderSet { get; init; } = [];
+        public int PastedAdded { get; init; }
+        public int RecentCountOnStartup { get; init; }
+        public int FilteredAfterLoad { get; init; }
+        public int ExpectedMinImages { get; init; }
+        public int RecentFolderSetCountAfterWrite { get; init; }
+        public bool ImportedSharedLastFolderSet { get; init; }
+        public bool PastedSecondFolder { get; init; }
+        public bool LoadedCurrentFolderSet { get; init; }
+        public bool StateSavedFolderSet { get; init; }
+        public bool WroteSharedLastFolderSet { get; init; }
+        public bool WriteFolderSetInRecent { get; init; }
+        public bool AdditivePreserved { get; init; }
+        public bool FavoritesUnchanged { get; init; }
+        public bool SeenPreserved { get; init; }
+    }
+
+    private sealed record GridZoomSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? StatePath,
+        int FilteredCount,
+        double InitialWidth,
+        double AfterButtonIn,
+        double AfterButtonOut,
+        double AfterShortcutIn,
+        double AfterShortcutReset,
+        double AfterWheelIn,
+        bool ButtonIn,
+        bool ButtonOut,
+        bool ShortcutIn,
+        bool ShortcutReset,
+        bool WheelIn,
+        bool WheelOutAndTileSync);
 
     private sealed class SharedRecentSmokeSnapshot
     {

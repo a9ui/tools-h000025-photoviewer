@@ -6,7 +6,7 @@ Node, Chrome, localhost, webview, or WebView2.
 This project started as the Claude WPF UI shell and now includes the first real
 browse and practical viewer slice:
 
-- folder picker
+- landing folder-set picker with multi-folder selection and pasted folder paths
 - recursive image file scan
 - decode-to-size thumbnails
 - grid/list display using real image thumbnails
@@ -31,6 +31,8 @@ browse and practical viewer slice:
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
+- `--folder-set-smoke <path>` landing folder-set and shared recent smoke
+- `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -149,6 +151,21 @@ and favorites/seen store isolation:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shared-recent-smoke "$env:TEMP\photoviewer-wpf-shared-recent-smoke.json" --folder .\local-native\ui-mockup
+```
+
+Folder-set smoke verifies the M15 landing workflow: shared recent folder-set
+import, pasted folder append, multi-folder scan, shared recent write-through,
+local WPF state persistence, and favorites/seen isolation:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --folder-set-smoke "$env:TEMP\photoviewer-wpf-folder-set-smoke.json" --folder .\local-native\ui-mockup
+```
+
+Grid zoom smoke verifies thumbnail size controls and the same card-width helper
+used by zoom shortcut and wheel paths:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
 ```
 
 ## WPF M2 First Performance Slice
@@ -369,6 +386,27 @@ Candidate classification from the final gate:
 | Custom virtualizing wrap panel or broad lazy thumbnail redesign | DEFER | It would change the current shell/layout and smoke contract; keep it as a separately measured WPF issue only if future evidence needs it. |
 | WinForms/browser/scripts/cache deletion/destructive work | REJECT | Out of scope for this WPF-only performance gate. |
 
+## WPF M15 Parity Rebaseline First Slice
+
+The #238 slice restores the browser-like landing folder-set workflow in WPF
+without touching browser or WinForms code. The landing page now displays the
+selected folder set, supports multi-folder picker results, accepts pasted
+absolute folder paths, opens all selected folders as one scan bounded by the
+existing 1,200-image cap, and reads/writes the shared
+`.cache/recent-folders.json` folder-set contract additively.
+
+The grid exposes thumbnail zoom buttons plus the same helper path used by
+Ctrl/Windows key and wheel zoom handling. The old size slider remains the source
+of truth for clamping and persisted card width.
+
+Obvious WPF shell controls without accepted behavior in this lane are disabled
+instead of remaining clickable no-ops: album mutation, enhanced-only filtering,
+display style variants, delete/recycle, and unfinished settings controls.
+
+The current `start_wpf.bat` / `dotnet run` path still works, but this slice does
+not replace it with a faster packaged launch route. Faster startup packaging or
+a release-mode launcher should be measured in a follow-up WPF slice.
+
 ## Files
 
 | File | Role |
@@ -398,8 +436,11 @@ Candidate classification from the final gate:
   `pvu_seen_images` import is supported only through the separately scoped
   explicit-file smoke path, not through browser/profile reads.
 - Recent folders import/write through `.cache/recent-folders.json` using the
-  browser-accepted shared folder-set shape. WPF still exposes only the existing
-  last-folder UX; richer recent/history UI remains deferred.
+  browser-accepted shared folder-set shape. WPF exposes current, last, and
+  recent folder sets on the landing page; richer history management remains
+  deferred.
+- Faster packaged launch remains deferred. The current BAT/dotnet route is
+  usable but not the fastest possible WPF startup path.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.

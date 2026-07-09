@@ -59,7 +59,7 @@
 
         <!-- right cluster -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Style="{StaticResource IconButton}" Foreground="#6EE7B7" ToolTip="Add selected to album (A)" Click="OpenAlbum_Click" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button Style="{StaticResource IconButton}" Foreground="#6EE7B7" ToolTip="Album mutation is deferred" IsEnabled="False" Opacity="0.45" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M12,5 v14 M5,12 h14" Stroke="#6EE7B7" StrokeThickness="2" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
           <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>
@@ -122,7 +122,7 @@
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
                 <TextBlock Text="ALBUMS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
-                <Button Style="{StaticResource SidebarLink}" Content="Album library" Margin="0,0,0,8"/>
+                <Button Style="{StaticResource SidebarLink}" Content="Album library" Margin="0,0,0,8" IsEnabled="False" ToolTip="Album mutation is deferred"/>
                 <Border CornerRadius="8" Background="{StaticResource SuccessSoft}" BorderBrush="{StaticResource SuccessBorder}" BorderThickness="1" Padding="10,7" Margin="0,0,0,8">
                   <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -183,7 +183,7 @@
                   <ToggleButton Content="★ 2+"/>
                   <ToggleButton Content="★ 3+"/>
                 </WrapPanel>
-                <CheckBox Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6"/>
+                <CheckBox Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" IsEnabled="False" ToolTip="Enhancement filtering is deferred"/>
                 <CheckBox x:Name="UnseenOnlyFilter" Content="Unseen only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
@@ -207,48 +207,15 @@
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
                 <TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
-                <StackPanel>
-                  <StackPanel.Resources>
-                    <Style TargetType="TextBlock"><Setter Property="VerticalAlignment" Value="Center"/></Style>
-                  </StackPanel.Resources>
-                  <!-- item -->
-                  <Border CornerRadius="8" Background="{StaticResource AccentSoft}" Padding="6,5" Margin="0,0,0,3">
-                    <Grid>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                      <CheckBox Grid.Column="0" IsChecked="True" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                      <TextBlock Grid.Column="1" Text="outputs\txt2img" Foreground="{StaticResource TextPrimary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Grid.Column="2" Text="6,204" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
-                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource AccentLight}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
-                    </Grid>
-                  </Border>
-                  <Border CornerRadius="8" Background="{StaticResource AccentSoft}" Padding="6,5" Margin="0,0,0,3">
-                    <Grid>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                      <CheckBox Grid.Column="0" IsChecked="True" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                      <TextBlock Grid.Column="1" Text="outputs\img2img" Foreground="{StaticResource TextPrimary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Grid.Column="2" Text="3,118" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
-                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource AccentLight}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
-                    </Grid>
-                  </Border>
-                  <Border CornerRadius="8" Padding="6,5" Margin="0,0,0,3">
-                    <Grid>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                      <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                      <TextBlock Grid.Column="1" Text="outputs\extras" Foreground="{StaticResource TextSecondary}" FontSize="12.5" TextTrimming="CharacterEllipsis"/>
-                      <TextBlock Grid.Column="2" Text="1,942" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
-                      <Path Grid.Column="3" Data="M1,12 s4,-8 11,-8 s11,8 11,8 s-4,8 -11,8 s-11,-8 -11,-8 z M12,9 a3,3 0 1 0 0,6 a3,3 0 1 0 0,-6" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
-                    </Grid>
-                  </Border>
-                  <Border CornerRadius="8" Padding="6,5">
-                    <Grid>
-                      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                      <CheckBox Grid.Column="0" VerticalAlignment="Center" Margin="0,0,7,0"/>
-                      <TextBlock Grid.Column="1" Text="archive\2025" Foreground="{StaticResource TextTertiary}" FontSize="12.5" TextTrimming="CharacterEllipsis" TextDecorations="Strikethrough"/>
-                      <TextBlock Grid.Column="2" Text="1,216" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="6,0"/>
-                      <Path Grid.Column="3" Data="M17.9,17.9 A10,10 0 0 1 12,20 C5,20 1,12 1,12 a18,18 0 0 1 5,-5.9 M9.9,4.2 A9,9 0 0 1 12,4 c7,0 11,8 11,8 a18,18 0 0 1 -2.2,3.2 M1,1 l22,22" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.6" Stretch="Uniform" Width="15" Height="15"/>
-                    </Grid>
-                  </Border>
-                </StackPanel>
+                <ItemsControl x:Name="SidebarFolderSetList">
+                  <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                      <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="7,5" Margin="0,0,0,4">
+                        <TextBlock Text="{Binding}" Foreground="{StaticResource TextSecondary}" FontSize="12" TextTrimming="CharacterEllipsis"/>
+                      </Border>
+                    </DataTemplate>
+                  </ItemsControl.ItemTemplate>
+                </ItemsControl>
               </StackPanel>
             </Border>
 
@@ -284,16 +251,19 @@
                   <TextBlock Grid.Column="0" Text="Style" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
                   <Border Grid.Column="1" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
                     <UniformGrid Rows="1">
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Standard" IsChecked="True"/>
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Compact"/>
-                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Poster"/>
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Standard" IsChecked="True" IsEnabled="False"/>
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Compact" IsEnabled="False"/>
+                      <RadioButton Style="{StaticResource Seg}" GroupName="style" Content="Poster" IsEnabled="False"/>
                     </UniformGrid>
                   </Border>
                 </Grid>
                 <Grid>
-                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBlock Grid.Column="0" Text="Size" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
-                  <Slider Grid.Column="1" x:Name="SizeSlider" Minimum="130" Maximum="280" Value="190" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
+                  <Button Grid.Column="1" Style="{StaticResource StepButton}" Content="-" ToolTip="Zoom out" Click="ZoomOut_Click" Margin="0,0,5,0"/>
+                  <Slider Grid.Column="2" x:Name="SizeSlider" Minimum="130" Maximum="280" Value="190" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
+                  <Button Grid.Column="3" Style="{StaticResource StepButton}" Content="0" ToolTip="Reset zoom" Click="ZoomReset_Click" Margin="5,0,5,0"/>
+                  <Button Grid.Column="4" Style="{StaticResource StepButton}" Content="+" ToolTip="Zoom in" Click="ZoomIn_Click"/>
                 </Grid>
               </StackPanel>
             </Border>
@@ -412,7 +382,7 @@
                     <TextBlock Text="Open"/>
                   </StackPanel>
                 </Button>
-                <Button Grid.Column="2" Style="{StaticResource DangerButton}" Width="40" ToolTip="Move to Recycle Bin (Del)" Click="OpenConfirm_Click">
+                <Button Grid.Column="2" Style="{StaticResource DangerButton}" Width="40" ToolTip="Delete/recycle is deferred" IsEnabled="False" Opacity="0.45">
                   <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
                 </Button>
               </Grid>
@@ -520,17 +490,17 @@
                 <TextBlock Text="Add folder" VerticalAlignment="Center"/>
               </StackPanel>
             </Button>
-            <Button Grid.Column="1" Style="{StaticResource PrimaryButton}" Content="Open folder set" Click="StartScan_Click"/>
+            <Button Grid.Column="1" x:Name="OpenFolderSetButton" Style="{StaticResource PrimaryButton}" Content="Open folder set" Click="StartScan_Click"/>
           </Grid>
 
-          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,6">
+          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,6" Visibility="Collapsed">
             <DockPanel>
               <TextBlock DockPanel.Dock="Left" Text="・" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
               <TextBlock DockPanel.Dock="Right" Text="✕" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="8,0,0,0"/>
               <TextBlock Text="D:\SD\outputs\txt2img" Foreground="{StaticResource TextPrimary}" FontSize="13.5" TextTrimming="CharacterEllipsis"/>
             </DockPanel>
           </Border>
-          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,12">
+          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,0,12" Visibility="Collapsed">
             <DockPanel>
               <TextBlock DockPanel.Dock="Left" Text="・" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="0,0,8,0"/>
               <TextBlock DockPanel.Dock="Right" Text="✕" Foreground="{StaticResource TextTertiary}" VerticalAlignment="Center" Margin="8,0,0,0"/>
@@ -538,24 +508,52 @@
             </DockPanel>
           </Border>
 
+          <Border CornerRadius="8" Background="#09FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="8,7" Margin="0,0,0,12">
+            <ItemsControl x:Name="LandingFolderSetList" MaxHeight="118">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate>
+                  <DockPanel Margin="0,0,0,5">
+                    <Button DockPanel.Dock="Right" Style="{StaticResource StepButton}" Content="x" ToolTip="Remove folder" Tag="{Binding}" Click="RemoveLandingFolder_Click" Margin="8,0,0,0"/>
+                    <TextBlock Text="{Binding}" Foreground="{StaticResource TextPrimary}" FontSize="13" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </Border>
+
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <Border Grid.Column="0" Height="64" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="14,10" Margin="0,0,12,0">
+            <Border Grid.Column="0" Height="72" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,7" Margin="0,0,12,0">
               <TextBlock Text="Paste one absolute path per line…" Foreground="{StaticResource TextTertiary}" FontSize="13"/>
             </Border>
-            <Button Grid.Column="1" Style="{StaticResource BrowseButton}" Content="Add pasted" VerticalAlignment="Stretch"/>
+            <TextBox Grid.Column="0" x:Name="PastedFoldersInput" Margin="10,7,22,7" AcceptsReturn="True" TextWrapping="NoWrap" BorderThickness="0" Background="{StaticResource BgSecondary}"
+                     Foreground="{StaticResource TextPrimary}" FontSize="13" VerticalScrollBarVisibility="Auto"/>
+            <Button Grid.Column="1" Style="{StaticResource BrowseButton}" Content="Add pasted" VerticalAlignment="Stretch" Click="AddPastedFolders_Click"/>
           </Grid>
+          <TextBlock x:Name="LandingFolderStatusText" Text="No folders selected yet." Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="2,8,0,0"/>
         </StackPanel>
 
         <Button Style="{StaticResource BrowseButton}" Height="46" HorizontalAlignment="Stretch" Margin="0,14,0,0" Click="OpenLastFolder_Click">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="Open last folder set" Foreground="{StaticResource TextPrimary}" FontWeight="Medium"/>
-            <TextBlock Text="  D:\SD\outputs (+3)" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
+            <TextBlock x:Name="LastFolderSetText" Text="  No saved folder set" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center"/>
           </StackPanel>
         </Button>
 
         <TextBlock Text="RECENT FOLDER SETS" Foreground="{StaticResource TextTertiary}" FontSize="10" FontWeight="SemiBold" Margin="2,20,0,8"/>
-        <WrapPanel>
+        <ItemsControl x:Name="RecentFolderSetList">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Button Style="{StaticResource GhostButton}" Height="30" Margin="0,0,7,7" FontSize="12" Tag="{Binding}" Click="RecentFolderSet_Click">
+                <TextBlock Text="{Binding Display}" TextTrimming="CharacterEllipsis" MaxWidth="220"/>
+              </Button>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+        <WrapPanel Visibility="Collapsed">
           <WrapPanel.Resources>
             <Style TargetType="Button" BasedOn="{StaticResource GhostButton}">
               <Setter Property="Height" Value="30"/><Setter Property="Margin" Value="0,0,7,7"/><Setter Property="FontSize" Value="12"/>
@@ -667,18 +665,18 @@
             <StackPanel>
               <TextBlock Text="Behavior" Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold" Margin="0,0,0,10"/>
               <DockPanel Margin="0,0,0,10">
-                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
+                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5" IsEnabled="False"/>
                 <TextBlock Text="Confirm before delete" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
               </DockPanel>
               <DockPanel Margin="0,0,0,10">
-                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5"/>
+                <CheckBox DockPanel.Dock="Right" Content="Enabled" IsChecked="True" Foreground="{StaticResource TextSecondary}" FontSize="12.5" IsEnabled="False"/>
                 <TextBlock Text="Unseen dots" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
               </DockPanel>
               <DockPanel Margin="0,0,0,4">
                 <TextBlock DockPanel.Dock="Right" Text="22%" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Width="42" TextAlignment="Right"/>
                 <TextBlock Text="Modal edge navigation zone" Foreground="{StaticResource TextPrimary}" FontSize="13"/>
               </DockPanel>
-              <Slider Minimum="10" Maximum="40" Value="22" Margin="0,0,0,16"/>
+              <Slider Minimum="10" Maximum="40" Value="22" Margin="0,0,0,16" IsEnabled="False"/>
 
               <TextBlock Text="Key bindings" Foreground="{StaticResource TextSecondary}" FontSize="12.5" FontWeight="SemiBold" Margin="0,4,0,10"/>
               <StackPanel>
@@ -738,7 +736,7 @@
             <Border Grid.Column="0" CornerRadius="8" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12,9" Margin="0,0,8,0">
               <TextBlock Text="New album name" Foreground="{StaticResource TextTertiary}" FontSize="13"/>
             </Border>
-            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Height="38">
+            <Button Grid.Column="1" Style="{StaticResource GhostButton}" Height="38" IsEnabled="False">
               <StackPanel Orientation="Horizontal">
                 <Path Data="M12,5 v14 M5,12 h14" Stroke="{StaticResource AccentLight}" StrokeThickness="2" Stretch="Uniform" Width="13" Height="13" Margin="0,0,5,0"/>
                 <TextBlock Text="Create" Foreground="{StaticResource AccentLight}"/>
@@ -751,6 +749,7 @@
                 <Setter Property="Height" Value="42"/>
                 <Setter Property="Margin" Value="0,0,0,6"/>
                 <Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="IsEnabled" Value="False"/>
                 <Setter Property="Template">
                   <Setter.Value>
                     <ControlTemplate TargetType="Button">
@@ -825,11 +824,11 @@
         <StackPanel>
           <TextBlock Text="Move selected images to Recycle Bin?" Foreground="{StaticResource TextPrimary}" FontSize="16" FontWeight="SemiBold" TextWrapping="Wrap"/>
           <TextBlock Text="3 image(s) will be moved to Recycle Bin." Foreground="{StaticResource TextSecondary}" FontSize="13" Margin="0,10,0,16" TextWrapping="Wrap"/>
-          <CheckBox Content="Do not ask again" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center" Margin="0,0,0,18"/>
+          <CheckBox Content="Do not ask again" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center" Margin="0,0,0,18" IsEnabled="False"/>
           <Grid>
             <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="10"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
             <Button Grid.Column="0" Style="{StaticResource GhostButton}" Height="40" Content="Cancel" Click="CloseConfirm_Click"/>
-            <Button Grid.Column="2" Style="{StaticResource DangerFilled}" Content="Move to Recycle Bin" Click="CloseConfirm_Click"/>
+            <Button Grid.Column="2" Style="{StaticResource DangerFilled}" Content="Move to Recycle Bin" IsEnabled="False"/>
           </Grid>
         </StackPanel>
       </Border>
