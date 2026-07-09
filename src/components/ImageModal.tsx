@@ -1,10 +1,10 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
-import { removeImageSlot } from '../lib/imageListState';
+import { buildImageIndexById, removeImageSlot } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import CachedImage from './CachedImage';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
@@ -244,6 +244,11 @@ export default function ImageModal() {
     ensureSearchRange(selectedIndex - 2, selectedIndex + 2);
   }, [ensureSearchRange, searchTotal, selectedIndex]);
 
+  const searchResultIndexById = useMemo(
+    () => buildImageIndexById(searchResults),
+    [searchResults]
+  );
+
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault();
     const delta = e.deltaY > 0 ? 0.9 : 1.1;
@@ -272,7 +277,7 @@ export default function ImageModal() {
       const nextId = modalImageIds[
         currentOrderIndex > 0 ? currentOrderIndex - 1 : modalImageIds.length - 1
       ];
-      const nextIndex = searchResults.findIndex((image) => image?.id === nextId);
+      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
       if (nextIndex >= 0) {
         setSelectedIndex(nextIndex);
       }
@@ -281,13 +286,13 @@ export default function ImageModal() {
 
     if (modalImageIds.length > 0) {
       const nextId = modalImageIds[modalImageIds.length - 1];
-      const nextIndex = searchResults.findIndex((image) => image?.id === nextId);
+      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
       if (nextIndex >= 0) setSelectedIndex(nextIndex);
       return;
     }
 
     setSelectedIndex(selectedIndex > 0 ? selectedIndex - 1 : searchTotal - 1);
-  }, [modalImageIds, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
 
   const goNext = useCallback(() => {
     if (selectedIndex === null || searchTotal <= 0) return;
@@ -299,7 +304,7 @@ export default function ImageModal() {
       const nextId = modalImageIds[
         currentOrderIndex >= 0 && currentOrderIndex < modalImageIds.length - 1 ? currentOrderIndex + 1 : 0
       ];
-      const nextIndex = searchResults.findIndex((image) => image?.id === nextId);
+      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
       if (nextIndex >= 0) {
         setSelectedIndex(nextIndex);
       }
@@ -308,13 +313,13 @@ export default function ImageModal() {
 
     if (modalImageIds.length > 0) {
       const nextId = modalImageIds[0];
-      const nextIndex = searchResults.findIndex((image) => image?.id === nextId);
+      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
       if (nextIndex >= 0) setSelectedIndex(nextIndex);
       return;
     }
 
     setSelectedIndex(selectedIndex < searchTotal - 1 ? selectedIndex + 1 : 0);
-  }, [modalImageIds, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
 
   const close = useCallback(() => {
     const current = selectedIndex !== null ? searchResults[selectedIndex] : null;
