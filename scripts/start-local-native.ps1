@@ -7,6 +7,7 @@ param(
   [switch]$HeadlessPerf,
   [switch]$HeadlessCacheCompat,
   [switch]$HeadlessUiSmoke,
+  [switch]$HeadlessUiScreenshot,
   [switch]$HeadlessFolderSetSmoke,
   [switch]$HeadlessLargeScrollSmoke,
   [switch]$HeadlessDateFilterSmoke,
@@ -16,6 +17,7 @@ param(
   [switch]$PrepareFixture,
   [string]$Search = "",
   [string[]]$FolderSet = @(),
+  [string]$ScreenshotOutput = "",
   [string]$BrowserStateExport = "",
   [switch]$FavoritesOnly,
   [string]$FavoritePath = "",
@@ -102,6 +104,22 @@ if ($PrepareFixture) {
   $arguments += "--"
   $arguments += "--headless-ui-smoke"
   $arguments += $Folder
+  if ($Search.Trim().Length -gt 0) {
+    $arguments += "--search"
+    $arguments += $Search
+  }
+} elseif ($HeadlessUiScreenshot) {
+  if ($Folder.Trim().Length -eq 0) {
+    throw "-HeadlessUiScreenshot requires -Folder."
+  }
+  if ($ScreenshotOutput.Trim().Length -eq 0) {
+    throw "-HeadlessUiScreenshot requires -ScreenshotOutput."
+  }
+
+  $arguments += "--"
+  $arguments += "--headless-ui-screenshot"
+  $arguments += $Folder
+  $arguments += $ScreenshotOutput
   if ($Search.Trim().Length -gt 0) {
     $arguments += "--search"
     $arguments += $Search
