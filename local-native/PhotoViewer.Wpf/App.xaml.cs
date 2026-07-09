@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Media;
@@ -10,7 +11,15 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        var startupWatch = Stopwatch.StartNew();
         base.OnStartup(e);
+
+        int startupSmokeIdx = Array.IndexOf(e.Args, "--startup-smoke");
+        if (startupSmokeIdx >= 0 && startupSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureStartupSmoke(e.Args[startupSmokeIdx + 1], e.Args, startupWatch);
+            return;
+        }
 
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
@@ -111,6 +120,47 @@ public partial class App : Application
         }
 
         new MainWindow().Show();
+    }
+
+    /// <summary>Open the shell to dispatcher-idle readiness, write timing evidence, and exit.</summary>
+    private void CaptureStartupSmoke(string path, string[] args, Stopwatch startupWatch)
+    {
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        string resultFullPath = Path.GetFullPath(path);
+        string mode = ArgValue(args, "--startup-mode") ?? "unspecified";
+
+        long beforeWindowMs = startupWatch.ElapsedMilliseconds;
+        var constructWatch = Stopwatch.StartNew();
+        var win = new MainWindow
+        {
+            WindowStartupLocation = WindowStartupLocation.Manual,
+            Left = -20000,
+            Top = -20000,
+            Width = 1280,
+            Height = 820,
+        };
+        win.SuppressStatePersistence();
+        constructWatch.Stop();
+
+        var showWatch = Stopwatch.StartNew();
+        win.Show();
+        showWatch.Stop();
+
+        win.Dispatcher.InvokeAsync(() =>
+        {
+            startupWatch.Stop();
+            var result = new StartupSmokeResult(
+                Ok: true,
+                Message: "startup shell reached dispatcher idle",
+                Mode: mode,
+                BeforeWindowMs: beforeWindowMs,
+                WindowConstructMs: constructWatch.ElapsedMilliseconds,
+                ShowMs: showWatch.ElapsedMilliseconds,
+                ReadyMs: startupWatch.ElapsedMilliseconds,
+                CompletedAtUtc: DateTime.UtcNow);
+            WriteStartupSmokeResult(resultFullPath, result);
+            Shutdown(0);
+        }, DispatcherPriority.ContextIdle);
     }
 
     /// <summary>Render the main window offscreen to a PNG and exit (UI smoke evidence).</summary>
@@ -2584,6 +2634,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteStartupSmokeResult(string path, StartupSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteScrollRealizationSmokeResult(string path, ScrollRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -2870,6 +2927,16 @@ public partial class App : Application
         bool ShortcutReset,
         bool WheelIn,
         bool WheelOutAndTileSync);
+
+    private sealed record StartupSmokeResult(
+        bool Ok,
+        string Message,
+        string Mode,
+        long BeforeWindowMs,
+        long WindowConstructMs,
+        long ShowMs,
+        long ReadyMs,
+        DateTime CompletedAtUtc);
 
     private sealed class SharedRecentSmokeSnapshot
     {
