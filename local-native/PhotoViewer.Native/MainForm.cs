@@ -133,6 +133,7 @@ internal sealed class MainForm : Form
     private bool _updatingSearchSuggestions;
     private bool _committingSearchText;
     private bool _updatingPreviewTabs;
+    private bool _updatingFolderBucketKeyboardRange;
     private int _folderBucketRangeAnchorIndex = -1;
     private readonly List<PreviewTabState> _closedPreviewTabs = [];
     private string _hoverPreviewPath = "";
@@ -1082,7 +1083,18 @@ internal sealed class MainForm : Form
 
         _folderBuckets.Dock = DockStyle.Fill;
         _folderBuckets.CheckOnClick = true;
-        _folderBuckets.SelectedIndexChanged += (_, _) => UpdateFolderBucketButtons();
+        _folderBuckets.SelectedIndexChanged += (_, _) =>
+        {
+            if (!_updatingFolderBucketKeyboardRange &&
+                (ModifierKeys & Keys.Shift) != Keys.Shift &&
+                _folderBuckets.SelectedIndex >= 0)
+            {
+                _folderBucketRangeAnchorIndex = _folderBuckets.SelectedIndex;
+            }
+
+            UpdateFolderBucketButtons();
+        };
+        _folderBuckets.KeyDown += (_, args) => HandleFolderBucketKeyDown(args);
         _folderBuckets.MouseUp += (_, args) => HandleFolderBucketMouseUp(args);
         _folderBuckets.ItemCheck += (_, _) =>
         {
@@ -1371,6 +1383,30 @@ internal sealed class MainForm : Form
             _folderBuckets.GetItemChecked(rangeEndIndex) &&
             _visibleImages.Count == initialVisible;
         Require(folderRangeShow, "folder range show did not restore contiguous buckets");
+        SetAllFolderBuckets(visible: true);
+        _folderBuckets.ClearSelected();
+        _folderBuckets.SelectedIndex = 0;
+        _folderBucketRangeAnchorIndex = 0;
+        var hiddenBeforeKeyboardRange = _store.GetSetting("hidden_folder_buckets", "");
+        var keyboardRangeArgs = new KeyEventArgs(Keys.Shift | Keys.Down);
+        HandleFolderBucketKeyDown(keyboardRangeArgs);
+        var keyboardRangeSelected = keyboardRangeArgs.Handled &&
+            keyboardRangeArgs.SuppressKeyPress &&
+            _folderBucketRangeAnchorIndex == 0 &&
+            _folderBuckets.SelectedIndex == rangeEndIndex &&
+            _folderBuckets.GetItemChecked(0) &&
+            _folderBuckets.GetItemChecked(rangeEndIndex) &&
+            string.Equals(_store.GetSetting("hidden_folder_buckets", ""), hiddenBeforeKeyboardRange, StringComparison.Ordinal);
+        Require(keyboardRangeSelected, "folder keyboard range selection changed visibility or failed to move focus");
+        var keyboardRangeApplyArgs = new KeyEventArgs(Keys.Space);
+        HandleFolderBucketKeyDown(keyboardRangeApplyArgs);
+        var folderKeyboardRangeSelection = keyboardRangeApplyArgs.Handled &&
+            keyboardRangeApplyArgs.SuppressKeyPress &&
+            !_folderBuckets.GetItemChecked(0) &&
+            !_folderBuckets.GetItemChecked(rangeEndIndex) &&
+            _visibleImages.Count == 0;
+        Require(folderKeyboardRangeSelection, "folder keyboard range apply did not filter contiguous buckets");
+        SetAllFolderBuckets(visible: true);
         ClearFolderBucketSelection();
         var folderClearSelection = _folderBuckets.SelectedIndices.Count == 0;
         Require(folderClearSelection, "folder clear-selection did not clear selected buckets");
@@ -1886,6 +1922,7 @@ internal sealed class MainForm : Form
             FolderShowSelected: folderShowSelected,
             FolderHideSelected: folderHideSelected,
             FolderRangeSelection: folderRangeHide && folderRangeShow,
+            FolderKeyboardRangeSelection: folderKeyboardRangeSelection,
             FolderClearSelection: folderClearSelection,
             DetailModal: detailReport.ModalOpened,
             DetailNavigation: detailReport.Navigation,
@@ -5137,6 +5174,66 @@ internal sealed class MainForm : Form
         _folderBucketRangeAnchorIndex = clickedIndex;
     }
 
+    private void HandleFolderBucketKeyDown(KeyEventArgs args)
+    {
+        if (_folderBuckets.Items.Count == 0)
+        {
+            return;
+        }
+
+        if ((args.KeyData & Keys.Shift) == Keys.Shift &&
+            (args.KeyCode == Keys.Up || args.KeyCode == Keys.Down))
+        {
+            var current = _folderBuckets.SelectedIndex >= 0 ? _folderBuckets.SelectedIndex : 0;
+            if (_folderBucketRangeAnchorIndex < 0)
+            {
+                _folderBucketRangeAnchorIndex = current;
+            }
+
+            var delta = args.KeyCode == Keys.Up ? -1 : 1;
+            var next = Math.Clamp(current + delta, 0, _folderBuckets.Items.Count - 1);
+            SelectFolderBucketKeyboardRange(_folderBucketRangeAnchorIndex, next);
+            args.Handled = true;
+            args.SuppressKeyPress = true;
+            return;
+        }
+
+        if (args.KeyCode == Keys.Space &&
+            _folderBucketRangeAnchorIndex >= 0 &&
+            _folderBuckets.SelectedIndex >= 0)
+        {
+            var visible = !_folderBuckets.GetItemChecked(_folderBuckets.SelectedIndex);
+            if (ApplyFolderBucketRange(_folderBucketRangeAnchorIndex, _folderBuckets.SelectedIndex, visible))
+            {
+                args.Handled = true;
+                args.SuppressKeyPress = true;
+            }
+        }
+    }
+
+    private void SelectFolderBucketKeyboardRange(int anchorIndex, int focusIndex)
+    {
+        if (_folderBuckets.Items.Count == 0)
+        {
+            return;
+        }
+
+        var focus = Math.Clamp(focusIndex, 0, _folderBuckets.Items.Count - 1);
+        _updatingFolderBucketKeyboardRange = true;
+        try
+        {
+            _folderBuckets.ClearSelected();
+            _folderBuckets.SelectedIndex = focus;
+        }
+        finally
+        {
+            _updatingFolderBucketKeyboardRange = false;
+        }
+
+        _folderBucketRangeAnchorIndex = Math.Clamp(anchorIndex, 0, _folderBuckets.Items.Count - 1);
+        UpdateFolderBucketButtons();
+    }
+
     private bool ApplyFolderBucketRange(int anchorIndex, int clickedIndex, bool visible)
     {
         if (_folderBuckets.Items.Count == 0)
@@ -6072,6 +6169,7 @@ internal sealed class MainForm : Form
             $"folderShowSelected={BoolText(report.FolderShowSelected)}",
             $"folderHideSelected={BoolText(report.FolderHideSelected)}",
             $"folderRangeSelection={BoolText(report.FolderRangeSelection)}",
+            $"folderKeyboardRangeSelection={BoolText(report.FolderKeyboardRangeSelection)}",
             $"folderClearSelection={BoolText(report.FolderClearSelection)}",
             $"folderSortMode={BoolText(report.FolderSortMode)}",
             $"sortName={BoolText(report.SortName)}",
@@ -7093,6 +7191,7 @@ internal sealed class MainForm : Form
         bool FolderShowSelected,
         bool FolderHideSelected,
         bool FolderRangeSelection,
+        bool FolderKeyboardRangeSelection,
         bool FolderClearSelection,
         bool DetailModal,
         bool DetailNavigation,
