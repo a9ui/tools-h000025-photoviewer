@@ -155,6 +155,12 @@ internal static class Program
             return await MainForm.RunEnhancedFilterSmokeAsync(folder);
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-webp-decode-smoke")
+        {
+            ApplicationConfiguration.Initialize();
+            return NativeWebpDecodeSmoke.Run();
+        }
+
         if (args.Length >= 1 && args[0] == "--prepare-fixture")
         {
             return NativeFixtureBuilder.Prepare();

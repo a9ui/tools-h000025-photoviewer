@@ -218,12 +218,7 @@ internal static class NativeHeadlessPerformance
 
     private static Image LoadImageCopy(string filePath)
     {
-        using var stream = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
-        using var memory = new MemoryStream();
-        stream.CopyTo(memory);
-        memory.Position = 0;
-        using var source = Image.FromStream(memory);
-        return new Bitmap(source);
+        return NativeImageDecoder.LoadImageCopy(filePath);
     }
 
     private readonly record struct NativeMutationProbeResult(

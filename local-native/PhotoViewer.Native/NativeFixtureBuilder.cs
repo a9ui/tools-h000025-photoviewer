@@ -316,13 +316,7 @@ Steps: 12, Sampler: Native Fixture, CFG scale: 7, Seed: 107, Size: 32x32
 
     private static void WriteMinimalWebp(string path)
     {
-        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        var bytes = new byte[24];
-        Encoding.ASCII.GetBytes("RIFF").CopyTo(bytes, 0);
-        BitConverter.GetBytes((uint)(bytes.Length - 8)).CopyTo(bytes, 4);
-        Encoding.ASCII.GetBytes("WEBP").CopyTo(bytes, 8);
-        Encoding.ASCII.GetBytes("VP8X").CopyTo(bytes, 12);
-        File.WriteAllBytes(path, bytes);
+        NativeWebpDecodeSmoke.WriteValidWebp(path);
         TrySetStableTimes(path);
     }
 
