@@ -119,6 +119,13 @@ public partial class App : Application
             return;
         }
 
+        int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
+        if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureEnhancedFilterSmoke(e.Args[enhancedFilterSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1714,6 +1721,159 @@ public partial class App : Application
     private static double Area(DisplayStyleMetrics metrics)
         => metrics.CardWidth * metrics.CardHeight;
 
+    private void CaptureEnhancedFilterSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteEnhancedFilterSmokeResult(resultPath, new EnhancedFilterSmokeResult { Ok = false, Message = "missing required --folder", Folder = folder });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length < 3)
+        {
+            WriteEnhancedFilterSmokeResult(resultPath, new EnhancedFilterSmokeResult { Ok = false, Message = "enhanced filter smoke requires at least 3 fixture images", Folder = fullFolder });
+            Shutdown(1);
+            return;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        string jobsPath = Path.Combine(smokeRoot, ".cache", "enhance", "jobs.json");
+        string outputRoot = Path.Combine(smokeRoot, "enhanced-output");
+        Directory.CreateDirectory(outputRoot);
+
+        string validSource = Path.Combine(fullFolder, fixtureNames[0]);
+        string staleSource = Path.Combine(fullFolder, fixtureNames[1]);
+        string failedSource = Path.Combine(fullFolder, fixtureNames[2]);
+        string validOutput = Path.Combine(outputRoot, "enhanced-" + Path.GetFileName(validSource));
+        string missingOutput = Path.Combine(outputRoot, "missing-output.png");
+        string missingSource = Path.Combine(smokeRoot, "missing-source.png");
+        File.Copy(validSource, validOutput, overwrite: true);
+        WriteEnhancedJobsFixture(jobsPath, validSource, validOutput, staleSource, missingOutput, failedSource, missingSource);
+        string beforeJobsJson = File.ReadAllText(jobsPath);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            EnhancedFilterSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(fullFolder);
+                string resolvedJobsPath = win.EnhancementJobsPathForSmoke;
+                int allCount = win.FilteredCountForSmoke;
+                bool selectedValid = win.SelectFileNameForSmoke(Path.GetFileName(validSource));
+                bool selectedValidEnhanced = win.SelectedEnhancedForSmoke;
+                string? selectedOutput = win.SelectedEnhancedOutputPathForSmoke;
+                bool outputMatches = string.Equals(selectedOutput, validOutput, StringComparison.OrdinalIgnoreCase);
+
+                win.SetEnhancedOnlyFilterForSmoke(true);
+                int enhancedFilteredCount = win.FilteredCountForSmoke;
+                bool validVisible = win.SelectFileNameForSmoke(Path.GetFileName(validSource));
+                bool staleVisible = win.SelectFileNameForSmoke(Path.GetFileName(staleSource));
+                bool failedVisible = win.SelectFileNameForSmoke(Path.GetFileName(failedSource));
+                bool selectedStillEnhanced = win.SelectedEnhancedForSmoke;
+
+                win.SetEnhancedOnlyFilterForSmoke(false);
+                int afterClearCount = win.FilteredCountForSmoke;
+                win.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(fullFolder);
+                second.SetEnhancedOnlyFilterForSmoke(true);
+                int reloadFilteredCount = second.FilteredCountForSmoke;
+                bool reloadValidVisible = second.SelectFileNameForSmoke(Path.GetFileName(validSource));
+                second.Close();
+
+                string afterJobsJson = File.ReadAllText(jobsPath);
+                bool enhancementStateUnchanged = string.Equals(beforeJobsJson, afterJobsJson, StringComparison.Ordinal);
+
+                bool ok = string.Equals(Path.GetFullPath(resolvedJobsPath), Path.GetFullPath(jobsPath), StringComparison.OrdinalIgnoreCase)
+                    && win.EnhancementReadOkForSmoke
+                    && win.EnhancementJobsReadForSmoke >= 5
+                    && win.EnhancedCandidateCountForSmoke == 1
+                    && win.EnhancedStoreCountForSmoke == 1
+                    && allCount >= 3
+                    && selectedValid
+                    && selectedValidEnhanced
+                    && outputMatches
+                    && enhancedFilteredCount == 1
+                    && validVisible
+                    && !staleVisible
+                    && !failedVisible
+                    && selectedStillEnhanced
+                    && afterClearCount == allCount
+                    && reloadFilteredCount == 1
+                    && reloadValidVisible
+                    && enhancementStateUnchanged;
+
+                result = new EnhancedFilterSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "read-only enhanced metadata import, enhanced-only filtering, stale fallback, reload, and state unchanged checks passed"
+                        : "enhanced filter smoke did not meet read/filter/reload/state expectations",
+                    Folder = fullFolder,
+                    ProjectRoot = smokeRoot,
+                    JobsPath = jobsPath,
+                    ResolvedJobsPath = resolvedJobsPath,
+                    ValidSourceName = Path.GetFileName(validSource),
+                    StaleSourceName = Path.GetFileName(staleSource),
+                    FailedSourceName = Path.GetFileName(failedSource),
+                    ValidOutputPath = validOutput,
+                    MissingOutputPath = missingOutput,
+                    AllCount = allCount,
+                    JobsRead = win.EnhancementJobsReadForSmoke,
+                    CandidateCount = win.EnhancedCandidateCountForSmoke,
+                    EnhancedStoreCount = win.EnhancedStoreCountForSmoke,
+                    SelectedValid = selectedValid,
+                    SelectedValidEnhanced = selectedValidEnhanced,
+                    SelectedOutputPath = selectedOutput,
+                    EnhancedFilteredCount = enhancedFilteredCount,
+                    ValidVisible = validVisible,
+                    StaleVisible = staleVisible,
+                    FailedVisible = failedVisible,
+                    AfterClearCount = afterClearCount,
+                    ReloadFilteredCount = reloadFilteredCount,
+                    ReloadValidVisible = reloadValidVisible,
+                    EnhancementStateUnchanged = enhancementStateUnchanged,
+                    ReadOk = win.EnhancementReadOkForSmoke,
+                    ReadError = win.EnhancementReadErrorForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                win.Close();
+                result = new EnhancedFilterSmokeResult { Ok = false, Message = ex.Message, Folder = fullFolder, ProjectRoot = smokeRoot, JobsPath = jobsPath };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteEnhancedFilterSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
         MainWindow first,
         string fullFolder,
@@ -2385,6 +2545,74 @@ public partial class App : Application
         File.WriteAllText(browserStatePath, json);
     }
 
+    private static void WriteEnhancedJobsFixture(
+        string jobsPath,
+        string validSourcePath,
+        string validOutputPath,
+        string staleSourcePath,
+        string missingOutputPath,
+        string failedSourcePath,
+        string missingSourcePath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(jobsPath))!);
+        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["version"] = 1,
+            ["jobs"] = new object?[]
+            {
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["id"] = "enhanced-ok",
+                    ["sourceId"] = validSourcePath,
+                    ["sourcePath"] = validSourcePath,
+                    ["status"] = "succeeded",
+                    ["progress"] = 100,
+                    ["outputPath"] = validOutputPath,
+                    ["createdAt"] = DateTime.UtcNow.ToString("o"),
+                    ["updatedAt"] = DateTime.UtcNow.ToString("o"),
+                },
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["id"] = "stale-output",
+                    ["sourceId"] = staleSourcePath,
+                    ["sourcePath"] = staleSourcePath,
+                    ["status"] = "succeeded",
+                    ["progress"] = 100,
+                    ["outputPath"] = missingOutputPath,
+                },
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["id"] = "failed-job",
+                    ["sourceId"] = failedSourcePath,
+                    ["sourcePath"] = failedSourcePath,
+                    ["status"] = "failed",
+                    ["progress"] = 100,
+                    ["outputPath"] = validOutputPath,
+                },
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["id"] = "missing-source",
+                    ["sourceId"] = missingSourcePath,
+                    ["sourcePath"] = missingSourcePath,
+                    ["status"] = "succeeded",
+                    ["progress"] = 100,
+                    ["outputPath"] = validOutputPath,
+                },
+                new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+                {
+                    ["id"] = "missing-output-field",
+                    ["sourceId"] = failedSourcePath,
+                    ["sourcePath"] = failedSourcePath,
+                    ["status"] = "succeeded",
+                    ["progress"] = 100,
+                },
+                "unsupported-entry",
+            },
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(jobsPath, json);
+    }
+
     private static void WriteViewerStateSeed(string statePath, string folder, string selectedPath)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(statePath))!);
@@ -2757,6 +2985,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteEnhancedFilterSmokeResult(string path, EnhancedFilterSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteStartupSmokeResult(string path, StartupSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -3066,6 +3301,38 @@ public partial class App : Application
         bool PosterChanged,
         bool Zoomed,
         bool PersistedPoster);
+
+    private sealed class EnhancedFilterSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? JobsPath { get; init; }
+        public string? ResolvedJobsPath { get; init; }
+        public string? ValidSourceName { get; init; }
+        public string? StaleSourceName { get; init; }
+        public string? FailedSourceName { get; init; }
+        public string? ValidOutputPath { get; init; }
+        public string? MissingOutputPath { get; init; }
+        public int AllCount { get; init; }
+        public int JobsRead { get; init; }
+        public int CandidateCount { get; init; }
+        public int EnhancedStoreCount { get; init; }
+        public bool SelectedValid { get; init; }
+        public bool SelectedValidEnhanced { get; init; }
+        public string? SelectedOutputPath { get; init; }
+        public int EnhancedFilteredCount { get; init; }
+        public bool ValidVisible { get; init; }
+        public bool StaleVisible { get; init; }
+        public bool FailedVisible { get; init; }
+        public int AfterClearCount { get; init; }
+        public int ReloadFilteredCount { get; init; }
+        public bool ReloadValidVisible { get; init; }
+        public bool EnhancementStateUnchanged { get; init; }
+        public bool ReadOk { get; init; }
+        public string? ReadError { get; init; }
+    }
 
     private sealed record StartupSmokeResult(
         bool Ok,

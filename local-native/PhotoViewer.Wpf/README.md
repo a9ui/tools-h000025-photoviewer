@@ -430,8 +430,8 @@ Ctrl/Windows key and wheel zoom handling. The old size slider remains the source
 of truth for clamping and persisted card width.
 
 Obvious WPF shell controls without accepted behavior in this lane are disabled
-instead of remaining clickable no-ops: album mutation, enhanced-only filtering,
-display style variants, delete/recycle, and unfinished settings controls.
+instead of remaining clickable no-ops: album mutation, delete/recycle, and
+unfinished settings controls.
 
 The current `start_wpf.bat` / `dotnet run` path still works, but this slice does
 not replace it with a faster packaged launch route. Faster startup packaging or
@@ -459,6 +459,23 @@ Measured #240 evidence on the project fixture shell:
 | After change, `dotnet run` startup smoke | 5-run median, `--startup-smoke` | 1,454.8 ms |
 | After change, Release exe startup smoke | 5-run median, `--startup-smoke` | 654.6 ms |
 | After change, `start_wpf.bat` direct route | single `--startup-smoke` with piped pause input | 1,040.3 ms |
+
+## WPF M18 Enhanced Read-only Filter Slice
+
+The #244 slice enables the existing `Enhanced only` checkbox as a read-only
+filter. WPF reads `.cache/enhance/jobs.json` without starting enhancement work
+and marks only real-file tiles whose succeeded job maps an existing
+`sourcePath`/`sourceId` to an existing `outputPath`.
+
+Malformed jobs, failed jobs, missing sources, and stale or missing outputs are
+ignored. WPF does not create, retry, cancel, delete, regenerate, overwrite, or
+otherwise mutate enhancement jobs or enhancement cache state in this slice.
+
+Dedicated smoke coverage:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --enhanced-filter-smoke $env:TEMP\wpf-enhanced-filter.json --folder .\local-native\ui-mockup
+```
 
 ## Files
 
@@ -495,6 +512,10 @@ Measured #240 evidence on the project fixture shell:
 - `start_wpf.bat` now launches the Release executable directly after a first
   build. A richer packaged installer or self-contained distribution remains
   deferred.
+- Enhanced-only filtering is read-only: it consumes succeeded jobs from
+  `.cache/enhance/jobs.json` when source and output files are both usable.
+  Enhancement generation, queue management, retry/cancel, output ownership, and
+  cache mutation remain deferred.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
