@@ -24,6 +24,14 @@ export interface GridMetricsSnapshot {
   totalHeight: number;
 }
 
+export interface ArrowSelectionArgs {
+  key: string;
+  viewMode: 'grid' | 'list';
+  gridColumns: number;
+  currentIndex: number;
+  itemCount: number;
+}
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
@@ -107,4 +115,29 @@ export function getZoomCenteredScrollTop(
   const nextCenterY = nextRow * next.rowHeight + next.rowHeight * rowOffsetRatio;
   const maxScrollTop = Math.max(0, next.totalHeight - next.viewportHeight);
   return clamp(nextCenterY - next.viewportHeight / 2, 0, maxScrollTop);
+}
+
+export function getArrowSelectionIndex({
+  key,
+  viewMode,
+  gridColumns,
+  currentIndex,
+  itemCount,
+}: ArrowSelectionArgs): number | null {
+  if (itemCount <= 0) return null;
+
+  if (currentIndex < 0 || currentIndex >= itemCount) {
+    return key === 'ArrowLeft' || key === 'ArrowUp' ? itemCount - 1 : 0;
+  }
+
+  const rowDelta = viewMode === 'grid' ? Math.max(1, gridColumns) : 1;
+  const delta =
+    key === 'ArrowLeft' ? -1 :
+    key === 'ArrowRight' ? 1 :
+    key === 'ArrowUp' ? -rowDelta :
+    key === 'ArrowDown' ? rowDelta :
+    0;
+
+  if (delta === 0) return null;
+  return clamp(currentIndex + delta, 0, itemCount - 1);
 }

@@ -3,7 +3,7 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
-import { getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
+import { getArrowSelectionIndex, getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
 import {
@@ -86,6 +86,7 @@ export default function ImageGrid() {
     closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
+    requestRevealImage, showSettings,
     dirPath,
   } = useImageStore();
 
@@ -282,6 +283,21 @@ export default function ImageGrid() {
     [clientFilteredVisible]
   );
 
+  const keyboardSelectionItems = useMemo(() => {
+    if (isClientFiltered) {
+      return clientFilteredVisible.map((item) => ({
+        image: item.image,
+        sourceIndex: item.sourceIndex,
+      }));
+    }
+    const items: Array<{ image: ImageFile; sourceIndex: number }> = [];
+    for (let i = 0; i < searchResults.length; i++) {
+      const image = searchResults[i];
+      if (image) items.push({ image, sourceIndex: i });
+    }
+    return items;
+  }, [clientFilteredVisible, isClientFiltered, searchResults]);
+
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const modalImageIdKey = modalImageIds.join('\u0001');
 
@@ -367,6 +383,69 @@ export default function ImageGrid() {
     return Math.round(gridCellWidth / aspectRatioValue);
   }, [aspectRatioValue, gridCellWidth, view.aspectMode, view.viewMode]);
   const compactGridActions = view.viewMode === 'grid' && gridCellWidth > 0 && gridCellWidth <= COMPACT_ACTIONS_MAX_WIDTH;
+
+  useEffect(() => {
+    if (selectedIndex !== null || showSettings) return;
+    const arrowKeys = new Set(['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown']);
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!arrowKeys.has(event.key)) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      if (document.querySelector('.modal-overlay, .settings-overlay, .confirm-overlay')) return;
+
+      const target = event.target as HTMLElement | null;
+      const tagName = target?.tagName;
+      if (
+        tagName === 'INPUT' ||
+        tagName === 'TEXTAREA' ||
+        tagName === 'SELECT' ||
+        target?.isContentEditable
+      ) {
+        return;
+      }
+
+      const currentId = selectedIds[selectedIds.length - 1] ?? null;
+      const currentIndex = currentId
+        ? keyboardSelectionItems.findIndex((item) => item.image.id === currentId)
+        : -1;
+      const targetIndex = getArrowSelectionIndex({
+        key: event.key,
+        viewMode: view.viewMode,
+        gridColumns,
+        currentIndex,
+        itemCount: keyboardSelectionItems.length,
+      });
+      if (targetIndex === null) return;
+
+      const targetItem = keyboardSelectionItems[targetIndex];
+      if (!targetItem) return;
+
+      event.preventDefault();
+      markImageSeen(targetItem.image.id);
+      selectImage(
+        targetItem.image,
+        isClientFiltered ? filteredOrderedIds : loadedOrderedIds
+      );
+      requestRevealImage(targetItem.image.id);
+    };
+
+    window.addEventListener('keydown', onKeyDown, { passive: false });
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [
+    filteredOrderedIds,
+    gridColumns,
+    isClientFiltered,
+    keyboardSelectionItems,
+    loadedOrderedIds,
+    markImageSeen,
+    requestRevealImage,
+    selectImage,
+    selectedIds,
+    selectedIndex,
+    showSettings,
+    view.viewMode,
+  ]);
+
   const showDateSeparators = view.sortBy === 'created-newest' || view.sortBy === 'created-oldest';
   const imageObjectStyle: React.CSSProperties = view.displayStyle === 'poster'
     ? {}
