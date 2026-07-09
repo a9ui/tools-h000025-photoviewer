@@ -55,11 +55,12 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly ObservableCollection<string> _landingFolderSet = new();
-    private readonly ObservableCollection<string> _activeFolderSetView = new();
+    private readonly ObservableCollection<FolderBucketView> _folderBucketViews = new();
     private readonly ObservableCollection<RecentFolderSetView> _recentFolderSetViews = new();
     private readonly List<Tile> _allTiles = new();
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private int _gridStartIndex;
     private int _lastInitialUnseenCount;
@@ -94,7 +95,7 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         LandingFolderSetList.ItemsSource = _landingFolderSet;
-        SidebarFolderSetList.ItemsSource = _activeFolderSetView;
+        SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
         RestoreState();
         BuildSampleTiles();
@@ -220,6 +221,8 @@ public partial class MainWindow : Window
             foreach (var file in files)
                 _allTiles.Add(MakeFileTile(file, width));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
+            PruneHiddenFolderBucketsToCurrentSet();
+            RefreshFolderBucketViews();
 
             FolderPathText.Text = resolvedFolderSummary;
             ApplyFilters(selectFirst: false);
@@ -329,19 +332,57 @@ public partial class MainWindow : Window
         if (OpenFolderSetButton is not null)
             OpenFolderSetButton.IsEnabled = _landingFolderSet.Count > 0;
 
-        RefreshActiveFolderSetView();
+        RefreshFolderBucketViews();
         RefreshRecentFolderSetViews();
     }
 
-    private void RefreshActiveFolderSetView()
+    private void RefreshFolderBucketViews()
     {
         if (SidebarFolderSetList is null)
             return;
 
-        _activeFolderSetView.Clear();
-        var source = _currentFolderSet.Count > 0 ? _currentFolderSet : _landingFolderSet.ToList();
-        foreach (string folder in source)
-            _activeFolderSetView.Add(folder);
+        var buckets = _allTiles
+            .Where(static tile => tile.IsRealFile && !string.IsNullOrWhiteSpace(tile.FolderBucketKey))
+            .GroupBy(static tile => tile.FolderBucketKey, StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                string key = group.Key;
+                string label = group.Select(static tile => tile.FolderBucketLabel).FirstOrDefault(static label => !string.IsNullOrWhiteSpace(label)) ?? key;
+                int count = group.Count();
+                bool hidden = _hiddenFolderBuckets.Contains(key);
+                return new FolderBucketView
+                {
+                    Key = key,
+                    Label = label,
+                    Path = key,
+                    Count = count,
+                    Hidden = hidden,
+                };
+            })
+            .OrderByDescending(static bucket => bucket.Count)
+            .ThenBy(static bucket => bucket.Label, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(static bucket => bucket.Key, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        _folderBucketViews.Clear();
+        foreach (var bucket in buckets)
+            _folderBucketViews.Add(bucket);
+
+        if (FolderBucketStatusText is not null)
+        {
+            if (buckets.Count == 0)
+            {
+                var source = _currentFolderSet.Count > 0 ? _currentFolderSet : _landingFolderSet.ToList();
+                FolderBucketStatusText.Text = source.Count == 0 ? "No folder buckets loaded" : "Open the folder set to build buckets.";
+            }
+            else
+            {
+                int hidden = buckets.Count(static bucket => bucket.Hidden);
+                FolderBucketStatusText.Text = hidden == 0
+                    ? $"{buckets.Count:N0} folder bucket(s)"
+                    : $"{buckets.Count - hidden:N0} shown / {buckets.Count:N0} folder bucket(s)";
+            }
+        }
     }
 
     private void RefreshRecentFolderSetViews()
@@ -559,6 +600,7 @@ public partial class MainWindow : Window
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
         TryReadBitmapSize(file.FullName, out int imageWidth, out int imageHeight);
+        var folderBucket = ResolveFolderBucket(file.FullName);
         var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
@@ -572,6 +614,8 @@ public partial class MainWindow : Window
             Prompt = file.FullName,
             Path = file.FullName,
             IsRealFile = true,
+            FolderBucketKey = folderBucket.Key,
+            FolderBucketLabel = folderBucket.Label,
             ImagePixelWidth = imageWidth,
             ImagePixelHeight = imageHeight,
             Enhanced = enhanced,
@@ -603,6 +647,55 @@ public partial class MainWindow : Window
             unit++;
         }
         return $"{value:0.#} {units[unit]}";
+    }
+
+    private FolderBucketIdentity ResolveFolderBucket(string filePath)
+    {
+        string fullPath;
+        try
+        {
+            fullPath = Path.GetFullPath(filePath);
+        }
+        catch
+        {
+            fullPath = filePath;
+        }
+
+        string? bestRoot = null;
+        foreach (string root in _currentFolderSet)
+        {
+            if (!IsPathWithinRoot(fullPath, root))
+                continue;
+
+            if (bestRoot is null || root.Length > bestRoot.Length)
+                bestRoot = root;
+        }
+
+        bestRoot ??= Path.GetDirectoryName(fullPath) ?? fullPath;
+        return new FolderBucketIdentity(bestRoot, FormatFolderBucketLabel(bestRoot));
+    }
+
+    private static bool IsPathWithinRoot(string fullPath, string root)
+    {
+        try
+        {
+            string normalizedPath = Path.GetFullPath(fullPath);
+            string normalizedRoot = Path.GetFullPath(root).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+            return string.Equals(normalizedPath, normalizedRoot, StringComparison.OrdinalIgnoreCase)
+                || normalizedPath.StartsWith(normalizedRoot + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                || normalizedPath.StartsWith(normalizedRoot + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static string FormatFolderBucketLabel(string folder)
+    {
+        string trimmed = folder.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        string label = Path.GetFileName(trimmed);
+        return string.IsNullOrWhiteSpace(label) ? folder : label;
     }
 
     private static string ResolvedFavoritesPath
@@ -1743,6 +1836,80 @@ public partial class MainWindow : Window
         ApplyFiltersForCurrentFilterChange();
     }
 
+    private void ToggleFolderBucket_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: FolderBucketView bucket })
+            SetFolderBucketHidden(bucket.Key, !bucket.Hidden);
+    }
+
+    private void ShowAllFolderBuckets_Click(object sender, RoutedEventArgs e)
+    {
+        if (_hiddenFolderBuckets.Count == 0)
+            return;
+
+        _hiddenFolderBuckets.Clear();
+        ApplyFolderBucketFilterChange();
+    }
+
+    private void HideAllFolderBuckets_Click(object sender, RoutedEventArgs e)
+    {
+        var keys = _folderBucketViews.Select(static bucket => bucket.Key).Where(static key => !string.IsNullOrWhiteSpace(key)).ToList();
+        if (keys.Count == 0)
+            return;
+
+        bool changed = false;
+        foreach (string key in keys)
+            changed |= _hiddenFolderBuckets.Add(key);
+
+        if (changed)
+            ApplyFolderBucketFilterChange();
+    }
+
+    private void InvertFolderBuckets_Click(object sender, RoutedEventArgs e)
+    {
+        var keys = _folderBucketViews.Select(static bucket => bucket.Key).Where(static key => !string.IsNullOrWhiteSpace(key)).ToList();
+        if (keys.Count == 0)
+            return;
+
+        var next = keys.Where(key => !_hiddenFolderBuckets.Contains(key)).ToList();
+        _hiddenFolderBuckets.Clear();
+        foreach (string key in next)
+            _hiddenFolderBuckets.Add(key);
+        ApplyFolderBucketFilterChange();
+    }
+
+    private bool SetFolderBucketHidden(string key, bool hidden)
+    {
+        if (string.IsNullOrWhiteSpace(key))
+            return false;
+
+        bool changed = hidden ? _hiddenFolderBuckets.Add(key) : _hiddenFolderBuckets.Remove(key);
+        if (changed)
+            ApplyFolderBucketFilterChange();
+
+        return changed;
+    }
+
+    private void ApplyFolderBucketFilterChange()
+    {
+        PruneHiddenFolderBucketsToCurrentSet();
+        RefreshFolderBucketViews();
+        ApplyFilters();
+        SaveState();
+    }
+
+    private void PruneHiddenFolderBucketsToCurrentSet()
+    {
+        if (_currentFolderSet.Count == 0)
+        {
+            _hiddenFolderBuckets.Clear();
+            return;
+        }
+
+        var active = new HashSet<string>(_currentFolderSet, StringComparer.OrdinalIgnoreCase);
+        _hiddenFolderBuckets.RemoveWhere(key => !active.Contains(key));
+    }
+
     private void ApplyFiltersForCurrentFilterChange()
     {
         if (UnseenOnlyFilter?.IsChecked == true)
@@ -1880,6 +2047,7 @@ public partial class MainWindow : Window
             .Where(tile => !favoritesOnly || tile.Fav > 0)
             .Where(tile => !enhancedOnly || tile.Enhanced)
             .Where(tile => !unseenOnly || tile.Unseen)
+            .Where(MatchesFolderBucketFilter)
             .Where(MatchesDateFilter))
             .ToList();
 
@@ -2026,6 +2194,11 @@ public partial class MainWindow : Window
 
     private static bool ContainsText(string? value, string token)
         => !string.IsNullOrEmpty(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesFolderBucketFilter(Tile tile)
+        => !tile.IsRealFile
+            || string.IsNullOrWhiteSpace(tile.FolderBucketKey)
+            || !_hiddenFolderBuckets.Contains(tile.FolderBucketKey);
 
     private bool MatchesDateFilter(Tile tile)
     {
@@ -2807,6 +2980,9 @@ public partial class MainWindow : Window
         _sortBy = NormalizeSortBy(state.SortBy);
         SyncSortButtons();
         RestoreDateFilter(state);
+        _hiddenFolderBuckets.Clear();
+        foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
+            _hiddenFolderBuckets.Add(folder);
 
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
@@ -2848,6 +3024,7 @@ public partial class MainWindow : Window
                 DatePreset = _datePreset,
                 DateFrom = FormatStateDate(_dateFromLocal),
                 DateTo = FormatStateDate(_dateToLocal),
+                HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -3145,6 +3322,10 @@ public partial class MainWindow : Window
     public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
     public int RecentFolderSetCountForSmoke => _recentFolderSetViews.Count;
     public string LastFolderSetDisplayForSmoke => LastFolderSetText.Text;
+    public int FolderBucketCountForSmoke => _folderBucketViews.Count;
+    public int HiddenFolderBucketCountForSmoke => _folderBucketViews.Count(static bucket => bucket.Hidden);
+    public List<string> FolderBucketKeysForSmoke => _folderBucketViews.Select(static bucket => bucket.Key).ToList();
+    public List<string> HiddenFolderBucketKeysForSmoke => _folderBucketViews.Where(static bucket => bucket.Hidden).Select(static bucket => bucket.Key).ToList();
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
@@ -3203,6 +3384,29 @@ public partial class MainWindow : Window
     public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
     public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
+    public bool SetFolderBucketHiddenForSmoke(string key, bool hidden) => SetFolderBucketHidden(key, hidden);
+    public void ShowAllFolderBucketsForSmoke()
+    {
+        _hiddenFolderBuckets.Clear();
+        ApplyFolderBucketFilterChange();
+    }
+
+    public void HideAllFolderBucketsForSmoke()
+    {
+        foreach (var bucket in _folderBucketViews)
+            _hiddenFolderBuckets.Add(bucket.Key);
+        ApplyFolderBucketFilterChange();
+    }
+
+    public void InvertFolderBucketsForSmoke()
+    {
+        var keys = _folderBucketViews.Select(static bucket => bucket.Key).ToList();
+        var next = keys.Where(key => !_hiddenFolderBuckets.Contains(key)).ToList();
+        _hiddenFolderBuckets.Clear();
+        foreach (string key in next)
+            _hiddenFolderBuckets.Add(key);
+        ApplyFolderBucketFilterChange();
+    }
 
     public List<string> FilteredFileNamesForSmoke(int take = 20)
         => _tiles.Take(take).Select(static tile => tile.FileName).ToList();
@@ -3316,6 +3520,7 @@ public sealed class ViewerState
     public string? DatePreset { get; set; }
     public string? DateFrom { get; set; }
     public string? DateTo { get; set; }
+    public List<string>? HiddenFolderBuckets { get; set; }
 }
 
 public readonly record struct DisplayStyleMetrics(
@@ -3335,6 +3540,20 @@ public sealed class RecentFolderSetView
     public string Display { get; init; } = "";
     public string Detail { get; init; } = "";
 }
+
+public sealed class FolderBucketView
+{
+    public string Key { get; init; } = "";
+    public string Label { get; init; } = "";
+    public string Path { get; init; } = "";
+    public int Count { get; init; }
+    public bool Hidden { get; init; }
+    public string CountText => Count.ToString("N0");
+    public string VisibilityText => Hidden ? "Hidden" : "Shown";
+    public double Opacity => Hidden ? 0.48 : 1.0;
+}
+
+public readonly record struct FolderBucketIdentity(string Key, string Label);
 
 public sealed class SharedRecentFoldersState
 {
@@ -3441,6 +3660,8 @@ public sealed class Tile : INotifyPropertyChanged
     public string Prompt { get; set; } = "";
     public string Path { get; set; } = "";
     public bool IsRealFile { get; set; }
+    public string FolderBucketKey { get; set; } = "";
+    public string FolderBucketLabel { get; set; } = "";
     public bool Enhanced { get; set; }
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
