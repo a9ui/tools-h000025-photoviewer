@@ -57,12 +57,24 @@ internal static class NativeIncrementalScanner
                 seenPaths.Add(absolutePath);
                 count++;
 
-                var dimensions = NativeImageHeaderReader.ReadDimensions(absolutePath);
                 var hasExisting = existingByPath.TryGetValue(absolutePath, out var existing);
                 var existingImage = hasExisting ? existing : null;
-                var fileUnchanged = existingImage is not null &&
+                var sizeAndMtimeUnchanged = existingImage is not null &&
                     existingImage.SizeBytes == info.Length &&
-                    existingImage.ModifiedAtUtc == info.LastWriteTimeUtc &&
+                    existingImage.ModifiedAtUtc == info.LastWriteTimeUtc;
+                if (sizeAndMtimeUnchanged &&
+                    existingImage is not null &&
+                    existingImage.Width.HasValue &&
+                    existingImage.Height.HasValue &&
+                    existingImage.MetadataChecked)
+                {
+                    unchanged++;
+                    continue;
+                }
+
+                var dimensions = NativeImageHeaderReader.ReadDimensions(absolutePath);
+                var fileUnchanged = sizeAndMtimeUnchanged &&
+                    existingImage is not null &&
                     (existingImage.Width.HasValue || !dimensions.Found) &&
                     (existingImage.Height.HasValue || !dimensions.Found);
                 if (fileUnchanged && existingImage is not null && existingImage.MetadataChecked)
