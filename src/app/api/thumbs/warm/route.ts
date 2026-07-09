@@ -3,6 +3,7 @@ import path from 'path';
 import { getIndex } from '@/lib/indexer';
 import { parseDirSet } from '@/lib/pathSet';
 import { enqueueThumbnails, getThumbnailWarmupState, startThumbnailWarmup } from '@/lib/thumbnailCache';
+import { collectLimitedThumbnailWarmupPaths } from '@/lib/thumbnailWarmupPaths';
 
 export const dynamic = 'force-dynamic';
 
@@ -70,11 +71,11 @@ export async function POST(request: NextRequest) {
     });
   }
 
-  const images = getIndex();
-  const paths = images
-    .filter((image) => isInsideAnyDir(image.id, dirs))
-    .slice(0, limit)
-    .map((image) => image.id);
+  const paths = collectLimitedThumbnailWarmupPaths(
+    getIndex(),
+    (imagePath) => isInsideAnyDir(imagePath, dirs),
+    limit
+  );
 
   return NextResponse.json({
     ok: true,
