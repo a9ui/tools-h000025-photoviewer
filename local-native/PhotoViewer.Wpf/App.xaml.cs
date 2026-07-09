@@ -54,6 +54,13 @@ public partial class App : Application
             return;
         }
 
+        int favoriteImportSmokeIdx = Array.IndexOf(e.Args, "--favorite-import-smoke");
+        if (favoriteImportSmokeIdx >= 0 && favoriteImportSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFavoriteImportSmoke(e.Args[favoriteImportSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -398,6 +405,177 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureFavoriteImportSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? favoritesPath = ArgValue(args, "--favorites-path");
+        string? browserStatePath = ArgValue(args, "--browser-state-path");
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(favoritesPath) || string.IsNullOrWhiteSpace(browserStatePath))
+        {
+            WriteFavoriteImportSmokeResult(
+                resultPath,
+                new FavoriteImportSmokeResult(
+                    false,
+                    "missing required --folder, --favorites-path, or --browser-state-path",
+                    folder,
+                    favoritesPath,
+                    browserStatePath,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0,
+                    false,
+                    0,
+                    0,
+                    0,
+                    0,
+                    0));
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string importedPath = Path.Combine(fullFolder, "wpf-preview.png");
+        string preservedPath = Path.Combine(fullFolder, "wpf-settings.png");
+        string clampedName = "wpf-list.png";
+        string clampedPath = Path.Combine(fullFolder, clampedName);
+        string zeroPath = Path.Combine(fullFolder, "wpf-modal-preview.png");
+        string unmatchedPath = Path.Combine(fullFolder, "missing-pvu-fav-level.png");
+        bool fixtureFilesExist = File.Exists(importedPath) &&
+            File.Exists(preservedPath) &&
+            File.Exists(clampedPath) &&
+            File.Exists(zeroPath);
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        if (fixtureFilesExist)
+        {
+            WriteFavoriteSeed(favoritesPath, preservedPath, 2);
+            WritePvuFavoriteImportFixture(browserStatePath, importedPath, preservedPath, clampedName, zeroPath, unmatchedPath);
+        }
+
+        var first = HiddenWindow();
+        first.Show();
+        first.SuppressStatePersistence();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            FavoriteImportSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                first.SetSearchQuery("", persist: false);
+
+                FavoriteImportSummary? importSummary = fixtureFilesExist
+                    ? first.ImportPvuFavoriteLevelsForSmoke(browserStatePath)
+                    : FavoriteImportSummary.Failed(browserStatePath, "fixture files missing");
+
+                int importedLevel = SelectFavoriteLevel(first, "wpf-preview.png");
+                int preservedLevel = SelectFavoriteLevel(first, "wpf-settings.png");
+                int clampedLevel = SelectFavoriteLevel(first, clampedName);
+                int zeroLevel = SelectFavoriteLevel(first, "wpf-modal-preview.png");
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                int filteredAfterImport = first.FilteredCountForSmoke;
+                int storeCountAfterImport = first.FavoriteStoreCountForSmoke;
+                first.Close();
+
+                int persistedImportedLevel = ReadFavoriteLevel(favoritesPath, importedPath);
+                int persistedPreservedLevel = ReadFavoriteLevel(favoritesPath, preservedPath);
+                int persistedClampedLevel = ReadFavoriteLevel(favoritesPath, clampedPath);
+                int persistedZeroLevel = ReadFavoriteLevel(favoritesPath, zeroPath);
+
+                var second = HiddenWindow();
+                second.Show();
+                second.SuppressStatePersistence();
+                await second.LoadFolderAsync(folder);
+                second.SetSearchQuery("", persist: false);
+                bool reloadSelected = second.SelectFileNameForSmoke("wpf-preview.png");
+                int reloadedImportedLevel = second.SelectedFavoriteLevelForSmoke;
+                int reloadedPreservedLevel = SelectFavoriteLevel(second, "wpf-settings.png");
+                int reloadedClampedLevel = SelectFavoriteLevel(second, clampedName);
+                int reloadedZeroLevel = SelectFavoriteLevel(second, "wpf-modal-preview.png");
+                second.SetFavoriteOnlyFilterForSmoke(true);
+                int reloadedFilteredCount = second.FilteredCountForSmoke;
+                second.Close();
+
+                bool ok = fixtureFilesExist
+                    && importSummary.Ok
+                    && importSummary.SourceShape == "browserLocalStorage.pvu_fav_levels"
+                    && importSummary.TotalEntries == 7
+                    && importSummary.ImportedCount == 2
+                    && importSummary.PreservedCount == 1
+                    && importSummary.IgnoredZeroCount == 1
+                    && importSummary.IgnoredInvalidCount == 1
+                    && importSummary.MissingCount == 1
+                    && importSummary.UnmatchedCount == 1
+                    && importedLevel == 4
+                    && preservedLevel == 2
+                    && clampedLevel == 5
+                    && zeroLevel == 0
+                    && filteredAfterImport == 3
+                    && storeCountAfterImport == 3
+                    && persistedImportedLevel == 4
+                    && persistedPreservedLevel == 2
+                    && persistedClampedLevel == 5
+                    && persistedZeroLevel == 0
+                    && reloadSelected
+                    && reloadedImportedLevel == 4
+                    && reloadedPreservedLevel == 2
+                    && reloadedClampedLevel == 5
+                    && reloadedZeroLevel == 0
+                    && reloadedFilteredCount == 3;
+
+                result = new FavoriteImportSmokeResult(
+                    ok,
+                    ok ? "pvu_fav_levels import, preserve-existing, ignore cases, persistence, reload, and filter passed" : "pvu_fav_levels import smoke did not meet expected policy",
+                    folder,
+                    favoritesPath,
+                    browserStatePath,
+                    importedPath,
+                    preservedPath,
+                    clampedPath,
+                    zeroPath,
+                    importSummary,
+                    importedLevel,
+                    preservedLevel,
+                    clampedLevel,
+                    zeroLevel,
+                    filteredAfterImport,
+                    storeCountAfterImport,
+                    persistedImportedLevel,
+                    persistedPreservedLevel,
+                    persistedClampedLevel,
+                    persistedZeroLevel,
+                    reloadSelected,
+                    reloadedImportedLevel,
+                    reloadedPreservedLevel,
+                    reloadedClampedLevel,
+                    reloadedZeroLevel,
+                    reloadedFilteredCount);
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new FavoriteImportSmokeResult(false, ex.Message, folder, favoritesPath, browserStatePath, importedPath, preservedPath, clampedPath, zeroPath, null, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, false, 0, 0, 0, 0, 0);
+            }
+
+            WriteFavoriteImportSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureScrollRealizationSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -736,6 +914,50 @@ public partial class App : Application
         return int.TryParse(value, out int parsed) ? parsed : fallback;
     }
 
+    private static int SelectFavoriteLevel(MainWindow window, string fileName)
+        => window.SelectFileNameForSmoke(fileName) ? window.SelectedFavoriteLevelForSmoke : -1;
+
+    private static void WriteFavoriteSeed(string favoritesPath, string preservedPath, int level)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(favoritesPath))!);
+        var favorites = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+        {
+            [NormalizeFavoritePath(preservedPath)] = Math.Clamp(level, 1, 5),
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(favorites, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(favoritesPath, json);
+    }
+
+    private static void WritePvuFavoriteImportFixture(
+        string browserStatePath,
+        string importedPath,
+        string preservedPath,
+        string clampedName,
+        string zeroPath,
+        string unmatchedPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(browserStatePath))!);
+        var pvuFavLevels = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [NormalizeFavoritePath(importedPath)] = 4,
+            [NormalizeFavoritePath(preservedPath)] = 5,
+            [clampedName] = 8,
+            [NormalizeFavoritePath(zeroPath)] = 0,
+            [NormalizeFavoritePath(unmatchedPath)] = 3,
+            ["invalid-level"] = "bad",
+            [""] = 2,
+        };
+        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["browserLocalStorage"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["pvu_fav_levels"] = pvuFavLevels,
+            },
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(browserStatePath, json);
+    }
+
     private static ViewerState? ReadPersistedState(string path)
     {
         try
@@ -830,6 +1052,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteFavoriteImportSmokeResult(string path, FavoriteImportSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteScrollRealizationSmokeResult(string path, ScrollRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -916,6 +1145,34 @@ public partial class App : Application
         int PersistedLevel,
         bool ReloadSelected,
         int ReloadedLevel,
+        int ReloadedFilteredCount);
+
+    private sealed record FavoriteImportSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? FavoritesPath,
+        string? BrowserStatePath,
+        string? ImportedPath,
+        string? PreservedPath,
+        string? ClampedPath,
+        string? ZeroPath,
+        FavoriteImportSummary? ImportSummary,
+        int ImportedLevel,
+        int PreservedLevel,
+        int ClampedLevel,
+        int ZeroLevel,
+        int FilteredAfterImport,
+        int StoreCountAfterImport,
+        int PersistedImportedLevel,
+        int PersistedPreservedLevel,
+        int PersistedClampedLevel,
+        int PersistedZeroLevel,
+        bool ReloadSelected,
+        int ReloadedImportedLevel,
+        int ReloadedPreservedLevel,
+        int ReloadedClampedLevel,
+        int ReloadedZeroLevel,
         int ReloadedFilteredCount);
 
     private sealed record GridRealizationSmokeResult(
