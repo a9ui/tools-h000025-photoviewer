@@ -55,6 +55,15 @@ public partial class App : Application
 
             win.ShowScreen(screen);
             win.UpdateLayout();
+            int perfIdx = Array.IndexOf(args, "--perf-log");
+            if (perfIdx >= 0 && perfIdx + 1 < args.Length && win.LastLoadMetrics is not null)
+            {
+                string perfPath = args[perfIdx + 1];
+                Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(perfPath))!);
+                var json = System.Text.Json.JsonSerializer.Serialize(win.LastLoadMetrics, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(perfPath, json);
+            }
+
             var root = (FrameworkElement)win.Content;
             int w = (int)Math.Ceiling(root.ActualWidth);
             int h = (int)Math.Ceiling(root.ActualHeight);
