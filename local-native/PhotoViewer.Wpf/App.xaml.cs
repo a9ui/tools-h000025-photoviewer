@@ -63,6 +63,13 @@ public partial class App : Application
             return;
         }
 
+        int favoriteFilterSmokeIdx = Array.IndexOf(e.Args, "--favorite-filter-smoke");
+        if (favoriteFilterSmokeIdx >= 0 && favoriteFilterSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFavoriteFilterSmoke(e.Args[favoriteFilterSmokeIdx + 1]);
+            return;
+        }
+
         int favoriteImportSmokeIdx = Array.IndexOf(e.Args, "--favorite-import-smoke");
         if (favoriteImportSmokeIdx >= 0 && favoriteImportSmokeIdx + 1 < e.Args.Length)
         {
@@ -535,6 +542,194 @@ public partial class App : Application
             }
 
             WriteFavoriteLevelSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureFavoriteFilterSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-favorite-filter-smoke-" + Guid.NewGuid().ToString("N"));
+        FavoriteFilterSmokeFixture fixture = PrepareFavoriteFilterSmokeFolder(smokeRoot);
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            FavoriteFilterSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(fixture.Folder);
+                first.SetSortByForSmoke("name");
+                int allCount = first.FilteredCountForSmoke;
+                List<string> allOrder = first.FilteredFileNamesForSmoke(10);
+
+                bool assignedLevel1 = first.SelectFileNameForSmoke(fixture.Level1Name)
+                    && first.SetSelectedFavoriteLevelForSmoke(1);
+                bool assignedLevel3 = first.SelectFileNameForSmoke(fixture.Level3Name)
+                    && first.SetSelectedFavoriteLevelForSmoke(3);
+                bool assignedLevel5 = first.SelectFileNameForSmoke(fixture.Level5Name)
+                    && first.SetSelectedFavoriteLevelForSmoke(5);
+                int storeCountAfterAssign = first.FavoriteStoreCountForSmoke;
+
+                first.ClearFavoriteFiltersForSmoke();
+                bool selectedLevel1 = first.SelectFileNameForSmoke(fixture.Level1Name);
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                first.SetFavoriteFilterLevelForSmoke(1);
+                int favoritesLv1Count = first.FilteredCountForSmoke;
+                List<string> favoritesLv1Order = first.FilteredFileNamesForSmoke(10);
+
+                first.SetFavoriteFilterLevelForSmoke(3);
+                int favoritesLv3Count = first.FilteredCountForSmoke;
+                List<string> favoritesLv3Order = first.FilteredFileNamesForSmoke(10);
+                string? selectedAfterLv3 = first.SelectedFileNameForSmoke;
+
+                first.SetFavoriteFilterLevelForSmoke(5);
+                int favoritesLv5Count = first.FilteredCountForSmoke;
+                List<string> favoritesLv5Order = first.FilteredFileNamesForSmoke(10);
+
+                first.SetUnfavoriteOnlyFilterForSmoke(true);
+                int unratedCount = first.FilteredCountForSmoke;
+                List<string> unratedOrder = first.FilteredFileNamesForSmoke(10);
+                bool unratedIsExclusive = !first.ShowFavoritesOnlyForSmoke && first.ShowUnfavoriteOnlyForSmoke;
+
+                first.ClearFavoriteFiltersForSmoke();
+                int clearCount = first.FilteredCountForSmoke;
+                List<string> clearOrder = first.FilteredFileNamesForSmoke(10);
+
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                first.SetFavoriteFilterLevelForSmoke(3);
+                bool selectedLevel3 = first.SelectFileNameForSmoke(fixture.Level3Name);
+                ViewerState? persisted = ReadPersistedState(statePath);
+                first.Close();
+
+                int persistedLevel1 = ReadFavoriteLevel(favoritesPath, Path.Combine(fixture.Folder, fixture.Level1Name));
+                int persistedLevel3 = ReadFavoriteLevel(favoritesPath, Path.Combine(fixture.Folder, fixture.Level3Name));
+                int persistedLevel5 = ReadFavoriteLevel(favoritesPath, Path.Combine(fixture.Folder, fixture.Level5Name));
+                int persistedUnrated = ReadFavoriteLevel(favoritesPath, Path.Combine(fixture.Folder, fixture.UnratedName));
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(fixture.Folder);
+                int restoredCount = second.FilteredCountForSmoke;
+                List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
+                bool restoredFavoriteOnly = second.ShowFavoritesOnlyForSmoke;
+                bool restoredUnfavoriteOnly = second.ShowUnfavoriteOnlyForSmoke;
+                int restoredFavoriteLevel = second.FavoriteFilterLevelForSmoke;
+                string? restoredSelected = second.SelectedFileNameForSmoke;
+                second.SetUnfavoriteOnlyFilterForSmoke(true);
+                int reloadUnratedCount = second.FilteredCountForSmoke;
+                List<string> reloadUnratedOrder = second.FilteredFileNamesForSmoke(10);
+                second.Close();
+
+                bool ok = allCount == 4
+                    && allOrder.SequenceEqual(fixture.AllExpected, StringComparer.OrdinalIgnoreCase)
+                    && assignedLevel1
+                    && assignedLevel3
+                    && assignedLevel5
+                    && storeCountAfterAssign == 3
+                    && selectedLevel1
+                    && favoritesLv1Count == 3
+                    && favoritesLv1Order.SequenceEqual(fixture.FavoritesLv1Expected, StringComparer.OrdinalIgnoreCase)
+                    && favoritesLv3Count == 2
+                    && favoritesLv3Order.SequenceEqual(fixture.FavoritesLv3Expected, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterLv3, fixture.Level3Name, StringComparison.OrdinalIgnoreCase)
+                    && favoritesLv5Count == 1
+                    && favoritesLv5Order.SequenceEqual(fixture.FavoritesLv5Expected, StringComparer.OrdinalIgnoreCase)
+                    && unratedIsExclusive
+                    && unratedCount == 1
+                    && unratedOrder.SequenceEqual(fixture.UnratedExpected, StringComparer.OrdinalIgnoreCase)
+                    && clearCount == 4
+                    && clearOrder.SequenceEqual(fixture.AllExpected, StringComparer.OrdinalIgnoreCase)
+                    && selectedLevel3
+                    && persisted?.ShowFavoritesOnly == true
+                    && persisted.ShowUnfavoriteOnly == false
+                    && persisted.FavoriteFilterLevel == 3
+                    && persistedLevel1 == 1
+                    && persistedLevel3 == 3
+                    && persistedLevel5 == 5
+                    && persistedUnrated == 0
+                    && restoredFavoriteOnly
+                    && !restoredUnfavoriteOnly
+                    && restoredFavoriteLevel == 3
+                    && restoredCount == 2
+                    && restoredOrder.SequenceEqual(fixture.FavoritesLv3Expected, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(restoredSelected, fixture.Level3Name, StringComparison.OrdinalIgnoreCase)
+                    && reloadUnratedCount == 1
+                    && reloadUnratedOrder.SequenceEqual(fixture.UnratedExpected, StringComparer.OrdinalIgnoreCase);
+
+                result = new FavoriteFilterSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "favorite level filters, unrated filter, exclusivity, and reload persistence passed" : "favorite filter behavior did not match expected browser parity subset",
+                    Folder = fixture.Folder,
+                    FavoritesPath = favoritesPath,
+                    StatePath = statePath,
+                    SeenPath = seenPath,
+                    AllCount = allCount,
+                    AllOrder = allOrder,
+                    StoreCountAfterAssign = storeCountAfterAssign,
+                    FavoritesLv1Count = favoritesLv1Count,
+                    FavoritesLv1Order = favoritesLv1Order,
+                    FavoritesLv3Count = favoritesLv3Count,
+                    FavoritesLv3Order = favoritesLv3Order,
+                    SelectedAfterLv3 = selectedAfterLv3,
+                    FavoritesLv5Count = favoritesLv5Count,
+                    FavoritesLv5Order = favoritesLv5Order,
+                    UnratedCount = unratedCount,
+                    UnratedOrder = unratedOrder,
+                    UnratedIsExclusive = unratedIsExclusive,
+                    ClearCount = clearCount,
+                    ClearOrder = clearOrder,
+                    PersistedFavoriteOnly = persisted?.ShowFavoritesOnly,
+                    PersistedUnfavoriteOnly = persisted?.ShowUnfavoriteOnly,
+                    PersistedFavoriteFilterLevel = persisted?.FavoriteFilterLevel,
+                    PersistedLevel1 = persistedLevel1,
+                    PersistedLevel3 = persistedLevel3,
+                    PersistedLevel5 = persistedLevel5,
+                    PersistedUnrated = persistedUnrated,
+                    RestoredFavoriteOnly = restoredFavoriteOnly,
+                    RestoredUnfavoriteOnly = restoredUnfavoriteOnly,
+                    RestoredFavoriteLevel = restoredFavoriteLevel,
+                    RestoredCount = restoredCount,
+                    RestoredOrder = restoredOrder,
+                    RestoredSelected = restoredSelected,
+                    ReloadUnratedCount = reloadUnratedCount,
+                    ReloadUnratedOrder = reloadUnratedOrder,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new FavoriteFilterSmokeResult
+                {
+                    Ok = false,
+                    Message = ex.Message,
+                    Folder = fixture.Folder,
+                    FavoritesPath = favoritesPath,
+                    StatePath = statePath,
+                    SeenPath = seenPath,
+                };
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+            }
+
+            WriteFavoriteFilterSmokeResult(resultPath, result);
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
@@ -3562,6 +3757,41 @@ public partial class App : Application
         };
     }
 
+    private static FavoriteFilterSmokeFixture PrepareFavoriteFilterSmokeFolder(string smokeRoot)
+    {
+        string target = Path.Combine(smokeRoot, "favorite-filter-folder");
+        Directory.CreateDirectory(target);
+
+        var inputs = new[]
+        {
+            new { Name = "alpha-unrated.png", ModifiedUtc = new DateTime(2026, 7, 10, 12, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(149, 165, 166) },
+            new { Name = "bravo-level1.png", ModifiedUtc = new DateTime(2026, 7, 10, 11, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(52, 152, 219) },
+            new { Name = "charlie-level3.png", ModifiedUtc = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(46, 204, 113) },
+            new { Name = "delta-level5.png", ModifiedUtc = new DateTime(2026, 7, 10, 9, 0, 0, DateTimeKind.Utc), Color = Color.FromRgb(241, 196, 15) },
+        };
+
+        foreach (var input in inputs)
+        {
+            string path = Path.Combine(target, input.Name);
+            WriteSmokePng(path, 128, 96, input.Color);
+            File.SetLastWriteTimeUtc(path, input.ModifiedUtc);
+        }
+
+        return new FavoriteFilterSmokeFixture
+        {
+            Folder = target,
+            UnratedName = "alpha-unrated.png",
+            Level1Name = "bravo-level1.png",
+            Level3Name = "charlie-level3.png",
+            Level5Name = "delta-level5.png",
+            AllExpected = ["alpha-unrated.png", "bravo-level1.png", "charlie-level3.png", "delta-level5.png"],
+            FavoritesLv1Expected = ["bravo-level1.png", "charlie-level3.png", "delta-level5.png"],
+            FavoritesLv3Expected = ["charlie-level3.png", "delta-level5.png"],
+            FavoritesLv5Expected = ["delta-level5.png"],
+            UnratedExpected = ["alpha-unrated.png"],
+        };
+    }
+
     private static List<string> ExpectedDateFilterNames(IEnumerable<DateFilterSmokeImage> inputs, DateTime? from, DateTime? to)
     {
         return inputs
@@ -3776,6 +4006,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteFavoriteFilterSmokeResult(string path, FavoriteFilterSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteFavoriteImportSmokeResult(string path, FavoriteImportSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -3961,6 +4198,46 @@ public partial class App : Application
         bool ReloadSelected,
         int ReloadedLevel,
         int ReloadedFilteredCount);
+
+    private sealed class FavoriteFilterSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? FavoritesPath { get; init; }
+        public string? StatePath { get; init; }
+        public string? SeenPath { get; init; }
+        public int AllCount { get; init; }
+        public List<string> AllOrder { get; init; } = [];
+        public int StoreCountAfterAssign { get; init; }
+        public int FavoritesLv1Count { get; init; }
+        public List<string> FavoritesLv1Order { get; init; } = [];
+        public int FavoritesLv3Count { get; init; }
+        public List<string> FavoritesLv3Order { get; init; } = [];
+        public string? SelectedAfterLv3 { get; init; }
+        public int FavoritesLv5Count { get; init; }
+        public List<string> FavoritesLv5Order { get; init; } = [];
+        public int UnratedCount { get; init; }
+        public List<string> UnratedOrder { get; init; } = [];
+        public bool UnratedIsExclusive { get; init; }
+        public int ClearCount { get; init; }
+        public List<string> ClearOrder { get; init; } = [];
+        public bool? PersistedFavoriteOnly { get; init; }
+        public bool? PersistedUnfavoriteOnly { get; init; }
+        public int? PersistedFavoriteFilterLevel { get; init; }
+        public int PersistedLevel1 { get; init; }
+        public int PersistedLevel3 { get; init; }
+        public int PersistedLevel5 { get; init; }
+        public int PersistedUnrated { get; init; }
+        public bool RestoredFavoriteOnly { get; init; }
+        public bool RestoredUnfavoriteOnly { get; init; }
+        public int RestoredFavoriteLevel { get; init; }
+        public int RestoredCount { get; init; }
+        public List<string> RestoredOrder { get; init; } = [];
+        public string? RestoredSelected { get; init; }
+        public int ReloadUnratedCount { get; init; }
+        public List<string> ReloadUnratedOrder { get; init; } = [];
+    }
 
     private sealed record FavoriteImportSmokeResult(
         bool Ok,
@@ -4299,6 +4576,20 @@ public partial class App : Application
         public List<string> SevenDayExpected { get; init; } = [];
         public List<string> ThirtyDayExpected { get; init; } = [];
         public List<string> ThisYearExpected { get; init; } = [];
+    }
+
+    private sealed class FavoriteFilterSmokeFixture
+    {
+        public string Folder { get; init; } = "";
+        public string UnratedName { get; init; } = "";
+        public string Level1Name { get; init; } = "";
+        public string Level3Name { get; init; } = "";
+        public string Level5Name { get; init; } = "";
+        public List<string> AllExpected { get; init; } = [];
+        public List<string> FavoritesLv1Expected { get; init; } = [];
+        public List<string> FavoritesLv3Expected { get; init; } = [];
+        public List<string> FavoritesLv5Expected { get; init; } = [];
+        public List<string> UnratedExpected { get; init; } = [];
     }
 
     private sealed class DateFilterSmokeResult
