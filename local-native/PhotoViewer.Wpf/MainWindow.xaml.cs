@@ -31,11 +31,13 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly List<Tile> _allTiles = new();
+    private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private int _gridStartIndex;
     private Rect _restoreBounds;
     private bool _fakeMaximized;
     private bool _initializing = true;
     private bool _suppressStateSave;
+    private bool _favoritesWriteBlocked;
     private bool _syncingSelection;
     private string? _currentFolder;
     private string? _restoredSelectedPath;
@@ -144,6 +146,7 @@ public partial class MainWindow : Window
         try
         {
             _currentFolder = resolvedFolder;
+            LoadFavorites();
             _allTiles.Clear();
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
@@ -358,7 +361,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static Tile MakeFileTile(FileInfo file, double width)
+    private Tile MakeFileTile(FileInfo file, double width)
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
@@ -367,7 +370,7 @@ public partial class MainWindow : Window
             ArtBase = MakeBaseBrush(paletteIndex),
             ArtGlow = MakeGlowBrush(paletteIndex),
             FileName = file.Name,
-            Fav = 0,
+            Fav = FavoriteLevelForPath(file.FullName),
             Unseen = false,
             Group = FormatGroup(modified),
             CardWidth = width,
@@ -399,6 +402,125 @@ public partial class MainWindow : Window
             unit++;
         }
         return $"{value:0.#} {units[unit]}";
+    }
+
+    private static string ResolvedFavoritesPath
+    {
+        get
+        {
+            var overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+            if (!string.IsNullOrWhiteSpace(overridePath))
+                return Path.GetFullPath(overridePath);
+
+            var root = FindProjectRoot(Environment.CurrentDirectory)
+                ?? FindProjectRoot(AppContext.BaseDirectory)
+                ?? Environment.CurrentDirectory;
+            return Path.Combine(root, ".cache", "favorites.json");
+        }
+    }
+
+    private static string? FindProjectRoot(string start)
+    {
+        try
+        {
+            var dir = new DirectoryInfo(Path.GetFullPath(start));
+            while (dir is not null)
+            {
+                if (File.Exists(Path.Combine(dir.FullName, "project.toml")) &&
+                    Directory.Exists(Path.Combine(dir.FullName, "local-native")))
+                    return dir.FullName;
+                dir = dir.Parent;
+            }
+        }
+        catch
+        {
+        }
+
+        return null;
+    }
+
+    private void LoadFavorites()
+    {
+        _favorites.Clear();
+        _favoritesWriteBlocked = false;
+
+        string path = ResolvedFavoritesPath;
+        if (!File.Exists(path))
+            return;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+            {
+                _favoritesWriteBlocked = true;
+                return;
+            }
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (TryReadFavoriteLevel(property.Value, out int level))
+                    _favorites[NormalizeFavoritePath(property.Name)] = level;
+            }
+        }
+        catch
+        {
+            _favorites.Clear();
+            _favoritesWriteBlocked = true;
+        }
+    }
+
+    private static bool TryReadFavoriteLevel(JsonElement value, out int level)
+    {
+        level = 0;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
+            level = numeric;
+        else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))
+            level = parsed;
+
+        level = Math.Clamp(level, 0, 5);
+        return level > 0;
+    }
+
+    private static string NormalizeFavoritePath(string path)
+    {
+        try
+        {
+            return Path.IsPathFullyQualified(path) ? Path.GetFullPath(path) : path;
+        }
+        catch
+        {
+            return path;
+        }
+    }
+
+    private int FavoriteLevelForPath(string path)
+        => _favorites.TryGetValue(NormalizeFavoritePath(path), out int level) ? Math.Clamp(level, 0, 5) : 0;
+
+    private bool SaveFavorites()
+    {
+        if (_favoritesWriteBlocked)
+            return false;
+
+        try
+        {
+            string path = ResolvedFavoritesPath;
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var ordered = _favorites
+                .Where(static item => item.Value > 0)
+                .OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    static item => item.Key,
+                    static item => Math.Clamp(item.Value, 1, 5),
+                    StringComparer.OrdinalIgnoreCase);
+            var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
+            File.WriteAllText(path, json);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static BitmapSource? LoadBitmap(string path, int decodePixelWidth)
@@ -585,6 +707,7 @@ public partial class MainWindow : Window
             : "animagineXL_v31";
         PreviewDateText.Text = t.ModifiedText;
         PreviewPromptText.Text = string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt;
+        FavoriteLevelText.Text = t.Fav.ToString();
         UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
         watch.Stop();
@@ -603,6 +726,81 @@ public partial class MainWindow : Window
     {
         if (_initializing) return;
         ApplyFilters();
+    }
+
+    private void FavoriteDecrease_Click(object sender, RoutedEventArgs e)
+    {
+        AdjustSelectedFavorite(-1);
+    }
+
+    private void FavoriteIncrease_Click(object sender, RoutedEventArgs e)
+    {
+        AdjustSelectedFavorite(1);
+    }
+
+    private void ToggleSelectedFavorite_Click(object sender, RoutedEventArgs e)
+    {
+        ToggleSelectedFavorite();
+    }
+
+    private bool ToggleSelectedFavorite()
+    {
+        if (SelectedTile() is not { IsRealFile: true } tile)
+            return false;
+
+        return SetFavoriteLevel(tile, tile.Fav > 0 ? 0 : 5);
+    }
+
+    private bool AdjustSelectedFavorite(int delta)
+    {
+        if (SelectedTile() is not { IsRealFile: true } tile)
+            return false;
+
+        int next = Math.Clamp(tile.Fav + delta, 0, 5);
+        return SetFavoriteLevel(tile, next);
+    }
+
+    private bool SetFavoriteLevel(Tile tile, int level)
+    {
+        if (!tile.IsRealFile)
+            return false;
+
+        int clamped = Math.Clamp(level, 0, 5);
+        string key = NormalizeFavoritePath(tile.Path);
+        int previousLevel = tile.Fav;
+        bool hadStoredLevel = _favorites.TryGetValue(key, out int previousStoredLevel);
+
+        if (clamped > 0)
+            _favorites[key] = clamped;
+        else
+            _favorites.Remove(key);
+
+        if (!SaveFavorites())
+        {
+            if (hadStoredLevel)
+                _favorites[key] = previousStoredLevel;
+            else
+                _favorites.Remove(key);
+            return false;
+        }
+
+        tile.Fav = clamped;
+        ApplyFilters();
+        if (_tiles.Contains(tile))
+            SelectTile(tile);
+        else if (previousLevel != clamped)
+            UpdateHeaderStats();
+
+        if (Modal.Visibility == Visibility.Visible)
+        {
+            if (SelectedTile() is null)
+                Modal.Visibility = Visibility.Collapsed;
+            else
+                OpenModal();
+        }
+
+        SaveState();
+        return true;
     }
 
     private void QuickSearch_Click(object sender, RoutedEventArgs e)
@@ -839,6 +1037,7 @@ public partial class MainWindow : Window
         PreviewModelText.Text = "-";
         PreviewDateText.Text = "-";
         PreviewPromptText.Text = "";
+        FavoriteLevelText.Text = "0";
         ModalTitle.Text = "No selection";
         UpdateHeaderStats();
     }
@@ -1208,6 +1407,20 @@ public partial class MainWindow : Window
             }
         }
 
+        if (e.Key == Key.F)
+        {
+            ToggleSelectedFavorite();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.X)
+        {
+            AdjustSelectedFavorite(-1);
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape && CloseTopmostOverlay())
             e.Handled = true;
         base.OnPreviewKeyDown(e);
@@ -1246,8 +1459,11 @@ public partial class MainWindow : Window
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
     public string SearchQueryForSmoke => SearchInput.Text;
     public string StatePathForSmoke => ResolvedStatePath;
+    public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
+    public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
+    public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
     public int GridRealizedCountForSmoke => _gridTiles.Count;
     public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
     public int GridWindowStartIndexForSmoke => _gridStartIndex;
@@ -1255,6 +1471,13 @@ public partial class MainWindow : Window
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
+    public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
+
+    public void SetFavoriteOnlyFilterForSmoke(bool enabled)
+    {
+        FavoriteOnlyFilter.IsChecked = enabled;
+        ApplyFilters();
+    }
 
     public bool RealizeNextGridBatchForSmoke()
     {
@@ -1352,7 +1575,6 @@ public sealed class Tile : INotifyPropertyChanged
     public Brush? ArtBase { get; set; }
     public Brush? ArtGlow { get; set; }
     public string FileName { get; set; } = "";
-    public int Fav { get; set; }
     public bool Unseen { get; set; }
     public string Group { get; set; } = "";
     public string Prompt { get; set; } = "";
@@ -1360,6 +1582,19 @@ public sealed class Tile : INotifyPropertyChanged
     public bool IsRealFile { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
+
+    private int _fav;
+    public int Fav
+    {
+        get => _fav;
+        set
+        {
+            int clamped = Math.Clamp(value, 0, 5);
+            if (_fav == clamped) return;
+            _fav = clamped;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Fav)));
+        }
+    }
 
     private BitmapSource? _thumbnail;
     public BitmapSource? Thumbnail

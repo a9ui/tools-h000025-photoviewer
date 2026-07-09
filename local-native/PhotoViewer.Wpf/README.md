@@ -24,6 +24,7 @@ browse and practical viewer slice:
 - `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
 - `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
+- `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -85,6 +86,13 @@ card window bounded while still moving through a large filtered folder:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --scroll-realization-smoke "$env:TEMP\photoviewer-wpf-scroll-realization-smoke.json" --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --advance-count 16
+```
+
+Favorite workflow smoke uses a caller-provided bounded favorites JSON path so
+verification does not modify real user favorites:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-smoke "$env:TEMP\photoviewer-wpf-favorite-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorites.json"
 ```
 
 ## WPF M2 First Performance Slice
@@ -172,6 +180,20 @@ The `--perf-log` output now also includes `GridMaxRealizationCount`,
 The 1,200-image perf smoke after #196 recorded initial `GridRealizedItems=96`,
 `GridDeferredItems=1104`, `GridMaxRealizationCount=384`, and window `0..96`.
 
+## WPF M8 Favorite Workflow Slice
+
+The #199 slice keeps favorite mutation non-destructive and WPF-only. Real-file
+tiles read favorite levels from the accepted native/browser disk state path,
+`.cache/favorites.json`, whose shape is `Record<absolutePath, level>`. Runtime
+toggle writes a merged copy of that same map and does not create a parallel WPF
+favorite store. The smoke path requires `--favorites-path` and uses a temporary
+JSON file for bounded verification.
+
+The dedicated favorite smoke toggles the selected real image from level `0` to
+`5`, enables the existing `Favorites only` filter, verifies exactly one visible
+favorite, reloads a second WPF window from the same favorites JSON, and verifies
+the selected image still has level `5` under the favorites-only filter.
+
 ## Files
 
 | File | Role |
@@ -190,8 +212,9 @@ The 1,200-image perf smoke after #196 recorded initial `GridRealizedItems=96`,
   bounded and expands in capped sliding-window batches. A custom true
   virtualizing wrap panel remains deferred until a separate measured slice
   proves it is needed.
-- Favorites are currently read-only counts on imported/sample tiles; album
-  mutation, delete, and browser-state import are not wired in this WPF surface yet.
+- Favorites use the accepted `.cache/favorites.json` absolute-path map for
+  selected-image toggle and favorites-only filtering; album mutation, delete,
+  and browser-state import are not wired in this WPF surface yet.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
