@@ -800,6 +800,82 @@ internal static class NativeHeadlessRunner
         return 0;
     }
 
+    public static int RunSharedRecentFoldersSmoke()
+    {
+        var hostRoot = NativeStateBridge.ResolveProjectRoot();
+        var smokeRoot = Path.Combine(hostRoot, ".cache", "native-shared-recent-smoke", $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}");
+        var sharedA = Path.Combine(smokeRoot, "shared-a");
+        var sharedB = Path.Combine(smokeRoot, "shared-b");
+        var unrelated = Path.Combine(smokeRoot, "unrelated");
+        var nativeA = Path.Combine(smokeRoot, "native-a");
+        var nativeB = Path.Combine(smokeRoot, "native-b");
+        Directory.CreateDirectory(sharedA);
+        Directory.CreateDirectory(sharedB);
+        Directory.CreateDirectory(unrelated);
+        Directory.CreateDirectory(nativeA);
+        Directory.CreateDirectory(nativeB);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(NativeStateBridge.RecentFoldersPath(smokeRoot))!);
+        var initialShared = new
+        {
+            version = 1,
+            lastFolderSet = new[] { sharedA, sharedB },
+            recentFolderSets = new[] { new[] { unrelated }, new[] { sharedA, sharedB } },
+            updatedAtUtc = DateTime.UtcNow.ToString("O"),
+        };
+        File.WriteAllText(
+            NativeStateBridge.RecentFoldersPath(smokeRoot),
+            JsonSerializer.Serialize(initialShared, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            Encoding.UTF8);
+
+        var store = new NativeImageStore(smokeRoot);
+        store.Initialize();
+        var import = store.ImportProjectState();
+        var importedSet = store.LoadRecentFolderSet();
+        var sharedImport = import.WarningCount == 0 &&
+            SameFolderSet(importedSet, [sharedA, sharedB]) &&
+            string.Equals(store.GetSetting("shared_recent_folder_set_imported", ""), "1", StringComparison.Ordinal);
+
+        store.SaveRecentFolderSet([nativeA, nativeB]);
+        var afterWriteSet = store.LoadRecentFolderSet();
+        var afterWriteShared = NativeStateBridge.LoadRecentFolders(smokeRoot);
+        var nativeWriteThrough = SameFolderSet(afterWriteSet, [nativeA, nativeB]) &&
+            SameFolderSet(afterWriteShared.LastFolderSet, [nativeA, nativeB]);
+        var additiveUnion = ContainsFolderSet(afterWriteShared.RecentFolderSets, [nativeA, nativeB]) &&
+            ContainsFolderSet(afterWriteShared.RecentFolderSets, [sharedA, sharedB]) &&
+            ContainsFolderSet(afterWriteShared.RecentFolderSets, [unrelated]);
+        var jsonShape = afterWriteShared.RecentFolderSets.Count > 0 &&
+            afterWriteShared.RecentFolderSets.All(static folderSet => folderSet.Count > 0);
+
+        var malformedRoot = Path.Combine(smokeRoot, "malformed");
+        var malformedNative = Path.Combine(malformedRoot, "native");
+        Directory.CreateDirectory(malformedNative);
+        var malformedPath = NativeStateBridge.RecentFoldersPath(malformedRoot);
+        Directory.CreateDirectory(Path.GetDirectoryName(malformedPath)!);
+        File.WriteAllText(malformedPath, "{not-json", Encoding.UTF8);
+        var malformedStore = new NativeImageStore(malformedRoot);
+        malformedStore.Initialize();
+        malformedStore.SaveRecentFolderSet([malformedNative]);
+        var malformedSafe = SameFolderSet(malformedStore.LoadRecentFolderSet(), [malformedNative]) &&
+            string.Equals(File.ReadAllText(malformedPath, Encoding.UTF8), "{not-json", StringComparison.Ordinal);
+
+        var complete = sharedImport &&
+            nativeWriteThrough &&
+            additiveUnion &&
+            malformedSafe &&
+            jsonShape;
+        if (!complete)
+        {
+            Console.Error.WriteLine(
+                $"native-shared-recent-folders-smoke error sharedImport={BoolText(sharedImport)} nativeWriteThrough={BoolText(nativeWriteThrough)} additiveUnion={BoolText(additiveUnion)} malformedSafe={BoolText(malformedSafe)} jsonShape={BoolText(jsonShape)}");
+            return 2;
+        }
+
+        Console.WriteLine(
+            $"native-shared-recent-folders-smoke complete smokeRoot=\"{smokeRoot}\" sharedImport={BoolText(sharedImport)} nativeWriteThrough={BoolText(nativeWriteThrough)} additiveUnion={BoolText(additiveUnion)} malformedSafe={BoolText(malformedSafe)} jsonShape={BoolText(jsonShape)} recentSetCount={afterWriteShared.RecentFolderSets.Count} sharedRecent=\"{NativeStateBridge.RecentFoldersPath(smokeRoot)}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
+        return 0;
+    }
+
     public static int RunSeenStateSmoke(string? folder)
     {
         var projectRoot = NativeStateBridge.ResolveProjectRoot();
@@ -936,6 +1012,19 @@ internal static class NativeHeadlessRunner
     {
         var normalized = Path.GetFullPath(path);
         return images.Any(item => string.Equals(item.AbsolutePath, normalized, StringComparison.OrdinalIgnoreCase) && item.IsSeen);
+    }
+
+    private static bool SameFolderSet(IEnumerable<string> actual, IEnumerable<string> expected)
+    {
+        var actualNormalized = NativeFolderSet.NormalizeDistinct(actual);
+        var expectedNormalized = NativeFolderSet.NormalizeDistinct(expected);
+        return actualNormalized.Count == expectedNormalized.Count &&
+            actualNormalized.Zip(expectedNormalized).All(pair => string.Equals(pair.First, pair.Second, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static bool ContainsFolderSet(IEnumerable<IReadOnlyList<string>> folderSets, IEnumerable<string> expected)
+    {
+        return folderSets.Any(folderSet => SameFolderSet(folderSet, expected));
     }
 
     private static string EnhancementStateFingerprint(string projectRoot)
