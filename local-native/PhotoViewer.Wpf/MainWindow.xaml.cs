@@ -700,6 +700,35 @@ public partial class MainWindow : Window
         }
     }
 
+    public SeenImportSummary ImportPvuSeenImagesForSmoke(string browserStatePath)
+    {
+        if (string.IsNullOrWhiteSpace(browserStatePath) || !File.Exists(browserStatePath))
+            return SeenImportSummary.Failed(browserStatePath, "missing browser state file");
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(browserStatePath));
+            if (!TryFindBrowserStateProperty(document.RootElement, "pvu_seen_images", out var seenElement, out string sourceShape))
+                return SeenImportSummary.Failed(browserStatePath, "pvu_seen_images not found");
+
+            if (seenElement.ValueKind == JsonValueKind.String)
+            {
+                string? embeddedJson = seenElement.GetString();
+                if (string.IsNullOrWhiteSpace(embeddedJson))
+                    return SeenImportSummary.Failed(browserStatePath, "pvu_seen_images string was empty", sourceShape);
+
+                using var embeddedDocument = JsonDocument.Parse(embeddedJson);
+                return ImportPvuSeenImagesElement(embeddedDocument.RootElement, browserStatePath, sourceShape);
+            }
+
+            return ImportPvuSeenImagesElement(seenElement, browserStatePath, sourceShape);
+        }
+        catch (Exception ex)
+        {
+            return SeenImportSummary.Failed(browserStatePath, ex.Message);
+        }
+    }
+
     private FavoriteImportSummary ImportPvuFavoriteLevelsObject(JsonElement levelsElement, string browserStatePath, string sourceShape)
     {
         if (levelsElement.ValueKind != JsonValueKind.Object)
@@ -905,6 +934,121 @@ public partial class MainWindow : Window
             FavoriteStoreCountForSmoke);
     }
 
+    private SeenImportSummary ImportPvuSeenImagesElement(JsonElement seenElement, string browserStatePath, string sourceShape)
+    {
+        if (seenElement.ValueKind != JsonValueKind.Object && seenElement.ValueKind != JsonValueKind.Array)
+            return SeenImportSummary.Failed(browserStatePath, "pvu_seen_images is not an object map or list", sourceShape);
+
+        int total = 0;
+        int imported = 0;
+        int preserved = 0;
+        int ignoredZero = 0;
+        int ignoredInvalid = 0;
+        int missing = 0;
+        int unmatched = 0;
+        var seenSnapshot = _seenPaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var tileSnapshot = _allTiles.ToDictionary(static tile => tile, static tile => tile.Unseen);
+
+        void ImportCandidate(string rawKey)
+        {
+            var tile = ResolvePvuSeenImportTile(rawKey);
+            if (tile is null)
+            {
+                unmatched++;
+                return;
+            }
+
+            string key = NormalizeFavoritePath(tile.Path);
+            if (_seenPaths.Contains(key) || !tile.Unseen)
+            {
+                preserved++;
+                return;
+            }
+
+            _seenPaths.Add(key);
+            tile.Unseen = false;
+            imported++;
+        }
+
+        if (seenElement.ValueKind == JsonValueKind.Object)
+        {
+            foreach (var property in seenElement.EnumerateObject())
+            {
+                total++;
+                string rawKey = property.Name.Trim();
+                if (string.IsNullOrWhiteSpace(rawKey))
+                {
+                    missing++;
+                    continue;
+                }
+
+                if (!TryReadPvuSeenImportFlag(property.Value, out bool wasZero))
+                {
+                    if (wasZero)
+                        ignoredZero++;
+                    else
+                        ignoredInvalid++;
+                    continue;
+                }
+
+                ImportCandidate(rawKey);
+            }
+        }
+        else
+        {
+            foreach (var item in seenElement.EnumerateArray())
+            {
+                total++;
+                if (item.ValueKind != JsonValueKind.String)
+                {
+                    ignoredInvalid++;
+                    continue;
+                }
+
+                string rawKey = item.GetString()?.Trim() ?? "";
+                if (string.IsNullOrWhiteSpace(rawKey))
+                {
+                    missing++;
+                    continue;
+                }
+
+                ImportCandidate(rawKey);
+            }
+        }
+
+        if (imported > 0 && !SaveSeenState())
+        {
+            _seenPaths.Clear();
+            foreach (var item in seenSnapshot)
+                _seenPaths.Add(item);
+            foreach (var (tile, unseen) in tileSnapshot)
+                tile.Unseen = unseen;
+            return SeenImportSummary.Failed(browserStatePath, "seen state save failed", sourceShape);
+        }
+
+        if (imported > 0)
+        {
+            if (UnseenOnlyFilter?.IsChecked == true)
+                ApplyFilters(selectFirst: false);
+            else
+                UpdateHeaderStats();
+        }
+
+        return new SeenImportSummary(
+            true,
+            "pvu_seen_images import policy applied",
+            browserStatePath,
+            sourceShape,
+            total,
+            imported,
+            preserved,
+            ignoredZero,
+            ignoredInvalid,
+            missing,
+            unmatched,
+            SeenStoreCountForSmoke);
+    }
+
     private static bool TryFindPvuFavoriteLevels(JsonElement root, out JsonElement levelsElement, out string sourceShape)
         => TryFindBrowserStateProperty(root, "pvu_fav_levels", out levelsElement, out sourceShape);
 
@@ -1001,6 +1145,53 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private static bool TryReadPvuSeenImportFlag(JsonElement value, out bool wasZero)
+    {
+        wasZero = false;
+
+        if (value.ValueKind == JsonValueKind.True)
+            return true;
+
+        if (value.ValueKind == JsonValueKind.False)
+        {
+            wasZero = true;
+            return false;
+        }
+
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
+        {
+            if (numeric != 0)
+                return true;
+
+            wasZero = true;
+            return false;
+        }
+
+        if (value.ValueKind == JsonValueKind.String)
+        {
+            string text = value.GetString()?.Trim() ?? "";
+            if (bool.TryParse(text, out bool parsedBool))
+            {
+                if (parsedBool)
+                    return true;
+
+                wasZero = true;
+                return false;
+            }
+
+            if (int.TryParse(text, out int parsedInt))
+            {
+                if (parsedInt != 0)
+                    return true;
+
+                wasZero = true;
+                return false;
+            }
+        }
+
+        return false;
+    }
+
     private Tile? ResolvePvuFavoriteImportTile(string rawKey)
     {
         string normalizedKey = NormalizeFavoritePath(rawKey);
@@ -1034,6 +1225,9 @@ public partial class MainWindow : Window
             tile.IsRealFile &&
             string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
     }
+
+    private Tile? ResolvePvuSeenImportTile(string rawKey)
+        => ResolvePvuFavoriteImportTile(rawKey);
 
     private static BitmapSource? LoadBitmap(string path, int decodePixelWidth)
     {
@@ -2066,6 +2260,9 @@ public partial class MainWindow : Window
 
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
+
+    public bool? IsFileUnseenForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Unseen;
 }
 
 // Lightweight persisted shell state.
@@ -2092,6 +2289,24 @@ public sealed record FavoriteImportSummary(
     int StoreCount)
 {
     public static FavoriteImportSummary Failed(string? browserStatePath, string message, string? sourceShape = null)
+        => new(false, message, browserStatePath, sourceShape, 0, 0, 0, 0, 0, 0, 0, 0);
+}
+
+public sealed record SeenImportSummary(
+    bool Ok,
+    string Message,
+    string? BrowserStatePath,
+    string? SourceShape,
+    int TotalEntries,
+    int ImportedCount,
+    int PreservedCount,
+    int IgnoredZeroCount,
+    int IgnoredInvalidCount,
+    int MissingCount,
+    int UnmatchedCount,
+    int SeenStoreCount)
+{
+    public static SeenImportSummary Failed(string? browserStatePath, string message, string? sourceShape = null)
         => new(false, message, browserStatePath, sourceShape, 0, 0, 0, 0, 0, 0, 0, 0);
 }
 

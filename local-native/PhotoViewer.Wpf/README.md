@@ -28,6 +28,7 @@ browse and practical viewer slice:
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
+- `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -121,6 +122,13 @@ verification does not modify real WPF state:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --seen-smoke "$env:TEMP\photoviewer-wpf-seen-smoke.json" --folder .\local-native\ui-mockup --seen-path "$env:TEMP\photoviewer-wpf-seen.json" --favorites-path "$env:TEMP\photoviewer-wpf-seen-favorites.json"
+```
+
+Seen import smoke writes a temporary explicit browser-state export and imports
+only `browserLocalStorage.pvu_seen_images` into the accepted WPF seen-state JSON:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --seen-import-smoke "$env:TEMP\photoviewer-wpf-seen-import-smoke.json" --folder .\local-native\ui-mockup --seen-path "$env:TEMP\photoviewer-wpf-seen-import.json" --favorites-path "$env:TEMP\photoviewer-wpf-seen-import-favorites.json" --browser-state-path "$env:TEMP\photoviewer-wpf-seen-import-browser-state.json"
 ```
 
 ## WPF M2 First Performance Slice
@@ -266,6 +274,23 @@ proves initial real-folder unseen count, selected-image seen persistence,
 unseen-only count change, reload behavior, and favorite-store isolation.
 `pvu_seen_images` import, direct browser/profile reads, delete/recycle, album
 mutation, and broad browser-state import remain out of scope.
+
+## WPF M13 Seen Import Policy Slice
+
+The #216 slice keeps the M12 seen-state store and adds only an explicit-file
+`browserLocalStorage.pvu_seen_images` import path. Supported shapes are
+`Record<path-or-file-name, truthy>` and a string list of path-or-file-name
+entries. Matching truthy entries are added to `.cache/wpf-seen.json`; existing
+WPF seen entries are preserved; `false`, zero, invalid, empty-key, and
+unmatched entries are ignored.
+
+The dedicated seen import smoke requires `--seen-path`, `--favorites-path`, and
+`--browser-state-path`, all intended for temporary verification files. It proves
+explicit import, preserve-existing behavior, invalid/missing/unmatched ignore,
+persistence/reload, unseen-only filtering, and favorite-store isolation. Direct
+Chrome/profile reads, broad browser-state migration, WinForms/browser changes,
+delete/recycle, album mutation, cache/state deletion, and automatic workers
+remain out of scope.
 
 ## Files
 

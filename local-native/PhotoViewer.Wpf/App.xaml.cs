@@ -68,6 +68,13 @@ public partial class App : Application
             return;
         }
 
+        int seenImportSmokeIdx = Array.IndexOf(e.Args, "--seen-import-smoke");
+        if (seenImportSmokeIdx >= 0 && seenImportSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSeenImportSmoke(e.Args[seenImportSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -811,6 +818,219 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSeenImportSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? seenPath = ArgValue(args, "--seen-path");
+        string? favoritesPath = ArgValue(args, "--favorites-path");
+        string? browserStatePath = ArgValue(args, "--browser-state-path");
+        if (string.IsNullOrWhiteSpace(folder) ||
+            string.IsNullOrWhiteSpace(seenPath) ||
+            string.IsNullOrWhiteSpace(favoritesPath) ||
+            string.IsNullOrWhiteSpace(browserStatePath))
+        {
+            WriteSeenImportSmokeResult(
+                resultPath,
+                new SeenImportSmokeResult
+                {
+                    Ok = false,
+                    Message = "missing required --folder, --seen-path, --favorites-path, or --browser-state-path",
+                    Folder = folder,
+                    SeenPath = seenPath,
+                    FavoritesPath = favoritesPath,
+                    BrowserStatePath = browserStatePath,
+                });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string favoriteSeedName = "wpf-confirm.png";
+        string favoriteSeedPath = Path.Combine(fullFolder, favoriteSeedName);
+        string statePath = Path.Combine(
+            Path.GetDirectoryName(Path.GetFullPath(resultPath)) ?? Path.GetTempPath(),
+            Path.GetFileNameWithoutExtension(resultPath) + "-state.json");
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        if (File.Exists(favoriteSeedPath))
+            WriteFavoriteSeed(favoritesPath, favoriteSeedPath, 3);
+
+        var first = HiddenWindow();
+        first.Show();
+        first.SuppressStatePersistence();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            SeenImportSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                first.SetSearchQuery("", persist: false);
+
+                string? selectedName = first.SelectedFileNameForSmoke;
+                string? selectedPath = first.SelectedPathForSmoke;
+                var candidateNames = new[]
+                    {
+                        "wpf-list.png",
+                        "wpf-modal-preview.png",
+                        "wpf-enhance.png",
+                        "wpf-album.png",
+                        "wpf-settings.png",
+                        "wpf-landing.png",
+                        "wpf-confirm.png",
+                    }
+                    .Where(name => !string.Equals(name, selectedName, StringComparison.OrdinalIgnoreCase))
+                    .Where(name => first.PathForFileNameForSmoke(name) is not null)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+
+                bool fixtureFilesExist = selectedPath is not null &&
+                    candidateNames.Count >= 3 &&
+                    File.Exists(favoriteSeedPath);
+                string importedName = fixtureFilesExist ? candidateNames[0] : "";
+                string importedByName = fixtureFilesExist ? candidateNames[1] : "";
+                string zeroName = fixtureFilesExist ? candidateNames[2] : "";
+                string? importedPath = fixtureFilesExist ? first.PathForFileNameForSmoke(importedName) : null;
+                string? importedByNamePath = fixtureFilesExist ? first.PathForFileNameForSmoke(importedByName) : null;
+                string? zeroPath = fixtureFilesExist ? first.PathForFileNameForSmoke(zeroName) : null;
+                string unmatchedPath = Path.Combine(fullFolder, "missing-pvu-seen.png");
+
+                if (fixtureFilesExist && importedPath is not null && importedByNamePath is not null && zeroPath is not null)
+                {
+                    WritePvuSeenImagesImportFixture(
+                        browserStatePath,
+                        selectedPath!,
+                        importedPath,
+                        importedByName,
+                        zeroPath,
+                        unmatchedPath);
+                }
+
+                int preImportSeenCount = first.SeenStoreCountForSmoke;
+                int preImportUnseenCount = first.UnseenCountForSmoke;
+                int favoriteCountBefore = first.FavoriteStoreCountForSmoke;
+                SeenImportSummary importSummary = fixtureFilesExist
+                    ? first.ImportPvuSeenImagesForSmoke(browserStatePath)
+                    : SeenImportSummary.Failed(browserStatePath, "fixture files missing");
+
+                bool importedSeen = !string.IsNullOrWhiteSpace(importedName) && first.IsFileUnseenForSmoke(importedName) == false;
+                bool importedByNameSeen = !string.IsNullOrWhiteSpace(importedByName) && first.IsFileUnseenForSmoke(importedByName) == false;
+                bool zeroStillUnseen = !string.IsNullOrWhiteSpace(zeroName) && first.IsFileUnseenForSmoke(zeroName) == true;
+                int seenStoreAfterImport = first.SeenStoreCountForSmoke;
+                int unseenAfterImport = first.UnseenCountForSmoke;
+                int favoriteCountAfter = first.FavoriteStoreCountForSmoke;
+                first.SetUnseenOnlyFilterForSmoke(true);
+                int filteredAfterImport = first.FilteredCountForSmoke;
+                first.Close();
+
+                bool preservedPersistedSeen = selectedPath is not null && ReadSeenFlag(seenPath, selectedPath);
+                bool importedPersistedSeen = importedPath is not null && ReadSeenFlag(seenPath, importedPath);
+                bool importedByNamePersistedSeen = importedByNamePath is not null && ReadSeenFlag(seenPath, importedByNamePath);
+                bool zeroPersistedSeen = zeroPath is not null && ReadSeenFlag(seenPath, zeroPath);
+
+                if (selectedPath is not null)
+                    WriteViewerStateSeed(statePath, fullFolder, selectedPath);
+
+                var second = HiddenWindow();
+                second.Show();
+                second.SuppressStatePersistence();
+                await second.LoadFolderAsync(folder);
+                second.SetSearchQuery("", persist: false);
+                bool reloadImportedSeen = !string.IsNullOrWhiteSpace(importedName) && second.IsFileUnseenForSmoke(importedName) == false;
+                bool reloadImportedByNameSeen = !string.IsNullOrWhiteSpace(importedByName) && second.IsFileUnseenForSmoke(importedByName) == false;
+                bool reloadZeroStillUnseen = !string.IsNullOrWhiteSpace(zeroName) && second.IsFileUnseenForSmoke(zeroName) == true;
+                int reloadSeenStoreCount = second.SeenStoreCountForSmoke;
+                int reloadUnseenCount = second.UnseenCountForSmoke;
+                int reloadFavoriteCount = second.FavoriteStoreCountForSmoke;
+                second.SetUnseenOnlyFilterForSmoke(true);
+                int reloadFilteredCount = second.FilteredCountForSmoke;
+                second.Close();
+
+                bool ok = fixtureFilesExist
+                    && importSummary.Ok
+                    && importSummary.SourceShape == "browserLocalStorage.pvu_seen_images"
+                    && importSummary.TotalEntries == 7
+                    && importSummary.ImportedCount == 2
+                    && importSummary.PreservedCount == 1
+                    && importSummary.IgnoredZeroCount == 1
+                    && importSummary.IgnoredInvalidCount == 1
+                    && importSummary.MissingCount == 1
+                    && importSummary.UnmatchedCount == 1
+                    && seenStoreAfterImport == preImportSeenCount + 2
+                    && unseenAfterImport == preImportUnseenCount - 2
+                    && filteredAfterImport == unseenAfterImport
+                    && favoriteCountBefore == favoriteCountAfter
+                    && favoriteCountAfter == reloadFavoriteCount
+                    && preservedPersistedSeen
+                    && importedPersistedSeen
+                    && importedByNamePersistedSeen
+                    && !zeroPersistedSeen
+                    && importedSeen
+                    && importedByNameSeen
+                    && zeroStillUnseen
+                    && reloadSeenStoreCount == seenStoreAfterImport
+                    && reloadUnseenCount == unseenAfterImport
+                    && reloadFilteredCount == unseenAfterImport
+                    && reloadImportedSeen
+                    && reloadImportedByNameSeen
+                    && reloadZeroStillUnseen;
+
+                result = new SeenImportSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "pvu_seen_images explicit-file import, preserve-existing, ignore cases, persistence, reload, and favorite-store isolation passed" : "seen import smoke did not meet expected policy",
+                    Folder = folder,
+                    SeenPath = seenPath,
+                    FavoritesPath = favoritesPath,
+                    BrowserStatePath = browserStatePath,
+                    PreservedName = selectedName,
+                    ImportedName = importedName,
+                    ImportedByName = importedByName,
+                    ZeroName = zeroName,
+                    ImportSummary = importSummary,
+                    PreImportSeenCount = preImportSeenCount,
+                    SeenStoreCountAfterImport = seenStoreAfterImport,
+                    PreImportUnseenCount = preImportUnseenCount,
+                    UnseenAfterImport = unseenAfterImport,
+                    FilteredAfterImport = filteredAfterImport,
+                    FavoriteCountBefore = favoriteCountBefore,
+                    FavoriteCountAfter = favoriteCountAfter,
+                    ReloadSeenStoreCount = reloadSeenStoreCount,
+                    ReloadUnseenCount = reloadUnseenCount,
+                    ReloadFilteredCount = reloadFilteredCount,
+                    ReloadFavoriteCount = reloadFavoriteCount,
+                    PreservedPersistedSeen = preservedPersistedSeen,
+                    ImportedPersistedSeen = importedPersistedSeen,
+                    ImportedByNamePersistedSeen = importedByNamePersistedSeen,
+                    ZeroStillUnseen = zeroStillUnseen && !zeroPersistedSeen,
+                    ReloadImportedSeen = reloadImportedSeen,
+                    ReloadImportedByNameSeen = reloadImportedByNameSeen,
+                    ReloadZeroStillUnseen = reloadZeroStillUnseen,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new SeenImportSmokeResult
+                {
+                    Ok = false,
+                    Message = ex.Message,
+                    Folder = folder,
+                    SeenPath = seenPath,
+                    FavoritesPath = favoritesPath,
+                    BrowserStatePath = browserStatePath,
+                };
+            }
+
+            WriteSeenImportSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureScrollRealizationSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -1234,6 +1454,50 @@ public partial class App : Application
         File.WriteAllText(browserStatePath, json);
     }
 
+    private static void WritePvuSeenImagesImportFixture(
+        string browserStatePath,
+        string preservedPath,
+        string importedPath,
+        string importedByName,
+        string zeroPath,
+        string unmatchedPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(browserStatePath))!);
+        var pvuSeenImages = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            [NormalizeFavoritePath(preservedPath)] = true,
+            [NormalizeFavoritePath(importedPath)] = true,
+            [importedByName] = 1,
+            [NormalizeFavoritePath(zeroPath)] = false,
+            [NormalizeFavoritePath(unmatchedPath)] = true,
+            ["invalid-seen"] = new { unsupported = true },
+            [""] = true,
+        };
+        var payload = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["browserLocalStorage"] = new Dictionary<string, object?>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["pvu_seen_images"] = pvuSeenImages,
+            },
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(payload, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(browserStatePath, json);
+    }
+
+    private static void WriteViewerStateSeed(string statePath, string folder, string selectedPath)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(statePath))!);
+        var state = new ViewerState
+        {
+            LastFolder = folder,
+            SearchQuery = "",
+            SelectedPath = selectedPath,
+            CardWidth = 190,
+        };
+        var json = System.Text.Json.JsonSerializer.Serialize(state, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(statePath, json);
+    }
+
     private static ViewerState? ReadPersistedState(string path)
     {
         try
@@ -1365,6 +1629,13 @@ public partial class App : Application
     }
 
     private static void WriteSeenSmokeResult(string path, SeenSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteSeenImportSmokeResult(string path, SeenImportSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -1515,6 +1786,39 @@ public partial class App : Application
         int ReloadFavoriteStoreCount,
         long FirstLoadTotalMs,
         int FirstThumbnailsCompleted);
+
+    private sealed class SeenImportSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? SeenPath { get; init; }
+        public string? FavoritesPath { get; init; }
+        public string? BrowserStatePath { get; init; }
+        public string? PreservedName { get; init; }
+        public string? ImportedName { get; init; }
+        public string? ImportedByName { get; init; }
+        public string? ZeroName { get; init; }
+        public SeenImportSummary? ImportSummary { get; init; }
+        public int PreImportSeenCount { get; init; }
+        public int SeenStoreCountAfterImport { get; init; }
+        public int PreImportUnseenCount { get; init; }
+        public int UnseenAfterImport { get; init; }
+        public int FilteredAfterImport { get; init; }
+        public int FavoriteCountBefore { get; init; }
+        public int FavoriteCountAfter { get; init; }
+        public int ReloadSeenStoreCount { get; init; }
+        public int ReloadUnseenCount { get; init; }
+        public int ReloadFilteredCount { get; init; }
+        public int ReloadFavoriteCount { get; init; }
+        public bool PreservedPersistedSeen { get; init; }
+        public bool ImportedPersistedSeen { get; init; }
+        public bool ImportedByNamePersistedSeen { get; init; }
+        public bool ZeroStillUnseen { get; init; }
+        public bool ReloadImportedSeen { get; init; }
+        public bool ReloadImportedByNameSeen { get; init; }
+        public bool ReloadZeroStillUnseen { get; init; }
+    }
 
     private sealed record GridRealizationSmokeResult(
         bool Ok,
