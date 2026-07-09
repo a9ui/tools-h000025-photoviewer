@@ -258,6 +258,17 @@
                     </UniformGrid>
                   </Border>
                 </Grid>
+                <Grid Margin="0,0,0,10">
+                  <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <TextBlock Grid.Column="0" Text="Aspect" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
+                  <Border Grid.Column="1" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
+                    <UniformGrid Rows="1">
+                      <RadioButton x:Name="AspectOriginalButton" Style="{StaticResource Seg}" GroupName="aspect" Content="Original" IsChecked="True" Checked="AspectOriginal_Checked"/>
+                      <RadioButton x:Name="AspectSquareButton" Style="{StaticResource Seg}" GroupName="aspect" Content="1:1" Checked="AspectSquare_Checked"/>
+                      <RadioButton x:Name="AspectPortraitButton" Style="{StaticResource Seg}" GroupName="aspect" Content="2:3" Checked="AspectPortrait_Checked"/>
+                    </UniformGrid>
+                  </Border>
+                </Grid>
                 <Grid>
                   <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBlock Grid.Column="0" Text="Size" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>

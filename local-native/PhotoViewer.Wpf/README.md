@@ -33,6 +33,7 @@ browse and practical viewer slice:
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
+- `--aspect-smoke <path>` browser-aligned aspect mode smoke
 
 It still preserves the shell-only guardrail for enhancement: browsing, preview,
 modal, settings, album picker, and enhance drawer do not start enhancement jobs
@@ -188,6 +189,14 @@ used by zoom shortcut and wheel paths:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
+```
+
+Aspect smoke creates a temporary three-image real-folder fixture and verifies
+Original / 1:1 / 2:3 grid and list thumbnail dimensions, selection/order
+stability, zoom composition, and WPF state persistence:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --aspect-smoke "$env:TEMP\photoviewer-wpf-aspect-smoke.json"
 ```
 
 Startup smoke opens the WPF shell to dispatcher-idle readiness, writes timing
@@ -497,6 +506,27 @@ Dedicated smoke coverage:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --sort-smoke $env:TEMP\wpf-sort-smoke.json --folder .\local-native\ui-mockup
 ```
 
+## WPF M20 Browser Aspect Mode First Slice
+
+The #248 slice adds browser-aligned Display > Aspect controls to the WPF
+surface:
+
+- Original
+- 1:1
+- 2:3
+
+Aspect mode composes with the existing Standard/Compact/Poster display style
+and thumbnail zoom size. Display style still controls density/width, zoom still
+controls base card size, and aspect mode controls the card/list thumbnail
+height ratio. The selected aspect is persisted through the existing WPF
+`state.json` path as `AspectMode`; missing older state falls back to Original.
+
+Dedicated smoke coverage:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --aspect-smoke $env:TEMP\wpf-aspect-smoke.json
+```
+
 ## Files
 
 | File | Role |
@@ -539,6 +569,10 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 - Sort supports modified-newest, modified-oldest, and name ordering. Browser
   created-date sorting, random sorting, and reshuffle remain deferred until WPF
   has reliable created timestamp and deterministic random-seed contracts.
+- Aspect controls support Original, 1:1, and 2:3. Browser display-style default
+  aspect shortcuts, fixed columns, exact object-fit/crop parity, and
+  `pvu_view.aspectMode` browser-state import remain deferred until separately
+  contracted.
 - Additional speed work should stay in measured WPF-only follow-up lanes.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.

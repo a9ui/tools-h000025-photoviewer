@@ -119,6 +119,13 @@ public partial class App : Application
             return;
         }
 
+        int aspectSmokeIdx = Array.IndexOf(e.Args, "--aspect-smoke");
+        if (aspectSmokeIdx >= 0 && aspectSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureAspectSmoke(e.Args[aspectSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int sortSmokeIdx = Array.IndexOf(e.Args, "--sort-smoke");
         if (sortSmokeIdx >= 0 && sortSmokeIdx + 1 < e.Args.Length)
         {
@@ -1672,7 +1679,7 @@ public partial class App : Application
                     && compact.CardHeight < standard.CardHeight
                     && compact.ListThumbnailSize < standard.ListThumbnailSize
                     && Area(compact) < Area(standard);
-                bool posterPortrait = poster.CardHeight > poster.CardWidth
+                bool posterExpanded = poster.CardWidth > standard.CardWidth
                     && poster.CardHeight > standard.CardHeight
                     && poster.ListThumbnailSize > standard.ListThumbnailSize
                     && Area(poster) > Area(standard);
@@ -1687,13 +1694,13 @@ public partial class App : Application
                     && compactChanged
                     && posterChanged
                     && compactDense
-                    && posterPortrait
+                    && posterExpanded
                     && zoomComposes
                     && persistedPoster;
 
                 result = new DisplayStyleSmokeResult(
                     ok,
-                    ok ? "display styles changed grid density/aspect, composed with zoom, and restored from WPF state" : "display style smoke did not meet density/aspect/persistence expectations",
+                    ok ? "display styles changed grid density/size, composed with zoom, and restored from WPF state" : "display style smoke did not meet density/size/persistence expectations",
                     fullFolder,
                     smokeRoot,
                     statePath,
@@ -1727,6 +1734,158 @@ public partial class App : Application
 
     private static double Area(DisplayStyleMetrics metrics)
         => metrics.CardWidth * metrics.CardHeight;
+
+    private void CaptureAspectSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        string aspectFolder = PrepareAspectSmokeFolder(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var first = HiddenWindow();
+        first.Show();
+
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            AspectSmokeResult result;
+            try
+            {
+                await first.LoadFolderAsync(aspectFolder);
+                int filtered = first.FilteredCountForSmoke;
+                List<string> initialOrder = first.FilteredFileNamesForSmoke(3);
+                bool selectedBravo = first.SelectFileNameForSmoke("bravo-square.png");
+                string? selectedBefore = first.SelectedFileNameForSmoke;
+
+                DisplayStyleMetrics original = first.DisplayStyleMetricsForSmoke();
+                bool squareChanged = first.SetAspectModeForSmoke("square");
+                DisplayStyleMetrics square = first.DisplayStyleMetricsForSmoke();
+                List<string> squareOrder = first.FilteredFileNamesForSmoke(3);
+                string? selectedAfterSquare = first.SelectedFileNameForSmoke;
+
+                bool portraitChanged = first.SetAspectModeForSmoke("portrait");
+                DisplayStyleMetrics portrait = first.DisplayStyleMetricsForSmoke();
+                List<string> portraitOrder = first.FilteredFileNamesForSmoke(3);
+                string? selectedAfterPortrait = first.SelectedFileNameForSmoke;
+
+                bool zoomed = first.ZoomInForSmoke();
+                DisplayStyleMetrics portraitZoomed = first.DisplayStyleMetricsForSmoke();
+                bool originalChanged = first.SetAspectModeForSmoke("original");
+                DisplayStyleMetrics restoredOriginalRuntime = first.DisplayStyleMetricsForSmoke();
+
+                string statePath = first.StatePathForSmoke;
+                bool persistedTargetSet = first.SetAspectModeForSmoke("portrait");
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(aspectFolder);
+                DisplayStyleMetrics restored = second.DisplayStyleMetricsForSmoke();
+                List<string> restoredOrder = second.FilteredFileNamesForSmoke(3);
+                second.Close();
+
+                ViewerState? persisted = ReadPersistedState(statePath);
+                bool squareShape = Math.Abs(square.CardWidth - square.CardHeight) < 0.5
+                    && Math.Abs(square.ListThumbnailWidth - square.ListThumbnailHeight) < 0.5;
+                bool portraitShape = portrait.CardHeight > square.CardHeight
+                    && portrait.ListThumbnailHeight > square.ListThumbnailHeight
+                    && Math.Abs((portrait.CardHeight / portrait.CardWidth) - 1.5) < 0.03;
+                bool originalShape = original.CardHeight < square.CardHeight
+                    && original.ListThumbnailHeight < square.ListThumbnailHeight
+                    && string.Equals(original.AspectMode, "original", StringComparison.OrdinalIgnoreCase);
+                bool orderStable = SameNameOrder(squareOrder, initialOrder)
+                    && SameNameOrder(portraitOrder, initialOrder)
+                    && SameNameOrder(restoredOrder, initialOrder);
+                bool selectionStable = selectedBravo
+                    && string.Equals(selectedBefore, "bravo-square.png", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterSquare, selectedBefore, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterPortrait, selectedBefore, StringComparison.OrdinalIgnoreCase);
+                bool zoomComposes = zoomed
+                    && portraitZoomed.CardWidth > portrait.CardWidth
+                    && portraitZoomed.CardHeight > portrait.CardHeight
+                    && Math.Abs((portraitZoomed.CardHeight / portraitZoomed.CardWidth) - (portrait.CardHeight / portrait.CardWidth)) < 0.03;
+                bool persistence = persistedTargetSet
+                    && string.Equals(persisted?.AspectMode, "portrait", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restored.AspectMode, "portrait", StringComparison.OrdinalIgnoreCase)
+                    && restored.CardHeight > restored.CardWidth;
+                bool runtimeRestore = originalChanged
+                    && string.Equals(restoredOriginalRuntime.AspectMode, "original", StringComparison.OrdinalIgnoreCase)
+                    && restoredOriginalRuntime.CardHeight < square.CardHeight;
+
+                bool ok = filtered == 3
+                    && initialOrder.SequenceEqual(new[] { "alpha-landscape.png", "bravo-square.png", "charlie-portrait.png" })
+                    && squareChanged
+                    && portraitChanged
+                    && squareShape
+                    && portraitShape
+                    && originalShape
+                    && orderStable
+                    && selectionStable
+                    && zoomComposes
+                    && runtimeRestore
+                    && persistence;
+
+                result = new AspectSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "aspect controls changed deterministic grid/list dimensions, preserved order/selection, composed with zoom, and restored from WPF state"
+                        : "aspect smoke did not meet dimension/order/selection/persistence expectations",
+                    Folder = aspectFolder,
+                    ProjectRoot = smokeRoot,
+                    StatePath = statePath,
+                    FilteredCount = filtered,
+                    InitialOrder = initialOrder,
+                    SquareOrder = squareOrder,
+                    PortraitOrder = portraitOrder,
+                    RestoredOrder = restoredOrder,
+                    Original = original,
+                    Square = square,
+                    Portrait = portrait,
+                    PortraitZoomed = portraitZoomed,
+                    RestoredOriginalRuntime = restoredOriginalRuntime,
+                    Restored = restored,
+                    SelectedBefore = selectedBefore,
+                    SelectedAfterSquare = selectedAfterSquare,
+                    SelectedAfterPortrait = selectedAfterPortrait,
+                    PersistedAspect = persisted?.AspectMode,
+                    SquareChanged = squareChanged,
+                    PortraitChanged = portraitChanged,
+                    OriginalChanged = originalChanged,
+                    Zoomed = zoomed,
+                    PersistedTargetSet = persistedTargetSet,
+                    SquareShape = squareShape,
+                    PortraitShape = portraitShape,
+                    OriginalShape = originalShape,
+                    OrderStable = orderStable,
+                    SelectionStable = selectionStable,
+                    ZoomComposes = zoomComposes,
+                    Persistence = persistence,
+                };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new AspectSmokeResult { Ok = false, Message = ex.Message, Folder = aspectFolder, ProjectRoot = smokeRoot };
+            }
+            finally
+            {
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteAspectSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
 
     private void CaptureSortSmoke(string resultPath, string[] args)
     {
@@ -2983,6 +3142,69 @@ public partial class App : Application
         return target;
     }
 
+    private static string PrepareAspectSmokeFolder(string smokeRoot)
+    {
+        string target = Path.Combine(smokeRoot, "aspect-folder");
+        Directory.CreateDirectory(target);
+
+        var inputs = new[]
+        {
+            new
+            {
+                Name = "alpha-landscape.png",
+                Width = 150,
+                Height = 100,
+                Color = Color.FromRgb(52, 152, 219),
+                ModifiedUtc = new DateTime(2026, 7, 10, 12, 0, 0, DateTimeKind.Utc),
+            },
+            new
+            {
+                Name = "bravo-square.png",
+                Width = 120,
+                Height = 120,
+                Color = Color.FromRgb(46, 204, 113),
+                ModifiedUtc = new DateTime(2026, 7, 10, 11, 0, 0, DateTimeKind.Utc),
+            },
+            new
+            {
+                Name = "charlie-portrait.png",
+                Width = 100,
+                Height = 150,
+                Color = Color.FromRgb(231, 76, 60),
+                ModifiedUtc = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc),
+            },
+        };
+
+        foreach (var input in inputs)
+        {
+            string path = Path.Combine(target, input.Name);
+            WriteSmokePng(path, input.Width, input.Height, input.Color);
+            File.SetLastWriteTimeUtc(path, input.ModifiedUtc);
+        }
+
+        return target;
+    }
+
+    private static void WriteSmokePng(string path, int width, int height, Color color)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        int stride = width * 4;
+        byte[] pixels = new byte[stride * height];
+        for (int offset = 0; offset < pixels.Length; offset += 4)
+        {
+            pixels[offset] = color.B;
+            pixels[offset + 1] = color.G;
+            pixels[offset + 2] = color.R;
+            pixels[offset + 3] = 255;
+        }
+
+        var bitmap = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, pixels, stride);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(bitmap));
+        using var stream = File.Create(path);
+        encoder.Save(stream);
+    }
+
     private static int CountDirectSmokeImages(string folder)
         => Directory.Exists(folder) ? Directory.EnumerateFiles(folder).Count(IsSmokeImageFile) : 0;
 
@@ -3173,6 +3395,13 @@ public partial class App : Application
     }
 
     private static void WriteDisplayStyleSmokeResult(string path, DisplayStyleSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WriteAspectSmokeResult(string path, AspectSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -3502,6 +3731,42 @@ public partial class App : Application
         bool PosterChanged,
         bool Zoomed,
         bool PersistedPoster);
+
+    private sealed class AspectSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? StatePath { get; init; }
+        public int FilteredCount { get; init; }
+        public List<string> InitialOrder { get; init; } = [];
+        public List<string> SquareOrder { get; init; } = [];
+        public List<string> PortraitOrder { get; init; } = [];
+        public List<string> RestoredOrder { get; init; } = [];
+        public DisplayStyleMetrics? Original { get; init; }
+        public DisplayStyleMetrics? Square { get; init; }
+        public DisplayStyleMetrics? Portrait { get; init; }
+        public DisplayStyleMetrics? PortraitZoomed { get; init; }
+        public DisplayStyleMetrics? RestoredOriginalRuntime { get; init; }
+        public DisplayStyleMetrics? Restored { get; init; }
+        public string? SelectedBefore { get; init; }
+        public string? SelectedAfterSquare { get; init; }
+        public string? SelectedAfterPortrait { get; init; }
+        public string? PersistedAspect { get; init; }
+        public bool SquareChanged { get; init; }
+        public bool PortraitChanged { get; init; }
+        public bool OriginalChanged { get; init; }
+        public bool Zoomed { get; init; }
+        public bool PersistedTargetSet { get; init; }
+        public bool SquareShape { get; init; }
+        public bool PortraitShape { get; init; }
+        public bool OriginalShape { get; init; }
+        public bool OrderStable { get; init; }
+        public bool SelectionStable { get; init; }
+        public bool ZoomComposes { get; init; }
+        public bool Persistence { get; init; }
+    }
 
     private sealed class SortSmokeResult
     {

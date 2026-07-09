@@ -396,7 +396,7 @@
                   <ColumnDefinition Width="*"/>
                   <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
-                <Border Grid.Column="0" Width="{Binding ListThumbnailSize}" Height="{Binding ListThumbnailSize}" CornerRadius="7" ClipToBounds="True" Margin="0,0,12,0">
+                <Border Grid.Column="0" Width="{Binding ListThumbnailWidth}" Height="{Binding ListThumbnailHeight}" CornerRadius="7" ClipToBounds="True" Margin="0,0,12,0">
                   <Grid>
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
