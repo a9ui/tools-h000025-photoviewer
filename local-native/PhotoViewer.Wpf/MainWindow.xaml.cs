@@ -2,6 +2,7 @@ using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -41,6 +42,11 @@ public partial class MainWindow : Window
     private const string SortModifiedNewestValue = "modified-newest";
     private const string SortModifiedOldestValue = "modified-oldest";
     private const string SortNameValue = "name";
+    private const string DatePresetNoneValue = "none";
+    private const string DatePresetTodayValue = "today";
+    private const string DatePreset7DaysValue = "7d";
+    private const string DatePreset30DaysValue = "30d";
+    private const string DatePresetThisYearValue = "this-year";
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -79,6 +85,9 @@ public partial class MainWindow : Window
     private string _displayStyle = DisplayStyleStandard;
     private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
+    private string _datePreset = DatePresetNoneValue;
+    private DateTime? _dateFromLocal;
+    private DateTime? _dateToLocal;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -1870,7 +1879,8 @@ public partial class MainWindow : Window
             .Where(tile => MatchesSearch(tile, query))
             .Where(tile => !favoritesOnly || tile.Fav > 0)
             .Where(tile => !enhancedOnly || tile.Enhanced)
-            .Where(tile => !unseenOnly || tile.Unseen))
+            .Where(tile => !unseenOnly || tile.Unseen)
+            .Where(MatchesDateFilter))
             .ToList();
 
         _tiles.Clear();
@@ -2016,6 +2026,25 @@ public partial class MainWindow : Window
 
     private static bool ContainsText(string? value, string token)
         => !string.IsNullOrEmpty(value) && value.Contains(token, StringComparison.OrdinalIgnoreCase);
+
+    private bool MatchesDateFilter(Tile tile)
+    {
+        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal)
+            || (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
+            || !tile.IsRealFile)
+        {
+            return true;
+        }
+
+        DateTime modifiedDate = tile.ModifiedUtc.ToLocalTime().Date;
+        if (_dateFromLocal.HasValue && modifiedDate < _dateFromLocal.Value.Date)
+            return false;
+
+        if (_dateToLocal.HasValue && modifiedDate > _dateToLocal.Value.Date)
+            return false;
+
+        return true;
+    }
 
     private IEnumerable<Tile> SortTiles(IEnumerable<Tile> source)
     {
@@ -2296,6 +2325,126 @@ public partial class MainWindow : Window
         SortName.IsChecked = _sortBy == SortNameValue;
     }
 
+    private static string NormalizeDatePreset(string? preset)
+    {
+        return preset?.Trim().ToLowerInvariant() switch
+        {
+            DatePresetTodayValue => DatePresetTodayValue,
+            DatePreset7DaysValue or "last7" or "last-7" => DatePreset7DaysValue,
+            DatePreset30DaysValue or "last30" or "last-30" => DatePreset30DaysValue,
+            DatePresetThisYearValue or "year" => DatePresetThisYearValue,
+            "clear" or "" or null => DatePresetNoneValue,
+            _ => DatePresetNoneValue,
+        };
+    }
+
+    private static (DateTime? From, DateTime? To) DateRangeForPreset(string preset)
+    {
+        DateTime today = DateTime.Today;
+        return NormalizeDatePreset(preset) switch
+        {
+            DatePresetTodayValue => (today, today),
+            DatePreset7DaysValue => (today.AddDays(-6), today),
+            DatePreset30DaysValue => (today.AddDays(-29), today),
+            DatePresetThisYearValue => (new DateTime(today.Year, 1, 1), today),
+            _ => (null, null),
+        };
+    }
+
+    private static string? FormatStateDate(DateTime? date)
+        => date?.ToString("yyyy-MM-dd");
+
+    private static DateTime? ParseStateDate(string? value)
+    {
+        if (DateTime.TryParseExact(value, "yyyy-MM-dd", CultureInfo.InvariantCulture, DateTimeStyles.None, out DateTime parsed))
+            return parsed.Date;
+
+        return null;
+    }
+
+    private static string DatePresetLabel(string preset)
+    {
+        return NormalizeDatePreset(preset) switch
+        {
+            DatePresetTodayValue => "Today",
+            DatePreset7DaysValue => "7d",
+            DatePreset30DaysValue => "30d",
+            DatePresetThisYearValue => "This year",
+            _ => "Clear",
+        };
+    }
+
+    private bool SetDatePreset(string preset)
+    {
+        string normalized = NormalizeDatePreset(preset);
+        bool changed = !string.Equals(_datePreset, normalized, StringComparison.Ordinal);
+        _datePreset = normalized;
+        (_dateFromLocal, _dateToLocal) = DateRangeForPreset(normalized);
+        SyncDatePresetButtons();
+        UpdateDateFilterSummary();
+
+        if (changed && !_initializing)
+        {
+            ApplyFilters();
+            SaveState();
+        }
+
+        return changed;
+    }
+
+    private void RestoreDateFilter(ViewerState state)
+    {
+        _datePreset = NormalizeDatePreset(state.DatePreset);
+        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal))
+        {
+            _dateFromLocal = null;
+            _dateToLocal = null;
+        }
+        else
+        {
+            _dateFromLocal = ParseStateDate(state.DateFrom);
+            _dateToLocal = ParseStateDate(state.DateTo);
+            if (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
+                (_dateFromLocal, _dateToLocal) = DateRangeForPreset(_datePreset);
+        }
+
+        SyncDatePresetButtons();
+        UpdateDateFilterSummary();
+    }
+
+    private void SyncDatePresetButtons()
+    {
+        if (DatePresetTodayButton is null
+            || DatePreset7DaysButton is null
+            || DatePreset30DaysButton is null
+            || DatePresetThisYearButton is null
+            || DatePresetClearButton is null)
+        {
+            return;
+        }
+
+        DatePresetTodayButton.IsChecked = _datePreset == DatePresetTodayValue;
+        DatePreset7DaysButton.IsChecked = _datePreset == DatePreset7DaysValue;
+        DatePreset30DaysButton.IsChecked = _datePreset == DatePreset30DaysValue;
+        DatePresetThisYearButton.IsChecked = _datePreset == DatePresetThisYearValue;
+        DatePresetClearButton.IsChecked = _datePreset == DatePresetNoneValue;
+    }
+
+    private void UpdateDateFilterSummary()
+    {
+        if (DateFilterSummary is null)
+            return;
+
+        if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal)
+            || (!_dateFromLocal.HasValue && !_dateToLocal.HasValue))
+        {
+            DateFilterSummary.Text = "No date filter";
+            return;
+        }
+
+        DateFilterSummary.Text = $"{DatePresetLabel(_datePreset)}: {FormatStateDate(_dateFromLocal) ?? "..."} to {FormatStateDate(_dateToLocal) ?? "..."}";
+    }
+
     private static bool IsZoomModifierActive()
         => (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0;
 
@@ -2372,6 +2521,36 @@ public partial class MainWindow : Window
     {
         if (!_initializing)
             SetSortBy(SortNameValue);
+    }
+
+    private void DatePresetToday_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetDatePreset(DatePresetTodayValue);
+    }
+
+    private void DatePreset7Days_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetDatePreset(DatePreset7DaysValue);
+    }
+
+    private void DatePreset30Days_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetDatePreset(DatePreset30DaysValue);
+    }
+
+    private void DatePresetThisYear_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetDatePreset(DatePresetThisYearValue);
+    }
+
+    private void DatePresetClear_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetDatePreset(DatePresetNoneValue);
     }
 
     private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
@@ -2627,6 +2806,7 @@ public partial class MainWindow : Window
         SyncAspectButtons();
         _sortBy = NormalizeSortBy(state.SortBy);
         SyncSortButtons();
+        RestoreDateFilter(state);
 
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
@@ -2665,6 +2845,9 @@ public partial class MainWindow : Window
                 DisplayStyle = _displayStyle,
                 AspectMode = _aspectMode,
                 SortBy = _sortBy,
+                DatePreset = _datePreset,
+                DateFrom = FormatStateDate(_dateFromLocal),
+                DateTo = FormatStateDate(_dateToLocal),
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -2986,6 +3169,9 @@ public partial class MainWindow : Window
     public string DisplayStyleForSmoke => _displayStyle;
     public string AspectModeForSmoke => _aspectMode;
     public string SortByForSmoke => _sortBy;
+    public string DatePresetForSmoke => _datePreset;
+    public string? DateFromForSmoke => FormatStateDate(_dateFromLocal);
+    public string? DateToForSmoke => FormatStateDate(_dateToLocal);
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
@@ -3016,6 +3202,7 @@ public partial class MainWindow : Window
     public bool SetDisplayStyleForSmoke(string style) => SetDisplayStyle(style);
     public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
+    public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
 
     public List<string> FilteredFileNamesForSmoke(int take = 20)
         => _tiles.Take(take).Select(static tile => tile.FileName).ToList();
@@ -3126,6 +3313,9 @@ public sealed class ViewerState
     public string? DisplayStyle { get; set; }
     public string? AspectMode { get; set; }
     public string? SortBy { get; set; }
+    public string? DatePreset { get; set; }
+    public string? DateFrom { get; set; }
+    public string? DateTo { get; set; }
 }
 
 public readonly record struct DisplayStyleMetrics(
