@@ -293,7 +293,10 @@ internal sealed class NativeImageStore
         UpsertSetting(connection, transaction, "import_warnings_json", JsonSerializer.Serialize(warnings), importedAt);
         UpsertSetting(connection, transaction, "import_recovery_summary", BuildRecoverySummary(warnings), importedAt);
 
-        UpsertSetting(connection, transaction, "keybindings_json", DefaultKeyBindingsJson, importedAt);
+        if (GetSetting(connection, transaction, "keybindings_json") is null)
+        {
+            UpsertSetting(connection, transaction, "keybindings_json", DefaultKeyBindingsJson, importedAt);
+        }
         UpsertSetting(connection, transaction, "view_mode", GetSetting(connection, transaction, "view_mode") ?? "details", importedAt);
 
         ExecuteNonQuery(connection, transaction, "UPDATE images SET favorite_level = 0");
@@ -2783,7 +2786,7 @@ internal sealed class NativeImageStore
         command.ExecuteNonQuery();
     }
 
-    private const string DefaultKeyBindingsJson = """
+    internal const string DefaultKeyBindingsJson = """
         {"next":"Right","previous":"Left","favoriteUp":"Ctrl+Up","favoriteDown":"Ctrl+Down","delete":"Delete","openFile":"Enter","openFolder":"Ctrl+Enter","openDetail":"Ctrl+M","toggleView":"Ctrl+G","togglePreview":"Ctrl+P","toggleDetails":"Ctrl+D","reshuffleSort":"Ctrl+R","detailNext":"Right","detailPrevious":"Left","detailZoomIn":"+","detailZoomOut":"-","detailReset":"0","detailFlip":"F","detailPan":"mouse-drag-or-scrollbars","detailOpenExternal":"Enter","detailFavoriteUp":"Ctrl+Up","detailFavoriteDown":"Ctrl+Down"}
         """;
 }
