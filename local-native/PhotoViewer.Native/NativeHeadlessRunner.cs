@@ -623,9 +623,102 @@ internal static class NativeHeadlessRunner
 
         var projectRoot = NativeStateBridge.ResolveProjectRoot();
         var store = new NativeImageStore(projectRoot);
-        store.SetFavoriteLevel(filePath, level);
+        var writeResult = store.SetFavoriteLevel(filePath, level);
         var storedLevel = store.LoadFavorites().TryGetValue(Path.GetFullPath(filePath), out var value) ? value : 0;
-        Console.WriteLine($"native-favorite complete path=\"{Path.GetFullPath(filePath)}\" level={storedLevel}");
+        Console.WriteLine($"native-favorite complete path=\"{Path.GetFullPath(filePath)}\" level={storedLevel} sharedWrite={BoolText(writeResult.Succeeded)} warning=\"{EscapeConsoleValue(writeResult.Warning)}\"");
+        return 0;
+    }
+
+    public static int RunSharedFavoritesSmoke()
+    {
+        var hostRoot = NativeStateBridge.ResolveProjectRoot();
+        var smokeRoot = Path.Combine(hostRoot, ".cache", "native-shared-favorites-smoke", $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}");
+        var smokeFolder = Path.Combine(smokeRoot, "images");
+        var targetPath = Path.Combine(smokeFolder, "shared-favorite-target.png");
+        var unrelatedPath = Path.Combine(smokeFolder, "shared-favorite-unrelated.png");
+        WriteSmokePng(targetPath, Color.Gold);
+        WriteSmokePng(unrelatedPath, Color.SteelBlue);
+
+        Directory.CreateDirectory(Path.GetDirectoryName(NativeStateBridge.FavoritesPath(smokeRoot))!);
+        File.WriteAllText(
+            NativeStateBridge.FavoritesPath(smokeRoot),
+            JsonSerializer.Serialize(new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                [unrelatedPath] = 2,
+            }, new JsonSerializerOptions { WriteIndented = true }) + Environment.NewLine,
+            Encoding.UTF8);
+
+        var store = new NativeImageStore(smokeRoot);
+        store.Initialize();
+        var scanFavorites = NativeStateBridge.LoadFavorites(smokeRoot);
+        var images = NativeImageScanner.ScanAsync(smokeFolder, scanFavorites, progress: null, CancellationToken.None).GetAwaiter().GetResult();
+        store.SaveScanResult(smokeFolder, images, TimeSpan.Zero);
+
+        var addResult = store.SetFavoriteLevel(targetPath, 3);
+        var afterAddSqlite = store.LoadFavorites();
+        var afterAddShared = NativeStateBridge.LoadFavorites(smokeRoot);
+        var addWriteThrough = addResult.Succeeded &&
+            afterAddSqlite.TryGetValue(targetPath, out var sqliteAddLevel) &&
+            sqliteAddLevel == 3 &&
+            afterAddShared.TryGetValue(targetPath, out var sharedAddLevel) &&
+            sharedAddLevel == 3 &&
+            afterAddShared.TryGetValue(unrelatedPath, out var unrelatedAddLevel) &&
+            unrelatedAddLevel == 2;
+
+        var changeResult = store.SetFavoriteLevel(targetPath, 5);
+        var afterChangeSqlite = store.LoadFavorites();
+        var afterChangeShared = NativeStateBridge.LoadFavorites(smokeRoot);
+        var levelChangeWriteThrough = changeResult.Succeeded &&
+            afterChangeSqlite.TryGetValue(targetPath, out var sqliteChangedLevel) &&
+            sqliteChangedLevel == 5 &&
+            afterChangeShared.TryGetValue(targetPath, out var sharedChangedLevel) &&
+            sharedChangedLevel == 5 &&
+            afterChangeShared.TryGetValue(unrelatedPath, out var unrelatedChangedLevel) &&
+            unrelatedChangedLevel == 2;
+
+        var clearResult = store.SetFavoriteLevel(targetPath, 0);
+        var afterClearSqlite = store.LoadFavorites();
+        var afterClearShared = NativeStateBridge.LoadFavorites(smokeRoot);
+        var clearWriteThrough = clearResult.Succeeded &&
+            !afterClearSqlite.ContainsKey(targetPath) &&
+            !afterClearShared.ContainsKey(targetPath) &&
+            afterClearShared.TryGetValue(unrelatedPath, out var unrelatedClearLevel) &&
+            unrelatedClearLevel == 2;
+
+        var favoriteOnlyMatches = store.SearchImagesIndexed(smokeFolder, "", favoritesOnly: true, limit: 25, out var usedIndex);
+        var sqliteFacingFilter = usedIndex &&
+            favoriteOnlyMatches.Count == 1 &&
+            string.Equals(favoriteOnlyMatches[0].AbsolutePath, unrelatedPath, StringComparison.OrdinalIgnoreCase) &&
+            favoriteOnlyMatches[0].FavoriteLevel == 2;
+
+        var malformedRoot = Path.Combine(smokeRoot, "malformed");
+        var malformedFavoritesPath = NativeStateBridge.FavoritesPath(malformedRoot);
+        Directory.CreateDirectory(Path.GetDirectoryName(malformedFavoritesPath)!);
+        File.WriteAllText(malformedFavoritesPath, "{not-json", Encoding.UTF8);
+        var malformedStore = new NativeImageStore(malformedRoot);
+        malformedStore.Initialize();
+        var malformedResult = malformedStore.SetFavoriteLevel(targetPath, 4);
+        var malformedSqlite = malformedStore.LoadFavorites().TryGetValue(targetPath, out var malformedSqliteLevel) && malformedSqliteLevel == 4;
+        var malformedSafe = !malformedResult.Succeeded &&
+            malformedSqlite &&
+            string.Equals(File.ReadAllText(malformedFavoritesPath, Encoding.UTF8), "{not-json", StringComparison.Ordinal);
+
+        var jsonShape = afterClearShared.Values.All(static level => level is >= 1 and <= 5);
+        var complete = addWriteThrough &&
+            levelChangeWriteThrough &&
+            clearWriteThrough &&
+            sqliteFacingFilter &&
+            malformedSafe &&
+            jsonShape;
+        if (!complete)
+        {
+            Console.Error.WriteLine(
+                $"native-shared-favorites-smoke error add={BoolText(addWriteThrough)} change={BoolText(levelChangeWriteThrough)} clear={BoolText(clearWriteThrough)} sqliteFilter={BoolText(sqliteFacingFilter)} malformedSafe={BoolText(malformedSafe)} jsonShape={BoolText(jsonShape)}");
+            return 2;
+        }
+
+        Console.WriteLine(
+            $"native-shared-favorites-smoke complete smokeRoot=\"{smokeRoot}\" addWriteThrough={BoolText(addWriteThrough)} levelChangeWriteThrough={BoolText(levelChangeWriteThrough)} clearWriteThrough={BoolText(clearWriteThrough)} sqliteFacingFilter={BoolText(sqliteFacingFilter)} unrelatedPreserved={BoolText(afterClearShared.TryGetValue(unrelatedPath, out var finalUnrelatedLevel) && finalUnrelatedLevel == 2)} malformedSafe={BoolText(malformedSafe)} jsonShape={BoolText(jsonShape)} sharedFavorites=\"{NativeStateBridge.FavoritesPath(smokeRoot)}\" browserRuntime=false localHttpServer=false nodeRuntime=false");
         return 0;
     }
 

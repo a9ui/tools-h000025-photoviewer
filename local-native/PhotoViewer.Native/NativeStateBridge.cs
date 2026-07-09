@@ -2,6 +2,8 @@ using System.Text.Json;
 
 namespace PhotoViewer.Native;
 
+internal sealed record NativeSharedFavoriteWriteResult(bool Succeeded, string Warning);
+
 internal sealed record NativeStateSummary(
     string ProjectRoot,
     int FavoriteCount,
@@ -53,7 +55,7 @@ internal static class NativeStateBridge
         string projectRoot,
         ICollection<NativeImportWarning>? warnings = null)
     {
-        var path = Path.Combine(projectRoot, ".cache", "favorites.json");
+        var path = FavoritesPath(projectRoot);
         var favorites = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
         if (!File.Exists(path))
         {
@@ -119,6 +121,94 @@ internal static class NativeStateBridge
         }
 
         return favorites;
+    }
+
+    public static NativeSharedFavoriteWriteResult WriteFavoriteLevel(string projectRoot, string absolutePath, int level)
+    {
+        var path = FavoritesPath(projectRoot);
+        var normalizedPath = Path.GetFullPath(absolutePath);
+        var clamped = Math.Clamp(level, 0, 5);
+        var favorites = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+
+        if (File.Exists(path))
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+                using var doc = JsonDocument.Parse(stream);
+                if (doc.RootElement.ValueKind != JsonValueKind.Object)
+                {
+                    return new NativeSharedFavoriteWriteResult(false, "shared favorites skipped: favorites.json is not an object");
+                }
+
+                foreach (var property in doc.RootElement.EnumerateObject())
+                {
+                    if (property.Value.ValueKind != JsonValueKind.Number ||
+                        !property.Value.TryGetInt32(out var existingLevel) ||
+                        existingLevel <= 0)
+                    {
+                        continue;
+                    }
+
+                    favorites[property.Name] = Math.Clamp(existingLevel, 1, 5);
+                }
+            }
+            catch (JsonException ex)
+            {
+                return new NativeSharedFavoriteWriteResult(false, $"shared favorites skipped: malformed favorites.json ({ex.Message})");
+            }
+            catch (Exception ex) when (IsRecoverableReadException(ex))
+            {
+                return new NativeSharedFavoriteWriteResult(false, $"shared favorites skipped: favorites.json was not readable ({ex.Message})");
+            }
+        }
+
+        foreach (var key in favorites.Keys.ToArray())
+        {
+            try
+            {
+                if (string.Equals(Path.GetFullPath(key), normalizedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    favorites.Remove(key);
+                }
+            }
+            catch
+            {
+                if (string.Equals(key, normalizedPath, StringComparison.OrdinalIgnoreCase))
+                {
+                    favorites.Remove(key);
+                }
+            }
+        }
+
+        if (clamped > 0)
+        {
+            favorites[normalizedPath] = clamped;
+        }
+
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            var orderedFavorites = favorites
+                .Where(static item => item.Value > 0)
+                .OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static item => item.Key, static item => Math.Clamp(item.Value, 1, 5), StringComparer.OrdinalIgnoreCase);
+            var json = JsonSerializer.Serialize(orderedFavorites, new JsonSerializerOptions { WriteIndented = true });
+            var tempPath = $"{path}.{Environment.ProcessId}.{DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()}.tmp";
+            File.WriteAllText(tempPath, json + Environment.NewLine);
+            File.Move(tempPath, path, overwrite: true);
+        }
+        catch (Exception ex) when (IsRecoverableWriteException(ex))
+        {
+            return new NativeSharedFavoriteWriteResult(false, $"shared favorites write failed: {ex.Message}");
+        }
+
+        return new NativeSharedFavoriteWriteResult(true, "");
+    }
+
+    public static string FavoritesPath(string projectRoot)
+    {
+        return Path.Combine(projectRoot, ".cache", "favorites.json");
     }
 
     public static List<NativeAlbumRecord> LoadAlbums(
@@ -444,6 +534,11 @@ internal static class NativeStateBridge
     }
 
     private static bool IsRecoverableReadException(Exception ex)
+    {
+        return ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException;
+    }
+
+    private static bool IsRecoverableWriteException(Exception ex)
     {
         return ex is IOException or UnauthorizedAccessException or NotSupportedException or ArgumentException;
     }

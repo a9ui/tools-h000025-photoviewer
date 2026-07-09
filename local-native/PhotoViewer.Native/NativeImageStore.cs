@@ -779,7 +779,7 @@ internal sealed class NativeImageStore
         transaction.Commit();
     }
 
-    public void SetFavoriteLevel(string absolutePath, int level)
+    public NativeSharedFavoriteWriteResult SetFavoriteLevel(string absolutePath, int level)
     {
         Initialize();
         var normalizedPath = Path.GetFullPath(absolutePath);
@@ -824,6 +824,7 @@ internal sealed class NativeImageStore
         updateImage.Parameters.AddWithValue("$path", normalizedPath);
         updateImage.ExecuteNonQuery();
         transaction.Commit();
+        return NativeStateBridge.WriteFavoriteLevel(_projectRoot, normalizedPath, clamped);
     }
 
     public void RemoveImage(string absolutePath)

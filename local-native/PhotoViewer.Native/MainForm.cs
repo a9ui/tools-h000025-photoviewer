@@ -4539,6 +4539,7 @@ internal sealed class MainForm : Form
     {
         var clamped = Math.Clamp(level, 0, 5);
         var updatedPaths = new List<string>();
+        var writeWarnings = new List<string>();
         string? firstUpdatedFilename = null;
 
         foreach (var absolutePath in absolutePaths)
@@ -4550,7 +4551,12 @@ internal sealed class MainForm : Form
                 continue;
             }
 
-            _store.SetFavoriteLevel(current.AbsolutePath, clamped);
+            var writeResult = _store.SetFavoriteLevel(current.AbsolutePath, clamped);
+            if (!writeResult.Succeeded && !string.IsNullOrWhiteSpace(writeResult.Warning))
+            {
+                writeWarnings.Add(writeResult.Warning);
+            }
+
             var updated = current with { FavoriteLevel = clamped };
             ReplaceImage(current.AbsolutePath, updated);
             updatedPaths.Add(updated.AbsolutePath);
@@ -4566,9 +4572,15 @@ internal sealed class MainForm : Form
         RefreshFavoriteFilterOptions();
         ApplyFilter();
         SelectImages(updatedPaths);
-        SetStatus(updatedPaths.Count == 1
+        var status = updatedPaths.Count == 1
             ? $"Favorite level {clamped}: {firstUpdatedFilename}"
-            : $"Favorite level {clamped}: {updatedPaths.Count:n0} images");
+            : $"Favorite level {clamped}: {updatedPaths.Count:n0} images";
+        if (writeWarnings.Count > 0)
+        {
+            status += $" ({writeWarnings[0]})";
+        }
+
+        SetStatus(status);
     }
 
     private void ClearPreview(string message)
