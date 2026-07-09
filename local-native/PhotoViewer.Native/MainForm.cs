@@ -1982,6 +1982,23 @@ internal sealed class MainForm : Form
         Require(restored, "large fixture gallery state restore failed");
         Require(ensureVisible, "large fixture restored selection was not visible");
 
+        ApplyViewMode("grid");
+        ApplyThumbnailSize(GalleryThumbnailDefault);
+        SaveThumbnailSize(GalleryThumbnailDefault);
+        var selectedZoomHandled = HandleGalleryWheelZoom(120);
+        var selectedZoomAnchored = selectedZoomHandled &&
+            GetSelectedIndex() == targetIndex &&
+            IsListIndexVisible(targetIndex);
+        Require(selectedZoomAnchored, "large fixture selected gallery zoom anchor failed");
+
+        ClearImageSelection();
+        Application.DoEvents();
+        var centerAnchorIndex = GetGalleryViewportAnchorIndex();
+        Require(centerAnchorIndex >= 0, "large fixture center gallery zoom anchor was not found");
+        var centerZoomHandled = HandleGalleryKeyboardZoom(Keys.Control | Keys.Oemplus);
+        var centerZoomAnchored = centerZoomHandled && IsListIndexVisible(centerAnchorIndex);
+        Require(centerZoomAnchored, "large fixture center gallery zoom anchor failed");
+
         var afterEnhancementState = EnhancementStateFingerprint();
         Require(beforeEnhancementState == afterEnhancementState, "enhancement state changed during native large-scroll smoke");
 
@@ -1999,6 +2016,8 @@ internal sealed class MainForm : Form
             RestoreSelected: restored,
             EnsureVisible: ensureVisible,
             VisibleBeforeRestore: visibleBeforeRestore,
+            GalleryZoomSelectedAnchor: selectedZoomAnchored,
+            GalleryZoomCenterAnchor: centerZoomAnchored,
             EnhancementStateUnchanged: beforeEnhancementState == afterEnhancementState);
     }
 
@@ -4124,17 +4143,64 @@ internal sealed class MainForm : Form
             return false;
         }
 
-        var selectedIndex = GetSelectedIndex();
+        var anchorIndex = GetGalleryViewportAnchorIndex();
         var clamped = Math.Clamp(size, GalleryThumbnailMin, GalleryThumbnailMax);
         ApplyThumbnailSize(clamped);
         SaveThumbnailSize(clamped);
-        if (selectedIndex >= 0 && selectedIndex < _list.VirtualListSize)
+        if (anchorIndex >= 0 && anchorIndex < _list.VirtualListSize)
         {
-            _list.EnsureVisible(selectedIndex);
+            _list.EnsureVisible(anchorIndex);
         }
 
         SetStatus($"Thumb {clamped}");
         return true;
+    }
+
+    private int GetGalleryViewportAnchorIndex()
+    {
+        var selectedIndex = GetSelectedIndex();
+        if (selectedIndex >= 0)
+        {
+            return selectedIndex;
+        }
+
+        var center = new Point(Math.Max(0, _list.ClientSize.Width / 2), Math.Max(0, _list.ClientSize.Height / 2));
+        var centeredItem = _list.GetItemAt(center.X, center.Y);
+        if (centeredItem is not null)
+        {
+            return centeredItem.Index;
+        }
+
+        var client = _list.ClientRectangle;
+        var bestIndex = -1;
+        var bestDistance = int.MaxValue;
+        for (var index = 0; index < _list.VirtualListSize; index++)
+        {
+            Rectangle rect;
+            try
+            {
+                rect = _list.GetItemRect(index);
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                continue;
+            }
+
+            if (rect.Bottom <= client.Top || rect.Top >= client.Bottom || rect.Right <= client.Left || rect.Left >= client.Right)
+            {
+                continue;
+            }
+
+            var distance = Math.Abs((rect.Left + rect.Width / 2) - center.X) +
+                Math.Abs((rect.Top + rect.Height / 2) - center.Y);
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                bestIndex = index;
+            }
+        }
+
+        return bestIndex;
     }
 
     private int GetSelectedIndex()
@@ -5437,6 +5503,8 @@ internal sealed class MainForm : Form
             $"restoreSelected={BoolText(report.RestoreSelected)}",
             $"ensureVisible={BoolText(report.EnsureVisible)}",
             $"visibleBeforeRestore={BoolText(report.VisibleBeforeRestore)}",
+            $"galleryZoomSelectedAnchor={BoolText(report.GalleryZoomSelectedAnchor)}",
+            $"galleryZoomCenterAnchor={BoolText(report.GalleryZoomCenterAnchor)}",
             $"enhancementStateUnchanged={BoolText(report.EnhancementStateUnchanged)}",
             "browserRuntime=false",
             "localHttpServer=false",
@@ -6208,6 +6276,8 @@ internal sealed class MainForm : Form
         bool RestoreSelected,
         bool EnsureVisible,
         bool VisibleBeforeRestore,
+        bool GalleryZoomSelectedAnchor,
+        bool GalleryZoomCenterAnchor,
         bool EnhancementStateUnchanged);
 
     private sealed record NativeDateFilterSmokeReport(
