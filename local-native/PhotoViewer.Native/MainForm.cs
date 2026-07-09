@@ -72,6 +72,7 @@ internal sealed class MainForm : Form
     private readonly NumericUpDown _thumbnailSize = new();
     private readonly CheckBox _previewVisible = new();
     private readonly CheckBox _detailsVisible = new();
+    private readonly CheckBox _enhancedPreview = new();
     private readonly CheckedListBox _folderBuckets = new();
     private readonly Button _showAllFoldersButton = new();
     private readonly Button _hideAllFoldersButton = new();
@@ -107,6 +108,7 @@ internal sealed class MainForm : Form
     private SplitContainer? _mainSplit;
 
     private readonly string _projectRoot;
+    private string _enhancementJobsPath = "";
     private readonly NativeImageStore _store;
     private readonly NativePreviewRingBuffer _previewRing = new(capacity: 5);
     private readonly NativeCacheScheduler _cacheScheduler = new();
@@ -133,6 +135,7 @@ internal sealed class MainForm : Form
     private bool _updatingSearchSuggestions;
     private bool _committingSearchText;
     private bool _updatingPreviewTabs;
+    private bool _updatingEnhancedPreview;
     private bool _updatingFolderBucketKeyboardRange;
     private int _folderBucketRangeAnchorIndex = -1;
     private readonly List<PreviewTabState> _closedPreviewTabs = [];
@@ -151,6 +154,7 @@ internal sealed class MainForm : Form
         KeyPreview = true;
 
         _projectRoot = NativeStateBridge.ResolveProjectRoot();
+        _enhancementJobsPath = NativeEnhancementState.JobsFilePath(_projectRoot);
         _store = new NativeImageStore(_projectRoot);
         _store.Initialize();
         var report = _store.ImportProjectState();
@@ -964,6 +968,24 @@ internal sealed class MainForm : Form
             _store.SaveSetting("preview_details_visible", _detailsVisible.Checked ? "1" : "0");
         };
 
+        _enhancedPreview.Text = "Enhanced preview";
+        ApplyTextFitSize(_enhancedPreview, 132);
+        _enhancedPreview.CheckedChanged += async (_, _) =>
+        {
+            if (_updatingEnhancedPreview)
+            {
+                return;
+            }
+
+            if (_enhancedPreview.Checked && !SelectedEnhancedOutputCanDisplay())
+            {
+                SetEnhancedPreviewChecked(false);
+                return;
+            }
+
+            await LoadSelectedPreviewAsync();
+        };
+
         displayControls.Controls.Add(sortLabel);
         displayControls.Controls.Add(_sortMode);
         displayControls.Controls.Add(_reshuffleButton);
@@ -981,6 +1003,7 @@ internal sealed class MainForm : Form
         displayControls.Controls.Add(_thumbnailSize);
         displayControls.Controls.Add(_previewVisible);
         displayControls.Controls.Add(_detailsVisible);
+        displayControls.Controls.Add(_enhancedPreview);
 
         var split = new SplitContainer
         {
@@ -1526,7 +1549,8 @@ internal sealed class MainForm : Form
         await LoadSelectedPreviewAsync();
         var previewLoaded = await WaitForPreviewAsync(previewTarget.Filename);
         Require(previewLoaded, "preview did not load fixture image");
-        var previewTabsFirst = _previewTabs.TabPages.Count == 1 &&
+        var initialPreviewTabCount = _previewTabs.TabPages.Count;
+        var previewTabsFirst = initialPreviewTabCount >= 1 &&
             string.Equals(ActivePreviewTabState()?.Path, previewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         var previewTabPin = ToggleActivePreviewTabPin() &&
             ActivePreviewTabState()?.IsPinned == true &&
@@ -1538,7 +1562,7 @@ internal sealed class MainForm : Form
         SelectImage(secondPreviewTarget!.AbsolutePath);
         await LoadSelectedPreviewAsync();
         var previewTabs = previewTabsFirst &&
-            _previewTabs.TabPages.Count >= 2 &&
+            _previewTabs.TabPages.Count >= initialPreviewTabCount &&
             string.Equals(ActivePreviewTabState()?.Path, secondPreviewTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         Require(previewTabs, "preview tab creation failed");
         var previewTabCloseAction = CloseActivePreviewTab();
@@ -1582,6 +1606,10 @@ internal sealed class MainForm : Form
             string.Equals(ActivePreviewTabState()?.Path, activeBeforeHover?.Path, StringComparison.OrdinalIgnoreCase) &&
             string.Equals(GetSelectedImage()?.AbsolutePath, selectedBeforeHover?.AbsolutePath, StringComparison.OrdinalIgnoreCase);
         Require(hoverQuickPreview, "hover quick preview changed tabs or selection");
+        var enhancedToggleSmoke = await RunEnhancedToggleSmokeAsync(previewTarget, secondPreviewTarget!);
+        Require(enhancedToggleSmoke.ValidToggle, "valid enhanced output did not toggle preview display");
+        Require(enhancedToggleSmoke.DetailToggle, "valid enhanced output did not toggle detail display");
+        Require(enhancedToggleSmoke.InvalidFallback, "invalid enhanced output did not fall back safely");
         var metadataTarget = _visibleImages.FirstOrDefault(static image =>
             image.Prompt.Contains("native metadata prompt", StringComparison.OrdinalIgnoreCase) &&
             image.NegativePrompt.Contains("native negative prompt", StringComparison.OrdinalIgnoreCase));
@@ -1918,6 +1946,9 @@ internal sealed class MainForm : Form
             FavoriteLevelFilter: favoriteLevelFilter,
             UnratedFilter: unratedFilter,
             EnhancedOnlyFilter: enhancedOnlyFilter,
+            EnhancedPreviewToggle: enhancedToggleSmoke.ValidToggle,
+            EnhancedDetailToggle: enhancedToggleSmoke.DetailToggle,
+            EnhancedInvalidFallback: enhancedToggleSmoke.InvalidFallback,
             ClearSearch: clearSearch,
             FolderShowSelected: folderShowSelected,
             FolderHideSelected: folderHideSelected,
@@ -3257,6 +3288,52 @@ internal sealed class MainForm : Form
         return $"{localDate.Month}\u6708{localDate.Day}\u65e5";
     }
 
+    private DisplayTarget ResolveDisplayTarget(NativeImageRecord image)
+    {
+        if (_enhancedPreview.Checked && TryGetDisplayableEnhancedOutput(image, out var outputPath))
+        {
+            return new DisplayTarget(outputPath, true);
+        }
+
+        if (_enhancedPreview.Checked)
+        {
+            SetEnhancedPreviewChecked(false);
+        }
+
+        return new DisplayTarget(image.AbsolutePath, false);
+    }
+
+    private string ResolveDetailDisplayPath(NativeImageRecord image)
+    {
+        return ResolveDisplayTarget(image).Path;
+    }
+
+    private bool SelectedEnhancedOutputCanDisplay()
+    {
+        var selected = GetSelectedImage();
+        return selected is not null && TryGetDisplayableEnhancedOutput(selected, out _);
+    }
+
+    private bool TryGetDisplayableEnhancedOutput(NativeImageRecord image, out string outputPath)
+    {
+        outputPath = "";
+        var outputs = NativeEnhancementState.LoadSucceededOutputs(_projectRoot, _enhancementJobsPath);
+        if (!outputs.TryGetValue(image.AbsolutePath, out var output) ||
+            string.IsNullOrWhiteSpace(output.OutputPath) ||
+            !File.Exists(output.OutputPath))
+        {
+            return false;
+        }
+
+        if (!NativeImageDecoder.CanDecode(output.OutputPath, out _))
+        {
+            return false;
+        }
+
+        outputPath = output.OutputPath;
+        return true;
+    }
+
     private async Task LoadSelectedPreviewAsync()
     {
         _hoverPreviewPath = "";
@@ -3275,6 +3352,8 @@ internal sealed class MainForm : Form
         var image = _visibleImages[index];
         var version = Interlocked.Increment(ref _previewVersion);
         var dimensionHint = FormatDimensions(image);
+        var displayTarget = ResolveDisplayTarget(image);
+        var cacheKey = displayTarget.IsEnhanced ? $"{image.AbsolutePath}|enhanced|{displayTarget.Path}" : image.AbsolutePath;
         _previewLabel.Text = dimensionHint.Length > 0
             ? $"Loading {image.Filename} ({dimensionHint})"
             : $"Loading {image.Filename}";
@@ -3282,7 +3361,7 @@ internal sealed class MainForm : Form
         try
         {
             Image loaded;
-            if (_previewRing.TryGet(image.AbsolutePath, out var cached) && cached is not null)
+            if (_previewRing.TryGet(cacheKey, out var cached) && cached is not null)
             {
                 loaded = new Bitmap(cached);
             }
@@ -3290,9 +3369,9 @@ internal sealed class MainForm : Form
             {
                 var decoded = await _cacheScheduler.ScheduleAsync(
                     NativeCacheJobKind.PreviewDecode,
-                    image.AbsolutePath,
-                    _ => LoadImageCopy(image.AbsolutePath));
-                _previewRing.Store(image.AbsolutePath, decoded);
+                    cacheKey,
+                    _ => LoadImageCopy(displayTarget.Path));
+                _previewRing.Store(cacheKey, decoded);
                 loaded = new Bitmap(decoded);
             }
 
@@ -3306,7 +3385,7 @@ internal sealed class MainForm : Form
             _preview.Image = loaded;
             previous?.Dispose();
 
-            _previewLabel.Text = FormatPreviewDetails(image, dimensionHint);
+            _previewLabel.Text = FormatPreviewDetails(image, dimensionHint, displayTarget.IsEnhanced);
             EnsurePreviewTab(image);
             UpdateSelectionActions();
             WarmNeighborPreviews(index);
@@ -3318,6 +3397,110 @@ internal sealed class MainForm : Form
                 ClearPreview($"Preview failed: {ex.Message}");
             }
         }
+    }
+
+    private async Task<EnhancedToggleSmokeResult> RunEnhancedToggleSmokeAsync(
+        NativeImageRecord validTarget,
+        NativeImageRecord invalidTarget)
+    {
+        var originalJobsPath = _enhancementJobsPath;
+        var smokeRoot = Path.Combine(_projectRoot, ".cache", "native-enhanced-toggle-smoke", $"{DateTime.UtcNow:yyyyMMddHHmmssfff}-{Environment.ProcessId}");
+        var validOutputPath = Path.Combine(smokeRoot, "valid-enhanced.webp");
+        var invalidOutputPath = Path.Combine(smokeRoot, "invalid-enhanced.webp");
+        var jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        Directory.CreateDirectory(smokeRoot);
+        NativeWebpDecodeSmoke.WriteValidWebp(validOutputPath);
+        File.WriteAllText(invalidOutputPath, "not a usable webp fixture", System.Text.Encoding.ASCII);
+        File.WriteAllText(jobsPath, BuildEnhancedToggleSmokeJobsJson(validTarget, validOutputPath, invalidTarget, invalidOutputPath));
+
+        try
+        {
+            _enhancementJobsPath = jobsPath;
+            SelectImage(validTarget.AbsolutePath);
+            SetEnhancedPreviewChecked(true);
+            await LoadSelectedPreviewAsync();
+            var validToggle = _enhancedPreview.Checked &&
+                _enhancedPreview.Enabled &&
+                _preview.Image is not null &&
+                _preview.Image.Width == 8 &&
+                _preview.Image.Height == 8 &&
+                _previewLabel.Text.Contains("Enhanced preview", StringComparison.OrdinalIgnoreCase);
+
+            using var detail = CreateDetailModal(GetSelectedIndex());
+            detail.Show(this);
+            Application.DoEvents();
+            var detailSize = detail.CurrentSourceSizeForSmoke();
+            var detailToggle = detailSize.Width == 8 && detailSize.Height == 8;
+            detail.Close();
+            Application.DoEvents();
+
+            SelectImage(invalidTarget.AbsolutePath);
+            var invalidDisabled = !_enhancedPreview.Checked && !_enhancedPreview.Enabled;
+            await LoadSelectedPreviewAsync();
+            var invalidFallback = invalidDisabled &&
+                _preview.Image is not null &&
+                _preview.Image.Width != 8 &&
+                !_previewLabel.Text.Contains("Enhanced preview", StringComparison.OrdinalIgnoreCase);
+
+            SetEnhancedPreviewChecked(false);
+            SelectImage(validTarget.AbsolutePath);
+            await LoadSelectedPreviewAsync();
+            return new EnhancedToggleSmokeResult(validToggle, detailToggle, invalidFallback);
+        }
+        finally
+        {
+            _enhancementJobsPath = originalJobsPath;
+            SetEnhancedPreviewChecked(false);
+        }
+    }
+
+    private void SetEnhancedPreviewChecked(bool value)
+    {
+        _updatingEnhancedPreview = true;
+        try
+        {
+            _enhancedPreview.Checked = value;
+        }
+        finally
+        {
+            _updatingEnhancedPreview = false;
+        }
+    }
+
+    private static string BuildEnhancedToggleSmokeJobsJson(
+        NativeImageRecord validTarget,
+        string validOutputPath,
+        NativeImageRecord invalidTarget,
+        string invalidOutputPath)
+    {
+        var payload = new
+        {
+            version = 1,
+            jobs = new object[]
+            {
+                BuildEnhancedToggleSmokeJob("native-toggle-valid", validTarget, validOutputPath),
+                BuildEnhancedToggleSmokeJob("native-toggle-invalid", invalidTarget, invalidOutputPath),
+            },
+        };
+        return JsonSerializer.Serialize(payload) + Environment.NewLine;
+    }
+
+    private static object BuildEnhancedToggleSmokeJob(string id, NativeImageRecord image, string outputPath)
+    {
+        return new
+        {
+            id,
+            sourceId = image.AbsolutePath,
+            sourcePath = image.AbsolutePath,
+            sourceSignature = new
+            {
+                size = image.SizeBytes,
+                mtimeMs = new DateTimeOffset(image.ModifiedAtUtc).ToUnixTimeMilliseconds(),
+            },
+            status = "succeeded",
+            progress = 100,
+            outputPath,
+        };
     }
 
     private void EnsurePreviewTab(NativeImageRecord image)
@@ -4082,6 +4265,7 @@ internal sealed class MainForm : Form
             _visibleImages,
             index,
             LoadKeyBindings(_store.GetSetting("keybindings_json", NativeImageStore.DefaultKeyBindingsJson), DetailKeyBindingActions),
+            ResolveDetailDisplayPath,
             OpenExternalPath,
             SetFavoriteLevelForPath,
             AddPromptTagToSearch);
@@ -4666,6 +4850,13 @@ internal sealed class MainForm : Form
         _refreshButton.Enabled = CurrentFolderSetRoots().Count > 0;
         _recentSetButton.Enabled = true;
         _addFolderButton.Enabled = true;
+        var canDisplayEnhancedOutput = selected is not null && TryGetDisplayableEnhancedOutput(selected, out _);
+        if (!canDisplayEnhancedOutput && _enhancedPreview.Checked)
+        {
+            SetEnhancedPreviewChecked(false);
+        }
+
+        _enhancedPreview.Enabled = canDisplayEnhancedOutput;
         _favoriteLevel.Enabled = selectedCount > 0;
         _selectionLabel.Text = selectedCount > 0
             ? $"Selected {selectedCount:n0} / {_visibleImages.Count:n0}"
@@ -5831,11 +6022,16 @@ internal sealed class MainForm : Form
         return $"{size.Width}x{size.Height}";
     }
 
-    private static string FormatPreviewDetails(NativeImageRecord image, string dimensionHint)
+    private static string FormatPreviewDetails(NativeImageRecord image, string dimensionHint, bool enhanced = false)
     {
         var details = string.IsNullOrWhiteSpace(dimensionHint)
             ? $"{image.Filename}  {FormatBytes(image.SizeBytes)}  fav {image.FavoriteLevel}"
             : $"{image.Filename}  {FormatBytes(image.SizeBytes)}  {dimensionHint}  fav {image.FavoriteLevel}";
+        if (enhanced)
+        {
+            details = $"Enhanced preview  {details}";
+        }
+
         var metadata = FormatMetadataDisplay(image, maxValueLength: 72);
         return string.IsNullOrWhiteSpace(metadata) ? details : $"{details}  {metadata}";
     }
@@ -6192,6 +6388,9 @@ internal sealed class MainForm : Form
             $"favoriteLevelFilter={BoolText(report.FavoriteLevelFilter)}",
             $"unratedFilter={BoolText(report.UnratedFilter)}",
             $"enhancedOnlyFilter={BoolText(report.EnhancedOnlyFilter)}",
+            $"enhancedPreviewToggle={BoolText(report.EnhancedPreviewToggle)}",
+            $"enhancedDetailToggle={BoolText(report.EnhancedDetailToggle)}",
+            $"enhancedInvalidFallback={BoolText(report.EnhancedInvalidFallback)}",
             $"clearSearch={BoolText(report.ClearSearch)}",
             $"detailModal={BoolText(report.DetailModal)}",
             $"detailNavigation={BoolText(report.DetailNavigation)}",
@@ -6426,6 +6625,7 @@ internal sealed class MainForm : Form
     {
         private readonly List<NativeImageRecord> _images;
         private readonly IReadOnlyDictionary<string, Keys> _keyBindings;
+        private readonly Func<NativeImageRecord, string> _displayPath;
         private readonly Action<string> _openExternal;
         private readonly Action<string, int> _favoriteChanged;
         private readonly Func<string, bool> _addPromptTagToSearch;
@@ -6446,6 +6646,7 @@ internal sealed class MainForm : Form
             IReadOnlyList<NativeImageRecord> images,
             int startIndex,
             IReadOnlyDictionary<string, Keys> keyBindings,
+            Func<NativeImageRecord, string> displayPath,
             Action<string> openExternal,
             Action<string, int> favoriteChanged,
             Func<string, bool> addPromptTagToSearch)
@@ -6458,6 +6659,7 @@ internal sealed class MainForm : Form
             _images = images.ToList();
             _index = Math.Clamp(startIndex, 0, _images.Count - 1);
             _keyBindings = keyBindings;
+            _displayPath = displayPath;
             _openExternal = openExternal;
             _favoriteChanged = favoriteChanged;
             _addPromptTagToSearch = addPromptTagToSearch;
@@ -6515,6 +6717,11 @@ internal sealed class MainForm : Form
             var message = Message.Create(Handle, 0, IntPtr.Zero, IntPtr.Zero);
             var handled = ProcessCmdKey(ref message, keyData);
             return handled && _zoom > beforeZoom;
+        }
+
+        public Size CurrentSourceSizeForSmoke()
+        {
+            return _sourceImage?.Size ?? Size.Empty;
         }
 
         protected override bool ProcessCmdKey(ref Message msg, Keys keyData)
@@ -6705,7 +6912,7 @@ internal sealed class MainForm : Form
             var image = CurrentImage;
             try
             {
-                _sourceImage = LoadImageCopy(image.AbsolutePath);
+                _sourceImage = LoadImageCopy(_displayPath(image));
                 _flipped = false;
                 _zoom = CalculateFitZoom();
                 ApplyDisplayImage();
@@ -7123,6 +7330,8 @@ internal sealed class MainForm : Form
 
     private sealed record SearchTagSuggestionAccumulator(string Tag, int Count);
 
+    private sealed record DisplayTarget(string Path, bool IsEnhanced);
+
     private sealed record PreviewTabState(string Path, string Filename, bool IsPinned);
 
     private sealed record KeyBindingAction(string Key, string Label, string Surface);
@@ -7182,6 +7391,9 @@ internal sealed class MainForm : Form
         bool FavoriteLevelFilter,
         bool UnratedFilter,
         bool EnhancedOnlyFilter,
+        bool EnhancedPreviewToggle,
+        bool EnhancedDetailToggle,
+        bool EnhancedInvalidFallback,
         bool ClearSearch,
         bool FolderShowSelected,
         bool FolderHideSelected,
@@ -7215,6 +7427,11 @@ internal sealed class MainForm : Form
         int BrowserStateKeys,
         bool SettingsImported,
         bool EnhancementStateUnchanged);
+
+    private sealed record EnhancedToggleSmokeResult(
+        bool ValidToggle,
+        bool DetailToggle,
+        bool InvalidFallback);
 
     private sealed record NativeFolderSetSmokeReport(
         int Roots,

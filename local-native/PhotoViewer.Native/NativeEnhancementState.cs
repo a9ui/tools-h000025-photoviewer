@@ -2,6 +2,8 @@ using System.Text.Json;
 
 namespace PhotoViewer.Native;
 
+internal sealed record NativeEnhancedOutput(string SourcePath, string OutputPath);
+
 internal static class NativeEnhancementState
 {
     public static string JobsFilePath(string projectRoot)
@@ -11,11 +13,17 @@ internal static class NativeEnhancementState
 
     public static HashSet<string> LoadSucceededSourceIds(string projectRoot)
     {
+        return LoadSucceededOutputs(projectRoot).Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+    }
+
+    public static Dictionary<string, NativeEnhancedOutput> LoadSucceededOutputs(string projectRoot, string? jobsPath = null)
+    {
         var sourceIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        var path = JobsFilePath(projectRoot);
+        var outputs = new Dictionary<string, NativeEnhancedOutput>(StringComparer.OrdinalIgnoreCase);
+        var path = string.IsNullOrWhiteSpace(jobsPath) ? JobsFilePath(projectRoot) : jobsPath;
         if (!File.Exists(path))
         {
-            return sourceIds;
+            return outputs;
         }
 
         try
@@ -23,7 +31,7 @@ internal static class NativeEnhancementState
             using var document = JsonDocument.Parse(File.ReadAllText(path));
             if (!document.RootElement.TryGetProperty("jobs", out var jobs) || jobs.ValueKind != JsonValueKind.Array)
             {
-                return sourceIds;
+                return outputs;
             }
 
             foreach (var job in jobs.EnumerateArray())
@@ -33,24 +41,36 @@ internal static class NativeEnhancementState
                     continue;
                 }
 
-                AddPath(sourceIds, ReadString(job, "sourceId"));
-                AddPath(sourceIds, ReadString(job, "sourcePath"));
+                var outputPath = ResolveJobPath(projectRoot, ReadString(job, "outputPath"));
+                if (string.IsNullOrWhiteSpace(outputPath) || !File.Exists(outputPath))
+                {
+                    continue;
+                }
+
+                var sourcePath = ResolveJobPath(projectRoot, ReadString(job, "sourcePath"));
+                if (!string.IsNullOrWhiteSpace(sourcePath) && !SourceSignatureMatches(sourcePath, job))
+                {
+                    continue;
+                }
+
+                AddOutput(outputs, ReadString(job, "sourceId"), sourcePath, outputPath);
+                AddOutput(outputs, sourcePath, sourcePath, outputPath);
             }
         }
         catch (JsonException)
         {
-            return sourceIds;
+            return outputs;
         }
         catch (IOException)
         {
-            return sourceIds;
+            return outputs;
         }
         catch (UnauthorizedAccessException)
         {
-            return sourceIds;
+            return outputs;
         }
 
-        return sourceIds;
+        return outputs;
     }
 
     private static bool IsSucceededOutputJob(JsonElement job)
@@ -66,21 +86,75 @@ internal static class NativeEnhancementState
             : "";
     }
 
-    private static void AddPath(HashSet<string> sourceIds, string value)
+    private static string ResolveJobPath(string projectRoot, string value)
     {
         if (string.IsNullOrWhiteSpace(value))
+        {
+            return "";
+        }
+
+        try
+        {
+            return Path.GetFullPath(Path.IsPathRooted(value) ? value : Path.Combine(projectRoot, value));
+        }
+        catch
+        {
+            return "";
+        }
+    }
+
+    private static void AddOutput(
+        IDictionary<string, NativeEnhancedOutput> outputs,
+        string sourceId,
+        string sourcePath,
+        string outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(sourceId))
         {
             return;
         }
 
-        sourceIds.Add(value);
+        outputs[sourceId] = new NativeEnhancedOutput(sourcePath, outputPath);
         try
         {
-            sourceIds.Add(Path.GetFullPath(value));
+            outputs[Path.GetFullPath(sourceId)] = new NativeEnhancedOutput(sourcePath, outputPath);
         }
         catch
         {
-            // Non-path source ids are ignored by the native absolute-path matcher.
+            // Non-path source ids are still useful if the native record uses the same id.
         }
+    }
+
+    private static bool SourceSignatureMatches(string sourcePath, JsonElement job)
+    {
+        if (!job.TryGetProperty("sourceSignature", out var signature) || signature.ValueKind != JsonValueKind.Object)
+        {
+            return true;
+        }
+
+        if (!File.Exists(sourcePath))
+        {
+            return false;
+        }
+
+        var info = new FileInfo(sourcePath);
+        if (signature.TryGetProperty("size", out var size) &&
+            size.TryGetInt64(out var expectedSize) &&
+            expectedSize != info.Length)
+        {
+            return false;
+        }
+
+        if (signature.TryGetProperty("mtimeMs", out var mtime) &&
+            mtime.TryGetInt64(out var expectedMtimeMs))
+        {
+            var actualMtimeMs = new DateTimeOffset(info.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+            if (expectedMtimeMs != actualMtimeMs)
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 }
