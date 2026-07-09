@@ -54,6 +54,11 @@ internal static class Program
             return NativeHeadlessRunner.RunSharedFavoritesSmoke();
         }
 
+        if (args.Length >= 1 && args[0] == "--headless-shared-seen-smoke")
+        {
+            return NativeHeadlessRunner.RunSharedSeenSmoke();
+        }
+
         if (args.Length >= 1 && args[0] == "--headless-seen-smoke")
         {
             var folder = args.Length >= 2 ? args[1] : null;
