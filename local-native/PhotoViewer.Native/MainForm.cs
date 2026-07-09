@@ -100,6 +100,7 @@ internal sealed class MainForm : Form
     private bool _updatingDisplayStyle;
     private bool _updatingAspectMode;
     private bool _updatingSearchSuggestions;
+    private bool _committingSearchText;
     private bool _updatingPreviewTabs;
     private readonly List<PreviewTabState> _closedPreviewTabs = [];
     private string _hoverPreviewPath = "";
@@ -559,12 +560,8 @@ internal sealed class MainForm : Form
 
         _searchText.Dock = DockStyle.Fill;
         _searchText.PlaceholderText = "Search name/folder";
-        _searchText.TextChanged += (_, _) =>
-        {
-            RefreshSearchChipControls();
-            ApplyFilter();
-            SaveViewState();
-        };
+        _searchText.TextChanged += (_, _) => HandleSearchTextChanged();
+        _searchText.KeyDown += (_, args) => HandleSearchTextKeyDown(args);
 
         _clearSearchButton.Text = "Clear";
         _clearSearchButton.Dock = DockStyle.Fill;
@@ -1603,6 +1600,32 @@ internal sealed class MainForm : Form
             chipTagsAfterRemove.Any(static tag => string.Equals(tag, "fixture", StringComparison.OrdinalIgnoreCase)) &&
             _visibleImages.Any(image => string.Equals(image.AbsolutePath, metadataTarget.AbsolutePath, StringComparison.OrdinalIgnoreCase));
         Require(searchChips, "search chips did not mirror and remove query tags");
+        _searchText.Text = $" fixture, Fixture, {normalizedPromptTag},";
+        var trailingCommaCommitTags = _searchChipPanel.Controls
+            .OfType<Button>()
+            .Select(static button => button.Tag as string)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToList();
+        var trailingCommaCommit = string.Equals(_searchText.Text, $"fixture, {normalizedPromptTag}", StringComparison.Ordinal) &&
+            trailingCommaCommitTags.Count == 2 &&
+            trailingCommaCommitTags.Any(static tag => string.Equals(tag, "fixture", StringComparison.OrdinalIgnoreCase)) &&
+            trailingCommaCommitTags.Any(tag => string.Equals(tag, normalizedPromptTag, StringComparison.OrdinalIgnoreCase));
+        _searchText.Text = $"{normalizedPromptTag}, {normalizedPromptTag.ToUpperInvariant()}, fixture";
+        var enterArgs = new KeyEventArgs(Keys.Enter);
+        HandleSearchTextKeyDown(enterArgs);
+        var enterCommitTags = _searchChipPanel.Controls
+            .OfType<Button>()
+            .Select(static button => button.Tag as string)
+            .Where(static tag => !string.IsNullOrWhiteSpace(tag))
+            .ToList();
+        var enterCommit = enterArgs.Handled &&
+            enterArgs.SuppressKeyPress &&
+            string.Equals(_searchText.Text, $"{normalizedPromptTag}, fixture", StringComparison.Ordinal) &&
+            enterCommitTags.Count == 2 &&
+            enterCommitTags.Any(tag => string.Equals(tag, normalizedPromptTag, StringComparison.OrdinalIgnoreCase)) &&
+            enterCommitTags.Any(static tag => string.Equals(tag, "fixture", StringComparison.OrdinalIgnoreCase));
+        var searchChipCommit = trailingCommaCommit && enterCommit;
+        Require(searchChipCommit, "search chip commit normalization failed");
         _clearSearchButton.PerformClick();
         Require(_searchText.Text.Length == 0 && _visibleImages.Count == initialVisible, "prompt tag search reset failed");
         var searchSuggestion = SelectSearchSuggestion(normalizedPromptTag) &&
@@ -1774,6 +1797,7 @@ internal sealed class MainForm : Form
             MetadataCopy: metadataCopy,
             PromptTagAction: promptTagAction,
             SearchChips: searchChips,
+            SearchChipCommit: searchChipCommit,
             SearchSuggestion: searchSuggestion,
             SettingsReadOnly: settingsReadOnly,
             SearchMatches: searchMatches,
@@ -3538,6 +3562,68 @@ internal sealed class MainForm : Form
         return _searchSuggestion.SelectedItem is SearchTagSuggestion suggestion && AddPromptTagToSearch(suggestion.Tag);
     }
 
+    private void HandleSearchTextChanged()
+    {
+        if (_committingSearchText)
+        {
+            return;
+        }
+
+        if (_searchText.Text.EndsWith(",", StringComparison.Ordinal))
+        {
+            CommitSearchText();
+            return;
+        }
+
+        RefreshSearchChipControls();
+        ApplyFilter();
+        SaveViewState();
+    }
+
+    private void HandleSearchTextKeyDown(KeyEventArgs args)
+    {
+        if (args.KeyCode != Keys.Enter)
+        {
+            return;
+        }
+
+        CommitSearchText();
+        args.Handled = true;
+        args.SuppressKeyPress = true;
+    }
+
+    private bool CommitSearchText()
+    {
+        var normalized = NormalizeSearchText(_searchText.Text);
+        var changed = !string.Equals(_searchText.Text, normalized, StringComparison.Ordinal);
+
+        if (changed)
+        {
+            _committingSearchText = true;
+            try
+            {
+                _searchText.Text = normalized;
+                _searchText.SelectionStart = _searchText.TextLength;
+                _searchText.SelectionLength = 0;
+            }
+            finally
+            {
+                _committingSearchText = false;
+            }
+        }
+
+        RefreshSearchChipControls();
+        ApplyFilter();
+        SaveViewState();
+
+        if (changed)
+        {
+            SetStatus(normalized.Length == 0 ? "Cleared search tags." : $"Committed search tags: {normalized}");
+        }
+
+        return changed;
+    }
+
     private void RemoveSearchTag(string tag)
     {
         var currentTags = ParseSearchTags(_searchText.Text);
@@ -5147,6 +5233,21 @@ internal sealed class MainForm : Form
             .ToList();
     }
 
+    private static string NormalizeSearchText(string query)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var tags = new List<string>();
+        foreach (var tag in ParseSearchTags(query))
+        {
+            if (seen.Add(tag))
+            {
+                tags.Add(tag);
+            }
+        }
+
+        return string.Join(", ", tags);
+    }
+
     private static string NormalizePromptTag(string tag)
     {
         return tag
@@ -5419,6 +5520,7 @@ internal sealed class MainForm : Form
             $"metadataCopy={BoolText(report.MetadataCopy)}",
             $"promptTagAction={BoolText(report.PromptTagAction)}",
             $"searchChips={BoolText(report.SearchChips)}",
+            $"searchChipCommit={BoolText(report.SearchChipCommit)}",
             $"searchSuggestion={BoolText(report.SearchSuggestion)}",
             $"settingsReadOnly={BoolText(report.SettingsReadOnly)}",
             $"searchMatches={report.SearchMatches}",
@@ -6235,6 +6337,7 @@ internal sealed class MainForm : Form
         bool MetadataCopy,
         bool PromptTagAction,
         bool SearchChips,
+        bool SearchChipCommit,
         bool SearchSuggestion,
         bool SettingsReadOnly,
         int SearchMatches,
