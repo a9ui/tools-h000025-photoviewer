@@ -3342,20 +3342,15 @@ internal sealed class MainForm : Form
     private bool TryGetDisplayableEnhancedOutput(NativeImageRecord image, out string outputPath)
     {
         outputPath = "";
-        var outputs = NativeEnhancementState.LoadSucceededOutputs(_projectRoot, _enhancementJobsPath);
-        if (!outputs.TryGetValue(image.AbsolutePath, out var output) ||
-            string.IsNullOrWhiteSpace(output.OutputPath) ||
-            !File.Exists(output.OutputPath))
+        var status = NativeEnhancementState.GetStatusForSource(_projectRoot, image.AbsolutePath, _enhancementJobsPath);
+        if (status.Status != NativeEnhancementJobStatus.SucceededDisplayable ||
+            string.IsNullOrWhiteSpace(status.OutputPath) ||
+            !File.Exists(status.OutputPath))
         {
             return false;
         }
 
-        if (!NativeImageDecoder.CanDecode(output.OutputPath, out _))
-        {
-            return false;
-        }
-
-        outputPath = output.OutputPath;
+        outputPath = status.OutputPath;
         return true;
     }
 
