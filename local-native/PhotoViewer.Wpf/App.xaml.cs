@@ -3280,6 +3280,18 @@ public partial class App : Application
                 string? activeAfterSecond = win.ActivePreviewTabNameForSmoke;
                 List<string> tabsAfterSecond = win.PreviewTabNamesForSmoke;
 
+                string? selectedBeforeHover = win.SelectedFileNameForSmoke;
+                string? activeBeforeHover = win.ActivePreviewTabNameForSmoke;
+                bool hoverFirstShown = win.ShowPreviewTabHoverForSmoke(firstName);
+                bool hoverVisibleAfterShow = win.PreviewTabHoverVisibleForSmoke;
+                string? hoverNameAfterShow = win.HoverPreviewTabNameForSmoke;
+                string? hoverPathAfterShow = win.HoverPreviewTabPathForSmoke;
+                string? selectedAfterHoverShow = win.SelectedFileNameForSmoke;
+                string? activeAfterHoverShow = win.ActivePreviewTabNameForSmoke;
+                bool hoverFirstHidden = win.HidePreviewTabHoverForSmoke(firstName);
+                bool hoverVisibleAfterHide = win.PreviewTabHoverVisibleForSmoke;
+                string? hoverNameAfterHide = win.HoverPreviewTabNameForSmoke;
+
                 bool activatedFirst = win.ActivatePreviewTabForSmoke(firstName);
                 string? selectedAfterActivateFirst = win.SelectedFileNameForSmoke;
                 string? activeAfterActivateFirst = win.ActivePreviewTabNameForSmoke;
@@ -3316,6 +3328,15 @@ public partial class App : Application
                     && countAfterSecond == 2
                     && string.Equals(activeAfterSecond, secondName, StringComparison.OrdinalIgnoreCase)
                     && tabsAfterSecond.SequenceEqual([firstName, secondName], StringComparer.OrdinalIgnoreCase)
+                    && hoverFirstShown
+                    && hoverVisibleAfterShow
+                    && string.Equals(hoverNameAfterShow, firstName, StringComparison.OrdinalIgnoreCase)
+                    && !string.IsNullOrWhiteSpace(hoverPathAfterShow)
+                    && string.Equals(activeAfterHoverShow, activeBeforeHover, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterHoverShow, selectedBeforeHover, StringComparison.OrdinalIgnoreCase)
+                    && hoverFirstHidden
+                    && !hoverVisibleAfterHide
+                    && string.IsNullOrWhiteSpace(hoverNameAfterHide)
                     && activatedFirst
                     && string.Equals(activeAfterActivateFirst, firstName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(selectedAfterActivateFirst, firstName, StringComparison.OrdinalIgnoreCase)
@@ -3339,7 +3360,7 @@ public partial class App : Application
                 result = new PreviewTabsSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "preview tabs open, activate, close, restore, close-all, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
+                    Message = ok ? "preview tabs open, hover preview, activate, close, restore, close-all, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
                     Folder = fullFolder,
                     StatePath = statePath,
                     SeenPath = seenPath,
@@ -3352,6 +3373,15 @@ public partial class App : Application
                     CountAfterSecond = countAfterSecond,
                     ActiveAfterSecond = activeAfterSecond,
                     TabsAfterSecond = tabsAfterSecond,
+                    HoverFirstShown = hoverFirstShown,
+                    HoverVisibleAfterShow = hoverVisibleAfterShow,
+                    HoverNameAfterShow = hoverNameAfterShow,
+                    HoverPathAfterShow = hoverPathAfterShow,
+                    ActiveAfterHoverShow = activeAfterHoverShow,
+                    SelectedAfterHoverShow = selectedAfterHoverShow,
+                    HoverFirstHidden = hoverFirstHidden,
+                    HoverVisibleAfterHide = hoverVisibleAfterHide,
+                    HoverNameAfterHide = hoverNameAfterHide,
                     ActiveAfterActivateFirst = activeAfterActivateFirst,
                     SelectedAfterActivateFirst = selectedAfterActivateFirst,
                     CountAfterCloseFirst = countAfterCloseFirst,
@@ -4409,6 +4439,15 @@ public partial class App : Application
         public int CountAfterSecond { get; init; }
         public string? ActiveAfterSecond { get; init; }
         public List<string> TabsAfterSecond { get; init; } = [];
+        public bool HoverFirstShown { get; init; }
+        public bool HoverVisibleAfterShow { get; init; }
+        public string? HoverNameAfterShow { get; init; }
+        public string? HoverPathAfterShow { get; init; }
+        public string? ActiveAfterHoverShow { get; init; }
+        public string? SelectedAfterHoverShow { get; init; }
+        public bool HoverFirstHidden { get; init; }
+        public bool HoverVisibleAfterHide { get; init; }
+        public string? HoverNameAfterHide { get; init; }
         public string? ActiveAfterActivateFirst { get; init; }
         public string? SelectedAfterActivateFirst { get; init; }
         public int CountAfterCloseFirst { get; init; }
