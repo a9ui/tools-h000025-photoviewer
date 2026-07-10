@@ -50,6 +50,13 @@ public partial class App : Application
             return;
         }
 
+        int selectionSmokeIdx = Array.IndexOf(e.Args, "--selection-smoke");
+        if (selectionSmokeIdx >= 0 && selectionSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSelectionSmoke(e.Args[selectionSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int previewTabsSmokeIdx = Array.IndexOf(e.Args, "--preview-tabs-smoke");
         if (previewTabsSmokeIdx >= 0 && previewTabsSmokeIdx + 1 < e.Args.Length)
         {
@@ -3639,6 +3646,114 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSelectionSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        string? statePath = ArgValue(args, "--state-path");
+        if (string.IsNullOrWhiteSpace(folder) || string.IsNullOrWhiteSpace(statePath))
+        {
+            WriteSelectionSmokeResult(resultPath, new SelectionSmokeResult(false, "missing required --folder or --state-path", folder, statePath));
+            Shutdown(1);
+            return;
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            SelectionSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                List<string> names = win.FilteredFileNamesForSmoke(20);
+                if (names.Count < 6)
+                    throw new InvalidOperationException("selection smoke requires at least 6 fixture images");
+
+                bool rangeSelected = win.SelectRangeForSmoke(1, 3);
+                int rangeCount = win.SelectedCountForSmoke;
+                List<string> rangeNames = win.SelectedFileNamesForSmoke;
+                string? primaryAfterRange = win.SelectedFileNameForSmoke;
+                int cardsAfterRange = win.CardsSelectedCountForSmoke;
+                int rowsAfterRange = win.RowsSelectedCountForSmoke;
+                bool headerAfterRange = win.HeaderStatsForSmoke.StartsWith("3 selected", StringComparison.Ordinal);
+
+                bool toggledRemoved = win.ToggleSelectionForSmoke(2);
+                int afterRemoveCount = win.SelectedCountForSmoke;
+                List<string> afterRemoveNames = win.SelectedFileNamesForSmoke;
+                string? primaryAfterRemove = win.SelectedFileNameForSmoke;
+
+                bool toggledAdded = win.ToggleSelectionForSmoke(5);
+                int afterAddCount = win.SelectedCountForSmoke;
+                List<string> afterAddNames = win.SelectedFileNamesForSmoke;
+                string? primaryAfterAdd = win.SelectedFileNameForSmoke;
+                bool listMode = win.SetListModeForSmoke();
+                int rowsAfterMode = win.RowsSelectedCountForSmoke;
+                int cardsAfterMode = win.CardsSelectedCountForSmoke;
+                bool gridMode = win.SetGridModeForSmoke();
+                var persisted = ReadPersistedState(statePath);
+
+                bool ok = win.MultiSelectionEnabledForSmoke
+                    && rangeSelected
+                    && rangeCount == 3
+                    && rangeNames.SequenceEqual(names.Skip(1).Take(3), StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(primaryAfterRange, names[3], StringComparison.OrdinalIgnoreCase)
+                    && cardsAfterRange == 3
+                    && rowsAfterRange == 3
+                    && headerAfterRange
+                    && toggledRemoved
+                    && afterRemoveCount == 2
+                    && afterRemoveNames.SequenceEqual([names[1], names[3]], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(primaryAfterRemove, names[3], StringComparison.OrdinalIgnoreCase)
+                    && toggledAdded
+                    && afterAddCount == 3
+                    && afterAddNames.SequenceEqual([names[1], names[3], names[5]], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(primaryAfterAdd, names[5], StringComparison.OrdinalIgnoreCase)
+                    && listMode
+                    && gridMode
+                    && rowsAfterMode == 3
+                    && cardsAfterMode == 3
+                    && string.Equals(persisted?.SelectedPath, win.SelectedPathForSmoke, StringComparison.OrdinalIgnoreCase);
+
+                result = new SelectionSmokeResult(
+                    ok,
+                    ok ? "Ctrl/Shift-style range and toggle selection, view synchronization, header count, and primary persistence passed" : "selection smoke did not meet expected multi-selection behavior",
+                    folder,
+                    statePath,
+                    names,
+                    rangeSelected,
+                    rangeCount,
+                    rangeNames,
+                    primaryAfterRange,
+                    cardsAfterRange,
+                    rowsAfterRange,
+                    toggledRemoved,
+                    afterRemoveCount,
+                    afterRemoveNames,
+                    primaryAfterRemove,
+                    toggledAdded,
+                    afterAddCount,
+                    afterAddNames,
+                    primaryAfterAdd,
+                    listMode,
+                    gridMode,
+                    cardsAfterMode,
+                    rowsAfterMode,
+                    persisted?.SelectedPath);
+            }
+            catch (Exception ex)
+            {
+                result = new SelectionSmokeResult(false, ex.Message, folder, statePath);
+            }
+
+            win.Close();
+            WriteSelectionSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewTabsSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -4931,6 +5046,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteSelectionSmokeResult(string path, SelectionSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WritePreviewTabsSmokeResult(string path, PreviewTabsSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -5201,6 +5323,32 @@ public partial class App : Application
         string? StartPath = null,
         string? NextPath = null,
         ModalTransformSnapshot AfterNavigation = default);
+
+    private sealed record SelectionSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        string? StatePath,
+        List<string>? FixtureNames = null,
+        bool RangeSelected = false,
+        int RangeCount = 0,
+        List<string>? RangeNames = null,
+        string? PrimaryAfterRange = null,
+        int CardsAfterRange = 0,
+        int RowsAfterRange = 0,
+        bool ToggledRemoved = false,
+        int AfterRemoveCount = 0,
+        List<string>? AfterRemoveNames = null,
+        string? PrimaryAfterRemove = null,
+        bool ToggledAdded = false,
+        int AfterAddCount = 0,
+        List<string>? AfterAddNames = null,
+        string? PrimaryAfterAdd = null,
+        bool ListMode = false,
+        bool GridMode = false,
+        int CardsAfterMode = 0,
+        int RowsAfterMode = 0,
+        string? PersistedSelectedPath = null);
 
     private sealed class PreviewTabsSmokeResult
     {
