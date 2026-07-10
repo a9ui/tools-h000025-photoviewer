@@ -35,6 +35,10 @@ public partial class MainWindow : Window
     private const int MaxRecentFolderSets = 8;
     private const double DefaultCardWidth = 190;
     private const double CardWidthStep = 15;
+    private const double ModalZoomMin = 0.25;
+    private const double ModalZoomMax = 10;
+    private const double ModalZoomKeyboardStep = 1.15;
+    private const double ModalZoomWheelStep = 1.1;
     private const string DisplayStyleStandard = "standard";
     private const string DisplayStyleCompact = "compact";
     private const string DisplayStylePoster = "poster";
@@ -94,6 +98,7 @@ public partial class MainWindow : Window
     private string? _restoredSelectedPath;
     private string? _activePreviewTabPath;
     private string? _hoverPreviewTabPath;
+    private string? _modalTransformPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private CancellationTokenSource? _previewCts;
@@ -113,6 +118,8 @@ public partial class MainWindow : Window
     private DateTime? _dateFromLocal;
     private DateTime? _dateToLocal;
     private int _favoriteFilterLevel = MinFavoriteFilterLevel;
+    private double _modalZoom = 1;
+    private bool _modalFlipped;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -3459,6 +3466,8 @@ public partial class MainWindow : Window
     private void OpenModal()
     {
         if (SelectedTile() is not Tile t) return;
+        if (!string.Equals(_modalTransformPath, t.Path, StringComparison.OrdinalIgnoreCase))
+            ResetModalTransform(t.Path);
         var watch = Stopwatch.StartNew();
         _modalCts?.Cancel();
         var cts = new CancellationTokenSource();
@@ -3527,6 +3536,80 @@ public partial class MainWindow : Window
     {
         _modalCts?.Cancel();
         Modal.Visibility = Visibility.Collapsed;
+        ResetModalTransform();
+    }
+
+    private void ToggleModalFlip_Click(object sender, RoutedEventArgs e) => ToggleModalFlip();
+
+    private void ResetModalTransform_Click(object sender, RoutedEventArgs e) => ResetModalTransform(_modalTransformPath);
+
+    private bool ToggleModalFlip()
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+
+        _modalFlipped = !_modalFlipped;
+        UpdateModalTransform();
+        return true;
+    }
+
+    private bool AdjustModalZoom(double multiplier)
+    {
+        if (Modal.Visibility != Visibility.Visible || multiplier <= 0)
+            return false;
+
+        return SetModalZoom(_modalZoom * multiplier);
+    }
+
+    private bool SetModalZoom(double zoom)
+    {
+        double next = Math.Clamp(zoom, ModalZoomMin, ModalZoomMax);
+        if (Math.Abs(next - _modalZoom) < 0.0001)
+            return false;
+
+        _modalZoom = next;
+        UpdateModalTransform();
+        return true;
+    }
+
+    private bool ResetModalTransform(string? path = null)
+    {
+        bool changed = Math.Abs(_modalZoom - 1) >= 0.0001
+            || _modalFlipped
+            || !string.Equals(_modalTransformPath, path, StringComparison.OrdinalIgnoreCase);
+        _modalZoom = 1;
+        _modalFlipped = false;
+        _modalTransformPath = path;
+        UpdateModalTransform();
+        return changed;
+    }
+
+    private void UpdateModalTransform()
+    {
+        if (ModalVisualTransform is not null)
+        {
+            ModalVisualTransform.ScaleX = _modalFlipped ? -_modalZoom : _modalZoom;
+            ModalVisualTransform.ScaleY = _modalZoom;
+        }
+
+        if (ModalZoomLabel is not null)
+            ModalZoomLabel.Text = $"{Math.Round(_modalZoom * 100):0}%";
+    }
+
+    private bool TryHandleModalTransformKey(KeyEventArgs e)
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+
+        var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        return key switch
+        {
+            Key.H => ToggleModalFlip(),
+            Key.Add or Key.OemPlus => AdjustModalZoom(ModalZoomKeyboardStep),
+            Key.Subtract or Key.OemMinus => AdjustModalZoom(1 / ModalZoomKeyboardStep),
+            Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath),
+            _ => false,
+        };
     }
 
     private void ModalPrevious_Click(object sender, RoutedEventArgs e)
@@ -3900,6 +3983,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (TryHandleModalTransformKey(e))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (TryHandleZoomKey(e))
         {
             e.Handled = true;
@@ -3944,6 +4033,13 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
     {
+        if (Modal.Visibility == Visibility.Visible)
+        {
+            AdjustModalZoom(e.Delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
+            e.Handled = true;
+            return;
+        }
+
         if (IsZoomModifierActive())
         {
             AdjustCardWidth(e.Delta > 0 ? 1 : -1);
@@ -4153,6 +4249,35 @@ public partial class MainWindow : Window
         return Modal.Visibility == Visibility.Visible;
     }
 
+    public bool ToggleModalFlipForSmoke() => ToggleModalFlip();
+
+    public bool ModalZoomShortcutForSmoke(string shortcut)
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+
+        return shortcut.ToLowerInvariant() switch
+        {
+            "plus" or "+" or "=" => AdjustModalZoom(ModalZoomKeyboardStep),
+            "minus" or "-" => AdjustModalZoom(1 / ModalZoomKeyboardStep),
+            "zero" or "0" => ResetModalTransform(_modalTransformPath),
+            _ => false,
+        };
+    }
+
+    public bool ModalZoomWheelForSmoke(int delta)
+        => AdjustModalZoom(delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
+
+    public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath);
+
+    public ModalTransformSnapshot ModalTransformForSmoke()
+        => new(
+            _modalZoom,
+            _modalFlipped,
+            ModalVisualTransform?.ScaleX ?? 1,
+            ModalVisualTransform?.ScaleY ?? 1,
+            ModalZoomLabel?.Text ?? "");
+
     public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
     {
         var tile = _allTiles.FirstOrDefault();
@@ -4323,6 +4448,13 @@ public readonly record struct DisplayStyleMetrics(
     double ListThumbnailHeight,
     double ListThumbnailSize,
     int FilteredCount);
+
+public readonly record struct ModalTransformSnapshot(
+    double Zoom,
+    bool Flipped,
+    double ScaleX,
+    double ScaleY,
+    string ZoomLabel);
 
 public sealed class RecentFolderSetView
 {

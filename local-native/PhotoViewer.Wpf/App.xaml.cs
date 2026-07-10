@@ -36,6 +36,13 @@ public partial class App : Application
             return;
         }
 
+        int modalTransformSmokeIdx = Array.IndexOf(e.Args, "--modal-transform-smoke");
+        if (modalTransformSmokeIdx >= 0 && modalTransformSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureModalTransformSmoke(e.Args[modalTransformSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int previewTabsSmokeIdx = Array.IndexOf(e.Args, "--preview-tabs-smoke");
         if (previewTabsSmokeIdx >= 0 && previewTabsSmokeIdx + 1 < e.Args.Length)
         {
@@ -3271,6 +3278,95 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureModalTransformSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        int selectIndex = ArgInt(args, "--select-index", 0);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteModalTransformSmokeResult(resultPath, new ModalTransformSmokeResult(false, "missing required --folder", folder, selectIndex));
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ModalTransformSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool selected = win.SelectIndexForSmoke(selectIndex);
+                win.ShowModalForShot();
+                var initial = win.ModalTransformForSmoke();
+                bool flipped = win.ToggleModalFlipForSmoke();
+                var afterFlip = win.ModalTransformForSmoke();
+                bool shortcutZoomed = win.ModalZoomShortcutForSmoke("plus");
+                var afterShortcut = win.ModalTransformForSmoke();
+                bool wheelZoomed = win.ModalZoomWheelForSmoke(120);
+                var afterWheel = win.ModalTransformForSmoke();
+                bool reset = win.ModalZoomShortcutForSmoke("0");
+                var afterReset = win.ModalTransformForSmoke();
+                string? startPath = win.SelectedPathForSmoke;
+                bool movedNext = win.NavigateModalForSmoke(1);
+                string? nextPath = win.SelectedPathForSmoke;
+                var afterNavigation = win.ModalTransformForSmoke();
+
+                bool ok = selected
+                    && win.ModalVisibleForSmoke
+                    && Math.Abs(initial.Zoom - 1) < 0.0001
+                    && !initial.Flipped
+                    && flipped
+                    && afterFlip.Flipped
+                    && afterFlip.ScaleX < 0
+                    && shortcutZoomed
+                    && afterShortcut.Zoom > 1
+                    && wheelZoomed
+                    && afterWheel.Zoom > afterShortcut.Zoom
+                    && reset
+                    && Math.Abs(afterReset.Zoom - 1) < 0.0001
+                    && !afterReset.Flipped
+                    && afterReset.ZoomLabel == "100%"
+                    && movedNext
+                    && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(afterNavigation.Zoom - 1) < 0.0001
+                    && !afterNavigation.Flipped;
+
+                result = new ModalTransformSmokeResult(
+                    ok,
+                    ok ? "modal flip, keyboard/wheel zoom, reset, and navigation reset passed" : "modal transform smoke did not meet expected behavior",
+                    folder,
+                    selectIndex,
+                    selected,
+                    win.ModalVisibleForSmoke,
+                    initial,
+                    flipped,
+                    afterFlip,
+                    shortcutZoomed,
+                    afterShortcut,
+                    wheelZoomed,
+                    afterWheel,
+                    reset,
+                    afterReset,
+                    movedNext,
+                    startPath,
+                    nextPath,
+                    afterNavigation);
+            }
+            catch (Exception ex)
+            {
+                result = new ModalTransformSmokeResult(false, ex.Message, folder, selectIndex);
+            }
+
+            win.Close();
+            WriteModalTransformSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewTabsSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -4549,6 +4645,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteModalTransformSmokeResult(string path, ModalTransformSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WritePreviewTabsSmokeResult(string path, PreviewTabsSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -4770,6 +4873,27 @@ public partial class App : Application
         bool ModalVisible,
         string? PersistedName,
         string? PersistedPath);
+
+    private sealed record ModalTransformSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        int SelectIndex,
+        bool Selected = false,
+        bool ModalVisible = false,
+        ModalTransformSnapshot Initial = default,
+        bool Flipped = false,
+        ModalTransformSnapshot AfterFlip = default,
+        bool ShortcutZoomed = false,
+        ModalTransformSnapshot AfterShortcut = default,
+        bool WheelZoomed = false,
+        ModalTransformSnapshot AfterWheel = default,
+        bool Reset = false,
+        ModalTransformSnapshot AfterReset = default,
+        bool MovedNext = false,
+        string? StartPath = null,
+        string? NextPath = null,
+        ModalTransformSnapshot AfterNavigation = default);
 
     private sealed class PreviewTabsSmokeResult
     {
