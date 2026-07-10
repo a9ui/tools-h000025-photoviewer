@@ -692,26 +692,48 @@
                 Margin="0,0,84,0" CornerRadius="10" Background="#E6121218" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12">
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
+              <Border Background="{StaticResource SoftFill}" CornerRadius="7" Padding="3" Margin="0,0,0,12">
+                <UniformGrid Columns="3">
+                  <RadioButton x:Name="ModalPromptTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
+                               Content="Prompt" Tag="prompt" IsChecked="True" Click="ModalMetadataTab_Click"/>
+                  <RadioButton x:Name="ModalNegativeTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
+                               Content="Negative" Tag="negative" Click="ModalMetadataTab_Click"/>
+                  <RadioButton x:Name="ModalSettingsTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
+                               Content="Settings" Tag="settings" Click="ModalMetadataTab_Click"/>
+                </UniformGrid>
+              </Border>
+
+              <StackPanel x:Name="ModalPromptPanel">
+                <DockPanel Margin="0,0,0,6">
+                  <TextBlock Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                  <Button x:Name="CopyModalPromptButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
+                          Content="Copy" IsEnabled="False" ToolTip="No prompt metadata loaded" Click="CopyPreviewPrompt_Click"/>
+                </DockPanel>
+                <TextBlock x:Name="ModalPromptText" Text="-" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
+              </StackPanel>
+
+              <StackPanel x:Name="ModalNegativePanel" Visibility="Collapsed">
+                <DockPanel Margin="0,0,0,6">
+                  <TextBlock Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                  <Button x:Name="CopyModalNegativeButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
+                          Content="Copy" IsEnabled="False" ToolTip="No negative prompt metadata loaded" Click="CopyPreviewNegative_Click"/>
+                </DockPanel>
+                <TextBlock x:Name="ModalNegativeText" Text="-" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
+              </StackPanel>
+
+              <StackPanel x:Name="ModalSettingsPanel" Visibility="Collapsed">
+                <TextBlock Text="GENERATION SETTINGS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
+                <TextBlock x:Name="ModalSettingsText" Text="No settings metadata." Foreground="{StaticResource TextSecondary}" FontSize="12"
+                           FontFamily="{StaticResource MonoFont}" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
+              </StackPanel>
+
+              <Border Height="1" Background="{StaticResource GlassBorder}" Margin="0,0,0,12"/>
               <DockPanel Margin="0,0,0,8">
                 <TextBlock Text="PNG INFO" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 <Button x:Name="CopyModalMetadataButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
                         Content="Copy" IsEnabled="False" ToolTip="No PNG metadata loaded" Click="CopyPreviewMetadata_Click"/>
               </DockPanel>
-              <TextBlock x:Name="ModalMetadataStatusText" Text="No PNG metadata loaded" Foreground="{StaticResource TextTertiary}" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,12"/>
-
-              <DockPanel Margin="0,0,0,6">
-                <TextBlock Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <Button x:Name="CopyModalPromptButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
-                        Content="Copy" IsEnabled="False" ToolTip="No prompt metadata loaded" Click="CopyPreviewPrompt_Click"/>
-              </DockPanel>
-              <TextBlock x:Name="ModalPromptText" Text="-" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
-
-              <DockPanel Margin="0,0,0,6">
-                <TextBlock Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                <Button x:Name="CopyModalNegativeButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
-                        Content="Copy" IsEnabled="False" ToolTip="No negative prompt metadata loaded" Click="CopyPreviewNegative_Click"/>
-              </DockPanel>
-              <TextBlock x:Name="ModalNegativeText" Text="-" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="150"/>
+              <TextBlock x:Name="ModalMetadataStatusText" Text="No PNG metadata loaded" Foreground="{StaticResource TextTertiary}" FontSize="12" TextWrapping="Wrap"/>
             </StackPanel>
           </ScrollViewer>
         </Border>

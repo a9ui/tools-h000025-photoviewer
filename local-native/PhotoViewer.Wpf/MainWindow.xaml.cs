@@ -61,6 +61,9 @@ public partial class MainWindow : Window
     private const string DatePreset30DaysValue = "30d";
     private const string DatePresetThisYearValue = "this-year";
     private const string DatePresetManualValue = "manual";
+    private const string ModalMetadataPromptTab = "prompt";
+    private const string ModalMetadataNegativeTab = "negative";
+    private const string ModalMetadataSettingsTab = "settings";
     private const int MinFavoriteFilterLevel = 1;
     private const int MaxFavoriteFilterLevel = 5;
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
@@ -2214,10 +2217,14 @@ public partial class MainWindow : Window
         bool hasPrompt = !string.IsNullOrWhiteSpace(metadata?.Prompt);
         bool hasNegative = !string.IsNullOrWhiteSpace(metadata?.NegativePrompt);
 
+        string settingsText = metadata is not null && metadata.Settings.Count > 0
+            ? string.Join("  ·  ", metadata.Settings.Select(static pair => $"{pair.Key}: {pair.Value}"))
+            : "No settings metadata.";
+        ModalSettingsText.Text = settingsText;
         ModalMetadataStatusText.Text = metadata is null
             ? "No PNG metadata loaded"
             : metadata.Settings.Count > 0
-                ? string.Join("  ·  ", metadata.Settings.Select(static pair => $"{pair.Key}: {pair.Value}"))
+                ? settingsText
                 : "PNG parameters loaded";
         ModalPromptText.Text = hasPrompt ? metadata!.Prompt : "-";
         ModalNegativeText.Text = hasNegative ? metadata!.NegativePrompt : "-";
@@ -4088,6 +4095,29 @@ public partial class MainWindow : Window
     private void ToggleModalMetadataSidebar_Click(object sender, RoutedEventArgs e)
         => SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
 
+    private void ModalMetadataTab_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is RadioButton { Tag: string tab })
+            SetModalMetadataTab(tab);
+    }
+
+    private void SetModalMetadataTab(string tab)
+    {
+        string activeTab = tab.ToLowerInvariant() switch
+        {
+            ModalMetadataNegativeTab => ModalMetadataNegativeTab,
+            ModalMetadataSettingsTab => ModalMetadataSettingsTab,
+            _ => ModalMetadataPromptTab,
+        };
+
+        ModalPromptTabButton.IsChecked = activeTab == ModalMetadataPromptTab;
+        ModalNegativeTabButton.IsChecked = activeTab == ModalMetadataNegativeTab;
+        ModalSettingsTabButton.IsChecked = activeTab == ModalMetadataSettingsTab;
+        ModalPromptPanel.Visibility = activeTab == ModalMetadataPromptTab ? Visibility.Visible : Visibility.Collapsed;
+        ModalNegativePanel.Visibility = activeTab == ModalMetadataNegativeTab ? Visibility.Visible : Visibility.Collapsed;
+        ModalSettingsPanel.Visibility = activeTab == ModalMetadataSettingsTab ? Visibility.Visible : Visibility.Collapsed;
+    }
+
     private void SetModalMetadataSidebarVisible(bool visible)
     {
         ModalMetadataSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
@@ -5242,6 +5272,12 @@ public partial class MainWindow : Window
         return ModalMetadataForSmoke();
     }
 
+    public ModalMetadataSmokeSnapshot SelectModalMetadataTabForSmoke(string tab)
+    {
+        SetModalMetadataTab(tab);
+        return ModalMetadataForSmoke();
+    }
+
     private ModalMetadataSmokeSnapshot ModalMetadataForSmoke()
     {
         bool current = SelectedTile() is Tile selected
@@ -5250,9 +5286,18 @@ public partial class MainWindow : Window
             Modal.Visibility == Visibility.Visible,
             ModalMetadataSidebar.Visibility == Visibility.Visible,
             current,
+            ModalPromptTabButton.IsChecked == true
+                ? ModalMetadataPromptTab
+                : ModalNegativeTabButton.IsChecked == true
+                    ? ModalMetadataNegativeTab
+                    : ModalMetadataSettingsTab,
+            ModalPromptPanel.Visibility == Visibility.Visible,
+            ModalNegativePanel.Visibility == Visibility.Visible,
+            ModalSettingsPanel.Visibility == Visibility.Visible,
             ModalMetadataStatusText.Text,
             ModalPromptText.Text,
             ModalNegativeText.Text,
+            ModalSettingsText.Text,
             CopyModalMetadataButton.IsEnabled,
             CopyModalPromptButton.IsEnabled,
             CopyModalNegativeButton.IsEnabled);
@@ -5520,9 +5565,14 @@ public sealed record ModalMetadataSmokeSnapshot(
     bool ModalVisible,
     bool SidebarVisible,
     bool MetadataCurrent,
+    string ActiveTab,
+    bool PromptPanelVisible,
+    bool NegativePanelVisible,
+    bool SettingsPanelVisible,
     string Status,
     string Prompt,
     string NegativePrompt,
+    string Settings,
     bool CopyMetadataEnabled,
     bool CopyPromptEnabled,
     bool CopyNegativeEnabled);
