@@ -10,7 +10,7 @@ browse and practical viewer slice:
 - recursive image file scan
 - decode-to-size thumbnails
 - grid/list display using real image thumbnails
-- right preview using the selected real image
+- right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata when present
 - modal preview using the selected real image
 - search across filename, path, prompt, group, size, and modified date
 - favorites-only and unseen-only filters
@@ -30,6 +30,7 @@ browse and practical viewer slice:
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/hover/activate/close/restore smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
+- `--png-metadata-smoke <path>` lazy active-preview PNG `parameters` metadata smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
@@ -41,9 +42,8 @@ browse and practical viewer slice:
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
 
-It still preserves the shell-only guardrail for enhancement: browsing, preview,
-modal, settings, album picker, and enhance drawer do not start enhancement jobs
-or background enhancement workers.
+It preserves the enhancement guardrail: browsing, preview, and modal actions do
+not start enhancement jobs or background enhancement workers.
 
 ## Build and Run
 
@@ -75,8 +75,7 @@ $env:PHOTOVIEWER_WPF_DOTNET_RUN = "1"
 ```
 
 Headless UI-smoke evidence renders the window to a PNG and exits. `--screen`
-selects the state to capture: `viewer` (default), `landing`, `list`, `modal`,
-`settings`, `album`, `enhance`, `confirm`.
+selects the state to capture: `viewer` (default), `landing`, `list`, or `modal`.
 
 ```powershell
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot .\local-native\ui-mockup\wpf-preview.png --screen viewer
@@ -107,6 +106,19 @@ then verifies that the deferred decode applies only to the latest selection:
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --preview-decode-smoke "$env:TEMP\photoviewer-wpf-preview-decode-smoke.json" --folder .\local-native\ui-mockup --select-name wpf-settings.png
 ```
+
+PNG metadata smoke creates temporary real PNG fixtures. It verifies a bounded
+pre-IDAT `tEXt` keyword `parameters` read for the active preview only, prompt
+and negative prompt/settings parsing, metadata-free and unrelated-text fallback,
+and latest-selection cancellation without touching user state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --png-metadata-smoke "$env:TEMP\photoviewer-wpf-png-metadata-smoke.json"
+```
+
+For a metadata display screenshot, `--wait-preview-metadata` waits only for the
+selected preview's already-started lazy read before rendering; normal runtime
+and standard `--shot` behavior remain non-blocking.
 
 State-restore smoke uses a caller-provided bounded state file and never writes
 browser or WinForms state:

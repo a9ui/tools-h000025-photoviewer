@@ -71,6 +71,13 @@ public partial class App : Application
             return;
         }
 
+        int pngMetadataSmokeIdx = Array.IndexOf(e.Args, "--png-metadata-smoke");
+        if (pngMetadataSmokeIdx >= 0 && pngMetadataSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePngMetadataSmoke(e.Args[pngMetadataSmokeIdx + 1]);
+            return;
+        }
+
         int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
         if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
         {
@@ -292,6 +299,9 @@ public partial class App : Application
                 win.SetSearchQuery(args[queryIdx + 1], persist: false);
             else
                 win.SetSearchQuery("", persist: false);
+
+            if (args.Contains("--wait-preview-metadata") && !string.IsNullOrWhiteSpace(win.SelectedFileNameForSmoke))
+                await win.WaitForPreviewPngMetadataForSmokeAsync(win.SelectedFileNameForSmoke!);
 
             win.ShowScreen(screen);
             win.UpdateLayout();
@@ -4147,6 +4157,116 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePngMetadataSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-png-metadata-smoke-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string validName = "metadata.png";
+        string missingName = "missing.png";
+        string ignoredName = "ignored-text.png";
+        string validPath = Path.Combine(folder, validName);
+        string missingPath = Path.Combine(folder, missingName);
+        string ignoredPath = Path.Combine(folder, ignoredName);
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            WriteSmokePng(missingPath, 128, 96, Color.FromRgb(52, 152, 219));
+            WritePngTextFixture(
+                validPath,
+                "parameters",
+                "masterpiece, studio portrait\nNegative prompt: lowres, text\nSteps: 28, Sampler: Euler a, CFG scale: 6.5, Seed: 1234",
+                Color.FromRgb(46, 204, 113));
+            WritePngTextFixture(ignoredPath, "not-parameters", "this text must not become image metadata", Color.FromRgb(231, 76, 60));
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        }
+        catch (Exception ex)
+        {
+            WritePngMetadataSmokeResult(resultPath, new PngMetadataSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PngMetadataSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                PngMetadataSmokeSnapshot valid = await win.SelectPngMetadataForSmokeAsync(validName);
+                PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
+                bool ignoredTextSkipped = !PhotoViewer.Wpf.MainWindow.HasPngParametersForSmoke(ignoredPath);
+
+                bool firstSelectionStarted = win.SelectFileNameForSmoke(validName);
+                bool latestSelectionStarted = win.SelectFileNameForSmoke(missingName);
+                PngMetadataSmokeSnapshot latest = await win.WaitForPreviewPngMetadataForSmokeAsync(missingName);
+                bool latestSelectionStable = latest.Selected
+                    && !latest.MetadataApplied
+                    && string.Equals(latest.SelectedPath, missingPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(latest.Prompt, missingPath, StringComparison.OrdinalIgnoreCase)
+                    && !latest.SamplerVisible;
+
+                bool ok = valid.MetadataApplied
+                    && string.Equals(valid.Prompt, "masterpiece, studio portrait", StringComparison.Ordinal)
+                    && string.Equals(valid.NegativePrompt, "lowres, text", StringComparison.Ordinal)
+                    && string.Equals(valid.Sampler, "Euler a", StringComparison.Ordinal)
+                    && valid.SamplerVisible
+                    && missing.Selected
+                    && !missing.MetadataApplied
+                    && string.Equals(missing.Prompt, missingPath, StringComparison.OrdinalIgnoreCase)
+                    && !missing.SamplerVisible
+                    && ignoredTextSkipped
+                    && firstSelectionStarted
+                    && latestSelectionStarted
+                    && latestSelectionStable;
+                result = new PngMetadataSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "lazy PNG parameters metadata applies only to the current selection; missing and unrelated text chunks stay on the safe path fallback"
+                        : "PNG parameters metadata smoke did not meet expected lazy selection behavior",
+                    SmokeRoot = smokeRoot,
+                    Folder = folder,
+                    ValidPath = validPath,
+                    MissingPath = missingPath,
+                    IgnoredPath = ignoredPath,
+                    Valid = valid,
+                    Missing = missing,
+                    IgnoredTextSkipped = ignoredTextSkipped,
+                    FirstSelectionStarted = firstSelectionStarted,
+                    LatestSelectionStarted = latestSelectionStarted,
+                    Latest = latest,
+                    LatestSelectionStable = latestSelectionStable,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new PngMetadataSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot, Folder = folder, ValidPath = validPath, MissingPath = missingPath, IgnoredPath = ignoredPath };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePngMetadataSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewDecodeSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -4906,6 +5026,82 @@ public partial class App : Application
         encoder.Save(stream);
     }
 
+    private static void WritePngTextFixture(string path, string keyword, string text, Color color)
+    {
+        WriteSmokePng(path, 128, 96, color);
+        byte[] png = File.ReadAllBytes(path);
+        int insertOffset = FindPngIdatOffset(png);
+        byte[] keywordBytes = System.Text.Encoding.Latin1.GetBytes(keyword);
+        byte[] textBytes = System.Text.Encoding.UTF8.GetBytes(text);
+        byte[] data = new byte[keywordBytes.Length + 1 + textBytes.Length];
+        Buffer.BlockCopy(keywordBytes, 0, data, 0, keywordBytes.Length);
+        Buffer.BlockCopy(textBytes, 0, data, keywordBytes.Length + 1, textBytes.Length);
+        byte[] chunk = BuildPngTextChunk(data);
+        byte[] combined = new byte[png.Length + chunk.Length];
+        Buffer.BlockCopy(png, 0, combined, 0, insertOffset);
+        Buffer.BlockCopy(chunk, 0, combined, insertOffset, chunk.Length);
+        Buffer.BlockCopy(png, insertOffset, combined, insertOffset + chunk.Length, png.Length - insertOffset);
+        File.WriteAllBytes(path, combined);
+    }
+
+    private static int FindPngIdatOffset(byte[] png)
+    {
+        const int signatureLength = 8;
+        int offset = signatureLength;
+        while (offset + 12 <= png.Length)
+        {
+            int length = ReadPngBigEndianInt32(png, offset);
+            if (length < 0 || offset + length + 12 > png.Length)
+                break;
+            bool idat = png[offset + 4] == (byte)'I'
+                && png[offset + 5] == (byte)'D'
+                && png[offset + 6] == (byte)'A'
+                && png[offset + 7] == (byte)'T';
+            if (idat)
+                return offset;
+            offset += length + 12;
+        }
+
+        throw new InvalidOperationException("smoke PNG did not contain an IDAT chunk");
+    }
+
+    private static byte[] BuildPngTextChunk(byte[] data)
+    {
+        byte[] chunk = new byte[data.Length + 12];
+        WritePngBigEndianInt32(chunk, 0, data.Length);
+        chunk[4] = (byte)'t';
+        chunk[5] = (byte)'E';
+        chunk[6] = (byte)'X';
+        chunk[7] = (byte)'t';
+        Buffer.BlockCopy(data, 0, chunk, 8, data.Length);
+        uint crc = ComputePngCrc(chunk.AsSpan(4, data.Length + 4));
+        WritePngBigEndianInt32(chunk, data.Length + 8, unchecked((int)crc));
+        return chunk;
+    }
+
+    private static int ReadPngBigEndianInt32(byte[] value, int offset)
+        => (value[offset] << 24) | (value[offset + 1] << 16) | (value[offset + 2] << 8) | value[offset + 3];
+
+    private static void WritePngBigEndianInt32(byte[] value, int offset, int number)
+    {
+        value[offset] = unchecked((byte)(number >> 24));
+        value[offset + 1] = unchecked((byte)(number >> 16));
+        value[offset + 2] = unchecked((byte)(number >> 8));
+        value[offset + 3] = unchecked((byte)number);
+    }
+
+    private static uint ComputePngCrc(ReadOnlySpan<byte> data)
+    {
+        uint crc = 0xffffffff;
+        foreach (byte value in data)
+        {
+            crc ^= value;
+            for (int bit = 0; bit < 8; bit++)
+                crc = (crc & 1) != 0 ? 0xedb88320u ^ (crc >> 1) : crc >> 1;
+        }
+        return ~crc;
+    }
+
     private static int CountDirectSmokeImages(string folder)
         => Directory.Exists(folder) ? Directory.EnumerateFiles(folder).Count(IsSmokeImageFile) : 0;
 
@@ -5061,6 +5257,13 @@ public partial class App : Application
     }
 
     private static void WritePreviewDecodeSmokeResult(string path, PreviewDecodeSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
+    private static void WritePngMetadataSmokeResult(string path, PngMetadataSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
@@ -5259,6 +5462,24 @@ public partial class App : Application
         public bool DeferredDecodeApplied { get; init; }
         public bool PreviewSourcePresent { get; init; }
         public bool StableLatestSelection { get; init; }
+    }
+
+    private sealed class PngMetadataSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public string? Folder { get; init; }
+        public string? ValidPath { get; init; }
+        public string? MissingPath { get; init; }
+        public string? IgnoredPath { get; init; }
+        public PngMetadataSmokeSnapshot? Valid { get; init; }
+        public PngMetadataSmokeSnapshot? Missing { get; init; }
+        public bool IgnoredTextSkipped { get; init; }
+        public bool FirstSelectionStarted { get; init; }
+        public bool LatestSelectionStarted { get; init; }
+        public PngMetadataSmokeSnapshot? Latest { get; init; }
+        public bool LatestSelectionStable { get; init; }
     }
 
     private sealed record ModalNavigationSmokeResult(

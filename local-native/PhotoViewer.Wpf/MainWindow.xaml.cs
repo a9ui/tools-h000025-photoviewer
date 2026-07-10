@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using System.Windows;
@@ -23,11 +24,13 @@ public partial class MainWindow : Window
     {
         ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
     };
+    private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
     private const int MaxLoadedImages = 1200;
     private const int MinParallelThumbnailCount = 32;
     private const int MaxThumbnailDecodeWorkers = 12;
     private const int MaxMetadataReadWorkers = 4;
+    private const int MaxPngMetadataChunkBytes = 4 * 1024 * 1024;
     private const int SearchStateSaveDebounceMilliseconds = 300;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
@@ -108,7 +111,9 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private CancellationTokenSource? _previewCts;
+    private CancellationTokenSource? _previewMetadataCts;
     private TaskCompletionSource<PreviewDecodeResult>? _previewDecodeCompletion;
+    private TaskCompletionSource<PngParametersMetadata?>? _previewMetadataCompletion;
     private int _previewUpdateCount;
     private long _previewMs;
     private int _previewDeferredDecodeCount;
@@ -1958,6 +1963,8 @@ public partial class MainWindow : Window
         Visibility generatedMetadataVisibility = hasRealFile ? Visibility.Collapsed : Visibility.Visible;
         _previewCts?.Cancel();
         _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
+        _previewMetadataCts?.Cancel();
+        _previewMetadataCompletion?.TrySetResult(null);
         _previewDecodedPath = null;
 
         var cts = new CancellationTokenSource();
@@ -1994,6 +2001,8 @@ public partial class MainWindow : Window
         PreviewSeedText.Visibility = generatedMetadataVisibility;
         PreviewNegativeLabel.Visibility = generatedMetadataVisibility;
         PreviewNegativeCard.Visibility = generatedMetadataVisibility;
+        if (hasRealFile)
+            PreviewNegativeText.Text = "";
         PreviewDateText.Text = t.ModifiedText;
         PreviewPromptText.Text = hasRealFile ? t.Path : (string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt);
         FavoriteLevelText.Text = t.Fav.ToString();
@@ -2005,7 +2014,14 @@ public partial class MainWindow : Window
         _lastPreviewImmediateMs = watch.ElapsedMilliseconds;
 
         if (hasRealFile)
+        {
             _ = LoadPreviewBitmapAsync(t.Path, cts.Token, completion);
+            var metadataCts = new CancellationTokenSource();
+            _previewMetadataCts = metadataCts;
+            var metadataCompletion = new TaskCompletionSource<PngParametersMetadata?>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _previewMetadataCompletion = metadataCompletion;
+            _ = LoadPreviewPngMetadataAsync(t.Path, metadataCts.Token, metadataCompletion);
+        }
         else
             completion.TrySetResult(new PreviewDecodeResult(t.Path, immediate, 0, 0, 0, Applied: true));
     }
@@ -2084,6 +2100,227 @@ public partial class MainWindow : Window
         {
             completion.TrySetResult(PreviewDecodeResult.Canceled);
         }
+    }
+
+    private async Task LoadPreviewPngMetadataAsync(
+        string path,
+        CancellationToken token,
+        TaskCompletionSource<PngParametersMetadata?> completion)
+    {
+        PngParametersMetadata? metadata;
+        try
+        {
+            metadata = await Task.Run(() => ReadPngParametersMetadata(path, token), token);
+        }
+        catch (OperationCanceledException)
+        {
+            completion.TrySetResult(null);
+            return;
+        }
+        catch
+        {
+            completion.TrySetResult(null);
+            return;
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            completion.TrySetResult(null);
+            return;
+        }
+
+        try
+        {
+            await Dispatcher.InvokeAsync(
+                () =>
+                {
+                    if (token.IsCancellationRequested || !string.Equals(SelectedTile()?.Path, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        completion.TrySetResult(null);
+                        return;
+                    }
+
+                    if (metadata is not null)
+                        ApplyPngParametersMetadata(metadata);
+                    completion.TrySetResult(metadata);
+                },
+                DispatcherPriority.Background,
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+            completion.TrySetResult(null);
+        }
+    }
+
+    private void ApplyPngParametersMetadata(PngParametersMetadata metadata)
+    {
+        PreviewPromptLabel.Text = "PROMPT";
+        PreviewPromptText.Text = string.IsNullOrWhiteSpace(metadata.Prompt) ? PreviewPromptText.Text : metadata.Prompt;
+        SetPreviewMetadataRow(PreviewSamplerLabel, PreviewSamplerText, "SAMPLER", metadata.Setting("Sampler"));
+        SetPreviewMetadataRow(PreviewStepsLabel, PreviewStepsText, "STEPS", metadata.Setting("Steps"));
+        SetPreviewMetadataRow(PreviewCfgLabel, PreviewCfgText, "CFG", metadata.Setting("CFG scale"));
+        SetPreviewMetadataRow(PreviewSeedLabel, PreviewSeedText, "SEED", metadata.Setting("Seed"));
+
+        bool hasNegative = !string.IsNullOrWhiteSpace(metadata.NegativePrompt);
+        PreviewNegativeLabel.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
+        PreviewNegativeCard.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
+        PreviewNegativeText.Text = hasNegative ? metadata.NegativePrompt : "";
+    }
+
+    private static void SetPreviewMetadataRow(TextBlock label, TextBlock value, string title, string? text)
+    {
+        bool visible = !string.IsNullOrWhiteSpace(text);
+        label.Text = title;
+        label.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        value.Text = visible ? text : "";
+        value.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private static PngParametersMetadata? ReadPngParametersMetadata(string path, CancellationToken token)
+    {
+        if (!string.Equals(Path.GetExtension(path), ".png", StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        try
+        {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite, 4096, FileOptions.SequentialScan);
+            var signature = new byte[8];
+            if (!TryReadExactly(stream, signature) || !signature.SequenceEqual(PngSignature))
+                return null;
+
+            var chunkHeader = new byte[8];
+            while (stream.Position + 12 <= stream.Length)
+            {
+                token.ThrowIfCancellationRequested();
+                if (!TryReadExactly(stream, chunkHeader))
+                    return null;
+
+                int length = (chunkHeader[0] << 24) | (chunkHeader[1] << 16) | (chunkHeader[2] << 8) | chunkHeader[3];
+                if (length < 0 || length > MaxPngMetadataChunkBytes || stream.Position + length + 4 > stream.Length)
+                    return null;
+
+                string type = Encoding.ASCII.GetString(chunkHeader, 4, 4);
+                if (string.Equals(type, "IDAT", StringComparison.Ordinal))
+                    return null;
+
+                if (string.Equals(type, "tEXt", StringComparison.Ordinal))
+                {
+                    var data = new byte[length];
+                    if (!TryReadExactly(stream, data) || !TrySkip(stream, 4))
+                        return null;
+
+                    int separator = Array.IndexOf(data, (byte)0);
+                    if (separator <= 0 || !string.Equals(Encoding.Latin1.GetString(data, 0, separator), "parameters", StringComparison.Ordinal))
+                        continue;
+
+                    string raw = Encoding.UTF8.GetString(data, separator + 1, data.Length - separator - 1);
+                    return ParsePngParameters(raw);
+                }
+
+                if (!TrySkip(stream, length + 4))
+                    return null;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return null;
+    }
+
+    private static PngParametersMetadata? ParsePngParameters(string raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw))
+            return null;
+
+        const string negativeMarker = "Negative prompt:";
+        const string settingsMarker = "\nSteps:";
+        int negativeStart = raw.IndexOf(negativeMarker, StringComparison.Ordinal);
+        int settingsStart = raw.IndexOf(settingsMarker, StringComparison.Ordinal);
+        string prompt = negativeStart >= 0 ? raw[..negativeStart].Trim() : (settingsStart >= 0 ? raw[..settingsStart].Trim() : raw.Trim());
+        int negativeValueStart = negativeStart >= 0 ? negativeStart + negativeMarker.Length : -1;
+        string negative = negativeValueStart >= 0
+            ? raw[negativeValueStart..(settingsStart >= negativeValueStart ? settingsStart : raw.Length)].Trim()
+            : "";
+        string settings = settingsStart >= 0 ? raw[(settingsStart + 1)..].Trim() : "";
+        return new PngParametersMetadata(prompt, negative, ParsePngSettings(settings));
+    }
+
+    private static Dictionary<string, string> ParsePngSettings(string settings)
+    {
+        var parsed = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string item in SplitPngSettings(settings))
+        {
+            int separator = item.IndexOf(':');
+            if (separator <= 0)
+                continue;
+            string key = item[..separator].Trim();
+            string value = item[(separator + 1)..].Trim().Trim('"');
+            if (!string.IsNullOrWhiteSpace(key) && !string.IsNullOrWhiteSpace(value))
+                parsed[key] = value;
+        }
+        return parsed;
+    }
+
+    private static IEnumerable<string> SplitPngSettings(string settings)
+    {
+        if (string.IsNullOrWhiteSpace(settings))
+            yield break;
+
+        var current = new StringBuilder();
+        bool quoted = false;
+        bool escaped = false;
+        foreach (char character in settings)
+        {
+            if (escaped)
+            {
+                current.Append(character);
+                escaped = false;
+                continue;
+            }
+            if (character == '\\')
+            {
+                current.Append(character);
+                escaped = true;
+                continue;
+            }
+            if (character == '"')
+                quoted = !quoted;
+            if (character == ',' && !quoted)
+            {
+                yield return current.ToString();
+                current.Clear();
+                continue;
+            }
+            current.Append(character);
+        }
+        if (current.Length > 0)
+            yield return current.ToString();
+    }
+
+    private static bool TryReadExactly(Stream stream, byte[] buffer)
+    {
+        int offset = 0;
+        while (offset < buffer.Length)
+        {
+            int read = stream.Read(buffer, offset, buffer.Length - offset);
+            if (read == 0)
+                return false;
+            offset += read;
+        }
+        return true;
+    }
+
+    private static bool TrySkip(Stream stream, int count)
+    {
+        if (count < 0 || stream.Position + count > stream.Length)
+            return false;
+        stream.Seek(count, SeekOrigin.Current);
+        return true;
     }
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
@@ -2876,6 +3113,8 @@ public partial class MainWindow : Window
     {
         _previewCts?.Cancel();
         _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
+        _previewMetadataCts?.Cancel();
+        _previewMetadataCompletion?.TrySetResult(null);
         _previewDecodedPath = null;
         PreviewBitmap.Source = null;
         PreviewBitmap.Visibility = Visibility.Collapsed;
@@ -4673,6 +4912,48 @@ public partial class MainWindow : Window
             stable ? "preview decode completed for the latest selection" : "preview decode did not remain synchronized with the latest selection");
     }
 
+    public async Task<PngMetadataSmokeSnapshot> SelectPngMetadataForSmokeAsync(string fileName)
+    {
+        var tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (tile is null || !tile.IsRealFile)
+            return PngMetadataSmokeSnapshot.NotSelected(fileName);
+
+        SelectTile(tile);
+        return await WaitForPreviewPngMetadataForSmokeAsync(fileName);
+    }
+
+    public async Task<PngMetadataSmokeSnapshot> WaitForPreviewPngMetadataForSmokeAsync(string expectedFileName)
+    {
+        var completion = _previewMetadataCompletion;
+        if (completion is null)
+            return PngMetadataSmokeSnapshot.NotSelected(expectedFileName);
+
+        var timeout = Task.Delay(TimeSpan.FromSeconds(5));
+        if (await Task.WhenAny(completion.Task, timeout) != completion.Task)
+            return new PngMetadataSmokeSnapshot(false, SelectedTile()?.Path, false, "", "", "", false, "preview metadata timed out");
+
+        PngParametersMetadata? metadata = await completion.Task;
+        await Task.Delay(125);
+        Tile? selected = SelectedTile();
+        bool current = selected is not null && string.Equals(selected.FileName, expectedFileName, StringComparison.OrdinalIgnoreCase);
+        bool applied = metadata is not null
+            && current
+            && string.Equals(PreviewPromptLabel.Text, "PROMPT", StringComparison.Ordinal)
+            && string.Equals(PreviewPromptText.Text, metadata.Prompt, StringComparison.Ordinal);
+        return new PngMetadataSmokeSnapshot(
+            current,
+            selected?.Path,
+            applied,
+            PreviewPromptText.Text,
+            PreviewNegativeText.Text,
+            PreviewSamplerText.Text,
+            PreviewSamplerText.Visibility == Visibility.Visible,
+            applied ? "PNG parameters metadata applied to the latest selection" : "PNG parameters metadata was unavailable or did not apply to the latest selection");
+    }
+
+    public static bool HasPngParametersForSmoke(string path)
+        => ReadPngParametersMetadata(path, CancellationToken.None) is not null;
+
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
 
@@ -4894,6 +5175,29 @@ public sealed record PreviewDecodeSmokeSnapshot(
 {
     public static PreviewDecodeSmokeSnapshot NotSelected(string fileName)
         => new(false, null, 0, 0, 0, false, false, false, $"fixture image was not selected: {fileName}");
+}
+
+public sealed record PngParametersMetadata(
+    string Prompt,
+    string NegativePrompt,
+    IReadOnlyDictionary<string, string> Settings)
+{
+    public string? Setting(string name)
+        => Settings.TryGetValue(name, out string? value) ? value : null;
+}
+
+public sealed record PngMetadataSmokeSnapshot(
+    bool Selected,
+    string? SelectedPath,
+    bool MetadataApplied,
+    string Prompt,
+    string NegativePrompt,
+    string Sampler,
+    bool SamplerVisible,
+    string Message)
+{
+    public static PngMetadataSmokeSnapshot NotSelected(string fileName)
+        => new(false, null, false, "", "", "", false, $"fixture image was not selected: {fileName}");
 }
 
 public readonly record struct ImageDimensions(int Width, int Height);
