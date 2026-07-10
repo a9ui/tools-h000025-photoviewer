@@ -12,6 +12,7 @@ browse and practical viewer slice:
 - grid/list display using real image thumbnails
 - right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata and explicit current-selection PNG Info, Prompt, and Negative Copy actions when present
 - modal preview using the selected real image
+- browser-aligned modal favorite `+1` / `-1` controls with the current `0..5` level visible
 - search across filename, path, prompt, group, size, and modified date
 - favorites-only and unseen-only filters
 - refresh active folder

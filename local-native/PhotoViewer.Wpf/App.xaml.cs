@@ -482,6 +482,14 @@ public partial class App : Application
                 string? selectedPath = first.SelectedPathForSmoke;
                 int beforeLevel = first.SelectedFavoriteLevelForSmoke;
 
+                first.ShowModalForShot();
+                bool modalOpened = first.ModalVisibleForSmoke;
+                bool modalIncreased = first.AdjustModalFavoriteForSmoke(1);
+                int modalLevelAfterIncrease = first.ModalFavoriteLevelForSmoke;
+                bool modalDecreased = first.AdjustModalFavoriteForSmoke(-1);
+                int modalLevelAfterDecrease = first.ModalFavoriteLevelForSmoke;
+                first.CloseModalForSmoke();
+
                 bool increasedOnce = first.AdjustSelectedFavoriteForSmoke(1);
                 int afterIncreaseOnce = first.SelectedFavoriteLevelForSmoke;
                 bool increasedTwice = first.AdjustSelectedFavoriteForSmoke(1);
@@ -520,6 +528,11 @@ public partial class App : Application
 
                 bool ok = selected
                     && beforeLevel == 0
+                    && modalOpened
+                    && modalIncreased
+                    && modalLevelAfterIncrease == 1
+                    && modalDecreased
+                    && modalLevelAfterDecrease == 0
                     && increasedOnce
                     && afterIncreaseOnce == 1
                     && increasedTwice
@@ -541,7 +554,7 @@ public partial class App : Application
 
                 result = new FavoriteLevelSmokeResult(
                     ok,
-                    ok ? "favorite level adjustment, clear, filter, and reload persistence passed" : "favorite level adjustment did not match expected 0..5 behavior",
+                    ok ? "modal favorite +1/-1 display, level adjustment, clear, filter, and reload persistence passed" : "favorite level adjustment did not match expected 0..5 behavior",
                     folder,
                     favoritesPath,
                     selectIndex,
