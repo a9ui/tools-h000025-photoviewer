@@ -29,6 +29,7 @@ browse and practical viewer slice:
 - `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/hover/activate/close/restore smoke
+- `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
@@ -613,6 +614,19 @@ hidden bucket reload persistence, and temp-state isolation:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --folder-bucket-smoke $env:TEMP\wpf-folder-bucket-smoke.json
+```
+
+## WPF M27 Input Safety
+
+Global viewer shortcuts now leave editable WPF text inputs alone. Search terms
+can include `F` and `X` without mutating the selected image favorite; the same
+shortcuts still work after focus leaves the input.
+
+Dedicated smoke coverage uses temporary state and favorite paths to prove the
+text-input guard and the outside-input shortcuts together:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shortcut-typing-smoke $env:TEMP\wpf-shortcut-typing-smoke.json --folder .\local-native\ui-mockup
 ```
 
 ## Files

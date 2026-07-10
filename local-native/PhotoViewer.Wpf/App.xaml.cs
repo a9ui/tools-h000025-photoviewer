@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.IO;
 using System.Windows;
+using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using System.Windows.Threading;
@@ -39,6 +40,13 @@ public partial class App : Application
         if (previewTabsSmokeIdx >= 0 && previewTabsSmokeIdx + 1 < e.Args.Length)
         {
             CapturePreviewTabsSmoke(e.Args[previewTabsSmokeIdx + 1], e.Args);
+            return;
+        }
+
+        int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
+        if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureShortcutTypingSmoke(e.Args[shortcutTypingSmokeIdx + 1], e.Args);
             return;
         }
 
@@ -3486,6 +3494,137 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureShortcutTypingSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteShortcutTypingSmokeResult(resultPath, new ShortcutTypingSmokeResult
+            {
+                Message = "missing required --folder",
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length == 0)
+        {
+            WriteShortcutTypingSmokeResult(resultPath, new ShortcutTypingSmokeResult
+            {
+                Message = "shortcut typing smoke requires at least one fixture image",
+                Folder = fullFolder,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-shortcut-typing-smoke-" + Guid.NewGuid().ToString("N"));
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ShortcutTypingSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(fullFolder);
+                string selectedName = fixtureNames[0];
+                bool selected = win.SelectFileNameForSmoke(selectedName);
+                int favoriteBefore = win.SelectedFavoriteLevelForSmoke;
+
+                bool searchFocused = win.FocusSearchInputForSmoke();
+                bool editableFocus = win.IsEditableTextInputFocusedForSmoke;
+                bool fHandledWhileTyping = win.InvokePreviewKeyForSmoke(Key.F);
+                bool xHandledWhileTyping = win.InvokePreviewKeyForSmoke(Key.X);
+                int favoriteAfterTyping = win.SelectedFavoriteLevelForSmoke;
+
+                win.SetSearchQuery("fox", persist: false);
+                bool queryRecorded = string.Equals(win.SearchQueryForSmoke, "fox", StringComparison.Ordinal);
+                win.SetSearchQuery("", persist: false);
+                bool reselected = win.SelectFileNameForSmoke(selectedName);
+                bool cardsFocused = win.FocusCardsListForSmoke();
+                bool nonEditableFocus = !win.IsEditableTextInputFocusedForSmoke;
+                bool fHandledOutsideTyping = win.InvokePreviewKeyForSmoke(Key.F);
+                int favoriteAfterF = win.SelectedFavoriteLevelForSmoke;
+                bool xHandledOutsideTyping = win.InvokePreviewKeyForSmoke(Key.X);
+                int favoriteAfterX = win.SelectedFavoriteLevelForSmoke;
+
+                bool ok = selected
+                    && searchFocused
+                    && editableFocus
+                    && !fHandledWhileTyping
+                    && !xHandledWhileTyping
+                    && favoriteAfterTyping == favoriteBefore
+                    && queryRecorded
+                    && reselected
+                    && cardsFocused
+                    && nonEditableFocus
+                    && fHandledOutsideTyping
+                    && favoriteAfterF == 5
+                    && xHandledOutsideTyping
+                    && favoriteAfterX == 4;
+
+                result = new ShortcutTypingSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "editable text input kept F/X as text keys while global favorites shortcuts still worked outside the input"
+                        : "shortcut typing guard did not preserve the expected text-input and global-shortcut behavior",
+                    Folder = fullFolder,
+                    StatePath = statePath,
+                    FavoritesPath = favoritesPath,
+                    SelectedName = selectedName,
+                    SearchFocused = searchFocused,
+                    EditableFocus = editableFocus,
+                    FHandledWhileTyping = fHandledWhileTyping,
+                    XHandledWhileTyping = xHandledWhileTyping,
+                    FavoriteBefore = favoriteBefore,
+                    FavoriteAfterTyping = favoriteAfterTyping,
+                    QueryRecorded = queryRecorded,
+                    CardsFocused = cardsFocused,
+                    NonEditableFocus = nonEditableFocus,
+                    FHandledOutsideTyping = fHandledOutsideTyping,
+                    XHandledOutsideTyping = xHandledOutsideTyping,
+                    FavoriteAfterF = favoriteAfterF,
+                    FavoriteAfterX = favoriteAfterX,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new ShortcutTypingSmokeResult
+                {
+                    Message = ex.Message,
+                    Folder = fullFolder,
+                    StatePath = statePath,
+                    FavoritesPath = favoritesPath,
+                };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WriteShortcutTypingSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private static MainWindow HiddenWindow()
         => new()
         {
@@ -4243,6 +4382,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteShortcutTypingSmokeResult(string path, ShortcutTypingSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteModalNavigationSmokeResult(string path, ModalNavigationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -4401,6 +4547,29 @@ public partial class App : Application
         string? RestoredPath,
         string Query,
         string? RestoredQuery);
+
+    private sealed class ShortcutTypingSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? StatePath { get; init; }
+        public string? FavoritesPath { get; init; }
+        public string? SelectedName { get; init; }
+        public bool SearchFocused { get; init; }
+        public bool EditableFocus { get; init; }
+        public bool FHandledWhileTyping { get; init; }
+        public bool XHandledWhileTyping { get; init; }
+        public int FavoriteBefore { get; init; }
+        public int FavoriteAfterTyping { get; init; }
+        public bool QueryRecorded { get; init; }
+        public bool CardsFocused { get; init; }
+        public bool NonEditableFocus { get; init; }
+        public bool FHandledOutsideTyping { get; init; }
+        public bool XHandledOutsideTyping { get; init; }
+        public int FavoriteAfterF { get; init; }
+        public int FavoriteAfterX { get; init; }
+    }
 
     private sealed record ModalNavigationSmokeResult(
         bool Ok,

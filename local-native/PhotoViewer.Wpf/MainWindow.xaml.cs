@@ -3619,6 +3619,12 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
+        if (Keyboard.FocusedElement is TextBoxBase)
+        {
+            base.OnPreviewKeyDown(e);
+            return;
+        }
+
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (key == Key.T
             && (Keyboard.Modifiers & ModifierKeys.Shift) != 0
@@ -3715,6 +3721,7 @@ public partial class MainWindow : Window
     public string? SelectedPathForSmoke => SelectedTile()?.Path;
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
     public string SearchQueryForSmoke => SearchInput.Text;
+    public bool IsEditableTextInputFocusedForSmoke => Keyboard.FocusedElement is TextBoxBase;
     public string StatePathForSmoke => ResolvedStatePath;
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
@@ -3757,6 +3764,22 @@ public partial class MainWindow : Window
     public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
     public int GridWindowStartIndexForSmoke => _gridStartIndex;
     public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
+    public bool FocusSearchInputForSmoke() => SearchInput.Focus();
+    public bool FocusCardsListForSmoke() => CardsList.Focus();
+
+    public bool InvokePreviewKeyForSmoke(Key key)
+    {
+        var source = PresentationSource.FromVisual(this);
+        if (source is null)
+            return false;
+
+        var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+        {
+            RoutedEvent = Keyboard.PreviewKeyDownEvent,
+        };
+        OnPreviewKeyDown(args);
+        return args.Handled;
+    }
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
     public double CardWidthForSmoke => SizeSlider.Value;
     public string DisplayStyleForSmoke => _displayStyle;
