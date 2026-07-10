@@ -27,6 +27,7 @@ public partial class MainWindow : Window
     private const int MaxLoadedImages = 1200;
     private const int MinParallelThumbnailCount = 32;
     private const int MaxThumbnailDecodeWorkers = 12;
+    private const int MaxMetadataReadWorkers = 4;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
@@ -224,6 +225,20 @@ public partial class MainWindow : Window
         if (cts.IsCancellationRequested)
             return;
 
+        ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
+        if (files.Count > 0)
+        {
+            ScanLabel.Text = "Reading image metadata...";
+            try
+            {
+                metadata = await Task.Run(() => ReadImageMetadata(files, cts.Token), cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+        }
+
         var materializeWatch = Stopwatch.StartNew();
         bool previousSuppress = _suppressStateSave;
         _suppressStateSave = true;
@@ -239,7 +254,7 @@ public partial class MainWindow : Window
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
             foreach (var file in files)
-                _allTiles.Add(MakeFileTile(file, width));
+                _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
             PruneHiddenFolderBucketsToCurrentSet();
             RefreshFolderBucketViews();
@@ -263,6 +278,9 @@ public partial class MainWindow : Window
                 files.Count,
                 scanWatch.ElapsedMilliseconds,
                 materializeWatch.ElapsedMilliseconds,
+                metadata.ElapsedMs,
+                metadata.Workers,
+                metadata.Completed,
                 thumbnailMs: 0,
                 thumbnailWorkers: 0,
                 thumbnailsCompleted: 0,
@@ -291,6 +309,9 @@ public partial class MainWindow : Window
             files.Count,
             scanWatch.ElapsedMilliseconds,
             materializeWatch.ElapsedMilliseconds,
+            metadata.ElapsedMs,
+            metadata.Workers,
+            metadata.Completed,
             thumbnails.ElapsedMs,
             thumbnails.Workers,
             thumbnails.Completed,
@@ -618,12 +639,12 @@ public partial class MainWindow : Window
         }
     }
 
-    private Tile MakeFileTile(FileInfo file, double width)
+    private Tile MakeFileTile(FileInfo file, double width, IReadOnlyDictionary<string, ImageDimensions> dimensions)
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
-        TryReadBitmapSize(file.FullName, out int imageWidth, out int imageHeight);
+        dimensions.TryGetValue(file.FullName, out var imageSize);
         var folderBucket = ResolveFolderBucket(file.FullName);
         var tile = new Tile
         {
@@ -640,8 +661,8 @@ public partial class MainWindow : Window
             IsRealFile = true,
             FolderBucketKey = folderBucket.Key,
             FolderBucketLabel = folderBucket.Label,
-            ImagePixelWidth = imageWidth,
-            ImagePixelHeight = imageHeight,
+            ImagePixelWidth = imageSize.Width,
+            ImagePixelHeight = imageSize.Height,
             Enhanced = enhanced,
             EnhancedOutputPath = enhancedOutputPath,
             SizeText = FormatBytes(file.Length),
@@ -1686,6 +1707,29 @@ public partial class MainWindow : Window
         {
             return false;
         }
+    }
+
+    private static ImageMetadataLoadMetrics ReadImageMetadata(IReadOnlyList<FileInfo> files, CancellationToken token)
+    {
+        if (files.Count == 0)
+            return ImageMetadataLoadMetrics.Empty;
+
+        var watch = Stopwatch.StartNew();
+        var dimensions = new ConcurrentDictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase);
+        int workers = Math.Max(1, Math.Min(Math.Min(MaxMetadataReadWorkers, Environment.ProcessorCount), files.Count));
+        int completed = 0;
+        Parallel.ForEach(
+            files,
+            new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = workers },
+            file =>
+            {
+                token.ThrowIfCancellationRequested();
+                TryReadBitmapSize(file.FullName, out int width, out int height);
+                dimensions[file.FullName] = new ImageDimensions(width, height);
+                Interlocked.Increment(ref completed);
+            });
+        watch.Stop();
+        return new ImageMetadataLoadMetrics(dimensions, workers, completed, watch.ElapsedMilliseconds);
     }
 
     // ─────────── Sample data (shell only — no real files, procedural art) ───────────
@@ -4285,6 +4329,9 @@ public sealed class LoadMetrics
     public int FileCount { get; set; }
     public long ScanMs { get; set; }
     public long MaterializeMs { get; set; }
+    public long MetadataMs { get; set; }
+    public int MetadataWorkers { get; set; }
+    public int MetadataCompleted { get; set; }
     public long ThumbnailMs { get; set; }
     public int ThumbnailWorkers { get; set; }
     public int ThumbnailsCompleted { get; set; }
@@ -4306,13 +4353,16 @@ public sealed class LoadMetrics
     public long TotalMs { get; set; }
     public string CompletedAtUtc { get; set; } = "";
 
-    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long previewMs, int previewUpdates, long previewDeferredDecodeMs, int previewDeferredDecodeCount, long totalMs)
+    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long metadataMs, int metadataWorkers, int metadataCompleted, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long previewMs, int previewUpdates, long previewDeferredDecodeMs, int previewDeferredDecodeCount, long totalMs)
         => new()
         {
             Folder = folder,
             FileCount = fileCount,
             ScanMs = scanMs,
             MaterializeMs = materializeMs,
+            MetadataMs = metadataMs,
+            MetadataWorkers = metadataWorkers,
+            MetadataCompleted = metadataCompleted,
             ThumbnailMs = thumbnailMs,
             ThumbnailWorkers = thumbnailWorkers,
             ThumbnailsCompleted = thumbnailsCompleted,
@@ -4338,6 +4388,13 @@ public sealed record PreviewDecodeSmokeSnapshot(
 {
     public static PreviewDecodeSmokeSnapshot NotSelected(string fileName)
         => new(false, null, 0, 0, 0, false, false, false, $"fixture image was not selected: {fileName}");
+}
+
+public readonly record struct ImageDimensions(int Width, int Height);
+
+public readonly record struct ImageMetadataLoadMetrics(IReadOnlyDictionary<string, ImageDimensions> Dimensions, int Workers, int Completed, long ElapsedMs)
+{
+    public static ImageMetadataLoadMetrics Empty => new(new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase), 0, 0, 0);
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
