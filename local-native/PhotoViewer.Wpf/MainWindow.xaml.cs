@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private int _gridStartIndex;
     private int _lastInitialUnseenCount;
@@ -96,6 +97,7 @@ public partial class MainWindow : Window
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
     private string? _restoredSelectedPath;
+    private string? _primarySelectedPath;
     private string? _activePreviewTabPath;
     private string? _hoverPreviewTabPath;
     private string? _modalTransformPath;
@@ -1867,24 +1869,84 @@ public partial class MainWindow : Window
     // ─────────── Selection → right preview ───────────
     private void CardsList_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (_syncingSelection || sender is not ListBox lb || lb.SelectedItem is not Tile t) return;
+        if (_syncingSelection || sender is not ListBox lb)
+            return;
+
+        foreach (Tile tile in e.RemovedItems.OfType<Tile>())
+            _selectedPaths.Remove(tile.Path);
+        foreach (Tile tile in e.AddedItems.OfType<Tile>())
+            _selectedPaths.Add(tile.Path);
+
+        Tile? primary = lb.SelectedItem as Tile;
+        if (primary is null || !_selectedPaths.Contains(primary.Path))
+            primary = e.AddedItems.OfType<Tile>().LastOrDefault()
+                ?? SelectedTiles().LastOrDefault();
+        _primarySelectedPath = primary?.Path;
+
+        SynchronizeSelectionControls();
+        ApplyPrimarySelection(primary);
+    }
+
+    private IReadOnlyList<Tile> SelectedTiles()
+        => _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
+
+    private void SetSelection(IEnumerable<Tile> selectedTiles, Tile? primary)
+    {
+        _selectedPaths.Clear();
+        foreach (Tile tile in selectedTiles.Where(tile => _tiles.Contains(tile)))
+            _selectedPaths.Add(tile.Path);
+
+        Tile? effectivePrimary = primary is not null && _selectedPaths.Contains(primary.Path)
+            ? primary
+            : SelectedTiles().LastOrDefault();
+        _primarySelectedPath = effectivePrimary?.Path;
+
+        SynchronizeSelectionControls();
+        ApplyPrimarySelection(effectivePrimary);
+    }
+
+    private void SynchronizeSelectionControls()
+    {
+        if (_syncingSelection)
+            return;
+
         try
         {
             _syncingSelection = true;
-            if (lb == CardsList && RowsList.SelectedItem != t)
-                RowsList.SelectedItem = t;
-            if (lb == RowsList && CardsList.SelectedItem != t)
-                CardsList.SelectedItem = t;
+            SynchronizeSelectionControl(CardsList);
+            SynchronizeSelectionControl(RowsList);
         }
         finally
         {
             _syncingSelection = false;
         }
+    }
 
-        UpdatePreview(t);
-        if (t.IsRealFile)
+    private void SynchronizeSelectionControl(ListBox listBox)
+    {
+        listBox.SelectedItems.Clear();
+        foreach (Tile tile in listBox.Items.OfType<Tile>())
         {
-            MarkTileSeen(t);
+            if (_selectedPaths.Contains(tile.Path))
+                listBox.SelectedItems.Add(tile);
+        }
+    }
+
+    private void ApplyPrimarySelection(Tile? primary)
+    {
+        if (primary is null)
+        {
+            ClearPreview();
+            return;
+        }
+
+        EnsureGridTileRealized(primary);
+        CardsList.ScrollIntoView(primary);
+        RowsList.ScrollIntoView(primary);
+        UpdatePreview(primary);
+        if (primary.IsRealFile)
+        {
+            MarkTileSeen(primary);
             SaveState();
         }
     }
@@ -2573,18 +2635,28 @@ public partial class MainWindow : Window
             .Where(MatchesDateFilter))
             .ToList();
 
+        var availablePaths = new HashSet<string>(filtered.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
+        _selectedPaths.IntersectWith(availablePaths);
+
         _tiles.Clear();
         foreach (var tile in filtered)
             _tiles.Add(tile);
 
-        Tile? preferred = previous is not null && filtered.Contains(previous)
-            ? previous
-            : (selectFirst && _tiles.Count > 0 ? _tiles[0] : null);
+        Tile? preferred = !string.IsNullOrWhiteSpace(_primarySelectedPath)
+            ? _tiles.FirstOrDefault(tile => string.Equals(tile.Path, _primarySelectedPath, StringComparison.OrdinalIgnoreCase))
+            : null;
+        preferred ??= previous is not null && filtered.Contains(previous) ? previous : null;
+        preferred ??= SelectedTiles().LastOrDefault();
+        preferred ??= selectFirst && _tiles.Count > 0 ? _tiles[0] : null;
         RebuildGridTiles(preferred);
         UpdateFolderStats();
 
         if (preferred is not null)
-            SelectTile(preferred);
+        {
+            if (_selectedPaths.Count == 0)
+                _selectedPaths.Add(preferred.Path);
+            SetSelection(SelectedTiles(), preferred);
+        }
         else if (filtered.Count == 0)
             SelectTile(null);
     }
@@ -2664,6 +2736,7 @@ public partial class MainWindow : Window
             _gridStartIndex = 0;
             if (LastLoadMetrics is not null)
                 UpdateGridMetrics(LastLoadMetrics);
+            SynchronizeSelectionControls();
             return;
         }
 
@@ -2676,6 +2749,8 @@ public partial class MainWindow : Window
 
         if (LastLoadMetrics is not null)
             UpdateGridMetrics(LastLoadMetrics);
+
+        SynchronizeSelectionControls();
     }
 
     private void CardsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
@@ -2794,18 +2869,7 @@ public partial class MainWindow : Window
 
     private void SelectTile(Tile? tile)
     {
-        if (tile is not null)
-            EnsureGridTileRealized(tile);
-
-        CardsList.SelectedItem = tile;
-        RowsList.SelectedItem = tile;
-        if (tile is not null)
-        {
-            CardsList.ScrollIntoView(tile);
-            RowsList.ScrollIntoView(tile);
-        }
-        if (tile is null)
-            ClearPreview();
+        SetSelection(tile is null ? [] : [tile], tile);
     }
 
     private void ClearPreview()
@@ -2843,7 +2907,7 @@ public partial class MainWindow : Window
     {
         if (HeaderStats is null) return;
 
-        int selected = SelectedTile() is null ? 0 : 1;
+        int selected = SelectedTiles().Count;
         int visible = _tiles.Count;
         int total = _allTiles.Count;
         string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
@@ -3799,7 +3863,17 @@ public partial class MainWindow : Window
         OpenModal();
     }
 
-    private Tile? SelectedTile() => CardsList.SelectedItem as Tile ?? RowsList.SelectedItem as Tile;
+    private Tile? SelectedTile()
+    {
+        if (!string.IsNullOrWhiteSpace(_primarySelectedPath))
+        {
+            var primary = _tiles.FirstOrDefault(tile => string.Equals(tile.Path, _primarySelectedPath, StringComparison.OrdinalIgnoreCase));
+            if (primary is not null)
+                return primary;
+        }
+
+        return CardsList.SelectedItem as Tile ?? RowsList.SelectedItem as Tile;
+    }
 
     private void OpenSelectedExternally_Click(object sender, RoutedEventArgs e)
     {
@@ -4231,6 +4305,23 @@ public partial class MainWindow : Window
     public List<string> HiddenFolderBucketKeysForSmoke => _folderBucketViews.Where(static bucket => bucket.Hidden).Select(static bucket => bucket.Key).ToList();
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public int FilteredCountForSmoke => _tiles.Count;
+    public int SelectedCountForSmoke => SelectedTiles().Count;
+    public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
+    public int CardsSelectedCountForSmoke => CardsList.SelectedItems.Count;
+    public int RowsSelectedCountForSmoke => RowsList.SelectedItems.Count;
+    public bool MultiSelectionEnabledForSmoke => CardsList.SelectionMode == SelectionMode.Extended && RowsList.SelectionMode == SelectionMode.Extended;
+    public string HeaderStatsForSmoke => HeaderStats.Text;
+    public bool SetListModeForSmoke()
+    {
+        ModeList.IsChecked = true;
+        return RowsList.Visibility == Visibility.Visible;
+    }
+
+    public bool SetGridModeForSmoke()
+    {
+        ModeGrid.IsChecked = true;
+        return CardsList.Visibility == Visibility.Visible;
+    }
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
     public bool SelectedUnseenForSmoke => SelectedTile()?.Unseen == true;
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
@@ -4501,6 +4592,37 @@ public partial class MainWindow : Window
 
         SelectTile(_tiles[index]);
         SaveState();
+        return true;
+    }
+
+    public bool SelectRangeForSmoke(int firstIndex, int lastIndex)
+    {
+        if (firstIndex < 0 || lastIndex < 0 || firstIndex >= _tiles.Count || lastIndex >= _tiles.Count)
+            return false;
+
+        int start = Math.Min(firstIndex, lastIndex);
+        int count = Math.Abs(lastIndex - firstIndex) + 1;
+        var selected = _tiles.Skip(start).Take(count).ToList();
+        SetSelection(selected, _tiles[lastIndex]);
+        return true;
+    }
+
+    public bool ToggleSelectionForSmoke(int index)
+    {
+        if (index < 0 || index >= _tiles.Count)
+            return false;
+
+        Tile target = _tiles[index];
+        var selected = SelectedTiles().ToList();
+        if (_selectedPaths.Contains(target.Path))
+            selected.RemoveAll(tile => string.Equals(tile.Path, target.Path, StringComparison.OrdinalIgnoreCase));
+        else
+            selected.Add(target);
+
+        Tile? primary = selected.Any(tile => string.Equals(tile.Path, target.Path, StringComparison.OrdinalIgnoreCase))
+            ? target
+            : SelectedTile();
+        SetSelection(selected, primary);
         return true;
     }
 
