@@ -31,7 +31,7 @@ browse and practical viewer slice:
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/pin/hover/activate/close/restore/reload smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
-- `--png-metadata-smoke <path>` lazy active-preview PNG `parameters` metadata smoke
+- `--png-metadata-smoke <path>` lazy active-preview and read-only modal sidebar PNG `parameters` metadata smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
