@@ -2201,6 +2201,32 @@ public partial class MainWindow : Window
         PreviewNegativeLabel.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
         PreviewNegativeCard.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
         PreviewNegativeText.Text = hasNegative ? metadata.NegativePrompt : "";
+        SyncModalMetadataSidebar();
+    }
+
+    private void SyncModalMetadataSidebar()
+    {
+        Tile? selected = SelectedTile();
+        bool current = selected is not null
+            && _currentPreviewMetadata is not null
+            && string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase);
+        PngParametersMetadata? metadata = current ? _currentPreviewMetadata : null;
+        bool hasPrompt = !string.IsNullOrWhiteSpace(metadata?.Prompt);
+        bool hasNegative = !string.IsNullOrWhiteSpace(metadata?.NegativePrompt);
+
+        ModalMetadataStatusText.Text = metadata is null
+            ? "No PNG metadata loaded"
+            : metadata.Settings.Count > 0
+                ? string.Join("  ·  ", metadata.Settings.Select(static pair => $"{pair.Key}: {pair.Value}"))
+                : "PNG parameters loaded";
+        ModalPromptText.Text = hasPrompt ? metadata!.Prompt : "-";
+        ModalNegativeText.Text = hasNegative ? metadata!.NegativePrompt : "-";
+        CopyModalMetadataButton.IsEnabled = metadata is not null;
+        CopyModalMetadataButton.ToolTip = metadata is null ? "No PNG metadata loaded" : "Copy PNG metadata";
+        CopyModalPromptButton.IsEnabled = hasPrompt;
+        CopyModalPromptButton.ToolTip = hasPrompt ? "Copy prompt" : "No prompt metadata loaded";
+        CopyModalNegativeButton.IsEnabled = hasNegative;
+        CopyModalNegativeButton.ToolTip = hasNegative ? "Copy negative prompt" : "No negative prompt metadata loaded";
     }
 
     private void ClearPreviewMetadataCopyState()
@@ -2219,6 +2245,8 @@ public partial class MainWindow : Window
         CopyPreviewNegativeButton.IsEnabled = false;
         CopyPreviewNegativeButton.Content = "Copy";
         CopyPreviewNegativeButton.ToolTip = "No negative prompt metadata loaded";
+        if (ModalMetadataStatusText is not null)
+            SyncModalMetadataSidebar();
     }
 
     private void CopyPreviewPrompt_Click(object sender, RoutedEventArgs e)
@@ -3975,6 +4003,7 @@ public partial class MainWindow : Window
         ModalArtBase.Fill = t.ArtBase;
         ModalArtGlow.Fill = t.ArtGlow;
         Modal.Visibility = Visibility.Visible;
+        SyncModalMetadataSidebar();
         watch.Stop();
 
         if (LastLoadMetrics is not null)
@@ -5168,6 +5197,23 @@ public partial class MainWindow : Window
         return new MetadataCopySmokeSnapshot(copied, button.IsEnabled, SelectedTile()?.Path, _currentPreviewMetadataPath, _lastMetadataCopyText);
     }
 
+    public ModalMetadataSmokeSnapshot OpenModalMetadataForSmoke()
+    {
+        OpenModal();
+        bool current = SelectedTile() is Tile selected
+            && string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase);
+        return new ModalMetadataSmokeSnapshot(
+            Modal.Visibility == Visibility.Visible,
+            ModalMetadataSidebar.Visibility == Visibility.Visible,
+            current,
+            ModalMetadataStatusText.Text,
+            ModalPromptText.Text,
+            ModalNegativeText.Text,
+            CopyModalMetadataButton.IsEnabled,
+            CopyModalPromptButton.IsEnabled,
+            CopyModalNegativeButton.IsEnabled);
+    }
+
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
 
@@ -5425,6 +5471,17 @@ public sealed record MetadataCopySmokeSnapshot(
     string? SelectedPath,
     string? MetadataPath,
     string CopyText);
+
+public sealed record ModalMetadataSmokeSnapshot(
+    bool ModalVisible,
+    bool SidebarVisible,
+    bool MetadataCurrent,
+    string Status,
+    string Prompt,
+    string NegativePrompt,
+    bool CopyMetadataEnabled,
+    bool CopyPromptEnabled,
+    bool CopyNegativeEnabled);
 
 public sealed record PngMetadataSmokeSnapshot(
     bool Selected,

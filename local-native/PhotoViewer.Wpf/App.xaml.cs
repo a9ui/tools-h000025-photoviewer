@@ -4263,6 +4263,7 @@ public partial class App : Application
                 MetadataCopySmokeSnapshot validCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot validPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
                 MetadataCopySmokeSnapshot validNegativeCopy = win.CopyCurrentPreviewPromptForSmoke(negative: true);
+                ModalMetadataSmokeSnapshot validModal = win.OpenModalMetadataForSmoke();
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
                 MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot missingPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
@@ -4295,6 +4296,15 @@ public partial class App : Application
                     && string.Equals(validPromptCopy.CopyText, "masterpiece, studio portrait", StringComparison.Ordinal)
                     && validNegativeCopy.Copied && validNegativeCopy.CopyEnabled
                     && string.Equals(validNegativeCopy.CopyText, "lowres, text", StringComparison.Ordinal)
+                    && validModal.ModalVisible
+                    && validModal.SidebarVisible
+                    && validModal.MetadataCurrent
+                    && validModal.Status.Contains("Sampler: Euler a", StringComparison.Ordinal)
+                    && string.Equals(validModal.Prompt, "masterpiece, studio portrait", StringComparison.Ordinal)
+                    && string.Equals(validModal.NegativePrompt, "lowres, text", StringComparison.Ordinal)
+                    && validModal.CopyMetadataEnabled
+                    && validModal.CopyPromptEnabled
+                    && validModal.CopyNegativeEnabled
                     && missing.Selected
                     && !missing.MetadataApplied
                     && !missingCopy.Copied
@@ -4322,6 +4332,7 @@ public partial class App : Application
                     IgnoredPath = ignoredPath,
                     Valid = valid,
                     ValidCopy = validCopy,
+                    ValidModal = validModal,
                     Missing = missing,
                     MissingCopy = missingCopy,
                     IgnoredTextSkipped = ignoredTextSkipped,
@@ -5557,6 +5568,7 @@ public partial class App : Application
         public string? IgnoredPath { get; init; }
         public PngMetadataSmokeSnapshot? Valid { get; init; }
         public MetadataCopySmokeSnapshot? ValidCopy { get; init; }
+        public ModalMetadataSmokeSnapshot? ValidModal { get; init; }
         public PngMetadataSmokeSnapshot? Missing { get; init; }
         public MetadataCopySmokeSnapshot? MissingCopy { get; init; }
         public bool IgnoredTextSkipped { get; init; }
