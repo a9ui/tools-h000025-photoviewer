@@ -4267,6 +4267,9 @@ public partial class App : Application
                 MetadataCopySmokeSnapshot validNegativeCopy = win.CopyCurrentPreviewPromptForSmoke(negative: true);
                 ModalMetadataSmokeSnapshot initialModal = win.OpenModalMetadataForSmoke();
                 ModalMetadataSmokeSnapshot validModal = win.ToggleModalMetadataSidebarForSmoke();
+                ModalMetadataSmokeSnapshot negativeTabModal = win.SelectModalMetadataTabForSmoke("negative");
+                ModalMetadataSmokeSnapshot settingsTabModal = win.SelectModalMetadataTabForSmoke("settings");
+                ModalMetadataSmokeSnapshot promptTabModal = win.SelectModalMetadataTabForSmoke("prompt");
                 ModalMetadataSmokeSnapshot hiddenModal = win.ToggleModalMetadataSidebarForSmoke();
                 ModalMetadataSmokeSnapshot doubleClickModal = win.DoubleClickModalImageForSmoke();
                 ModalMetadataSmokeSnapshot doubleClickHiddenModal = win.DoubleClickModalImageForSmoke();
@@ -4314,6 +4317,34 @@ public partial class App : Application
                     && validModal.CopyMetadataEnabled
                     && validModal.CopyPromptEnabled
                     && validModal.CopyNegativeEnabled
+                    && string.Equals(validModal.ActiveTab, "prompt", StringComparison.Ordinal)
+                    && validModal.PromptPanelVisible
+                    && !validModal.NegativePanelVisible
+                    && !validModal.SettingsPanelVisible
+                    && string.Equals(negativeTabModal.ActiveTab, "negative", StringComparison.Ordinal)
+                    && !negativeTabModal.PromptPanelVisible
+                    && negativeTabModal.NegativePanelVisible
+                    && !negativeTabModal.SettingsPanelVisible
+                    && string.Equals(negativeTabModal.NegativePrompt, "lowres, text", StringComparison.Ordinal)
+                    && negativeTabModal.CopyMetadataEnabled
+                    && negativeTabModal.CopyPromptEnabled
+                    && negativeTabModal.CopyNegativeEnabled
+                    && string.Equals(settingsTabModal.ActiveTab, "settings", StringComparison.Ordinal)
+                    && !settingsTabModal.PromptPanelVisible
+                    && !settingsTabModal.NegativePanelVisible
+                    && settingsTabModal.SettingsPanelVisible
+                    && settingsTabModal.Settings.Contains("Sampler: Euler a", StringComparison.Ordinal)
+                    && settingsTabModal.CopyMetadataEnabled
+                    && settingsTabModal.CopyPromptEnabled
+                    && settingsTabModal.CopyNegativeEnabled
+                    && string.Equals(promptTabModal.ActiveTab, "prompt", StringComparison.Ordinal)
+                    && promptTabModal.PromptPanelVisible
+                    && !promptTabModal.NegativePanelVisible
+                    && !promptTabModal.SettingsPanelVisible
+                    && string.Equals(promptTabModal.Prompt, "masterpiece, studio portrait", StringComparison.Ordinal)
+                    && promptTabModal.CopyMetadataEnabled
+                    && promptTabModal.CopyPromptEnabled
+                    && promptTabModal.CopyNegativeEnabled
                     && hiddenModal.ModalVisible
                     && !hiddenModal.SidebarVisible
                     && hiddenModal.MetadataCurrent
@@ -4350,7 +4381,7 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "lazy PNG parameters metadata survives button and image-double-click sidebar show/hide cycles; missing and unrelated text chunks stay on the safe path fallback"
+                        ? "lazy PNG parameters metadata survives Prompt/Negative/Settings tab selection plus button and image-double-click sidebar show/hide cycles; missing and unrelated text chunks stay on the safe path fallback"
                         : "PNG parameters metadata smoke did not meet expected lazy selection behavior",
                     SmokeRoot = smokeRoot,
                     Folder = folder,
@@ -4361,6 +4392,9 @@ public partial class App : Application
                     ValidCopy = validCopy,
                     InitialModal = initialModal,
                     ValidModal = validModal,
+                    NegativeTabModal = negativeTabModal,
+                    SettingsTabModal = settingsTabModal,
+                    PromptTabModal = promptTabModal,
                     HiddenModal = hiddenModal,
                     DoubleClickModal = doubleClickModal,
                     DoubleClickHiddenModal = doubleClickHiddenModal,
@@ -5601,6 +5635,9 @@ public partial class App : Application
         public MetadataCopySmokeSnapshot? ValidCopy { get; init; }
         public ModalMetadataSmokeSnapshot? InitialModal { get; init; }
         public ModalMetadataSmokeSnapshot? ValidModal { get; init; }
+        public ModalMetadataSmokeSnapshot? NegativeTabModal { get; init; }
+        public ModalMetadataSmokeSnapshot? SettingsTabModal { get; init; }
+        public ModalMetadataSmokeSnapshot? PromptTabModal { get; init; }
         public ModalMetadataSmokeSnapshot? HiddenModal { get; init; }
         public ModalMetadataSmokeSnapshot? DoubleClickModal { get; init; }
         public ModalMetadataSmokeSnapshot? DoubleClickHiddenModal { get; init; }

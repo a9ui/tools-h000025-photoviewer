@@ -31,7 +31,7 @@ browse and practical viewer slice:
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/pin/hover/activate/close/restore/reload smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
-- `--png-metadata-smoke <path>` lazy active-preview and read-only modal sidebar PNG `parameters` metadata smoke
+- `--png-metadata-smoke <path>` lazy active-preview and read-only modal Prompt / Negative / Settings tab plus PNG `parameters` metadata smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
@@ -655,6 +655,19 @@ text-input guard and the outside-input shortcuts together:
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shortcut-typing-smoke $env:TEMP\wpf-shortcut-typing-smoke.json --folder .\local-native\ui-mockup
 ```
+
+## WPF M50 Modal Metadata Tabs
+
+The #306 slice aligns the existing read-only modal metadata sidebar with the
+browser's `Prompt` / `Negative` / `Settings` tabs. Tab changes only switch the
+visible WPF panel; they do not re-read PNG metadata or change search, favorite,
+enhancement, delete, album, cache, or persisted state. PNG Info remains visible
+below every tab, and the existing PNG Info, Prompt, and Negative copy actions
+stay current even while their panel is hidden.
+
+The existing `--png-metadata-smoke` verifies all three tab states and then
+rechecks the M47-M49 topbar and image-double-click sidebar cycles with current
+metadata and copy state preserved.
 
 ## Files
 
