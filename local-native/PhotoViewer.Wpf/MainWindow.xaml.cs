@@ -43,7 +43,10 @@ public partial class MainWindow : Window
     private const string AspectPortraitValue = "portrait";
     private const string SortModifiedNewestValue = "modified-newest";
     private const string SortModifiedOldestValue = "modified-oldest";
+    private const string SortCreatedNewestValue = "created-newest";
+    private const string SortCreatedOldestValue = "created-oldest";
     private const string SortNameValue = "name";
+    private const string SortRandomValue = "random";
     private const string DatePresetNoneValue = "none";
     private const string DatePresetTodayValue = "today";
     private const string DatePreset7DaysValue = "7d";
@@ -105,6 +108,7 @@ public partial class MainWindow : Window
     private string _displayStyle = DisplayStyleStandard;
     private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
+    private string _randomSortSeed = "default";
     private string _datePreset = DatePresetNoneValue;
     private DateTime? _dateFromLocal;
     private DateTime? _dateToLocal;
@@ -664,6 +668,7 @@ public partial class MainWindow : Window
             Group = FormatGroup(modified),
             CardWidth = width,
             ModifiedUtc = file.LastWriteTimeUtc,
+            CreatedUtc = file.CreationTimeUtc,
             Prompt = file.FullName,
             Path = file.FullName,
             IsRealFile = true,
@@ -2738,6 +2743,17 @@ public partial class MainWindow : Window
                 .OrderBy(static tile => tile.ModifiedUtc)
                 .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedNewestValue => source
+                .OrderByDescending(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedOldestValue => source
+                .OrderBy(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortRandomValue => source
+                .OrderBy(tile => StableRandomSortKey(_randomSortSeed, tile.Path))
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
             SortNameValue => source
                 .OrderBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
                 .ThenByDescending(static tile => tile.ModifiedUtc)
@@ -2979,7 +2995,10 @@ public partial class MainWindow : Window
         return sortBy?.Trim().ToLowerInvariant() switch
         {
             SortModifiedOldestValue or "oldest" => SortModifiedOldestValue,
+            SortCreatedNewestValue => SortCreatedNewestValue,
+            SortCreatedOldestValue => SortCreatedOldestValue,
             SortNameValue => SortNameValue,
+            SortRandomValue => SortRandomValue,
             SortModifiedNewestValue or "newest" => SortModifiedNewestValue,
             _ => SortModifiedNewestValue,
         };
@@ -3003,12 +3022,42 @@ public partial class MainWindow : Window
 
     private void SyncSortButtons()
     {
-        if (SortModifiedNewest is null || SortModifiedOldest is null || SortName is null)
+        if (SortModifiedNewest is null || SortModifiedOldest is null || SortCreatedNewest is null || SortCreatedOldest is null || SortName is null || SortRandom is null)
             return;
 
         SortModifiedNewest.IsChecked = _sortBy == SortModifiedNewestValue;
         SortModifiedOldest.IsChecked = _sortBy == SortModifiedOldestValue;
+        SortCreatedNewest.IsChecked = _sortBy == SortCreatedNewestValue;
+        SortCreatedOldest.IsChecked = _sortBy == SortCreatedOldestValue;
         SortName.IsChecked = _sortBy == SortNameValue;
+        SortRandom.IsChecked = _sortBy == SortRandomValue;
+    }
+
+    private static ulong StableRandomSortKey(string seed, string path)
+    {
+        const ulong offset = 14695981039346656037;
+        const ulong prime = 1099511628211;
+        ulong hash = offset;
+        foreach (char value in seed + "\0" + path)
+        {
+            hash ^= value;
+            hash *= prime;
+        }
+        return hash;
+    }
+
+    private bool ReshuffleRandomSort()
+    {
+        _randomSortSeed = Guid.NewGuid().ToString("N");
+        if (_sortBy != SortRandomValue)
+            _sortBy = SortRandomValue;
+        SyncSortButtons();
+        if (!_initializing)
+        {
+            ApplyFilters();
+            SaveState();
+        }
+        return true;
     }
 
     private static string NormalizeDatePreset(string? preset)
@@ -3263,6 +3312,26 @@ public partial class MainWindow : Window
         if (!_initializing)
             SetSortBy(SortNameValue);
     }
+
+    private void SortCreatedNewest_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortCreatedNewestValue);
+    }
+
+    private void SortCreatedOldest_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortCreatedOldestValue);
+    }
+
+    private void SortRandom_Checked(object sender, RoutedEventArgs e)
+    {
+        if (!_initializing)
+            SetSortBy(SortRandomValue);
+    }
+
+    private void ReshuffleSort_Click(object sender, RoutedEventArgs e) => ReshuffleRandomSort();
 
     private void DatePresetToday_Checked(object sender, RoutedEventArgs e)
     {
@@ -3558,6 +3627,7 @@ public partial class MainWindow : Window
         _aspectMode = NormalizeAspectMode(state.AspectMode);
         SyncAspectButtons();
         _sortBy = NormalizeSortBy(state.SortBy);
+        _randomSortSeed = string.IsNullOrWhiteSpace(state.RandomSortSeed) ? "default" : state.RandomSortSeed;
         SyncSortButtons();
         RestoreDateFilter(state);
         _favoriteFilterLevel = NormalizeFavoriteFilterLevel(state.FavoriteFilterLevel <= 0
@@ -3605,6 +3675,7 @@ public partial class MainWindow : Window
                 DisplayStyle = _displayStyle,
                 AspectMode = _aspectMode,
                 SortBy = _sortBy,
+                RandomSortSeed = _randomSortSeed,
                 DatePreset = _datePreset,
                 DateFrom = FormatStateDate(_dateFromLocal),
                 DateTo = FormatStateDate(_dateToLocal),
@@ -4044,6 +4115,8 @@ public partial class MainWindow : Window
     public bool SetDisplayStyleForSmoke(string style) => SetDisplayStyle(style);
     public bool SetAspectModeForSmoke(string aspectMode) => SetAspectMode(aspectMode);
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
+    public bool ReshuffleRandomSortForSmoke() => ReshuffleRandomSort();
+    public string RandomSortSeedForSmoke => _randomSortSeed;
     public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
     public bool SetManualDateRangeForSmoke(string? from, string? to) => SetManualDateRange(ParseStateDate(from), ParseStateDate(to));
     public bool SetFavoriteFilterLevelForSmoke(int level) => SetFavoriteFilterLevel(level);
@@ -4230,6 +4303,7 @@ public sealed class ViewerState
     public string? DisplayStyle { get; set; }
     public string? AspectMode { get; set; }
     public string? SortBy { get; set; }
+    public string? RandomSortSeed { get; set; }
     public string? DatePreset { get; set; }
     public string? DateFrom { get; set; }
     public string? DateTo { get; set; }
@@ -4444,6 +4518,7 @@ public sealed class Tile : INotifyPropertyChanged
     public bool Enhanced { get; set; }
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
+    public DateTime CreatedUtc { get; set; }
     public int ImagePixelWidth { get; set; }
     public int ImagePixelHeight { get; set; }
     public string SizeText { get; set; } = "";
