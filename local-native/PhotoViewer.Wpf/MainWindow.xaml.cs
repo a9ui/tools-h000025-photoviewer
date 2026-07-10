@@ -4002,6 +4002,7 @@ public partial class MainWindow : Window
         ModalArtGlow.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
         ModalArtBase.Fill = t.ArtBase;
         ModalArtGlow.Fill = t.ArtGlow;
+        SetModalMetadataSidebarVisible(false);
         Modal.Visibility = Visibility.Visible;
         SyncModalMetadataSidebar();
         watch.Stop();
@@ -4083,6 +4084,16 @@ public partial class MainWindow : Window
     }
 
     private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal();
+
+    private void ToggleModalMetadataSidebar_Click(object sender, RoutedEventArgs e)
+        => SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
+
+    private void SetModalMetadataSidebarVisible(bool visible)
+    {
+        ModalMetadataSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ModalMetadataSidebarToggleButton.ToolTip = visible ? "Hide metadata sidebar" : "Show metadata sidebar";
+        ModalMetadataSidebarToggleLabel.Text = visible ? ">" : "<";
+    }
 
     private void CloseModal()
     {
@@ -5200,6 +5211,17 @@ public partial class MainWindow : Window
     public ModalMetadataSmokeSnapshot OpenModalMetadataForSmoke()
     {
         OpenModal();
+        return ModalMetadataForSmoke();
+    }
+
+    public ModalMetadataSmokeSnapshot ToggleModalMetadataSidebarForSmoke()
+    {
+        SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
+        return ModalMetadataForSmoke();
+    }
+
+    private ModalMetadataSmokeSnapshot ModalMetadataForSmoke()
+    {
         bool current = SelectedTile() is Tile selected
             && string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase);
         return new ModalMetadataSmokeSnapshot(
