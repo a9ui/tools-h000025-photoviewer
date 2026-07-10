@@ -304,6 +304,8 @@ public partial class App : Application
                 await win.WaitForPreviewPngMetadataForSmokeAsync(win.SelectedFileNameForSmoke!);
 
             win.ShowScreen(screen);
+            if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--show-modal-metadata"))
+                win.ToggleModalMetadataSidebarForSmoke();
             win.UpdateLayout();
             int perfIdx = Array.IndexOf(args, "--perf-log");
             if (perfIdx >= 0 && perfIdx + 1 < args.Length && win.LastLoadMetrics is not null)
@@ -4263,7 +4265,9 @@ public partial class App : Application
                 MetadataCopySmokeSnapshot validCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot validPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
                 MetadataCopySmokeSnapshot validNegativeCopy = win.CopyCurrentPreviewPromptForSmoke(negative: true);
-                ModalMetadataSmokeSnapshot validModal = win.OpenModalMetadataForSmoke();
+                ModalMetadataSmokeSnapshot initialModal = win.OpenModalMetadataForSmoke();
+                ModalMetadataSmokeSnapshot validModal = win.ToggleModalMetadataSidebarForSmoke();
+                ModalMetadataSmokeSnapshot hiddenModal = win.ToggleModalMetadataSidebarForSmoke();
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
                 MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot missingPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
@@ -4296,6 +4300,9 @@ public partial class App : Application
                     && string.Equals(validPromptCopy.CopyText, "masterpiece, studio portrait", StringComparison.Ordinal)
                     && validNegativeCopy.Copied && validNegativeCopy.CopyEnabled
                     && string.Equals(validNegativeCopy.CopyText, "lowres, text", StringComparison.Ordinal)
+                    && initialModal.ModalVisible
+                    && !initialModal.SidebarVisible
+                    && initialModal.MetadataCurrent
                     && validModal.ModalVisible
                     && validModal.SidebarVisible
                     && validModal.MetadataCurrent
@@ -4305,6 +4312,12 @@ public partial class App : Application
                     && validModal.CopyMetadataEnabled
                     && validModal.CopyPromptEnabled
                     && validModal.CopyNegativeEnabled
+                    && hiddenModal.ModalVisible
+                    && !hiddenModal.SidebarVisible
+                    && hiddenModal.MetadataCurrent
+                    && hiddenModal.CopyMetadataEnabled
+                    && hiddenModal.CopyPromptEnabled
+                    && hiddenModal.CopyNegativeEnabled
                     && missing.Selected
                     && !missing.MetadataApplied
                     && !missingCopy.Copied
@@ -4323,7 +4336,7 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "lazy PNG parameters metadata applies only to the current selection; missing and unrelated text chunks stay on the safe path fallback"
+                        ? "lazy PNG parameters metadata survives the initially-collapsed modal sidebar show/hide cycle; missing and unrelated text chunks stay on the safe path fallback"
                         : "PNG parameters metadata smoke did not meet expected lazy selection behavior",
                     SmokeRoot = smokeRoot,
                     Folder = folder,
@@ -4332,7 +4345,9 @@ public partial class App : Application
                     IgnoredPath = ignoredPath,
                     Valid = valid,
                     ValidCopy = validCopy,
+                    InitialModal = initialModal,
                     ValidModal = validModal,
+                    HiddenModal = hiddenModal,
                     Missing = missing,
                     MissingCopy = missingCopy,
                     IgnoredTextSkipped = ignoredTextSkipped,
@@ -5568,7 +5583,9 @@ public partial class App : Application
         public string? IgnoredPath { get; init; }
         public PngMetadataSmokeSnapshot? Valid { get; init; }
         public MetadataCopySmokeSnapshot? ValidCopy { get; init; }
+        public ModalMetadataSmokeSnapshot? InitialModal { get; init; }
         public ModalMetadataSmokeSnapshot? ValidModal { get; init; }
+        public ModalMetadataSmokeSnapshot? HiddenModal { get; init; }
         public PngMetadataSmokeSnapshot? Missing { get; init; }
         public MetadataCopySmokeSnapshot? MissingCopy { get; init; }
         public bool IgnoredTextSkipped { get; init; }

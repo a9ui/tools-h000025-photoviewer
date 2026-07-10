@@ -632,6 +632,9 @@
         <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" Width="38" Height="38">
           <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
+        <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" Width="38" Height="38">
+          <TextBlock x:Name="ModalMetadataSidebarToggleLabel" Text="&lt;" Foreground="{StaticResource TextSecondary}" FontSize="15" FontWeight="SemiBold"/>
+        </Button>
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" Width="38" Height="38" Click="OpenSelectedExternally_Click">
           <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="15" Height="15"/>
         </Button>
@@ -685,7 +688,7 @@
           </Border>
         </Button>
 
-        <Border x:Name="ModalMetadataSidebar" HorizontalAlignment="Right" VerticalAlignment="Center" Width="300" MaxHeight="640"
+        <Border x:Name="ModalMetadataSidebar" HorizontalAlignment="Right" VerticalAlignment="Center" Width="300" MaxHeight="640" Visibility="Collapsed"
                 Margin="0,0,84,0" CornerRadius="10" Background="#E6121218" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12">
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
