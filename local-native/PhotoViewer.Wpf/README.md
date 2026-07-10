@@ -97,6 +97,10 @@ Performance-log smoke:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-perf-after.png" --screen viewer --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --perf-log "$env:TEMP\photoviewer-wpf-perf-after.json"
 ```
 
+The perf log separates `MetadataMs`, `MetadataWorkers`, and
+`MetadataCompleted` from UI-thread `MaterializeMs`, so large-folder header
+reads remain measurable without hiding them inside tile creation time.
+
 Preview decode smoke selects one fixture image and immediately selects another,
 then verifies that the deferred decode applies only to the latest selection:
 
