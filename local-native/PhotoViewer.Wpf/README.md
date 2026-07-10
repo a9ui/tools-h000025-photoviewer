@@ -28,7 +28,7 @@ browse and practical viewer slice:
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
 - `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
-- `--preview-tabs-smoke <path>` preview tab open/hover/activate/close/restore smoke
+- `--preview-tabs-smoke <path>` preview tab open/pin/hover/activate/close/restore/reload smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--png-metadata-smoke <path>` lazy active-preview PNG `parameters` metadata smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke

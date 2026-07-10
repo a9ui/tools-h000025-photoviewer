@@ -452,13 +452,14 @@
                 <DataTemplate>
                   <Border Padding="6,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                      <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" MouseEnter="PreviewTab_MouseEnter" MouseMove="PreviewTab_MouseMove" MouseLeave="PreviewTab_MouseLeave" ToolTip="{Binding Path}">
+                       <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" MouseEnter="PreviewTab_MouseEnter" MouseMove="PreviewTab_MouseMove" MouseLeave="PreviewTab_MouseLeave" ToolTip="{Binding Path}">
                         <StackPanel Orientation="Horizontal">
                           <TextBlock Text="{Binding ActiveMarker}" Foreground="{StaticResource FavoriteText}" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
                           <TextBlock Text="{Binding FileName}" Foreground="{Binding Foreground}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" VerticalAlignment="Center"/>
                         </StackPanel>
-                      </Button>
-                      <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="12" Content="x" Tag="{Binding}" Click="ClosePreviewTab_Click" ToolTip="Close tab"/>
+                       </Button>
+                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="11" Content="{Binding PinMarker}" Tag="{Binding}" Click="TogglePreviewTabPin_Click" ToolTip="{Binding PinToolTip}"/>
+                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="12" Content="x" Tag="{Binding}" Click="ClosePreviewTab_Click" ToolTip="Close tab"/>
                     </StackPanel>
                   </Border>
                 </DataTemplate>
