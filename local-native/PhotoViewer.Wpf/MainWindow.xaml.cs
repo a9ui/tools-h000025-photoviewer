@@ -4242,6 +4242,13 @@ public partial class MainWindow : Window
 
     private void ModalImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        if (e.ClickCount == 2 && ToggleModalMetadataSidebarFromImageDoubleClick())
+        {
+            EndModalPan();
+            e.Handled = true;
+            return;
+        }
+
         if (Modal.Visibility != Visibility.Visible || _modalZoom <= 1)
             return;
 
@@ -4249,6 +4256,15 @@ public partial class MainWindow : Window
         _modalPanStartOffset = new Vector(_modalPanX, _modalPanY);
         ModalImage.CaptureMouse();
         e.Handled = true;
+    }
+
+    private bool ToggleModalMetadataSidebarFromImageDoubleClick()
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+
+        SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
+        return true;
     }
 
     private void ModalImage_MouseMove(object sender, MouseEventArgs e)
@@ -5217,6 +5233,12 @@ public partial class MainWindow : Window
     public ModalMetadataSmokeSnapshot ToggleModalMetadataSidebarForSmoke()
     {
         SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
+        return ModalMetadataForSmoke();
+    }
+
+    public ModalMetadataSmokeSnapshot DoubleClickModalImageForSmoke()
+    {
+        ToggleModalMetadataSidebarFromImageDoubleClick();
         return ModalMetadataForSmoke();
     }
 

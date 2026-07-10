@@ -4268,6 +4268,8 @@ public partial class App : Application
                 ModalMetadataSmokeSnapshot initialModal = win.OpenModalMetadataForSmoke();
                 ModalMetadataSmokeSnapshot validModal = win.ToggleModalMetadataSidebarForSmoke();
                 ModalMetadataSmokeSnapshot hiddenModal = win.ToggleModalMetadataSidebarForSmoke();
+                ModalMetadataSmokeSnapshot doubleClickModal = win.DoubleClickModalImageForSmoke();
+                ModalMetadataSmokeSnapshot doubleClickHiddenModal = win.DoubleClickModalImageForSmoke();
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
                 MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot missingPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
@@ -4318,6 +4320,18 @@ public partial class App : Application
                     && hiddenModal.CopyMetadataEnabled
                     && hiddenModal.CopyPromptEnabled
                     && hiddenModal.CopyNegativeEnabled
+                    && doubleClickModal.ModalVisible
+                    && doubleClickModal.SidebarVisible
+                    && doubleClickModal.MetadataCurrent
+                    && doubleClickModal.CopyMetadataEnabled
+                    && doubleClickModal.CopyPromptEnabled
+                    && doubleClickModal.CopyNegativeEnabled
+                    && doubleClickHiddenModal.ModalVisible
+                    && !doubleClickHiddenModal.SidebarVisible
+                    && doubleClickHiddenModal.MetadataCurrent
+                    && doubleClickHiddenModal.CopyMetadataEnabled
+                    && doubleClickHiddenModal.CopyPromptEnabled
+                    && doubleClickHiddenModal.CopyNegativeEnabled
                     && missing.Selected
                     && !missing.MetadataApplied
                     && !missingCopy.Copied
@@ -4336,7 +4350,7 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "lazy PNG parameters metadata survives the initially-collapsed modal sidebar show/hide cycle; missing and unrelated text chunks stay on the safe path fallback"
+                        ? "lazy PNG parameters metadata survives button and image-double-click sidebar show/hide cycles; missing and unrelated text chunks stay on the safe path fallback"
                         : "PNG parameters metadata smoke did not meet expected lazy selection behavior",
                     SmokeRoot = smokeRoot,
                     Folder = folder,
@@ -4348,6 +4362,8 @@ public partial class App : Application
                     InitialModal = initialModal,
                     ValidModal = validModal,
                     HiddenModal = hiddenModal,
+                    DoubleClickModal = doubleClickModal,
+                    DoubleClickHiddenModal = doubleClickHiddenModal,
                     Missing = missing,
                     MissingCopy = missingCopy,
                     IgnoredTextSkipped = ignoredTextSkipped,
@@ -5586,6 +5602,8 @@ public partial class App : Application
         public ModalMetadataSmokeSnapshot? InitialModal { get; init; }
         public ModalMetadataSmokeSnapshot? ValidModal { get; init; }
         public ModalMetadataSmokeSnapshot? HiddenModal { get; init; }
+        public ModalMetadataSmokeSnapshot? DoubleClickModal { get; init; }
+        public ModalMetadataSmokeSnapshot? DoubleClickHiddenModal { get; init; }
         public PngMetadataSmokeSnapshot? Missing { get; init; }
         public MetadataCopySmokeSnapshot? MissingCopy { get; init; }
         public bool IgnoredTextSkipped { get; init; }
