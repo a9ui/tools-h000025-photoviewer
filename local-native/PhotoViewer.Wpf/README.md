@@ -10,7 +10,7 @@ browse and practical viewer slice:
 - recursive image file scan
 - decode-to-size thumbnails
 - grid/list display using real image thumbnails
-- right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata and an explicit current-selection Copy action when present
+- right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata and explicit current-selection PNG Info, Prompt, and Negative Copy actions when present
 - modal preview using the selected real image
 - search across filename, path, prompt, group, size, and modified date
 - favorites-only and unseen-only filters
@@ -110,7 +110,7 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 PNG metadata smoke creates temporary real PNG fixtures. It verifies a bounded
 pre-IDAT `tEXt` keyword `parameters` read for the active preview only, prompt
 and negative prompt/settings parsing, metadata-free and unrelated-text fallback,
-latest-selection cancellation, and clipboard-free Copy text/disabled fallback
+latest-selection cancellation, and clipboard-free PNG Info/Prompt/Negative Copy text and disabled fallbacks
 without touching user state or the OS clipboard:
 
 ```powershell
