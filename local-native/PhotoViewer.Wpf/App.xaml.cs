@@ -3819,6 +3819,13 @@ public partial class App : Application
                 int countAfterSecond = win.PreviewTabCountForSmoke;
                 string? activeAfterSecond = win.ActivePreviewTabNameForSmoke;
                 List<string> tabsAfterSecond = win.PreviewTabNamesForSmoke;
+                bool pinnedFirst = win.TogglePreviewTabPinForSmoke(firstName);
+                bool firstPinnedAfterToggle = win.IsPreviewTabPinnedForSmoke(firstName);
+                int pinnedCountAfterToggle = win.PinnedPreviewCountForSmoke;
+                ViewerState? persistedPinState = ReadPersistedState(statePath);
+                string? firstPath = win.PathForFileNameForSmoke(firstName);
+                bool firstPinPersisted = firstPath is not null
+                    && persistedPinState?.PinnedPreviewPaths?.Contains(firstPath, StringComparer.OrdinalIgnoreCase) == true;
 
                 string? selectedBeforeHover = win.SelectedFileNameForSmoke;
                 string? activeBeforeHover = win.ActivePreviewTabNameForSmoke;
@@ -3841,22 +3848,35 @@ public partial class App : Application
                 int closedStackAfterCloseFirst = win.ClosedPreviewTabCountForSmoke;
                 string? activeAfterCloseFirst = win.ActivePreviewTabNameForSmoke;
                 string? selectedAfterCloseFirst = win.SelectedFileNameForSmoke;
+                bool pinSurvivedClose = win.PinnedPreviewCountForSmoke == 1;
 
                 bool restoredFirst = win.RestoreLastClosedPreviewTabForSmoke();
                 int countAfterRestore = win.PreviewTabCountForSmoke;
                 string? activeAfterRestore = win.ActivePreviewTabNameForSmoke;
                 string? selectedAfterRestore = win.SelectedFileNameForSmoke;
                 List<string> tabsAfterRestore = win.PreviewTabNamesForSmoke;
+                bool firstPinnedAfterRestore = win.IsPreviewTabPinnedForSmoke(firstName);
 
                 win.CloseAllPreviewTabsForSmoke();
                 int countAfterCloseAll = win.PreviewTabCountForSmoke;
                 int closedStackAfterCloseAll = win.ClosedPreviewTabCountForSmoke;
+                bool pinSurvivedCloseAll = win.PinnedPreviewCountForSmoke == 1;
 
                 bool restoredAfterCloseAll = win.RestoreLastClosedPreviewTabForSmoke();
                 int countAfterRestoreAll = win.PreviewTabCountForSmoke;
                 string? activeAfterRestoreAll = win.ActivePreviewTabNameForSmoke;
                 string? selectedAfterRestoreAll = win.SelectedFileNameForSmoke;
                 win.Close();
+
+                var reloaded = HiddenWindow();
+                reloaded.Show();
+                reloaded.SuppressStatePersistence();
+                await reloaded.LoadFolderAsync(fullFolder);
+                bool selectedFirstAfterReload = reloaded.SelectFileNameForSmoke(firstName);
+                bool openedFirstAfterReload = reloaded.OpenSelectedPreviewTabForSmoke();
+                bool firstPinnedAfterReload = reloaded.IsPreviewTabPinnedForSmoke(firstName);
+                int pinnedCountAfterReload = reloaded.PinnedPreviewCountForSmoke;
+                reloaded.Close();
 
                 bool ok = selectedFirst
                     && openedFirst
@@ -3868,6 +3888,10 @@ public partial class App : Application
                     && countAfterSecond == 2
                     && string.Equals(activeAfterSecond, secondName, StringComparison.OrdinalIgnoreCase)
                     && tabsAfterSecond.SequenceEqual([firstName, secondName], StringComparer.OrdinalIgnoreCase)
+                    && pinnedFirst
+                    && firstPinnedAfterToggle
+                    && pinnedCountAfterToggle == 1
+                    && firstPinPersisted
                     && hoverFirstShown
                     && hoverVisibleAfterShow
                     && string.Equals(hoverNameAfterShow, firstName, StringComparison.OrdinalIgnoreCase)
@@ -3885,22 +3909,29 @@ public partial class App : Application
                     && closedStackAfterCloseFirst == 1
                     && string.Equals(activeAfterCloseFirst, secondName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(selectedAfterCloseFirst, secondName, StringComparison.OrdinalIgnoreCase)
+                    && pinSurvivedClose
                     && restoredFirst
                     && countAfterRestore == 2
                     && string.Equals(activeAfterRestore, firstName, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(selectedAfterRestore, firstName, StringComparison.OrdinalIgnoreCase)
                     && tabsAfterRestore.SequenceEqual([secondName, firstName], StringComparer.OrdinalIgnoreCase)
+                    && firstPinnedAfterRestore
                     && countAfterCloseAll == 0
                     && closedStackAfterCloseAll >= 2
+                    && pinSurvivedCloseAll
                     && restoredAfterCloseAll
                     && countAfterRestoreAll == 1
                     && !string.IsNullOrWhiteSpace(activeAfterRestoreAll)
-                    && string.Equals(selectedAfterRestoreAll, activeAfterRestoreAll, StringComparison.OrdinalIgnoreCase);
+                    && string.Equals(selectedAfterRestoreAll, activeAfterRestoreAll, StringComparison.OrdinalIgnoreCase)
+                    && selectedFirstAfterReload
+                    && openedFirstAfterReload
+                    && firstPinnedAfterReload
+                    && pinnedCountAfterReload == 1;
 
                 result = new PreviewTabsSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "preview tabs open, hover preview, activate, close, restore, close-all, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
+                    Message = ok ? "preview tabs open, pin, hover, activate, close, restore, close-all, reload, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
                     Folder = fullFolder,
                     StatePath = statePath,
                     SeenPath = seenPath,
@@ -3913,6 +3944,10 @@ public partial class App : Application
                     CountAfterSecond = countAfterSecond,
                     ActiveAfterSecond = activeAfterSecond,
                     TabsAfterSecond = tabsAfterSecond,
+                    PinnedFirst = pinnedFirst,
+                    FirstPinnedAfterToggle = firstPinnedAfterToggle,
+                    PinnedCountAfterToggle = pinnedCountAfterToggle,
+                    FirstPinPersisted = firstPinPersisted,
                     HoverFirstShown = hoverFirstShown,
                     HoverVisibleAfterShow = hoverVisibleAfterShow,
                     HoverNameAfterShow = hoverNameAfterShow,
@@ -3928,15 +3963,22 @@ public partial class App : Application
                     ClosedStackAfterCloseFirst = closedStackAfterCloseFirst,
                     ActiveAfterCloseFirst = activeAfterCloseFirst,
                     SelectedAfterCloseFirst = selectedAfterCloseFirst,
+                    PinSurvivedClose = pinSurvivedClose,
                     CountAfterRestore = countAfterRestore,
                     ActiveAfterRestore = activeAfterRestore,
                     SelectedAfterRestore = selectedAfterRestore,
                     TabsAfterRestore = tabsAfterRestore,
+                    FirstPinnedAfterRestore = firstPinnedAfterRestore,
                     CountAfterCloseAll = countAfterCloseAll,
                     ClosedStackAfterCloseAll = closedStackAfterCloseAll,
+                    PinSurvivedCloseAll = pinSurvivedCloseAll,
                     CountAfterRestoreAll = countAfterRestoreAll,
                     ActiveAfterRestoreAll = activeAfterRestoreAll,
                     SelectedAfterRestoreAll = selectedAfterRestoreAll,
+                    SelectedFirstAfterReload = selectedFirstAfterReload,
+                    OpenedFirstAfterReload = openedFirstAfterReload,
+                    FirstPinnedAfterReload = firstPinnedAfterReload,
+                    PinnedCountAfterReload = pinnedCountAfterReload,
                 };
             }
             catch (Exception ex)
@@ -5587,6 +5629,10 @@ public partial class App : Application
         public int CountAfterSecond { get; init; }
         public string? ActiveAfterSecond { get; init; }
         public List<string> TabsAfterSecond { get; init; } = [];
+        public bool PinnedFirst { get; init; }
+        public bool FirstPinnedAfterToggle { get; init; }
+        public int PinnedCountAfterToggle { get; init; }
+        public bool FirstPinPersisted { get; init; }
         public bool HoverFirstShown { get; init; }
         public bool HoverVisibleAfterShow { get; init; }
         public string? HoverNameAfterShow { get; init; }
@@ -5602,15 +5648,22 @@ public partial class App : Application
         public int ClosedStackAfterCloseFirst { get; init; }
         public string? ActiveAfterCloseFirst { get; init; }
         public string? SelectedAfterCloseFirst { get; init; }
+        public bool PinSurvivedClose { get; init; }
         public int CountAfterRestore { get; init; }
         public string? ActiveAfterRestore { get; init; }
         public string? SelectedAfterRestore { get; init; }
         public List<string> TabsAfterRestore { get; init; } = [];
+        public bool FirstPinnedAfterRestore { get; init; }
         public int CountAfterCloseAll { get; init; }
         public int ClosedStackAfterCloseAll { get; init; }
+        public bool PinSurvivedCloseAll { get; init; }
         public int CountAfterRestoreAll { get; init; }
         public string? ActiveAfterRestoreAll { get; init; }
         public string? SelectedAfterRestoreAll { get; init; }
+        public bool SelectedFirstAfterReload { get; init; }
+        public bool OpenedFirstAfterReload { get; init; }
+        public bool FirstPinnedAfterReload { get; init; }
+        public int PinnedCountAfterReload { get; init; }
     }
 
     private sealed record FavoriteSmokeResult(

@@ -75,6 +75,7 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<PreviewTabView> _previewTabs = new();
     private readonly List<Tile> _allTiles = new();
     private readonly List<Tile> _closedPreviewTabs = new();
+    private readonly HashSet<string> _pinnedPreviewPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
@@ -864,6 +865,21 @@ public partial class MainWindow : Window
         catch
         {
             return path;
+        }
+    }
+
+    private static string? NormalizePinnedPreviewPath(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            return null;
+
+        try
+        {
+            return Path.GetFullPath(path);
+        }
+        catch
+        {
+            return null;
         }
     }
 
@@ -2663,6 +2679,12 @@ public partial class MainWindow : Window
             ClosePreviewTab(tab.Path);
     }
 
+    private void TogglePreviewTabPin_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab })
+            TogglePreviewTabPin(tab.Path);
+    }
+
     private void RestorePreviewTab_Click(object sender, RoutedEventArgs e) => RestoreLastClosedPreviewTab();
 
     private void CloseAllPreviewTabs_Click(object sender, RoutedEventArgs e) => CloseAllPreviewTabs();
@@ -2673,7 +2695,11 @@ public partial class MainWindow : Window
             return false;
 
         if (_previewTabs.All(tab => !string.Equals(tab.Path, tile.Path, StringComparison.OrdinalIgnoreCase)))
-            _previewTabs.Add(new PreviewTabView(tile.Path, tile.FileName));
+        {
+            bool isPinned = NormalizePinnedPreviewPath(tile.Path) is string normalizedPath
+                && _pinnedPreviewPaths.Contains(normalizedPath);
+            _previewTabs.Add(new PreviewTabView(tile.Path, tile.FileName, isPinned));
+        }
 
         _closedPreviewTabs.RemoveAll(closed => string.Equals(closed.Path, tile.Path, StringComparison.OrdinalIgnoreCase));
 
@@ -2681,6 +2707,24 @@ public partial class MainWindow : Window
             return ActivatePreviewTab(tile.Path);
 
         RefreshPreviewTabs();
+        return true;
+    }
+
+    private bool TogglePreviewTabPin(string path)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (tab is null)
+            return false;
+
+        string? normalizedPath = NormalizePinnedPreviewPath(tab.Path);
+        if (normalizedPath is null)
+            return false;
+        bool isPinned = !_pinnedPreviewPaths.Remove(normalizedPath);
+        if (isPinned)
+            _pinnedPreviewPaths.Add(normalizedPath);
+        tab.IsPinned = isPinned;
+        RefreshPreviewTabs();
+        SaveState();
         return true;
     }
 
@@ -2767,7 +2811,11 @@ public partial class MainWindow : Window
     private void RefreshPreviewTabs()
     {
         foreach (var tab in _previewTabs)
+        {
             tab.IsActive = string.Equals(tab.Path, _activePreviewTabPath, StringComparison.OrdinalIgnoreCase);
+            tab.IsPinned = NormalizePinnedPreviewPath(tab.Path) is string normalizedPath
+                && _pinnedPreviewPaths.Contains(normalizedPath);
+        }
 
         if (PreviewTabsEmptyText is not null)
             PreviewTabsEmptyText.Visibility = _previewTabs.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
@@ -4179,6 +4227,12 @@ public partial class MainWindow : Window
         _hiddenFolderBuckets.Clear();
         foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
             _hiddenFolderBuckets.Add(folder);
+        _pinnedPreviewPaths.Clear();
+        foreach (string? path in (state.PinnedPreviewPaths ?? []).Select(NormalizePinnedPreviewPath))
+        {
+            if (path is not null)
+                _pinnedPreviewPaths.Add(path);
+        }
 
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
@@ -4225,6 +4279,7 @@ public partial class MainWindow : Window
                 ShowUnfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true,
                 FavoriteFilterLevel = _favoriteFilterLevel,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
+                PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
@@ -4631,6 +4686,14 @@ public partial class MainWindow : Window
 
     public bool RestoreLastClosedPreviewTabForSmoke() => RestoreLastClosedPreviewTab();
     public void CloseAllPreviewTabsForSmoke() => CloseAllPreviewTabs();
+    public bool TogglePreviewTabPinForSmoke(string fileName)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && TogglePreviewTabPin(tab.Path);
+    }
+    public bool IsPreviewTabPinnedForSmoke(string fileName)
+        => _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.IsPinned == true;
+    public int PinnedPreviewCountForSmoke => _pinnedPreviewPaths.Count;
     public bool ShowPreviewTabHoverForSmoke(string fileName)
     {
         var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
@@ -4985,6 +5048,7 @@ public sealed class ViewerState
     public bool ShowUnfavoriteOnly { get; set; }
     public int FavoriteFilterLevel { get; set; } = 1;
     public List<string>? HiddenFolderBuckets { get; set; }
+    public List<string>? PinnedPreviewPaths { get; set; }
 }
 
 public readonly record struct DisplayStyleMetrics(
@@ -5031,16 +5095,20 @@ public sealed class FolderBucketView
 public sealed class PreviewTabView : INotifyPropertyChanged
 {
     private bool _isActive;
+    private bool _isPinned;
 
-    public PreviewTabView(string path, string fileName)
+    public PreviewTabView(string path, string fileName, bool isPinned = false)
     {
         Path = path;
         FileName = fileName;
+        _isPinned = isPinned;
     }
 
     public string Path { get; }
     public string FileName { get; }
     public string ActiveMarker => IsActive ? "*" : "";
+    public string PinMarker => IsPinned ? "P" : "p";
+    public string PinToolTip => IsPinned ? "Unpin tab" : "Pin tab";
     public Brush Foreground => IsActive ? Brushes.White : Brushes.LightGray;
 
     public bool IsActive
@@ -5053,6 +5121,19 @@ public sealed class PreviewTabView : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsActive)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ActiveMarker)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Foreground)));
+        }
+    }
+
+    public bool IsPinned
+    {
+        get => _isPinned;
+        set
+        {
+            if (_isPinned == value) return;
+            _isPinned = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsPinned)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PinMarker)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PinToolTip)));
         }
     }
 
