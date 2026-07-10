@@ -4247,12 +4247,15 @@ public partial class App : Application
             {
                 await win.LoadFolderAsync(folder);
                 PngMetadataSmokeSnapshot valid = await win.SelectPngMetadataForSmokeAsync(validName);
+                MetadataCopySmokeSnapshot validCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
+                MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 bool ignoredTextSkipped = !PhotoViewer.Wpf.MainWindow.HasPngParametersForSmoke(ignoredPath);
 
                 bool firstSelectionStarted = win.SelectFileNameForSmoke(validName);
                 bool latestSelectionStarted = win.SelectFileNameForSmoke(missingName);
                 PngMetadataSmokeSnapshot latest = await win.WaitForPreviewPngMetadataForSmokeAsync(missingName);
+                MetadataCopySmokeSnapshot latestCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 bool latestSelectionStable = latest.Selected
                     && !latest.MetadataApplied
                     && string.Equals(latest.SelectedPath, missingPath, StringComparison.OrdinalIgnoreCase)
@@ -4264,14 +4267,25 @@ public partial class App : Application
                     && string.Equals(valid.NegativePrompt, "lowres, text", StringComparison.Ordinal)
                     && string.Equals(valid.Sampler, "Euler a", StringComparison.Ordinal)
                     && valid.SamplerVisible
+                    && validCopy.Copied
+                    && validCopy.CopyEnabled
+                    && string.Equals(validCopy.SelectedPath, validCopy.MetadataPath, StringComparison.OrdinalIgnoreCase)
+                    && validCopy.CopyText.Contains("Prompt: masterpiece, studio portrait", StringComparison.Ordinal)
+                    && validCopy.CopyText.Contains("Negative prompt: lowres, text", StringComparison.Ordinal)
+                    && validCopy.CopyText.Contains("Steps: 28", StringComparison.Ordinal)
+                    && validCopy.CopyText.Contains("Raw parameters:", StringComparison.Ordinal)
                     && missing.Selected
                     && !missing.MetadataApplied
+                    && !missingCopy.Copied
+                    && !missingCopy.CopyEnabled
                     && string.Equals(missing.Prompt, missingPath, StringComparison.OrdinalIgnoreCase)
                     && !missing.SamplerVisible
                     && ignoredTextSkipped
                     && firstSelectionStarted
                     && latestSelectionStarted
-                    && latestSelectionStable;
+                    && latestSelectionStable
+                    && !latestCopy.Copied
+                    && !latestCopy.CopyEnabled;
                 result = new PngMetadataSmokeResult
                 {
                     Ok = ok,
@@ -4284,11 +4298,14 @@ public partial class App : Application
                     MissingPath = missingPath,
                     IgnoredPath = ignoredPath,
                     Valid = valid,
+                    ValidCopy = validCopy,
                     Missing = missing,
+                    MissingCopy = missingCopy,
                     IgnoredTextSkipped = ignoredTextSkipped,
                     FirstSelectionStarted = firstSelectionStarted,
                     LatestSelectionStarted = latestSelectionStarted,
                     Latest = latest,
+                    LatestCopy = latestCopy,
                     LatestSelectionStable = latestSelectionStable,
                 };
             }
@@ -5516,11 +5533,14 @@ public partial class App : Application
         public string? MissingPath { get; init; }
         public string? IgnoredPath { get; init; }
         public PngMetadataSmokeSnapshot? Valid { get; init; }
+        public MetadataCopySmokeSnapshot? ValidCopy { get; init; }
         public PngMetadataSmokeSnapshot? Missing { get; init; }
+        public MetadataCopySmokeSnapshot? MissingCopy { get; init; }
         public bool IgnoredTextSkipped { get; init; }
         public bool FirstSelectionStarted { get; init; }
         public bool LatestSelectionStarted { get; init; }
         public PngMetadataSmokeSnapshot? Latest { get; init; }
+        public MetadataCopySmokeSnapshot? LatestCopy { get; init; }
         public bool LatestSelectionStable { get; init; }
     }
 

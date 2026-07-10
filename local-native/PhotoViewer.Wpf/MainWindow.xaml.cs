@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
@@ -115,6 +116,9 @@ public partial class MainWindow : Window
     private CancellationTokenSource? _previewMetadataCts;
     private TaskCompletionSource<PreviewDecodeResult>? _previewDecodeCompletion;
     private TaskCompletionSource<PngParametersMetadata?>? _previewMetadataCompletion;
+    private PngParametersMetadata? _currentPreviewMetadata;
+    private string? _currentPreviewMetadataPath;
+    private string _lastMetadataCopyText = "";
     private int _previewUpdateCount;
     private long _previewMs;
     private int _previewDeferredDecodeCount;
@@ -1981,6 +1985,7 @@ public partial class MainWindow : Window
         _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
         _previewMetadataCts?.Cancel();
         _previewMetadataCompletion?.TrySetResult(null);
+        ClearPreviewMetadataCopyState();
         _previewDecodedPath = null;
 
         var cts = new CancellationTokenSource();
@@ -2171,6 +2176,15 @@ public partial class MainWindow : Window
 
     private void ApplyPngParametersMetadata(PngParametersMetadata metadata)
     {
+        Tile? selected = SelectedTile();
+        if (selected is null)
+            return;
+
+        _currentPreviewMetadata = metadata;
+        _currentPreviewMetadataPath = selected.Path;
+        CopyPreviewMetadataButton.IsEnabled = true;
+        CopyPreviewMetadataButton.Content = "Copy";
+        CopyPreviewMetadataButton.ToolTip = "Copy PNG metadata";
         PreviewPromptLabel.Text = "PROMPT";
         PreviewPromptText.Text = string.IsNullOrWhiteSpace(metadata.Prompt) ? PreviewPromptText.Text : metadata.Prompt;
         SetPreviewMetadataRow(PreviewSamplerLabel, PreviewSamplerText, "SAMPLER", metadata.Setting("Sampler"));
@@ -2182,6 +2196,69 @@ public partial class MainWindow : Window
         PreviewNegativeLabel.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
         PreviewNegativeCard.Visibility = hasNegative ? Visibility.Visible : Visibility.Collapsed;
         PreviewNegativeText.Text = hasNegative ? metadata.NegativePrompt : "";
+    }
+
+    private void ClearPreviewMetadataCopyState()
+    {
+        _currentPreviewMetadata = null;
+        _currentPreviewMetadataPath = null;
+        _lastMetadataCopyText = "";
+        if (CopyPreviewMetadataButton is null)
+            return;
+        CopyPreviewMetadataButton.IsEnabled = false;
+        CopyPreviewMetadataButton.Content = "Copy";
+        CopyPreviewMetadataButton.ToolTip = "No PNG metadata loaded";
+    }
+
+    private void CopyPreviewMetadata_Click(object sender, RoutedEventArgs e)
+        => CopyCurrentPreviewMetadata(useSystemClipboard: true);
+
+    private bool CopyCurrentPreviewMetadata(bool useSystemClipboard)
+    {
+        Tile? selected = SelectedTile();
+        if (selected is null
+            || _currentPreviewMetadata is null
+            || !string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string text = BuildPngMetadataCopyText(_currentPreviewMetadata);
+        if (string.IsNullOrWhiteSpace(text))
+            return false;
+
+        _lastMetadataCopyText = text;
+        if (!useSystemClipboard)
+            return true;
+
+        try
+        {
+            Clipboard.SetText(text);
+            CopyPreviewMetadataButton.Content = "Copied";
+            CopyPreviewMetadataButton.ToolTip = "PNG metadata copied";
+            return true;
+        }
+        catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+        {
+            CopyPreviewMetadataButton.Content = "Copy";
+            CopyPreviewMetadataButton.ToolTip = $"Copy failed: {ex.Message}";
+            return false;
+        }
+    }
+
+    private static string BuildPngMetadataCopyText(PngParametersMetadata metadata)
+    {
+        var lines = new List<string>();
+        AddPngMetadataCopyLine(lines, "Prompt", metadata.Prompt);
+        AddPngMetadataCopyLine(lines, "Negative prompt", metadata.NegativePrompt);
+        foreach ((string key, string value) in metadata.Settings)
+            AddPngMetadataCopyLine(lines, key, value);
+        AddPngMetadataCopyLine(lines, "Raw parameters", metadata.Raw);
+        return string.Join(Environment.NewLine, lines);
+    }
+
+    private static void AddPngMetadataCopyLine(ICollection<string> lines, string label, string? value)
+    {
+        if (!string.IsNullOrWhiteSpace(value))
+            lines.Add($"{label}: {value.Trim()}");
     }
 
     private static void SetPreviewMetadataRow(TextBlock label, TextBlock value, string title, string? text)
@@ -2263,7 +2340,7 @@ public partial class MainWindow : Window
             ? raw[negativeValueStart..(settingsStart >= negativeValueStart ? settingsStart : raw.Length)].Trim()
             : "";
         string settings = settingsStart >= 0 ? raw[(settingsStart + 1)..].Trim() : "";
-        return new PngParametersMetadata(prompt, negative, ParsePngSettings(settings));
+        return new PngParametersMetadata(prompt, negative, ParsePngSettings(settings), raw.Trim());
     }
 
     private static Dictionary<string, string> ParsePngSettings(string settings)
@@ -3163,6 +3240,7 @@ public partial class MainWindow : Window
         _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
         _previewMetadataCts?.Cancel();
         _previewMetadataCompletion?.TrySetResult(null);
+        ClearPreviewMetadataCopyState();
         _previewDecodedPath = null;
         PreviewBitmap.Source = null;
         PreviewBitmap.Visibility = Visibility.Collapsed;
@@ -5017,6 +5095,17 @@ public partial class MainWindow : Window
     public static bool HasPngParametersForSmoke(string path)
         => ReadPngParametersMetadata(path, CancellationToken.None) is not null;
 
+    public MetadataCopySmokeSnapshot CopyCurrentPreviewMetadataForSmoke()
+    {
+        bool copied = CopyCurrentPreviewMetadata(useSystemClipboard: false);
+        return new MetadataCopySmokeSnapshot(
+            copied,
+            CopyPreviewMetadataButton.IsEnabled,
+            SelectedTile()?.Path,
+            _currentPreviewMetadataPath,
+            _lastMetadataCopyText);
+    }
+
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
 
@@ -5261,11 +5350,19 @@ public sealed record PreviewDecodeSmokeSnapshot(
 public sealed record PngParametersMetadata(
     string Prompt,
     string NegativePrompt,
-    IReadOnlyDictionary<string, string> Settings)
+    IReadOnlyDictionary<string, string> Settings,
+    string Raw)
 {
     public string? Setting(string name)
         => Settings.TryGetValue(name, out string? value) ? value : null;
 }
+
+public sealed record MetadataCopySmokeSnapshot(
+    bool Copied,
+    bool CopyEnabled,
+    string? SelectedPath,
+    string? MetadataPath,
+    string CopyText);
 
 public sealed record PngMetadataSmokeSnapshot(
     bool Selected,
