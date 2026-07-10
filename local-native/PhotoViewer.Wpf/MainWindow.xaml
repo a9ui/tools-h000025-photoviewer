@@ -638,11 +638,17 @@
         <Button x:Name="ModalEnhancedToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="No enhanced output available" Width="42" Height="38" Click="ToggleModalEnhanced_Click" IsEnabled="False">
           <TextBlock x:Name="ModalEnhancedToggleLabel" Text="OR" Foreground="{StaticResource TextSecondary}" FontSize="10.5" FontWeight="SemiBold"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Toggle favorite (F)" Width="38" Height="38" Click="ToggleSelectedFavorite_Click">
-          <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="16" Height="16"/>
-        </Button>
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38" Click="ToggleModalFlip_Click">
           <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (X)" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
+          <TextBlock Text="−" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">
+          <StackPanel Orientation="Horizontal">
+            <TextBlock Text="F" Foreground="{StaticResource FavoriteText}" FontWeight="Bold"/>
+            <TextBlock x:Name="ModalFavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontSize="11" FontWeight="Bold" Margin="4,0,0,0"/>
+          </StackPanel>
         </Button>
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset zoom (0)" Width="42" Height="38" Click="ResetModalTransform_Click">
           <TextBlock Text="1:1" Foreground="{StaticResource TextSecondary}" FontSize="12"/>

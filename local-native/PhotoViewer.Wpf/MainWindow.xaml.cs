@@ -2027,6 +2027,7 @@ public partial class MainWindow : Window
         PreviewDateText.Text = t.ModifiedText;
         PreviewPromptText.Text = hasRealFile ? t.Path : (string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt);
         FavoriteLevelText.Text = t.Fav.ToString();
+        ModalFavoriteLevelText.Text = t.Fav.ToString();
         UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
         watch.Stop();
@@ -2702,6 +2703,12 @@ public partial class MainWindow : Window
         ToggleSelectedFavorite();
     }
 
+    private void ModalFavoriteIncrease_Click(object sender, RoutedEventArgs e)
+        => AdjustSelectedFavorite(1);
+
+    private void ModalFavoriteDecrease_Click(object sender, RoutedEventArgs e)
+        => AdjustSelectedFavorite(-1);
+
     private bool ToggleSelectedFavorite()
     {
         if (SelectedTile() is not { IsRealFile: true } tile)
@@ -3295,6 +3302,7 @@ public partial class MainWindow : Window
         PreviewDateText.Text = "-";
         PreviewPromptText.Text = "";
         FavoriteLevelText.Text = "0";
+        ModalFavoriteLevelText.Text = "0";
         ModalTitle.Text = "No selection";
         UpdateHeaderStats();
     }
@@ -4718,6 +4726,7 @@ public partial class MainWindow : Window
     public List<string> FolderBucketKeysForSmoke => _folderBucketViews.Select(static bucket => bucket.Key).ToList();
     public List<string> HiddenFolderBucketKeysForSmoke => _folderBucketViews.Where(static bucket => bucket.Hidden).Select(static bucket => bucket.Key).ToList();
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+    public void CloseModalForSmoke() => CloseModal();
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedCountForSmoke => SelectedTiles().Count;
     public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
@@ -4830,6 +4839,10 @@ public partial class MainWindow : Window
 
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
+    public bool AdjustModalFavoriteForSmoke(int delta)
+        => Modal.Visibility == Visibility.Visible && AdjustSelectedFavorite(delta);
+    public int ModalFavoriteLevelForSmoke
+        => int.TryParse(ModalFavoriteLevelText.Text, out int level) ? level : -1;
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
     public bool ZoomInForSmoke() => AdjustCardWidth(1);
     public bool ZoomOutForSmoke() => AdjustCardWidth(-1);
