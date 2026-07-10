@@ -43,6 +43,13 @@ public partial class App : Application
             return;
         }
 
+        int previewDecodeSmokeIdx = Array.IndexOf(e.Args, "--preview-decode-smoke");
+        if (previewDecodeSmokeIdx >= 0 && previewDecodeSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePreviewDecodeSmoke(e.Args[previewDecodeSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
         if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
         {
@@ -3625,6 +3632,116 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePreviewDecodeSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WritePreviewDecodeSmokeResult(resultPath, new PreviewDecodeSmokeResult { Message = "missing required --folder" });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length < 2)
+        {
+            WritePreviewDecodeSmokeResult(resultPath, new PreviewDecodeSmokeResult
+            {
+                Message = "preview decode smoke requires at least two fixture images",
+                Folder = fullFolder,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string targetName = ArgValue(args, "--select-name") ?? fixtureNames[^1];
+        string? rapidSelectionName = fixtureNames.FirstOrDefault(name => !string.Equals(name, targetName, StringComparison.OrdinalIgnoreCase));
+        if (string.IsNullOrWhiteSpace(rapidSelectionName))
+        {
+            WritePreviewDecodeSmokeResult(resultPath, new PreviewDecodeSmokeResult
+            {
+                Message = "preview decode smoke could not choose a distinct rapid selection fixture",
+                Folder = fullFolder,
+                TargetName = targetName,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-preview-decode-smoke-" + Guid.NewGuid().ToString("N"));
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PreviewDecodeSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(fullFolder);
+                bool rapidSelected = win.SelectFileNameForSmoke(rapidSelectionName);
+                PreviewDecodeSmokeSnapshot snapshot = await win.SelectPreviewForSmokeAsync(targetName);
+                bool targetSelected = string.Equals(win.SelectedFileNameForSmoke, targetName, StringComparison.OrdinalIgnoreCase);
+                bool ok = rapidSelected
+                    && snapshot.Selected
+                    && snapshot.DeferredDecodeApplied
+                    && snapshot.PreviewSourcePresent
+                    && snapshot.StableLatestSelection
+                    && targetSelected;
+
+                result = new PreviewDecodeSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? snapshot.Message : "preview decode smoke did not keep the decoded image synchronized with the latest selection",
+                    Folder = fullFolder,
+                    StatePath = statePath,
+                    TargetName = targetName,
+                    RapidSelectionName = rapidSelectionName,
+                    RapidSelectionApplied = rapidSelected,
+                    TargetSelected = targetSelected,
+                    ExpectedPath = snapshot.ExpectedPath,
+                    SelectionImmediateMs = snapshot.SelectionImmediateMs,
+                    PreviewImmediateMs = snapshot.PreviewImmediateMs,
+                    DeferredDecodeMs = snapshot.DeferredDecodeMs,
+                    DeferredDecodeApplied = snapshot.DeferredDecodeApplied,
+                    PreviewSourcePresent = snapshot.PreviewSourcePresent,
+                    StableLatestSelection = snapshot.StableLatestSelection,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new PreviewDecodeSmokeResult
+                {
+                    Message = ex.Message,
+                    Folder = fullFolder,
+                    StatePath = statePath,
+                    TargetName = targetName,
+                    RapidSelectionName = rapidSelectionName,
+                };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePreviewDecodeSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private static MainWindow HiddenWindow()
         => new()
         {
@@ -4403,6 +4520,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WritePreviewDecodeSmokeResult(string path, PreviewDecodeSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteGridRealizationSmokeResult(string path, GridRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -4569,6 +4693,25 @@ public partial class App : Application
         public bool XHandledOutsideTyping { get; init; }
         public int FavoriteAfterF { get; init; }
         public int FavoriteAfterX { get; init; }
+    }
+
+    private sealed class PreviewDecodeSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? StatePath { get; init; }
+        public string? TargetName { get; init; }
+        public string? RapidSelectionName { get; init; }
+        public bool RapidSelectionApplied { get; init; }
+        public bool TargetSelected { get; init; }
+        public string? ExpectedPath { get; init; }
+        public long SelectionImmediateMs { get; init; }
+        public long PreviewImmediateMs { get; init; }
+        public long DeferredDecodeMs { get; init; }
+        public bool DeferredDecodeApplied { get; init; }
+        public bool PreviewSourcePresent { get; init; }
+        public bool StableLatestSelection { get; init; }
     }
 
     private sealed record ModalNavigationSmokeResult(

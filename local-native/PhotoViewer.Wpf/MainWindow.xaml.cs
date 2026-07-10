@@ -90,8 +90,14 @@ public partial class MainWindow : Window
     private string? _hoverPreviewTabPath;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
+    private CancellationTokenSource? _previewCts;
+    private TaskCompletionSource<PreviewDecodeResult>? _previewDecodeCompletion;
     private int _previewUpdateCount;
     private long _previewMs;
+    private int _previewDeferredDecodeCount;
+    private long _previewDeferredDecodeMs;
+    private long _lastPreviewImmediateMs;
+    private string? _previewDecodedPath;
     private string _displayStyle = DisplayStyleStandard;
     private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
@@ -167,6 +173,8 @@ public partial class MainWindow : Window
         LastLoadMetrics = null;
         _previewUpdateCount = 0;
         _previewMs = 0;
+        _previewDeferredDecodeCount = 0;
+        _previewDeferredDecodeMs = 0;
         var requestedFolderSet = NormalizeFolderSet(folders);
         var existingFolderSet = requestedFolderSet.Where(Directory.Exists).ToList();
         if (existingFolderSet.Count == 0)
@@ -260,6 +268,8 @@ public partial class MainWindow : Window
                 thumbnailsCompleted: 0,
                 previewMs: _previewMs,
                 previewUpdates: _previewUpdateCount,
+                previewDeferredDecodeMs: _previewDeferredDecodeMs,
+                previewDeferredDecodeCount: _previewDeferredDecodeCount,
                 totalWatch.ElapsedMilliseconds);
             UpdateGridMetrics(LastLoadMetrics);
             LandingPanel.IsEnabled = true;
@@ -286,6 +296,8 @@ public partial class MainWindow : Window
             thumbnails.Completed,
             _previewMs,
             _previewUpdateCount,
+            _previewDeferredDecodeMs,
+            _previewDeferredDecodeCount,
             totalWatch.ElapsedMilliseconds);
         UpdateGridMetrics(LastLoadMetrics);
     }
@@ -1811,17 +1823,28 @@ public partial class MainWindow : Window
         var watch = Stopwatch.StartNew();
         bool hasRealFile = t.IsRealFile;
         Visibility generatedMetadataVisibility = hasRealFile ? Visibility.Collapsed : Visibility.Visible;
-        var preview = t.IsRealFile ? LoadBitmap(t.Path, 900) : null;
-        PreviewBitmap.Source = preview;
-        PreviewBitmap.Visibility = preview is null ? Visibility.Collapsed : Visibility.Visible;
-        PreviewArtBase.Visibility = preview is null ? Visibility.Visible : Visibility.Collapsed;
-        PreviewArtGlow.Visibility = preview is null ? Visibility.Visible : Visibility.Collapsed;
+        _previewCts?.Cancel();
+        _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
+        _previewDecodedPath = null;
+
+        var cts = new CancellationTokenSource();
+        _previewCts = cts;
+        var completion = new TaskCompletionSource<PreviewDecodeResult>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _previewDecodeCompletion = completion;
+
+        var immediate = hasRealFile ? t.Thumbnail : null;
+        PreviewBitmap.Source = immediate;
+        PreviewBitmap.Visibility = immediate is null ? Visibility.Collapsed : Visibility.Visible;
+        PreviewArtBase.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
+        PreviewArtGlow.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
         PreviewArtBase.Fill = t.ArtBase;
         PreviewArtGlow.Fill = t.ArtGlow;
         PreviewFileName.Text = t.FileName;
         PreviewTabName.Text = t.FileName;
-        PreviewSizeText.Text = t.IsRealFile && TryReadBitmapSize(t.Path, out var width, out var height)
-            ? $"{width} x {height}"
+        PreviewSizeText.Text = hasRealFile
+            ? t.ImagePixelWidth > 0 && t.ImagePixelHeight > 0
+                ? $"{t.ImagePixelWidth} x {t.ImagePixelHeight}"
+                : "Loading..."
             : t.SizeText;
         PreviewModelLabel.Text = hasRealFile ? "TYPE" : "MODEL";
         PreviewModelText.Text = hasRealFile
@@ -1846,6 +1869,88 @@ public partial class MainWindow : Window
         watch.Stop();
         _previewUpdateCount++;
         _previewMs += watch.ElapsedMilliseconds;
+        _lastPreviewImmediateMs = watch.ElapsedMilliseconds;
+
+        if (hasRealFile)
+            _ = LoadPreviewBitmapAsync(t.Path, cts.Token, completion);
+        else
+            completion.TrySetResult(new PreviewDecodeResult(t.Path, immediate, 0, 0, 0, Applied: true));
+    }
+
+    private async Task LoadPreviewBitmapAsync(string path, CancellationToken token, TaskCompletionSource<PreviewDecodeResult> completion)
+    {
+        PreviewDecodeResult decoded;
+        try
+        {
+            decoded = await Task.Run(
+                () =>
+                {
+                    var watch = Stopwatch.StartNew();
+                    var bitmap = LoadBitmap(path, 900);
+                    bool hasSize = TryReadBitmapSize(path, out int width, out int height);
+                    watch.Stop();
+                    return new PreviewDecodeResult(path, bitmap, hasSize ? width : 0, hasSize ? height : 0, watch.ElapsedMilliseconds, Applied: false);
+                },
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+            completion.TrySetResult(PreviewDecodeResult.Canceled);
+            return;
+        }
+        catch
+        {
+            completion.TrySetResult(new PreviewDecodeResult(path, null, 0, 0, 0, Applied: false));
+            return;
+        }
+
+        if (token.IsCancellationRequested)
+        {
+            completion.TrySetResult(PreviewDecodeResult.Canceled);
+            return;
+        }
+
+        try
+        {
+            await Dispatcher.InvokeAsync(
+                () =>
+                {
+                    if (token.IsCancellationRequested || !string.Equals(SelectedTile()?.Path, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        completion.TrySetResult(PreviewDecodeResult.Canceled);
+                        return;
+                    }
+
+                    if (decoded.Bitmap is not null)
+                    {
+                        PreviewBitmap.Source = decoded.Bitmap;
+                        PreviewBitmap.Visibility = Visibility.Visible;
+                        PreviewArtBase.Visibility = Visibility.Collapsed;
+                        PreviewArtGlow.Visibility = Visibility.Collapsed;
+                    }
+
+                    if (decoded.Width > 0 && decoded.Height > 0)
+                        PreviewSizeText.Text = $"{decoded.Width} x {decoded.Height}";
+
+                    ModalTitle.Text = $"{PreviewFileName.Text} - {PreviewSizeText.Text}";
+                    _previewDecodedPath = path;
+                    _previewDeferredDecodeCount++;
+                    _previewDeferredDecodeMs += decoded.DecodeMs;
+                    if (LastLoadMetrics is not null)
+                    {
+                        LastLoadMetrics.PreviewDeferredDecodeMs = _previewDeferredDecodeMs;
+                        LastLoadMetrics.PreviewDeferredDecodeCount = _previewDeferredDecodeCount;
+                    }
+
+                    completion.TrySetResult(decoded with { Applied = true });
+                },
+                DispatcherPriority.Background,
+                token);
+        }
+        catch (OperationCanceledException)
+        {
+            completion.TrySetResult(PreviewDecodeResult.Canceled);
+        }
     }
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
@@ -2603,6 +2708,9 @@ public partial class MainWindow : Window
 
     private void ClearPreview()
     {
+        _previewCts?.Cancel();
+        _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
+        _previewDecodedPath = null;
         PreviewBitmap.Source = null;
         PreviewBitmap.Visibility = Visibility.Collapsed;
         PreviewArtBase.Visibility = Visibility.Visible;
@@ -3991,11 +4099,52 @@ public partial class MainWindow : Window
         return true;
     }
 
+    public async Task<PreviewDecodeSmokeSnapshot> SelectPreviewForSmokeAsync(string fileName)
+    {
+        var tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (tile is null || !tile.IsRealFile)
+            return PreviewDecodeSmokeSnapshot.NotSelected(fileName);
+
+        var selectionWatch = Stopwatch.StartNew();
+        SelectTile(tile);
+        selectionWatch.Stop();
+
+        var completion = _previewDecodeCompletion;
+        if (completion is null)
+            return PreviewDecodeSmokeSnapshot.NotSelected(fileName);
+
+        var timeout = Task.Delay(TimeSpan.FromSeconds(5));
+        if (await Task.WhenAny(completion.Task, timeout) != completion.Task)
+            return new PreviewDecodeSmokeSnapshot(true, tile.Path, selectionWatch.ElapsedMilliseconds, _lastPreviewImmediateMs, 0, false, false, false, "preview decode timed out");
+
+        var decoded = await completion.Task;
+        await Task.Delay(125);
+        bool stable = decoded.Applied
+            && string.Equals(SelectedTile()?.Path, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_previewDecodedPath, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && PreviewBitmap.Source is not null;
+        return new PreviewDecodeSmokeSnapshot(
+            true,
+            tile.Path,
+            selectionWatch.ElapsedMilliseconds,
+            _lastPreviewImmediateMs,
+            decoded.DecodeMs,
+            decoded.Applied,
+            PreviewBitmap.Source is not null,
+            stable,
+            stable ? "preview decode completed for the latest selection" : "preview decode did not remain synchronized with the latest selection");
+    }
+
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
 
     public bool? IsFileUnseenForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Unseen;
+
+    private readonly record struct PreviewDecodeResult(string Path, BitmapSource? Bitmap, int Width, int Height, long DecodeMs, bool Applied)
+    {
+        public static PreviewDecodeResult Canceled => new("", null, 0, 0, 0, Applied: false);
+    }
 }
 
 // Lightweight persisted shell state.
@@ -4141,6 +4290,8 @@ public sealed class LoadMetrics
     public int ThumbnailsCompleted { get; set; }
     public long PreviewMs { get; set; }
     public int PreviewUpdates { get; set; }
+    public long PreviewDeferredDecodeMs { get; set; }
+    public int PreviewDeferredDecodeCount { get; set; }
     public long ModalOpenMs { get; set; }
     public bool ModalImmediateSource { get; set; }
     public bool ModalDeferredDecode { get; set; }
@@ -4155,7 +4306,7 @@ public sealed class LoadMetrics
     public long TotalMs { get; set; }
     public string CompletedAtUtc { get; set; } = "";
 
-    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long previewMs, int previewUpdates, long totalMs)
+    public static LoadMetrics Create(string folder, int fileCount, long scanMs, long materializeMs, long thumbnailMs, int thumbnailWorkers, int thumbnailsCompleted, long previewMs, int previewUpdates, long previewDeferredDecodeMs, int previewDeferredDecodeCount, long totalMs)
         => new()
         {
             Folder = folder,
@@ -4167,9 +4318,26 @@ public sealed class LoadMetrics
             ThumbnailsCompleted = thumbnailsCompleted,
             PreviewMs = previewMs,
             PreviewUpdates = previewUpdates,
+            PreviewDeferredDecodeMs = previewDeferredDecodeMs,
+            PreviewDeferredDecodeCount = previewDeferredDecodeCount,
             TotalMs = totalMs,
             CompletedAtUtc = DateTime.UtcNow.ToString("O"),
         };
+}
+
+public sealed record PreviewDecodeSmokeSnapshot(
+    bool Selected,
+    string? ExpectedPath,
+    long SelectionImmediateMs,
+    long PreviewImmediateMs,
+    long DeferredDecodeMs,
+    bool DeferredDecodeApplied,
+    bool PreviewSourcePresent,
+    bool StableLatestSelection,
+    string Message)
+{
+    public static PreviewDecodeSmokeSnapshot NotSelected(string fileName)
+        => new(false, null, 0, 0, 0, false, false, false, $"fixture image was not selected: {fileName}");
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
