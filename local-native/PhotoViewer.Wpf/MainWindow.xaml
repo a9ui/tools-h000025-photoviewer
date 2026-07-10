@@ -445,27 +445,27 @@
                 </Grid.Resources>
                 <TextBlock Grid.Row="0" Grid.Column="0" Text="SIZE" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
                 <TextBlock x:Name="PreviewSizeText" Grid.Row="0" Grid.Column="1" Text="832 x 1216" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
-                <TextBlock Grid.Row="1" Grid.Column="0" Text="MODEL" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewModelLabel" Grid.Row="1" Grid.Column="0" Text="MODEL" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
                 <TextBlock x:Name="PreviewModelText" Grid.Row="1" Grid.Column="1" Text="animagineXL_v31" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
-                <TextBlock Grid.Row="2" Grid.Column="0" Text="SAMPLER" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
-                <TextBlock Grid.Row="2" Grid.Column="1" Text="Euler a" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
-                <TextBlock Grid.Row="3" Grid.Column="0" Text="STEPS" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
-                <TextBlock Grid.Row="3" Grid.Column="1" Text="28" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
-                <TextBlock Grid.Row="4" Grid.Column="0" Text="CFG" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
-                <TextBlock Grid.Row="4" Grid.Column="1" Text="6.5" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
-                <TextBlock Grid.Row="5" Grid.Column="0" Text="SEED" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
-                <TextBlock Grid.Row="5" Grid.Column="1" Text="3874219055" Foreground="{StaticResource TextSecondary}" FontFamily="{StaticResource MonoFont}" FontSize="12" Margin="12,2,0,2"/>
+                <TextBlock x:Name="PreviewSamplerLabel" Grid.Row="2" Grid.Column="0" Text="SAMPLER" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewSamplerText" Grid.Row="2" Grid.Column="1" Text="Euler a" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock x:Name="PreviewStepsLabel" Grid.Row="3" Grid.Column="0" Text="STEPS" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewStepsText" Grid.Row="3" Grid.Column="1" Text="28" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock x:Name="PreviewCfgLabel" Grid.Row="4" Grid.Column="0" Text="CFG" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewCfgText" Grid.Row="4" Grid.Column="1" Text="6.5" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
+                <TextBlock x:Name="PreviewSeedLabel" Grid.Row="5" Grid.Column="0" Text="SEED" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
+                <TextBlock x:Name="PreviewSeedText" Grid.Row="5" Grid.Column="1" Text="3874219055" Foreground="{StaticResource TextSecondary}" FontFamily="{StaticResource MonoFont}" FontSize="12" Margin="12,2,0,2"/>
                 <TextBlock Grid.Row="6" Grid.Column="0" Text="DATE" Foreground="{StaticResource TextTertiary}" FontSize="11"/>
                 <TextBlock x:Name="PreviewDateText" Grid.Row="6" Grid.Column="1" Text="2026-07-08 14:22" Foreground="{StaticResource TextSecondary}" Margin="12,2,0,2"/>
               </Grid>
 
-              <TextBlock Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,12,0,4"/>
+              <TextBlock x:Name="PreviewPromptLabel" Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,12,0,4"/>
               <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
                 <TextBlock x:Name="PreviewPromptText" Text="masterpiece, best quality, 1girl, portrait, silver hair, intricate detail, soft rim lighting, cinematic, depth of field, looking at viewer, ornate jacket, snowy background" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
               </Border>
 
-              <TextBlock Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,10,0,4"/>
-              <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
+              <TextBlock x:Name="PreviewNegativeLabel" Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,10,0,4"/>
+              <Border x:Name="PreviewNegativeCard" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
                 <TextBlock Text="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, worst quality, jpeg artifacts, watermark, signature" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
               </Border>
             </StackPanel>

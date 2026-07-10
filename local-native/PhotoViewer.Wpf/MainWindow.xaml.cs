@@ -1809,6 +1809,8 @@ public partial class MainWindow : Window
     private void UpdatePreview(Tile t)
     {
         var watch = Stopwatch.StartNew();
+        bool hasRealFile = t.IsRealFile;
+        Visibility generatedMetadataVisibility = hasRealFile ? Visibility.Collapsed : Visibility.Visible;
         var preview = t.IsRealFile ? LoadBitmap(t.Path, 900) : null;
         PreviewBitmap.Source = preview;
         PreviewBitmap.Visibility = preview is null ? Visibility.Collapsed : Visibility.Visible;
@@ -1821,11 +1823,23 @@ public partial class MainWindow : Window
         PreviewSizeText.Text = t.IsRealFile && TryReadBitmapSize(t.Path, out var width, out var height)
             ? $"{width} x {height}"
             : t.SizeText;
-        PreviewModelText.Text = t.IsRealFile
+        PreviewModelLabel.Text = hasRealFile ? "TYPE" : "MODEL";
+        PreviewModelText.Text = hasRealFile
             ? Path.GetExtension(t.Path).TrimStart('.').ToUpperInvariant()
             : "animagineXL_v31";
+        PreviewPromptLabel.Text = hasRealFile ? "PATH" : "PROMPT";
+        PreviewSamplerLabel.Visibility = generatedMetadataVisibility;
+        PreviewSamplerText.Visibility = generatedMetadataVisibility;
+        PreviewStepsLabel.Visibility = generatedMetadataVisibility;
+        PreviewStepsText.Visibility = generatedMetadataVisibility;
+        PreviewCfgLabel.Visibility = generatedMetadataVisibility;
+        PreviewCfgText.Visibility = generatedMetadataVisibility;
+        PreviewSeedLabel.Visibility = generatedMetadataVisibility;
+        PreviewSeedText.Visibility = generatedMetadataVisibility;
+        PreviewNegativeLabel.Visibility = generatedMetadataVisibility;
+        PreviewNegativeCard.Visibility = generatedMetadataVisibility;
         PreviewDateText.Text = t.ModifiedText;
-        PreviewPromptText.Text = string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt;
+        PreviewPromptText.Text = hasRealFile ? t.Path : (string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt);
         FavoriteLevelText.Text = t.Fav.ToString();
         UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
