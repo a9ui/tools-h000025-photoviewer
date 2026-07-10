@@ -29,6 +29,7 @@ browse and practical viewer slice:
 - `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/hover/activate/close/restore smoke
+- `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
@@ -94,6 +95,13 @@ Performance-log smoke:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shot "$env:TEMP\photoviewer-wpf-perf-after.png" --screen viewer --folder "$env:TEMP\photoviewer-wpf-perf-fixture" --perf-log "$env:TEMP\photoviewer-wpf-perf-after.json"
+```
+
+Preview decode smoke selects one fixture image and immediately selects another,
+then verifies that the deferred decode applies only to the latest selection:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --preview-decode-smoke "$env:TEMP\photoviewer-wpf-preview-decode-smoke.json" --folder .\local-native\ui-mockup --select-name wpf-settings.png
 ```
 
 State-restore smoke uses a caller-provided bounded state file and never writes
