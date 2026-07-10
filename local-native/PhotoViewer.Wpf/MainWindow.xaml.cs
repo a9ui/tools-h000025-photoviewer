@@ -3459,10 +3459,6 @@ public partial class MainWindow : Window
             case "landing": SetPhase(landing: true); break;
             case "list": SetPhase(landing: false); ModeList.IsChecked = true; break;
             case "modal": SetPhase(landing: false); ShowModalForShot(); break;
-            case "settings": SetPhase(landing: false); SettingsOverlay.Visibility = Visibility.Visible; break;
-            case "album": SetPhase(landing: false); AlbumOverlay.Visibility = Visibility.Visible; break;
-            case "enhance": SetPhase(landing: false); EnhanceOverlay.Visibility = Visibility.Visible; break;
-            case "confirm": SetPhase(landing: false); ConfirmOverlay.Visibility = Visibility.Visible; break;
             default: SetPhase(landing: false); break;
         }
     }
@@ -3578,7 +3574,9 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CloseModal_Click(object sender, RoutedEventArgs e)
+    private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal();
+
+    private void CloseModal()
     {
         _modalCts?.Cancel();
         Modal.Visibility = Visibility.Collapsed;
@@ -4090,27 +4088,13 @@ public partial class MainWindow : Window
         }
     }
 
-    // ─────────── Overlays (settings / album / enhance / confirm) ───────────
-    private void OpenSettings_Click(object sender, RoutedEventArgs e) => SettingsOverlay.Visibility = Visibility.Visible;
-    private void CloseSettings_Click(object sender, RoutedEventArgs e) => SettingsOverlay.Visibility = Visibility.Collapsed;
-    private void OpenAlbum_Click(object sender, RoutedEventArgs e) => AlbumOverlay.Visibility = Visibility.Visible;
-    private void CloseAlbum_Click(object sender, RoutedEventArgs e) => AlbumOverlay.Visibility = Visibility.Collapsed;
-    private void OpenEnhance_Click(object sender, RoutedEventArgs e) => EnhanceOverlay.Visibility = Visibility.Visible;
-    private void CloseEnhance_Click(object sender, RoutedEventArgs e) => EnhanceOverlay.Visibility = Visibility.Collapsed;
-    private void OpenConfirm_Click(object sender, RoutedEventArgs e) => ConfirmOverlay.Visibility = Visibility.Visible;
-    private void CloseConfirm_Click(object sender, RoutedEventArgs e) => ConfirmOverlay.Visibility = Visibility.Collapsed;
-
     private bool CloseTopmostOverlay()
     {
-        foreach (var o in new[] { ConfirmOverlay, AlbumOverlay, SettingsOverlay, EnhanceOverlay, Modal })
-        {
-            if (o.Visibility == Visibility.Visible)
-            {
-                o.Visibility = Visibility.Collapsed;
-                return true;
-            }
-        }
-        return false;
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+
+        CloseModal();
+        return true;
     }
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
@@ -4421,6 +4405,8 @@ public partial class MainWindow : Window
     public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath);
 
     public bool SetModalPanForSmoke(double x, double y) => SetModalPan(x, y);
+
+    public bool CloseTopmostOverlayForSmoke() => CloseTopmostOverlay();
 
     public ModalTransformSnapshot ModalTransformForSmoke()
         => new(
