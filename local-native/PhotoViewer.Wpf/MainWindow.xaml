@@ -424,7 +424,7 @@
 
               <TextBlock x:Name="PreviewNegativeLabel" Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,10,0,4"/>
               <Border x:Name="PreviewNegativeCard" CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="10,8">
-                <TextBlock Text="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, worst quality, jpeg artifacts, watermark, signature" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
+                <TextBlock x:Name="PreviewNegativeText" Text="lowres, bad anatomy, bad hands, text, error, missing fingers, extra digit, worst quality, jpeg artifacts, watermark, signature" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18"/>
               </Border>
             </StackPanel>
           </ScrollViewer>
