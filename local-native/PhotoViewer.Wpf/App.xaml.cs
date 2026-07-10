@@ -3481,9 +3481,12 @@ public partial class App : Application
                 bool movedNext = win.NavigateModalForSmoke(1);
                 string? nextPath = win.SelectedPathForSmoke;
                 var afterNavigation = win.ModalTransformForSmoke();
+                bool modalVisibleBeforeClose = win.ModalVisibleForSmoke;
+                bool closed = win.CloseTopmostOverlayForSmoke();
+                var afterClose = win.ModalTransformForSmoke();
 
                 bool ok = selected
-                    && win.ModalVisibleForSmoke
+                    && modalVisibleBeforeClose
                     && Math.Abs(initial.Zoom - 1) < 0.0001
                     && !initial.Flipped
                     && flipped
@@ -3500,7 +3503,13 @@ public partial class App : Application
                     && movedNext
                     && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
                     && Math.Abs(afterNavigation.Zoom - 1) < 0.0001
-                    && !afterNavigation.Flipped;
+                    && !afterNavigation.Flipped
+                    && closed
+                    && !win.ModalVisibleForSmoke
+                    && Math.Abs(afterClose.Zoom - 1) < 0.0001
+                    && !afterClose.Flipped
+                    && Math.Abs(afterClose.PanX) < 0.0001
+                    && Math.Abs(afterClose.PanY) < 0.0001;
 
                 result = new ModalTransformSmokeResult(
                     ok,
@@ -3508,7 +3517,7 @@ public partial class App : Application
                     folder,
                     selectIndex,
                     selected,
-                    win.ModalVisibleForSmoke,
+                    modalVisibleBeforeClose,
                     initial,
                     flipped,
                     afterFlip,
@@ -3521,7 +3530,9 @@ public partial class App : Application
                     movedNext,
                     startPath,
                     nextPath,
-                    afterNavigation);
+                    afterNavigation,
+                    closed,
+                    afterClose);
             }
             catch (Exception ex)
             {
@@ -5168,7 +5179,9 @@ public partial class App : Application
         bool MovedNext = false,
         string? StartPath = null,
         string? NextPath = null,
-        ModalTransformSnapshot AfterNavigation = default);
+        ModalTransformSnapshot AfterNavigation = default,
+        bool Closed = false,
+        ModalTransformSnapshot AfterClose = default);
 
     private sealed record ModalPanSmokeResult(
         bool Ok,
