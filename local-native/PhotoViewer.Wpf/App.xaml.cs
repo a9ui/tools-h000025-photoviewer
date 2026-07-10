@@ -2355,7 +2355,16 @@ public partial class App : Application
                     && modalMovedNext
                     && string.Equals(modalNextName, bravoName, StringComparison.OrdinalIgnoreCase);
 
-                bool changedNewest = first.SetSortByForSmoke("modified-newest");
+                bool changedCreatedNewest = first.SetSortByForSmoke("created-newest");
+                List<string> createdNewestOrder = first.FilteredFileNamesForSmoke(3);
+                bool changedCreatedOldest = first.SetSortByForSmoke("created-oldest");
+                List<string> createdOldestOrder = first.FilteredFileNamesForSmoke(3);
+                bool changedRandom = first.SetSortByForSmoke("random");
+                string randomSeedBefore = first.RandomSortSeedForSmoke;
+                List<string> randomOrderBefore = first.FilteredFileNamesForSmoke(3);
+                bool reshuffled = first.ReshuffleRandomSortForSmoke();
+                string randomSeedAfter = first.RandomSortSeedForSmoke;
+                List<string> randomOrderAfter = first.FilteredFileNamesForSmoke(3);
                 ViewerState? persisted = ReadPersistedState(statePath);
                 first.Close();
 
@@ -2364,17 +2373,27 @@ public partial class App : Application
                 await second.LoadFolderAsync(sortFolder);
                 string restoredSort = second.SortByForSmoke;
                 List<string> restoredOrder = second.FilteredFileNamesForSmoke(3);
+                string restoredRandomSeed = second.RandomSortSeedForSmoke;
                 second.Close();
 
                 List<string> expectedNewest = [bravoName, alphaName, charlieName];
                 List<string> expectedOldest = [charlieName, alphaName, bravoName];
                 List<string> expectedName = [alphaName, bravoName, charlieName];
+                List<string> expectedCreatedNewest = [bravoName, alphaName, charlieName];
+                List<string> expectedCreatedOldest = [charlieName, alphaName, bravoName];
                 bool newestOk = SameNameOrder(newestOrder, expectedNewest);
                 bool oldestOk = SameNameOrder(oldestOrder, expectedOldest);
                 bool nameOk = SameNameOrder(nameOrder, expectedName);
-                bool persistedNewest = string.Equals(persisted?.SortBy, "modified-newest", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredSort, "modified-newest", StringComparison.OrdinalIgnoreCase)
-                    && SameNameOrder(restoredOrder, expectedNewest);
+                bool createdNewestOk = SameNameOrder(createdNewestOrder, expectedCreatedNewest);
+                bool createdOldestOk = SameNameOrder(createdOldestOrder, expectedCreatedOldest);
+                bool randomPersistence = changedRandom
+                    && reshuffled
+                    && !string.Equals(randomSeedBefore, randomSeedAfter, StringComparison.Ordinal)
+                    && persisted?.SortBy == "random"
+                    && string.Equals(persisted.RandomSortSeed, randomSeedAfter, StringComparison.Ordinal)
+                    && string.Equals(restoredSort, "random", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(restoredRandomSeed, randomSeedAfter, StringComparison.Ordinal)
+                    && SameNameOrder(restoredOrder, randomOrderAfter);
                 bool ok = newestOk
                     && changedOldest
                     && oldestOk
@@ -2384,14 +2403,17 @@ public partial class App : Application
                     && selectionKeptAfterName
                     && filterPreserved
                     && modalUsesSortedNameOrder
-                    && changedNewest
-                    && persistedNewest;
+                    && changedCreatedNewest
+                    && createdNewestOk
+                    && changedCreatedOldest
+                    && createdOldestOk
+                    && randomPersistence;
 
                 result = new SortSmokeResult
                 {
                     Ok = ok,
                     Message = ok
-                        ? "modified newest, modified oldest, name sort, filter, selection, modal navigation, and persistence checks passed"
+                        ? "modified, created, name, random/reshuffle sort, filter, selection, modal navigation, and persistence checks passed"
                         : "sort smoke did not meet order/filter/selection/modal/persistence expectations",
                     Folder = sortFolder,
                     ProjectRoot = smokeRoot,
@@ -2399,9 +2421,15 @@ public partial class App : Application
                     ExpectedNewest = expectedNewest,
                     ExpectedOldest = expectedOldest,
                     ExpectedName = expectedName,
+                    ExpectedCreatedNewest = expectedCreatedNewest,
+                    ExpectedCreatedOldest = expectedCreatedOldest,
                     NewestOrder = newestOrder,
                     OldestOrder = oldestOrder,
                     NameOrder = nameOrder,
+                    CreatedNewestOrder = createdNewestOrder,
+                    CreatedOldestOrder = createdOldestOrder,
+                    RandomOrderBefore = randomOrderBefore,
+                    RandomOrderAfter = randomOrderAfter,
                     RestoredOrder = restoredOrder,
                     SelectedAlpha = selectedAlpha,
                     SelectionKeptAfterOldest = selectionKeptAfterOldest,
@@ -2410,8 +2438,12 @@ public partial class App : Application
                     ModalOpened = modalOpened,
                     ModalMovedNext = modalMovedNext,
                     ModalNextName = modalNextName,
+                    RandomSeedBefore = randomSeedBefore,
+                    RandomSeedAfter = randomSeedAfter,
                     PersistedSort = persisted?.SortBy,
                     RestoredSort = restoredSort,
+                    RestoredRandomSeed = restoredRandomSeed,
+                    RandomPersistence = randomPersistence,
                 };
             }
             catch (Exception ex)
@@ -4199,18 +4231,21 @@ public partial class App : Application
                 SourceName = fixtureNames[0],
                 TargetName = "alpha-sort" + Path.GetExtension(fixtureNames[0]).ToLowerInvariant(),
                 ModifiedUtc = new DateTime(2026, 7, 10, 11, 0, 0, DateTimeKind.Utc),
+                CreatedUtc = new DateTime(2026, 7, 9, 10, 0, 0, DateTimeKind.Utc),
             },
             new
             {
                 SourceName = fixtureNames[1],
                 TargetName = "bravo-sort" + Path.GetExtension(fixtureNames[1]).ToLowerInvariant(),
                 ModifiedUtc = new DateTime(2026, 7, 10, 12, 0, 0, DateTimeKind.Utc),
+                CreatedUtc = new DateTime(2026, 7, 10, 9, 0, 0, DateTimeKind.Utc),
             },
             new
             {
                 SourceName = fixtureNames[2],
                 TargetName = "charlie-sort" + Path.GetExtension(fixtureNames[2]).ToLowerInvariant(),
                 ModifiedUtc = new DateTime(2026, 7, 10, 10, 0, 0, DateTimeKind.Utc),
+                CreatedUtc = new DateTime(2026, 7, 8, 11, 0, 0, DateTimeKind.Utc),
             },
         };
 
@@ -4220,6 +4255,7 @@ public partial class App : Application
             string destination = Path.Combine(target, input.TargetName);
             File.Copy(source, destination, overwrite: true);
             File.SetLastWriteTimeUtc(destination, input.ModifiedUtc);
+            File.SetCreationTimeUtc(destination, input.CreatedUtc);
         }
 
         return target;
@@ -5172,9 +5208,15 @@ public partial class App : Application
         public List<string> ExpectedNewest { get; init; } = [];
         public List<string> ExpectedOldest { get; init; } = [];
         public List<string> ExpectedName { get; init; } = [];
+        public List<string> ExpectedCreatedNewest { get; init; } = [];
+        public List<string> ExpectedCreatedOldest { get; init; } = [];
         public List<string> NewestOrder { get; init; } = [];
         public List<string> OldestOrder { get; init; } = [];
         public List<string> NameOrder { get; init; } = [];
+        public List<string> CreatedNewestOrder { get; init; } = [];
+        public List<string> CreatedOldestOrder { get; init; } = [];
+        public List<string> RandomOrderBefore { get; init; } = [];
+        public List<string> RandomOrderAfter { get; init; } = [];
         public List<string> RestoredOrder { get; init; } = [];
         public bool SelectedAlpha { get; init; }
         public bool SelectionKeptAfterOldest { get; init; }
@@ -5185,6 +5227,10 @@ public partial class App : Application
         public string? ModalNextName { get; init; }
         public string? PersistedSort { get; init; }
         public string? RestoredSort { get; init; }
+        public string? RandomSeedBefore { get; init; }
+        public string? RandomSeedAfter { get; init; }
+        public string? RestoredRandomSeed { get; init; }
+        public bool RandomPersistence { get; init; }
     }
 
     private sealed record DateFilterSmokeImage(string Name, DateTime ModifiedLocal, Color Color);

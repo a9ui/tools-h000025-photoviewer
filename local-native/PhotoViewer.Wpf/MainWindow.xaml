@@ -208,12 +208,16 @@
               <StackPanel>
                 <TextBlock Text="SORT" Style="{StaticResource SectionHeader}" Margin="0,0,0,8"/>
                 <Border CornerRadius="8" Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="3">
-                  <UniformGrid Rows="3">
+                  <UniformGrid Rows="6">
                     <RadioButton x:Name="SortModifiedNewest" Style="{StaticResource Seg}" GroupName="sort" Content="Modified new" IsChecked="True" Checked="SortModifiedNewest_Checked"/>
                     <RadioButton x:Name="SortModifiedOldest" Style="{StaticResource Seg}" GroupName="sort" Content="Modified old" Checked="SortModifiedOldest_Checked"/>
+                    <RadioButton x:Name="SortCreatedNewest" Style="{StaticResource Seg}" GroupName="sort" Content="Created new" Checked="SortCreatedNewest_Checked"/>
+                    <RadioButton x:Name="SortCreatedOldest" Style="{StaticResource Seg}" GroupName="sort" Content="Created old" Checked="SortCreatedOldest_Checked"/>
                     <RadioButton x:Name="SortName" Style="{StaticResource Seg}" GroupName="sort" Content="Name" Checked="SortName_Checked"/>
+                    <RadioButton x:Name="SortRandom" Style="{StaticResource Seg}" GroupName="sort" Content="Random" Checked="SortRandom_Checked"/>
                   </UniformGrid>
                 </Border>
+                <Button x:Name="ReshuffleSortButton" Style="{StaticResource SidebarLink}" Content="Reshuffle" Click="ReshuffleSort_Click" Margin="2,8,0,0" HorizontalAlignment="Left"/>
               </StackPanel>
             </Border>
 
