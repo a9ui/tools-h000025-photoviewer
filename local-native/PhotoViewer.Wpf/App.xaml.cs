@@ -4248,8 +4248,12 @@ public partial class App : Application
                 await win.LoadFolderAsync(folder);
                 PngMetadataSmokeSnapshot valid = await win.SelectPngMetadataForSmokeAsync(validName);
                 MetadataCopySmokeSnapshot validCopy = win.CopyCurrentPreviewMetadataForSmoke();
+                MetadataCopySmokeSnapshot validPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
+                MetadataCopySmokeSnapshot validNegativeCopy = win.CopyCurrentPreviewPromptForSmoke(negative: true);
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
                 MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
+                MetadataCopySmokeSnapshot missingPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
+                MetadataCopySmokeSnapshot missingNegativeCopy = win.CopyCurrentPreviewPromptForSmoke(negative: true);
                 bool ignoredTextSkipped = !PhotoViewer.Wpf.MainWindow.HasPngParametersForSmoke(ignoredPath);
 
                 bool firstSelectionStarted = win.SelectFileNameForSmoke(validName);
@@ -4274,10 +4278,16 @@ public partial class App : Application
                     && validCopy.CopyText.Contains("Negative prompt: lowres, text", StringComparison.Ordinal)
                     && validCopy.CopyText.Contains("Steps: 28", StringComparison.Ordinal)
                     && validCopy.CopyText.Contains("Raw parameters:", StringComparison.Ordinal)
+                    && validPromptCopy.Copied && validPromptCopy.CopyEnabled
+                    && string.Equals(validPromptCopy.CopyText, "masterpiece, studio portrait", StringComparison.Ordinal)
+                    && validNegativeCopy.Copied && validNegativeCopy.CopyEnabled
+                    && string.Equals(validNegativeCopy.CopyText, "lowres, text", StringComparison.Ordinal)
                     && missing.Selected
                     && !missing.MetadataApplied
                     && !missingCopy.Copied
                     && !missingCopy.CopyEnabled
+                    && !missingPromptCopy.Copied && !missingPromptCopy.CopyEnabled
+                    && !missingNegativeCopy.Copied && !missingNegativeCopy.CopyEnabled
                     && string.Equals(missing.Prompt, missingPath, StringComparison.OrdinalIgnoreCase)
                     && !missing.SamplerVisible
                     && ignoredTextSkipped

@@ -2185,6 +2185,10 @@ public partial class MainWindow : Window
         CopyPreviewMetadataButton.IsEnabled = true;
         CopyPreviewMetadataButton.Content = "Copy";
         CopyPreviewMetadataButton.ToolTip = "Copy PNG metadata";
+        CopyPreviewPromptButton.IsEnabled = !string.IsNullOrWhiteSpace(metadata.Prompt);
+        CopyPreviewPromptButton.ToolTip = CopyPreviewPromptButton.IsEnabled ? "Copy prompt" : "No prompt metadata loaded";
+        CopyPreviewNegativeButton.IsEnabled = !string.IsNullOrWhiteSpace(metadata.NegativePrompt);
+        CopyPreviewNegativeButton.ToolTip = CopyPreviewNegativeButton.IsEnabled ? "Copy negative prompt" : "No negative prompt metadata loaded";
         PreviewPromptLabel.Text = "PROMPT";
         PreviewPromptText.Text = string.IsNullOrWhiteSpace(metadata.Prompt) ? PreviewPromptText.Text : metadata.Prompt;
         SetPreviewMetadataRow(PreviewSamplerLabel, PreviewSamplerText, "SAMPLER", metadata.Setting("Sampler"));
@@ -2208,6 +2212,44 @@ public partial class MainWindow : Window
         CopyPreviewMetadataButton.IsEnabled = false;
         CopyPreviewMetadataButton.Content = "Copy";
         CopyPreviewMetadataButton.ToolTip = "No PNG metadata loaded";
+        CopyPreviewPromptButton.IsEnabled = false;
+        CopyPreviewPromptButton.Content = "Copy";
+        CopyPreviewPromptButton.ToolTip = "No prompt metadata loaded";
+        CopyPreviewNegativeButton.IsEnabled = false;
+        CopyPreviewNegativeButton.Content = "Copy";
+        CopyPreviewNegativeButton.ToolTip = "No negative prompt metadata loaded";
+    }
+
+    private void CopyPreviewPrompt_Click(object sender, RoutedEventArgs e)
+        => CopyCurrentPreviewMetadataValue(negative: false, useSystemClipboard: true);
+
+    private void CopyPreviewNegative_Click(object sender, RoutedEventArgs e)
+        => CopyCurrentPreviewMetadataValue(negative: true, useSystemClipboard: true);
+
+    private bool CopyCurrentPreviewMetadataValue(bool negative, bool useSystemClipboard)
+    {
+        Tile? selected = SelectedTile();
+        if (selected is null || _currentPreviewMetadata is null
+            || !string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase))
+            return false;
+        string text = (negative ? _currentPreviewMetadata.NegativePrompt : _currentPreviewMetadata.Prompt).Trim();
+        if (text.Length == 0)
+            return false;
+        _lastMetadataCopyText = text;
+        if (!useSystemClipboard)
+            return true;
+        Button button = negative ? CopyPreviewNegativeButton : CopyPreviewPromptButton;
+        try
+        {
+            Clipboard.SetText(text);
+            button.Content = "Copied";
+            return true;
+        }
+        catch (Exception ex) when (ex is ExternalException or InvalidOperationException)
+        {
+            button.ToolTip = $"Copy failed: {ex.Message}";
+            return false;
+        }
     }
 
     private void CopyPreviewMetadata_Click(object sender, RoutedEventArgs e)
@@ -5104,6 +5146,13 @@ public partial class MainWindow : Window
             SelectedTile()?.Path,
             _currentPreviewMetadataPath,
             _lastMetadataCopyText);
+    }
+
+    public MetadataCopySmokeSnapshot CopyCurrentPreviewPromptForSmoke(bool negative)
+    {
+        bool copied = CopyCurrentPreviewMetadataValue(negative, useSystemClipboard: false);
+        Button button = negative ? CopyPreviewNegativeButton : CopyPreviewPromptButton;
+        return new MetadataCopySmokeSnapshot(copied, button.IsEnabled, SelectedTile()?.Path, _currentPreviewMetadataPath, _lastMetadataCopyText);
     }
 
     public string? PathForFileNameForSmoke(string fileName)
