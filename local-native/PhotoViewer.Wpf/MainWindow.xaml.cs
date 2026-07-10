@@ -99,6 +99,8 @@ public partial class MainWindow : Window
     private string? _activePreviewTabPath;
     private string? _hoverPreviewTabPath;
     private string? _modalTransformPath;
+    private string? _modalSourceTilePath;
+    private string? _modalDisplayPath;
     private Point? _modalPanStartPoint;
     private Vector _modalPanStartOffset;
     private CancellationTokenSource? _loadCts;
@@ -124,6 +126,7 @@ public partial class MainWindow : Window
     private bool _modalFlipped;
     private double _modalPanX;
     private double _modalPanY;
+    private bool _modalShowingEnhanced;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -3472,12 +3475,24 @@ public partial class MainWindow : Window
         if (SelectedTile() is not Tile t) return;
         if (!string.Equals(_modalTransformPath, t.Path, StringComparison.OrdinalIgnoreCase))
             ResetModalTransform(t.Path);
+        if (!string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            _modalSourceTilePath = t.Path;
+            _modalShowingEnhanced = false;
+        }
         var watch = Stopwatch.StartNew();
         _modalCts?.Cancel();
         var cts = new CancellationTokenSource();
         _modalCts = cts;
 
-        var immediate = PreviewBitmap.Source as BitmapSource ?? t.Thumbnail;
+        bool canShowEnhanced = TryGetModalEnhancedOutput(t, out string? enhancedPath);
+        if (!canShowEnhanced)
+            _modalShowingEnhanced = false;
+        string displayPath = _modalShowingEnhanced && enhancedPath is not null ? enhancedPath : t.Path;
+        _modalDisplayPath = displayPath;
+        UpdateModalEnhancedControls(canShowEnhanced);
+
+        var immediate = _modalShowingEnhanced ? null : PreviewBitmap.Source as BitmapSource ?? t.Thumbnail;
         ModalBitmap.Source = immediate;
         ModalBitmap.Visibility = immediate is null ? Visibility.Collapsed : Visibility.Visible;
         ModalArtBase.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
@@ -3494,16 +3509,41 @@ public partial class MainWindow : Window
             LastLoadMetrics.ModalDeferredDecode = t.IsRealFile;
         }
 
-        if (t.IsRealFile)
-            _ = LoadModalBitmapAsync(t.Path, cts.Token);
+        if (t.IsRealFile && File.Exists(displayPath))
+            _ = LoadModalBitmapAsync(displayPath, t.Path, cts.Token);
     }
 
-    private async Task LoadModalBitmapAsync(string path, CancellationToken token)
+    private bool TryGetModalEnhancedOutput(Tile tile, out string? outputPath)
+    {
+        outputPath = tile.EnhancedOutputPath;
+        return tile.IsRealFile
+            && tile.Enhanced
+            && !string.IsNullOrWhiteSpace(outputPath)
+            && File.Exists(outputPath);
+    }
+
+    private void UpdateModalEnhancedControls(bool canShowEnhanced)
+    {
+        if (ModalEnhancedToggleButton is not null)
+        {
+            ModalEnhancedToggleButton.IsEnabled = canShowEnhanced;
+            ModalEnhancedToggleButton.ToolTip = canShowEnhanced
+                ? _modalShowingEnhanced ? "Show original (E)" : "Show enhanced output (E)"
+                : "No enhanced output available";
+        }
+
+        if (ModalEnhancedToggleLabel is not null)
+            ModalEnhancedToggleLabel.Text = _modalShowingEnhanced ? "UP" : "OR";
+        if (ModalSourceLabel is not null)
+            ModalSourceLabel.Text = _modalShowingEnhanced ? "Enhanced output" : "Original";
+    }
+
+    private async Task LoadModalBitmapAsync(string displayPath, string selectedPath, CancellationToken token)
     {
         BitmapSource? bitmap;
         try
         {
-            bitmap = await Task.Run(() => LoadBitmap(path, 1400), token);
+            bitmap = await Task.Run(() => LoadBitmap(displayPath, 1400), token);
         }
         catch (OperationCanceledException)
         {
@@ -3520,7 +3560,9 @@ public partial class MainWindow : Window
                 {
                     if (token.IsCancellationRequested || Modal.Visibility != Visibility.Visible)
                         return;
-                    if (SelectedTile()?.Path != path)
+                    if (SelectedTile()?.Path != selectedPath)
+                        return;
+                    if (!string.Equals(_modalDisplayPath, displayPath, StringComparison.OrdinalIgnoreCase))
                         return;
 
                     ModalBitmap.Source = bitmap;
@@ -3540,7 +3582,23 @@ public partial class MainWindow : Window
     {
         _modalCts?.Cancel();
         Modal.Visibility = Visibility.Collapsed;
+        _modalShowingEnhanced = false;
+        _modalSourceTilePath = null;
+        _modalDisplayPath = null;
+        UpdateModalEnhancedControls(false);
         ResetModalTransform();
+    }
+
+    private void ToggleModalEnhanced_Click(object sender, RoutedEventArgs e) => ToggleModalEnhanced();
+
+    private bool ToggleModalEnhanced()
+    {
+        if (Modal.Visibility != Visibility.Visible || SelectedTile() is not Tile tile || !TryGetModalEnhancedOutput(tile, out _))
+            return false;
+
+        _modalShowingEnhanced = !_modalShowingEnhanced;
+        OpenModal();
+        return true;
     }
 
     private void ToggleModalFlip_Click(object sender, RoutedEventArgs e) => ToggleModalFlip();
@@ -3657,6 +3715,7 @@ public partial class MainWindow : Window
         return key switch
         {
             Key.H => ToggleModalFlip(),
+            Key.E => ToggleModalEnhanced(),
             Key.Add or Key.OemPlus => AdjustModalZoom(ModalZoomKeyboardStep),
             Key.Subtract or Key.OemMinus => AdjustModalZoom(1 / ModalZoomKeyboardStep),
             Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath),
@@ -4340,6 +4399,8 @@ public partial class MainWindow : Window
 
     public bool ToggleModalFlipForSmoke() => ToggleModalFlip();
 
+    public bool ToggleModalEnhancedForSmoke() => ToggleModalEnhanced();
+
     public bool ModalZoomShortcutForSmoke(string shortcut)
     {
         if (Modal.Visibility != Visibility.Visible)
@@ -4372,6 +4433,10 @@ public partial class MainWindow : Window
             _modalPanY,
             ModalPanLimits().MaxX,
             ModalPanLimits().MaxY);
+
+    public bool ModalShowingEnhancedForSmoke => _modalShowingEnhanced;
+    public bool ModalEnhancedToggleAvailableForSmoke => SelectedTile() is Tile tile && TryGetModalEnhancedOutput(tile, out _);
+    public string? ModalDisplayPathForSmoke => _modalDisplayPath;
 
     public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
     {

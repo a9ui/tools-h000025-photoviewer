@@ -197,6 +197,13 @@ public partial class App : Application
             return;
         }
 
+        int modalEnhancedSmokeIdx = Array.IndexOf(e.Args, "--modal-enhanced-smoke");
+        if (modalEnhancedSmokeIdx >= 0 && modalEnhancedSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureModalEnhancedSmoke(e.Args[modalEnhancedSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -2848,6 +2855,159 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureModalEnhancedSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteModalEnhancedSmokeResult(resultPath, new ModalEnhancedSmokeResult { Ok = false, Message = "missing required --folder", Folder = folder });
+            Shutdown(1);
+            return;
+        }
+
+        string fullFolder = Path.GetFullPath(folder);
+        string[] fixtureNames = GetSmokeImageFileNames(fullFolder);
+        if (fixtureNames.Length < 3)
+        {
+            WriteModalEnhancedSmokeResult(resultPath, new ModalEnhancedSmokeResult { Ok = false, Message = "modal enhanced smoke requires at least 3 fixture images", Folder = fullFolder });
+            Shutdown(1);
+            return;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        string jobsPath = Path.Combine(smokeRoot, ".cache", "enhance", "jobs.json");
+        string outputRoot = Path.Combine(smokeRoot, "enhanced-output");
+        Directory.CreateDirectory(outputRoot);
+
+        string validSource = Path.Combine(fullFolder, fixtureNames[0]);
+        string staleSource = Path.Combine(fullFolder, fixtureNames[1]);
+        string failedSource = Path.Combine(fullFolder, fixtureNames[2]);
+        string validOutput = Path.Combine(outputRoot, "enhanced-" + Path.GetFileName(validSource));
+        string missingOutput = Path.Combine(outputRoot, "missing-output.png");
+        string missingSource = Path.Combine(smokeRoot, "missing-source.png");
+        File.Copy(validSource, validOutput, overwrite: true);
+        WriteEnhancedJobsFixture(jobsPath, validSource, validOutput, staleSource, missingOutput, failedSource, missingSource);
+        string beforeJobsJson = File.ReadAllText(jobsPath);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ModalEnhancedSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(fullFolder);
+                bool selectedValid = win.SelectFileNameForSmoke(Path.GetFileName(validSource));
+                win.ShowModalForShot();
+                bool validToggleAvailable = win.ModalEnhancedToggleAvailableForSmoke;
+                string? originalDisplayPath = win.ModalDisplayPathForSmoke;
+                bool toggledEnhanced = win.ToggleModalEnhancedForSmoke();
+                bool showingEnhanced = win.ModalShowingEnhancedForSmoke;
+                string? enhancedDisplayPath = win.ModalDisplayPathForSmoke;
+                bool toggledOriginal = win.ToggleModalEnhancedForSmoke();
+                bool showingOriginal = !win.ModalShowingEnhancedForSmoke;
+                string? restoredOriginalPath = win.ModalDisplayPathForSmoke;
+
+                bool selectedStale = win.SelectFileNameForSmoke(Path.GetFileName(staleSource));
+                win.ShowModalForShot();
+                bool staleToggleAvailable = win.ModalEnhancedToggleAvailableForSmoke;
+                bool staleToggleAttempt = win.ToggleModalEnhancedForSmoke();
+                string? staleDisplayPath = win.ModalDisplayPathForSmoke;
+
+                bool selectedAgain = win.SelectFileNameForSmoke(Path.GetFileName(validSource));
+                win.ShowModalForShot();
+                bool toggledBeforeNavigation = win.ToggleModalEnhancedForSmoke();
+                string? validPathBeforeNavigation = win.ModalDisplayPathForSmoke;
+                bool movedNext = win.NavigateModalForSmoke(1);
+                if (!movedNext)
+                    movedNext = win.NavigateModalForSmoke(-1);
+                string? nextPath = win.SelectedPathForSmoke;
+                bool navigationResetToOriginal = !win.ModalShowingEnhancedForSmoke
+                    && string.Equals(win.ModalDisplayPathForSmoke, nextPath, StringComparison.OrdinalIgnoreCase);
+                win.Close();
+
+                string afterJobsJson = File.ReadAllText(jobsPath);
+                bool enhancementStateUnchanged = string.Equals(beforeJobsJson, afterJobsJson, StringComparison.Ordinal);
+                bool ok = win.EnhancementReadOkForSmoke
+                    && selectedValid
+                    && validToggleAvailable
+                    && string.Equals(originalDisplayPath, validSource, StringComparison.OrdinalIgnoreCase)
+                    && toggledEnhanced
+                    && showingEnhanced
+                    && string.Equals(enhancedDisplayPath, validOutput, StringComparison.OrdinalIgnoreCase)
+                    && toggledOriginal
+                    && showingOriginal
+                    && string.Equals(restoredOriginalPath, validSource, StringComparison.OrdinalIgnoreCase)
+                    && selectedStale
+                    && !staleToggleAvailable
+                    && !staleToggleAttempt
+                    && string.Equals(staleDisplayPath, staleSource, StringComparison.OrdinalIgnoreCase)
+                    && selectedAgain
+                    && toggledBeforeNavigation
+                    && string.Equals(validPathBeforeNavigation, validOutput, StringComparison.OrdinalIgnoreCase)
+                    && movedNext
+                    && !string.Equals(nextPath, validSource, StringComparison.OrdinalIgnoreCase)
+                    && navigationResetToOriginal
+                    && enhancementStateUnchanged;
+
+                result = new ModalEnhancedSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "read-only modal original/enhanced toggle, stale fallback, navigation reset, and jobs-state isolation passed"
+                        : "modal enhanced smoke did not meet expected read-only behavior",
+                    Folder = fullFolder,
+                    ProjectRoot = smokeRoot,
+                    JobsPath = jobsPath,
+                    ValidSourcePath = validSource,
+                    ValidOutputPath = validOutput,
+                    StaleSourcePath = staleSource,
+                    OriginalDisplayPath = originalDisplayPath,
+                    EnhancedDisplayPath = enhancedDisplayPath,
+                    RestoredOriginalPath = restoredOriginalPath,
+                    StaleDisplayPath = staleDisplayPath,
+                    NextPath = nextPath,
+                    ValidToggleAvailable = validToggleAvailable,
+                    ToggledEnhanced = toggledEnhanced,
+                    ToggledOriginal = toggledOriginal,
+                    StaleToggleAvailable = staleToggleAvailable,
+                    StaleToggleAttempt = staleToggleAttempt,
+                    ToggledBeforeNavigation = toggledBeforeNavigation,
+                    MovedNext = movedNext,
+                    NavigationResetToOriginal = navigationResetToOriginal,
+                    EnhancementStateUnchanged = enhancementStateUnchanged,
+                    ReadOk = win.EnhancementReadOkForSmoke,
+                    ReadError = win.EnhancementReadErrorForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new ModalEnhancedSmokeResult { Ok = false, Message = ex.Message, Folder = fullFolder, ProjectRoot = smokeRoot, JobsPath = jobsPath };
+            }
+            finally
+            {
+                win.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteModalEnhancedSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private static async Task<SharedSeenSmokeResult> RunSharedSeenSmokeAsync(
         MainWindow first,
         string fullFolder,
@@ -4893,6 +5053,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteModalEnhancedSmokeResult(string path, ModalEnhancedSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteStartupSmokeResult(string path, StartupSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -5601,6 +5768,34 @@ public partial class App : Application
         public int AfterClearCount { get; init; }
         public int ReloadFilteredCount { get; init; }
         public bool ReloadValidVisible { get; init; }
+        public bool EnhancementStateUnchanged { get; init; }
+        public bool ReadOk { get; init; }
+        public string? ReadError { get; init; }
+    }
+
+    private sealed class ModalEnhancedSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? Folder { get; init; }
+        public string? ProjectRoot { get; init; }
+        public string? JobsPath { get; init; }
+        public string? ValidSourcePath { get; init; }
+        public string? ValidOutputPath { get; init; }
+        public string? StaleSourcePath { get; init; }
+        public string? OriginalDisplayPath { get; init; }
+        public string? EnhancedDisplayPath { get; init; }
+        public string? RestoredOriginalPath { get; init; }
+        public string? StaleDisplayPath { get; init; }
+        public string? NextPath { get; init; }
+        public bool ValidToggleAvailable { get; init; }
+        public bool ToggledEnhanced { get; init; }
+        public bool ToggledOriginal { get; init; }
+        public bool StaleToggleAvailable { get; init; }
+        public bool StaleToggleAttempt { get; init; }
+        public bool ToggledBeforeNavigation { get; init; }
+        public bool MovedNext { get; init; }
+        public bool NavigationResetToOriginal { get; init; }
         public bool EnhancementStateUnchanged { get; init; }
         public bool ReadOk { get; init; }
         public string? ReadError { get; init; }
