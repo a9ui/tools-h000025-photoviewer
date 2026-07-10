@@ -627,10 +627,10 @@
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Toggle favorite (F)" Width="38" Height="38" Click="ToggleSelectedFavorite_Click">
           <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38" Click="ToggleModalFlip_Click">
           <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset (0)" Width="42" Height="38">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset zoom (0)" Width="42" Height="38" Click="ResetModalTransform_Click">
           <TextBlock Text="1:1" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
         </Button>
       </DockPanel>
@@ -639,7 +639,10 @@
       <Grid Grid.Row="1" Margin="0,0,0,16">
         <Border x:Name="ModalImage" Width="440" Height="640" CornerRadius="6" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center">
           <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
-          <Grid>
+          <Grid x:Name="ModalVisual" RenderTransformOrigin="0.5,0.5">
+            <Grid.RenderTransform>
+              <ScaleTransform x:Name="ModalVisualTransform" ScaleX="1" ScaleY="1"/>
+            </Grid.RenderTransform>
             <Rectangle x:Name="ModalArtBase"/>
             <Rectangle x:Name="ModalArtGlow"/>
             <Image x:Name="ModalBitmap" Stretch="Uniform" RenderOptions.BitmapScalingMode="HighQuality"/>
@@ -659,7 +662,7 @@
 
         <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" CornerRadius="999" Background="#80000000" Padding="12,5" Margin="0,0,0,10">
           <TextBlock Foreground="{StaticResource TextSecondary}" FontSize="12">
-            <Run Text="100%"/><Run Text="   ·   ← → navigate   ·   Esc close" Foreground="{StaticResource TextTertiary}"/>
+            <Run x:Name="ModalZoomLabel" Text="100%"/><Run Text="   ·   ← → navigate   ·   +/- zoom   ·   Esc close" Foreground="{StaticResource TextTertiary}"/>
           </TextBlock>
         </Border>
       </Grid>
