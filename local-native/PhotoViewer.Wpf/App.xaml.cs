@@ -43,6 +43,13 @@ public partial class App : Application
             return;
         }
 
+        int modalPanSmokeIdx = Array.IndexOf(e.Args, "--modal-pan-smoke");
+        if (modalPanSmokeIdx >= 0 && modalPanSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureModalPanSmoke(e.Args[modalPanSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int previewTabsSmokeIdx = Array.IndexOf(e.Args, "--preview-tabs-smoke");
         if (previewTabsSmokeIdx >= 0 && previewTabsSmokeIdx + 1 < e.Args.Length)
         {
@@ -3367,6 +3374,100 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureModalPanSmoke(string resultPath, string[] args)
+    {
+        string? folder = ArgValue(args, "--folder");
+        int selectIndex = ArgInt(args, "--select-index", 0);
+        if (string.IsNullOrWhiteSpace(folder))
+        {
+            WriteModalPanSmokeResult(resultPath, new ModalPanSmokeResult(false, "missing required --folder", folder, selectIndex));
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ModalPanSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool selected = win.SelectIndexForSmoke(selectIndex);
+                win.ShowModalForShot();
+                bool firstZoom = win.ModalZoomShortcutForSmoke("plus");
+                bool secondZoom = win.ModalZoomShortcutForSmoke("plus");
+                var zoomed = win.ModalTransformForSmoke();
+                bool pannedPositive = win.SetModalPanForSmoke(double.MaxValue, double.MinValue);
+                var afterPositivePan = win.ModalTransformForSmoke();
+                bool pannedNegative = win.SetModalPanForSmoke(double.MinValue, double.MaxValue);
+                var afterNegativePan = win.ModalTransformForSmoke();
+                bool reset = win.ResetModalTransformForSmoke();
+                var afterReset = win.ModalTransformForSmoke();
+                string? startPath = win.SelectedPathForSmoke;
+                bool movedNext = win.NavigateModalForSmoke(1);
+                string? nextPath = win.SelectedPathForSmoke;
+                var afterNavigation = win.ModalTransformForSmoke();
+
+                const double epsilon = 0.0001;
+                bool ok = selected
+                    && win.ModalVisibleForSmoke
+                    && firstZoom
+                    && secondZoom
+                    && zoomed.Zoom > 1
+                    && zoomed.MaxPanX > 0
+                    && zoomed.MaxPanY > 0
+                    && pannedPositive
+                    && afterPositivePan.PanX > 0
+                    && afterPositivePan.PanY < 0
+                    && Math.Abs(afterPositivePan.PanX) <= afterPositivePan.MaxPanX + epsilon
+                    && Math.Abs(afterPositivePan.PanY) <= afterPositivePan.MaxPanY + epsilon
+                    && pannedNegative
+                    && afterNegativePan.PanX < 0
+                    && afterNegativePan.PanY > 0
+                    && Math.Abs(afterNegativePan.PanX) <= afterNegativePan.MaxPanX + epsilon
+                    && Math.Abs(afterNegativePan.PanY) <= afterNegativePan.MaxPanY + epsilon
+                    && reset
+                    && Math.Abs(afterReset.Zoom - 1) < epsilon
+                    && Math.Abs(afterReset.PanX) < epsilon
+                    && Math.Abs(afterReset.PanY) < epsilon
+                    && movedNext
+                    && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
+                    && Math.Abs(afterNavigation.PanX) < epsilon
+                    && Math.Abs(afterNavigation.PanY) < epsilon;
+
+                result = new ModalPanSmokeResult(
+                    ok,
+                    ok ? "modal pan clamps after zoom and resets on reset/navigation" : "modal pan smoke did not meet expected behavior",
+                    folder,
+                    selectIndex,
+                    selected,
+                    win.ModalVisibleForSmoke,
+                    zoomed,
+                    pannedPositive,
+                    afterPositivePan,
+                    pannedNegative,
+                    afterNegativePan,
+                    reset,
+                    afterReset,
+                    movedNext,
+                    startPath,
+                    nextPath,
+                    afterNavigation);
+            }
+            catch (Exception ex)
+            {
+                result = new ModalPanSmokeResult(false, ex.Message, folder, selectIndex);
+            }
+
+            win.Close();
+            WriteModalPanSmokeResult(resultPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewTabsSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -4652,6 +4753,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteModalPanSmokeResult(string path, ModalPanSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WritePreviewTabsSmokeResult(string path, PreviewTabsSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -4888,6 +4996,25 @@ public partial class App : Application
         ModalTransformSnapshot AfterShortcut = default,
         bool WheelZoomed = false,
         ModalTransformSnapshot AfterWheel = default,
+        bool Reset = false,
+        ModalTransformSnapshot AfterReset = default,
+        bool MovedNext = false,
+        string? StartPath = null,
+        string? NextPath = null,
+        ModalTransformSnapshot AfterNavigation = default);
+
+    private sealed record ModalPanSmokeResult(
+        bool Ok,
+        string Message,
+        string? Folder,
+        int SelectIndex,
+        bool Selected = false,
+        bool ModalVisible = false,
+        ModalTransformSnapshot Zoomed = default,
+        bool PannedPositive = false,
+        ModalTransformSnapshot AfterPositivePan = default,
+        bool PannedNegative = false,
+        ModalTransformSnapshot AfterNegativePan = default,
         bool Reset = false,
         ModalTransformSnapshot AfterReset = default,
         bool MovedNext = false,
