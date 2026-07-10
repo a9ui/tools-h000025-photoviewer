@@ -28,6 +28,7 @@ public partial class MainWindow : Window
     private const int MinParallelThumbnailCount = 32;
     private const int MaxThumbnailDecodeWorkers = 12;
     private const int MaxMetadataReadWorkers = 4;
+    private const int SearchStateSaveDebounceMilliseconds = 300;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
@@ -83,6 +84,7 @@ public partial class MainWindow : Window
     private bool _syncingSelection;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
+    private bool _settingSearchQuery;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
@@ -99,6 +101,7 @@ public partial class MainWindow : Window
     private long _previewDeferredDecodeMs;
     private long _lastPreviewImmediateMs;
     private string? _previewDecodedPath;
+    private readonly DispatcherTimer _searchStateSaveTimer;
     private string _displayStyle = DisplayStyleStandard;
     private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
@@ -111,6 +114,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _searchStateSaveTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(SearchStateSaveDebounceMilliseconds),
+        };
+        _searchStateSaveTimer.Tick += SearchStateSaveTimer_Tick;
         LandingFolderSetList.ItemsSource = _landingFolderSet;
         SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
@@ -1999,8 +2007,23 @@ public partial class MainWindow : Window
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
     {
-        if (_initializing) return;
+        if (_initializing || _settingSearchQuery) return;
         ApplyFilters();
+        ScheduleSearchStateSave();
+    }
+
+    private void ScheduleSearchStateSave()
+    {
+        if (_suppressStateSave)
+            return;
+
+        _searchStateSaveTimer.Stop();
+        _searchStateSaveTimer.Start();
+    }
+
+    private void SearchStateSaveTimer_Tick(object? sender, EventArgs e)
+    {
+        _searchStateSaveTimer.Stop();
         SaveState();
     }
 
@@ -2489,16 +2512,21 @@ public partial class MainWindow : Window
         _suppressStateSave = !persist;
         try
         {
+            _settingSearchQuery = true;
             SearchInput.Text = query;
             ApplyFilters();
         }
         finally
         {
+            _settingSearchQuery = false;
             _suppressStateSave = previous;
         }
 
         if (persist)
+        {
+            _searchStateSaveTimer.Stop();
             SaveState();
+        }
     }
 
     public void SuppressStatePersistence()
