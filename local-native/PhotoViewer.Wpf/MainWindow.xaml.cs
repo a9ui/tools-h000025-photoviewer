@@ -99,6 +99,8 @@ public partial class MainWindow : Window
     private string? _activePreviewTabPath;
     private string? _hoverPreviewTabPath;
     private string? _modalTransformPath;
+    private Point? _modalPanStartPoint;
+    private Vector _modalPanStartOffset;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private CancellationTokenSource? _previewCts;
@@ -120,6 +122,8 @@ public partial class MainWindow : Window
     private int _favoriteFilterLevel = MinFavoriteFilterLevel;
     private double _modalZoom = 1;
     private bool _modalFlipped;
+    private double _modalPanX;
+    private double _modalPanY;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -3568,6 +3572,7 @@ public partial class MainWindow : Window
             return false;
 
         _modalZoom = next;
+        ClampModalPan();
         UpdateModalTransform();
         return true;
     }
@@ -3577,11 +3582,52 @@ public partial class MainWindow : Window
         bool changed = Math.Abs(_modalZoom - 1) >= 0.0001
             || _modalFlipped
             || !string.Equals(_modalTransformPath, path, StringComparison.OrdinalIgnoreCase);
+        EndModalPan();
         _modalZoom = 1;
         _modalFlipped = false;
+        _modalPanX = 0;
+        _modalPanY = 0;
         _modalTransformPath = path;
         UpdateModalTransform();
         return changed;
+    }
+
+    private bool SetModalPan(double x, double y)
+    {
+        if (Modal.Visibility != Visibility.Visible || _modalZoom <= 1)
+            return false;
+
+        (double maxX, double maxY) = ModalPanLimits();
+        double nextX = Math.Clamp(x, -maxX, maxX);
+        double nextY = Math.Clamp(y, -maxY, maxY);
+        if (Math.Abs(nextX - _modalPanX) < 0.0001 && Math.Abs(nextY - _modalPanY) < 0.0001)
+            return false;
+
+        _modalPanX = nextX;
+        _modalPanY = nextY;
+        UpdateModalTransform();
+        return true;
+    }
+
+    private (double MaxX, double MaxY) ModalPanLimits()
+    {
+        double width = ModalImage?.ActualWidth > 0 ? ModalImage.ActualWidth : 440;
+        double height = ModalImage?.ActualHeight > 0 ? ModalImage.ActualHeight : 640;
+        return (Math.Max(0, width * (_modalZoom - 1) / 2), Math.Max(0, height * (_modalZoom - 1) / 2));
+    }
+
+    private void ClampModalPan()
+    {
+        if (_modalZoom <= 1)
+        {
+            _modalPanX = 0;
+            _modalPanY = 0;
+            return;
+        }
+
+        (double maxX, double maxY) = ModalPanLimits();
+        _modalPanX = Math.Clamp(_modalPanX, -maxX, maxX);
+        _modalPanY = Math.Clamp(_modalPanY, -maxY, maxY);
     }
 
     private void UpdateModalTransform()
@@ -3590,6 +3636,12 @@ public partial class MainWindow : Window
         {
             ModalVisualTransform.ScaleX = _modalFlipped ? -_modalZoom : _modalZoom;
             ModalVisualTransform.ScaleY = _modalZoom;
+        }
+
+        if (ModalPanTransform is not null)
+        {
+            ModalPanTransform.X = _modalPanX;
+            ModalPanTransform.Y = _modalPanY;
         }
 
         if (ModalZoomLabel is not null)
@@ -3610,6 +3662,43 @@ public partial class MainWindow : Window
             Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath),
             _ => false,
         };
+    }
+
+    private void ModalImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (Modal.Visibility != Visibility.Visible || _modalZoom <= 1)
+            return;
+
+        _modalPanStartPoint = e.GetPosition(ModalImage);
+        _modalPanStartOffset = new Vector(_modalPanX, _modalPanY);
+        ModalImage.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void ModalImage_MouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_modalPanStartPoint.HasValue || !ModalImage.IsMouseCaptured)
+            return;
+
+        Point current = e.GetPosition(ModalImage);
+        Vector delta = current - _modalPanStartPoint.Value;
+        SetModalPan(_modalPanStartOffset.X + delta.X, _modalPanStartOffset.Y + delta.Y);
+        e.Handled = true;
+    }
+
+    private void ModalImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        EndModalPan();
+        e.Handled = true;
+    }
+
+    private void ModalImage_LostMouseCapture(object sender, MouseEventArgs e) => EndModalPan();
+
+    private void EndModalPan()
+    {
+        _modalPanStartPoint = null;
+        if (ModalImage.IsMouseCaptured)
+            ModalImage.ReleaseMouseCapture();
     }
 
     private void ModalPrevious_Click(object sender, RoutedEventArgs e)
@@ -4270,13 +4359,19 @@ public partial class MainWindow : Window
 
     public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath);
 
+    public bool SetModalPanForSmoke(double x, double y) => SetModalPan(x, y);
+
     public ModalTransformSnapshot ModalTransformForSmoke()
         => new(
             _modalZoom,
             _modalFlipped,
             ModalVisualTransform?.ScaleX ?? 1,
             ModalVisualTransform?.ScaleY ?? 1,
-            ModalZoomLabel?.Text ?? "");
+            ModalZoomLabel?.Text ?? "",
+            _modalPanX,
+            _modalPanY,
+            ModalPanLimits().MaxX,
+            ModalPanLimits().MaxY);
 
     public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
     {
@@ -4454,7 +4549,11 @@ public readonly record struct ModalTransformSnapshot(
     bool Flipped,
     double ScaleX,
     double ScaleY,
-    string ZoomLabel);
+    string ZoomLabel,
+    double PanX,
+    double PanY,
+    double MaxPanX,
+    double MaxPanY);
 
 public sealed class RecentFolderSetView
 {
