@@ -65,11 +65,24 @@ export default function SettingsModal() {
             <span className="setting-label">Confirm before delete</span>
             <label className="sidebar-toggle">
               <input
+                aria-label="Confirm before delete"
                 type="checkbox"
                 checked={confirmBeforeDelete}
                 onChange={(e) => setConfirmBeforeDelete(e.target.checked)}
               />
               <span>{confirmBeforeDelete ? 'Enabled' : 'Disabled'}</span>
+            </label>
+          </div>
+          <div className="setting-row">
+            <span className="setting-label">Unseen dots</span>
+            <label className="sidebar-toggle">
+              <input
+                aria-label="Show unseen markers"
+                type="checkbox"
+                checked={view.showUnseenMarkers}
+                onChange={(e) => setView({ showUnseenMarkers: e.target.checked })}
+              />
+              <span>{view.showUnseenMarkers ? 'Enabled' : 'Disabled'}</span>
             </label>
           </div>
           <div className="setting-row">
@@ -121,4 +134,3 @@ function formatKey(key: string): string {
   };
   return map[key] || key.toUpperCase();
 }
-

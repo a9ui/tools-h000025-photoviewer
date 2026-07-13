@@ -3,6 +3,7 @@
 import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
+import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
 import { getArrowSelectionIndex, getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
@@ -82,7 +83,7 @@ type SectionLayoutEntry =
 export default function ImageGrid() {
   const {
     searchQuery, searchResults, searchTotal, isSearching, ensureSearchRange,
-    selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevel,
+    selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
     closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
@@ -172,12 +173,12 @@ export default function ImageGrid() {
       style: view.displayStyle,
       fav: showFavOnly ? 1 : 0,
       unfav: showUnfavOnly ? 1 : 0,
-      favLevel: favoriteFilterLevel,
+      favLevels: showFavOnly ? favoriteFilterLevels.join(',') : '',
       enhanced: showEnhancedOnly ? 1 : 0,
       hiddenFolders: view.hiddenFolders,
     }),
     [
-      favoriteFilterLevel,
+      favoriteFilterLevels,
       dirPath,
       searchQuery,
       showFavOnly,
@@ -267,7 +268,7 @@ export default function ImageGrid() {
       if (!img) continue;
       const level = favorites[img.id] ?? 0;
       const matchesFavorite = showFavOnly
-        ? level >= favoriteFilterLevel
+        ? matchesFavoriteLevel(level, favoriteFilterLevels)
         : showUnfavOnly
           ? level === 0
           : true;
@@ -277,7 +278,7 @@ export default function ImageGrid() {
       }
     }
     return items;
-  }, [enhancedSourceIds, favoriteFilterLevel, isClientFiltered, showEnhancedOnly, showFavOnly, showUnfavOnly, searchResults, favorites]);
+  }, [enhancedSourceIds, favoriteFilterLevels, isClientFiltered, showEnhancedOnly, showFavOnly, showUnfavOnly, searchResults, favorites]);
 
   const filteredOrderedIds = useMemo(
     () => clientFilteredVisible.map((item) => item.image.id),
@@ -931,7 +932,7 @@ export default function ImageGrid() {
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
     const isSelected = selectedIdSet.has(image.id);
-    const isUnseen = !seenImageIds[image.id];
+    const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
     const previousImage = isClientFiltered
       ? clientFilteredVisible[virtualIndex - 1]?.image ?? null
@@ -1032,7 +1033,7 @@ export default function ImageGrid() {
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
     const isSelected = selectedIdSet.has(image.id);
-    const isUnseen = !seenImageIds[image.id];
+    const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
     const previousImage = isClientFiltered
       ? clientFilteredVisible[virtualIndex - 1]?.image ?? null
