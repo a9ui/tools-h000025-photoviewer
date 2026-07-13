@@ -4,8 +4,7 @@ import React, { useEffect, useMemo, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import { getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
-
-const FAVORITE_FILTER_LEVELS = [1, 2, 3, 4, 5] as const;
+import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
 
 function toDateInputValue(date: Date): string {
   const year = date.getFullYear();
@@ -33,8 +32,9 @@ export default function Sidebar() {
     setShowFavOnly,
     showUnfavOnly,
     setShowUnfavOnly,
-    favoriteFilterLevel,
-    setFavoriteFilterLevel,
+    favoriteFilterLevels,
+    toggleFavoriteFilterLevel,
+    clearFavoriteFilterLevels,
     showEnhancedOnly,
     setShowEnhancedOnly,
     setShowSettings,
@@ -293,10 +293,41 @@ export default function Sidebar() {
           <span>Filter</span>
         </div>
 
-        <label className="sidebar-toggle">
-          <input type="checkbox" checked={showFavOnly} onChange={(e) => setShowFavOnly(e.target.checked)} />
-          <span>Favorites only</span>
-        </label>
+        <div className="favorite-filter-block">
+          <label className="sidebar-toggle">
+            <input type="checkbox" checked={showFavOnly} onChange={(e) => setShowFavOnly(e.target.checked)} />
+            <span>Favorites</span>
+          </label>
+
+          {showFavOnly && (
+            <div className="favorite-level-checks" aria-label="Favorite levels">
+              <button
+                className={`favorite-level-check ${favoriteFilterLevels.length === 0 ? 'is-active' : ''}`}
+                type="button"
+                onClick={clearFavoriteFilterLevels}
+              >
+                All
+              </button>
+              {FAVORITE_FILTER_LEVELS.map((level) => {
+                const checked = favoriteFilterLevels.includes(level);
+                return (
+                  <label key={level} className={`favorite-level-check ${checked ? 'is-active' : ''}`}>
+                    <input
+                      aria-label={`Favorite level ${level}`}
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggleFavoriteFilterLevel(level)}
+                    />
+                    <svg className="favorite-level-heart" width="12" height="12" viewBox="0 0 24 24" aria-hidden="true">
+                      <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
+                    </svg>
+                    <span>{level}</span>
+                  </label>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         <label className="sidebar-toggle" style={{ marginTop: '0.35rem' }}>
           <input type="checkbox" checked={showUnfavOnly} onChange={(e) => setShowUnfavOnly(e.target.checked)} />
@@ -307,20 +338,6 @@ export default function Sidebar() {
           <input type="checkbox" checked={showEnhancedOnly} onChange={(e) => setShowEnhancedOnly(e.target.checked)} />
           <span>Enhanced only</span>
         </label>
-
-        {showFavOnly && (
-          <div className="sidebar-pills" style={{ marginTop: '0.55rem' }}>
-            {FAVORITE_FILTER_LEVELS.map((level) => (
-              <button
-                key={level}
-                className={`pill ${favoriteFilterLevel === level ? 'active' : ''}`}
-                onClick={() => setFavoriteFilterLevel(level)}
-              >
-                Lv {level}+
-              </button>
-            ))}
-          </div>
-        )}
 
         <div className="sidebar-date-range">
           <div className="sidebar-pills">

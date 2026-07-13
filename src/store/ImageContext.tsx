@@ -10,6 +10,12 @@ import type { FolderSortBy } from '../lib/viewerUi';
 import { removeImageSlot } from '../lib/imageListState';
 import { formatDirSet, parseDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
+import {
+  DEFAULT_SHOW_UNSEEN_MARKERS,
+  readFavoriteFilterLevelsPreference,
+  toggleFavoriteFilterLevel as toggleFavoriteFilterLevelValue,
+  type FavoriteFilterLevel,
+} from '../lib/browserUiPreferences';
 
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
@@ -34,6 +40,7 @@ export interface ViewSettings {
   dateFrom: string;
   dateTo: string;
   hiddenFolders: string[];
+  showUnseenMarkers: boolean;
 }
 
 const DEFAULT_VIEW: ViewSettings = {
@@ -53,6 +60,7 @@ const DEFAULT_VIEW: ViewSettings = {
   dateFrom: '',
   dateTo: '',
   hiddenFolders: [],
+  showUnseenMarkers: DEFAULT_SHOW_UNSEEN_MARKERS,
 };
 
 const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
@@ -62,7 +70,6 @@ const VIEW_SETTINGS_FLUSH_DELAY_MS = 300;
 const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
-type FavoriteFilterLevel = 1 | 2 | 3 | 4 | 5;
 
 // ── Context shape ──
 function normalizeFavorites(value: unknown): Record<string, number> {
@@ -127,8 +134,9 @@ interface Ctx {
   setShowFavOnly: (v: boolean) => void;
   showUnfavOnly: boolean;
   setShowUnfavOnly: (v: boolean) => void;
-  favoriteFilterLevel: FavoriteFilterLevel;
-  setFavoriteFilterLevel: (v: FavoriteFilterLevel) => void;
+  favoriteFilterLevels: FavoriteFilterLevel[];
+  toggleFavoriteFilterLevel: (v: FavoriteFilterLevel) => void;
+  clearFavoriteFilterLevels: () => void;
   showEnhancedOnly: boolean;
   setShowEnhancedOnly: (v: boolean) => void;
   enhancedSourceIds: Record<string, true>;
@@ -207,7 +215,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [favorites, setFavorites] = useState<Record<string, number>>({});
   const [showFavOnlyState, setShowFavOnlyState] = useState(false);
   const [showUnfavOnlyState, setShowUnfavOnlyState] = useState(false);
-  const [favoriteFilterLevel, setFavoriteFilterLevel] = useState<FavoriteFilterLevel>(1);
+  const [favoriteFilterLevels, setFavoriteFilterLevels] = useState<FavoriteFilterLevel[]>([]);
   const [showEnhancedOnlyState, setShowEnhancedOnlyState] = useState(false);
   const [enhancedSourceIds, setEnhancedSourceIds] = useState<Record<string, true>>({});
   const [enhanceJobsActive, setEnhanceJobsActive] = useState(false);
@@ -232,6 +240,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [seenImageIds, setSeenImageIds] = useState<Record<string, true>>({});
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
   const [favoritesHydrated, setFavoritesHydrated] = useState(false);
+  const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollMemoryRef = useRef<Record<string, number>>({});
@@ -356,6 +365,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (favOnly === '1') setShowFavOnlyState(true);
       const unfavOnly = localStorage.getItem('pvu_unfav_only');
       if (unfavOnly === '1') setShowUnfavOnlyState(true);
+      setFavoriteFilterLevels(readFavoriteFilterLevelsPreference(
+        localStorage.getItem('pvu_fav_levels'),
+        localStorage.getItem('pvu_fav_level')
+      ));
       const enhancedOnly = localStorage.getItem('pvu_enhanced_only');
       if (enhancedOnly === '1') setShowEnhancedOnlyState(true);
     } catch { /* ignore */ }
@@ -382,6 +395,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         }
       }
     } catch { /* ignore */ }
+    setUiPreferencesHydrated(true);
   }, []);
 
   // ── Persist favorites ──
@@ -422,12 +436,14 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [perfEnabled]);
 
   useEffect(() => {
+    if (!uiPreferencesHydrated) return;
     try {
       localStorage.setItem('pvu_fav_only', showFavOnlyState ? '1' : '0');
       localStorage.setItem('pvu_unfav_only', showUnfavOnlyState ? '1' : '0');
+      localStorage.setItem('pvu_fav_levels', JSON.stringify(favoriteFilterLevels));
       localStorage.setItem('pvu_enhanced_only', showEnhancedOnlyState ? '1' : '0');
     } catch { /* ignore */ }
-  }, [showEnhancedOnlyState, showFavOnlyState, showUnfavOnlyState]);
+  }, [favoriteFilterLevels, showEnhancedOnlyState, showFavOnlyState, showUnfavOnlyState, uiPreferencesHydrated]);
 
   const refreshEnhancedSources = useCallback(async () => {
     try {
@@ -586,6 +602,16 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     if (value) {
       setShowUnfavOnlyState(false);
     }
+  }, []);
+
+  const toggleFavoriteFilterLevel = useCallback((value: FavoriteFilterLevel) => {
+    setFavoriteFilterLevels((prev) => toggleFavoriteFilterLevelValue(prev, value));
+    setShowFavOnlyState(true);
+    setShowUnfavOnlyState(false);
+  }, []);
+
+  const clearFavoriteFilterLevels = useCallback(() => {
+    setFavoriteFilterLevels([]);
   }, []);
 
   const setShowUnfavOnly = useCallback((value: boolean) => {
@@ -1191,7 +1217,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       isSearching, ensureSearchRange,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,
-      cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite, favoriteFilterLevel, setFavoriteFilterLevel,
+      cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite,
+      favoriteFilterLevels, toggleFavoriteFilterLevel, clearFavoriteFilterLevels,
       showEnhancedOnly: showEnhancedOnlyState, setShowEnhancedOnly, enhancedSourceIds,
       selectedIndex, setSelectedIndex,
       modalImageIds, setModalImageIds, openModalAtImage,
