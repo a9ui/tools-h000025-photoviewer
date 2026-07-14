@@ -1,11 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import {
+  getEmptyResultMessage,
   getArrowSelectionIndex,
   getResultCountLabel,
   getZoomCenteredScrollTop,
+  isInteractiveShortcutTarget,
+  shouldIgnoreViewerShortcut,
   sortFolderBuckets,
   type FolderBucket,
 } from './viewerUi';
+
+describe('shouldIgnoreViewerShortcut', () => {
+  it('blocks shortcuts from interactive controls and their descendants', () => {
+    const button = document.createElement('button');
+    const icon = document.createElement('span');
+    button.appendChild(icon);
+
+    expect(shouldIgnoreViewerShortcut(button, document)).toBe(true);
+    expect(shouldIgnoreViewerShortcut(icon, document)).toBe(true);
+    expect(isInteractiveShortcutTarget(icon)).toBe(true);
+    expect(isInteractiveShortcutTarget(document.body)).toBe(false);
+  });
+
+  it('blocks shortcuts while a modal or confirmation overlay is mounted', () => {
+    const overlay = document.createElement('div');
+    overlay.className = 'settings-overlay';
+    document.body.appendChild(overlay);
+
+    expect(shouldIgnoreViewerShortcut(document.body, document)).toBe(true);
+    overlay.remove();
+    expect(shouldIgnoreViewerShortcut(document.body, document)).toBe(false);
+  });
+});
+
+describe('getEmptyResultMessage', () => {
+  it('describes query, client-filter, and folder-empty states', () => {
+    expect(getEmptyResultMessage(' portrait ', false)).toBe('No images found for query: portrait');
+    expect(getEmptyResultMessage('', true)).toBe('No images match the active filters.');
+    expect(getEmptyResultMessage('', false)).toBe('No supported images were found in the selected folders.');
+  });
+});
 
 describe('sortFolderBuckets', () => {
   const buckets: FolderBucket[] = [

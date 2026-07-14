@@ -10,7 +10,7 @@ import Sidebar from '../components/Sidebar';
 import RightPreviewPanel from '../components/RightPreviewPanel';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
-import { getResultCountLabel } from '../lib/viewerUi';
+import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import { sharedRecentToLocalMemory } from '../lib/recentFolders';
@@ -255,9 +255,8 @@ function ViewerApp() {
   useEffect(() => {
     if (phase !== 'viewer') return;
     const onKeyDown = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
-      const isTyping = target?.tagName === 'INPUT' || target?.tagName === 'TEXTAREA' || target?.isContentEditable;
-      if (isTyping) return;
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+      if (shouldIgnoreViewerShortcut(event.target)) return;
       if (selectedIndex !== null) return;
       if (selectedCount === 0) return;
 
@@ -449,9 +448,9 @@ function ViewerApp() {
               <line x1="9" y1="3" x2="9" y2="21" />
             </svg>
           </button>
-          <span className="viewer-logo" onClick={() => setPhase('landing')} title="Back to folder selection">
+          <button className="viewer-logo" onClick={() => setPhase('landing')} title="Back to folder selection" type="button">
             PhotoViewer
-          </span>
+          </button>
           <button
             className="icon-btn sidebar-toggle-btn"
             onClick={handleStartScan}
@@ -496,9 +495,9 @@ function ViewerApp() {
 
       {showBulkDeleteConfirm && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" onClick={() => setShowBulkDeleteConfirm(false)} />
-          <div className="confirm-panel">
-            <h3>Move selected images to Recycle Bin?</h3>
+          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowBulkDeleteConfirm(false)} />
+          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title">
+            <h3 id="bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
               <input

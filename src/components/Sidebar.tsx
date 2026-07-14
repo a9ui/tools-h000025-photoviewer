@@ -259,10 +259,12 @@ export default function Sidebar() {
 
         <p className="sidebar-path" title={dirPath}>{summarizeDirSet(dirPath) || dirPath}</p>
         <p className="sidebar-meta">{resultCountLabel}</p>
-        <button className="sidebar-link" onClick={() => void addFolderFromSidebar()} disabled={addingFolder}>
-          {addingFolder ? 'Adding folder...' : 'Add folder'}
-        </button>
-        <button className="sidebar-link" onClick={() => setPhase('landing')}>Change folder</button>
+        <div className="sidebar-actions">
+          <button className="sidebar-link" onClick={() => void addFolderFromSidebar()} disabled={addingFolder}>
+            {addingFolder ? 'Adding folder...' : 'Add folder'}
+          </button>
+          <button className="sidebar-link" onClick={() => setPhase('landing')}>Change folder</button>
+        </div>
         {folderActionError && <p className="sidebar-error">{folderActionError}</p>}
       </div>
 
