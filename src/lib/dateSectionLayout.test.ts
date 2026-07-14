@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { ImageFile } from './types';
 import {
   buildDateSectionLayout,
+  findDateSectionAnchorIndex,
   findDateSectionItemTop,
   formatSectionDate,
   shouldUseDateSectionLayout,
@@ -69,6 +70,20 @@ describe('date section layout', () => {
       searchTotal: 100,
       isClientFiltered: false,
     })).toBe(true);
+  });
+
+  it('anchors a zoom to the item nearest the horizontal viewport center', () => {
+    const slots = Array.from({ length: 10 }, (_, index) => image(`same-day-${index}`, '2026-05-19'));
+    const layout = buildDateSectionLayout({
+      itemCount: slots.length,
+      viewMode: 'grid',
+      gridColumns: 5,
+      gridCellWidth: 100,
+      gridCellHeight: 100,
+      getImageAt: (index) => slots[index],
+    });
+
+    expect(findDateSectionAnchorIndex(layout, 88, 290)).toBe(2);
   });
 
   it('keeps large result sets on the lightweight virtual layout even after metadata pages load', () => {

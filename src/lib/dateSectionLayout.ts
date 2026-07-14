@@ -184,3 +184,62 @@ export function findDateSectionItemTop(layout: DateSectionLayout | null, index: 
   const top = layout.itemTops[index];
   return Number.isFinite(top) ? top : null;
 }
+
+export function findDateSectionAnchorIndex(
+  layout: DateSectionLayout | null,
+  anchorY: number,
+  anchorX: number
+): number | null {
+  if (!layout || layout.entries.length === 0) return null;
+
+  let closestIndex: number | null = null;
+  let closestVerticalDistance = Number.POSITIVE_INFINITY;
+  let closestHorizontalDistance = Number.POSITIVE_INFINITY;
+  const entries = layout.entries;
+  let low = 0;
+  let high = entries.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (entries[middle].top <= anchorY) low = middle + 1;
+    else high = middle;
+  }
+
+  const candidateRowTops = new Set<number>();
+  let previousIndex = low - 1;
+  while (previousIndex >= 0 && entries[previousIndex].type !== 'item') previousIndex--;
+  if (previousIndex >= 0) candidateRowTops.add(entries[previousIndex].top);
+
+  let nextIndex = low;
+  while (nextIndex < entries.length && entries[nextIndex].type !== 'item') nextIndex++;
+  if (nextIndex < entries.length) candidateRowTops.add(entries[nextIndex].top);
+
+  for (const rowTop of candidateRowTops) {
+    let rowStart = previousIndex >= 0 && entries[previousIndex].top === rowTop
+      ? previousIndex
+      : nextIndex;
+    while (rowStart > 0 && entries[rowStart - 1].top === rowTop) rowStart--;
+
+    for (let index = rowStart; index < entries.length && entries[index].top === rowTop; index++) {
+      const entry = entries[index];
+      if (entry.type !== 'item') continue;
+      const bottom = entry.top + Math.max(1, entry.height);
+      const verticalDistance = anchorY < entry.top
+        ? entry.top - anchorY
+        : anchorY > bottom
+          ? anchorY - bottom
+          : 0;
+      const horizontalDistance = Math.abs(entry.left + entry.width / 2 - anchorX);
+      const isCloser = verticalDistance < closestVerticalDistance || (
+        verticalDistance === closestVerticalDistance &&
+        horizontalDistance < closestHorizontalDistance
+      );
+      if (isCloser) {
+        closestIndex = entry.virtualIndex;
+        closestVerticalDistance = verticalDistance;
+        closestHorizontalDistance = horizontalDistance;
+      }
+    }
+  }
+
+  return closestIndex;
+}

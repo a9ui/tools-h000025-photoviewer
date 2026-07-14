@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useMemo, useRef, useEffect, useState } from 'react';
+import React, { useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
@@ -16,12 +16,14 @@ import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../l
 import { buildImageIndexById } from '../lib/imageListState';
 import {
   buildDateSectionLayout,
+  findDateSectionAnchorIndex,
   findDateSectionItemTop,
   formatCompactImageDate,
   formatImageDate,
   GRID_GAP,
   LIST_ROW_HEIGHT,
   shouldUseDateSectionLayout,
+  type DateSectionLayout,
   type DateSectionLayoutEntry,
 } from '../lib/dateSectionLayout';
 import CachedImage from './CachedImage';
@@ -86,6 +88,59 @@ type SectionLayoutEntry =
       height: number;
     };
 
+function getGridItemTop(
+  sectionLayout: DateSectionLayout | null,
+  virtualIndex: number,
+  rowHeight: number,
+  gridColumns: number
+): number | null {
+  if (virtualIndex < 0) return null;
+  const sectionTop = findDateSectionItemTop(sectionLayout, virtualIndex);
+  if (sectionTop !== null) return sectionTop;
+  if (gridColumns <= 0 || rowHeight <= 0) return null;
+  return Math.floor(virtualIndex / gridColumns) * rowHeight;
+}
+
+function getZoomAnchorIndex({
+  sectionLayout,
+  scrollTop,
+  viewportHeight,
+  contentWidth,
+  contentOffsetTop,
+  rowHeight,
+  gridColumns,
+  fullCount,
+}: {
+  sectionLayout: DateSectionLayout | null;
+  scrollTop: number;
+  viewportHeight: number;
+  contentWidth: number;
+  contentOffsetTop: number;
+  rowHeight: number;
+  gridColumns: number;
+  fullCount: number;
+}): number | null {
+  if (fullCount <= 0) return null;
+
+  const anchorY = scrollTop + Math.max(0, viewportHeight) / 2 - Math.max(0, contentOffsetTop);
+  const sectionAnchorIndex = findDateSectionAnchorIndex(
+    sectionLayout,
+    anchorY,
+    Math.max(0, contentWidth) / 2
+  );
+  if (sectionAnchorIndex !== null) return sectionAnchorIndex;
+
+  const safeColumns = Math.max(1, gridColumns);
+  const safeRowHeight = Math.max(1, rowHeight);
+  const totalRows = Math.max(1, Math.ceil(fullCount / safeColumns));
+  const row = Math.min(
+    Math.max(0, Math.floor(anchorY / safeRowHeight)),
+    totalRows - 1
+  );
+  const column = Math.min(Math.floor(safeColumns / 2), safeColumns - 1);
+  return Math.min(fullCount - 1, row * safeColumns + column);
+}
+
 export default function ImageGrid() {
   const {
     searchQuery, searchResults, searchTotal, isSearching, ensureSearchRange,
@@ -104,6 +159,7 @@ export default function ImageGrid() {
   const [viewportHeight, setViewportHeight] = useState(0);
   const [viewportWidth, setViewportWidth] = useState(0);
   const [horizontalPadding, setHorizontalPadding] = useState(0);
+  const [verticalPaddingTop, setVerticalPaddingTop] = useState(0);
   const preloadRef = useRef<Set<string>>(new Set());
   const visibleWarmRef = useRef<Set<string>>(new Set());
   const modalWarmCursorRef = useRef(0);
@@ -182,42 +238,65 @@ export default function ImageGrid() {
   }, [scrollMemoryKey, scrollTop, setSearchScrollPosition]);
 
   useEffect(() => {
-    const container = containerRef.current;
-    const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    if (!scrollEl) return;
+    const commitThumbSize = (next: number) => {
+      if (next === thumbSizeRef.current) return;
+      thumbSizeRef.current = next;
+      setView({ thumbSize: next });
+    };
 
     const onWheel = (event: WheelEvent) => {
-      if (view.viewMode !== 'grid') return;
       if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
-      event.preventDefault();
+      const container = containerRef.current;
+      if (!container) return;
+      const browserZoomModifier = event.ctrlKey || event.metaKey;
+      if (browserZoomModifier) event.preventDefault();
+      const target = event.target instanceof Node ? event.target : null;
+      if (
+        view.viewMode !== 'grid' ||
+        selectedIndex !== null ||
+        showSettings ||
+        !target ||
+        !container.contains(target)
+      ) return;
+      if (!browserZoomModifier) event.preventDefault();
+      if (event.deltaY === 0) return;
       const next = Math.max(40, Math.min(600, thumbSizeRef.current + (event.deltaY > 0 ? -20 : 20)));
-      if (next !== thumbSizeRef.current) setView({ thumbSize: next });
+      commitThumbSize(next);
     };
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (view.viewMode !== 'grid') return;
       if (!event.ctrlKey && !event.metaKey) return;
+      if (!containerRef.current) return;
       const key = event.key;
       if (key === '+' || key === '=' || key === '-') {
         event.preventDefault();
+        if (
+          view.viewMode !== 'grid' ||
+          selectedIndex !== null ||
+          showSettings ||
+          shouldIgnoreViewerShortcut(event.target)
+        ) return;
         const delta = key === '-' ? -20 : 20;
         const next = Math.max(40, Math.min(600, thumbSizeRef.current + delta));
-        if (next !== thumbSizeRef.current) setView({ thumbSize: next });
+        commitThumbSize(next);
       } else if (key === '0') {
         event.preventDefault();
-        setView({ thumbSize: 200 });
+        if (
+          view.viewMode === 'grid' &&
+          selectedIndex === null &&
+          !showSettings &&
+          !shouldIgnoreViewerShortcut(event.target)
+        ) commitThumbSize(200);
       }
     };
 
-    scrollEl.addEventListener('wheel', onWheel, { passive: false });
     window.addEventListener('keydown', onKeyDown, { passive: false });
     window.addEventListener('wheel', onWheel, { passive: false, capture: true });
     return () => {
-      scrollEl.removeEventListener('wheel', onWheel);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
     };
-  }, [setView, view.viewMode]);
+  }, [selectedIndex, setView, showSettings, view.viewMode]);
 
   const loadedOrderedIds = useMemo(
     () => searchResults.filter((img): img is ImageFile => Boolean(img)).map((img) => img.id),
@@ -306,16 +385,6 @@ export default function ImageGrid() {
     setSelectedIndex,
     showFavOnly,
   ]);
-
-  const handleThumbWheel = (event: React.WheelEvent<HTMLDivElement>) => {
-    const wantsThumbZoom = event.altKey || event.ctrlKey || event.metaKey;
-    if (!wantsThumbZoom || view.viewMode !== 'grid') return;
-    event.preventDefault();
-    const next = Math.max(40, Math.min(600, thumbSizeRef.current + (event.deltaY > 0 ? -20 : 20)));
-    if (next !== thumbSizeRef.current) {
-      setView({ thumbSize: next });
-    }
-  };
 
   const handleImageDragStart = (event: React.DragEvent, imageId: string, filename: string, fullUrl: string) => {
     const absoluteUrl = new URL(fullUrl, window.location.origin).toString();
@@ -429,7 +498,9 @@ export default function ImageGrid() {
       const style = window.getComputedStyle(container);
       const leftPad = Number.parseFloat(style.paddingLeft || '0') || 0;
       const rightPad = Number.parseFloat(style.paddingRight || '0') || 0;
+      const topPad = Number.parseFloat(style.paddingTop || '0') || 0;
       setHorizontalPadding(leftPad + rightPad);
+      setVerticalPaddingTop(topPad);
       setViewportHeight(scrollEl.clientHeight);
       setViewportWidth(container.clientWidth);
       setScrollTop(scrollEl.scrollTop);
@@ -587,48 +658,86 @@ export default function ImageGrid() {
       : 'nearby'
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (view.viewMode !== 'grid') {
       previousThumbSizeRef.current = view.thumbSize;
       previousGridMetricsRef.current = null;
       return;
     }
 
+    const rowHeight = Math.max(1, gridCellHeight + GRID_GAP);
+    const previousMetrics = previousGridMetricsRef.current;
+    const previousThumbSize = previousThumbSizeRef.current;
+    const container = containerRef.current;
+    const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
+    const anchorIndex = previousThumbSize !== view.thumbSize
+      ? previousMetrics?.anchorIndex ?? getZoomAnchorIndex({
+        sectionLayout,
+        scrollTop,
+        viewportHeight,
+        contentWidth: Math.max(0, viewportWidth - horizontalPadding),
+        contentOffsetTop: verticalPaddingTop,
+        rowHeight,
+        gridColumns,
+        fullCount,
+      }) ?? undefined
+      : getZoomAnchorIndex({
+        sectionLayout,
+        scrollTop,
+        viewportHeight,
+        contentWidth: Math.max(0, viewportWidth - horizontalPadding),
+        contentOffsetTop: verticalPaddingTop,
+        rowHeight,
+        gridColumns,
+        fullCount,
+      }) ?? undefined;
+    const anchorTop = anchorIndex !== undefined
+      ? getGridItemTop(sectionLayout, anchorIndex, rowHeight, gridColumns)
+      : null;
     const nextMetrics: GridMetricsSnapshot = {
       scrollTop,
       viewportHeight,
-      rowHeight: Math.max(1, gridCellHeight + GRID_GAP),
+      rowHeight,
       gridColumns,
       fullCount,
-      totalHeight: virtualRange.totalHeight,
+      totalHeight: scrollEl?.scrollHeight ?? virtualRange.totalHeight,
+      anchorIndex,
+      anchorTop: anchorTop ?? undefined,
+      anchorViewportOffset: anchorTop !== null ? anchorTop - scrollTop : undefined,
     };
-    const previousMetrics = previousGridMetricsRef.current;
-    const previousThumbSize = previousThumbSizeRef.current;
+    let metricsForRef = nextMetrics;
 
     if (
       previousMetrics &&
       previousThumbSize !== view.thumbSize &&
       previousMetrics.fullCount > 0
     ) {
-      const container = containerRef.current;
-      const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
       if (scrollEl) {
         const nextScrollTop = getZoomCenteredScrollTop(previousMetrics, nextMetrics);
         scrollEl.scrollTop = nextScrollTop;
         setScrollTop(nextScrollTop);
+        metricsForRef = {
+          ...nextMetrics,
+          scrollTop: nextScrollTop,
+          anchorViewportOffset: anchorTop !== null ? anchorTop - nextScrollTop : undefined,
+        };
       }
     }
 
     previousThumbSizeRef.current = view.thumbSize;
-    previousGridMetricsRef.current = nextMetrics;
+    previousGridMetricsRef.current = metricsForRef;
   }, [
     fullCount,
     gridCellHeight,
     gridColumns,
+    horizontalPadding,
+    sectionLayout,
     scrollTop,
     view.thumbSize,
     view.viewMode,
+    verticalPaddingTop,
     viewportHeight,
+    viewportWidth,
     virtualRange.totalHeight,
   ]);
 
@@ -1148,7 +1257,6 @@ export default function ImageGrid() {
 
   return (
     <div className="grid-container" ref={containerRef}
-      onWheel={handleThumbWheel}
       onClick={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
       <div
         className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}

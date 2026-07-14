@@ -22,6 +22,9 @@ export interface GridMetricsSnapshot {
   gridColumns: number;
   fullCount: number;
   totalHeight: number;
+  anchorIndex?: number;
+  anchorTop?: number;
+  anchorViewportOffset?: number;
 }
 
 export interface ArrowSelectionArgs {
@@ -136,6 +139,18 @@ export function getZoomCenteredScrollTop(
     return previous.scrollTop;
   }
 
+  const maxScrollTop = Math.max(0, next.totalHeight - next.viewportHeight);
+  if (
+    previous.anchorIndex !== undefined &&
+    previous.anchorIndex === next.anchorIndex &&
+    previous.anchorViewportOffset !== undefined &&
+    next.anchorTop !== undefined &&
+    Number.isFinite(previous.anchorViewportOffset) &&
+    Number.isFinite(next.anchorTop)
+  ) {
+    return clamp(next.anchorTop - previous.anchorViewportOffset, 0, maxScrollTop);
+  }
+
   const previousCenterY = previous.scrollTop + previous.viewportHeight / 2;
   const previousRow = clamp(
     Math.floor(previousCenterY / previous.rowHeight),
@@ -159,7 +174,6 @@ export function getZoomCenteredScrollTop(
   );
   const nextRow = Math.floor(anchorIndex / next.gridColumns);
   const nextCenterY = nextRow * next.rowHeight + next.rowHeight * rowOffsetRatio;
-  const maxScrollTop = Math.max(0, next.totalHeight - next.viewportHeight);
   return clamp(nextCenterY - next.viewportHeight / 2, 0, maxScrollTop);
 }
 
