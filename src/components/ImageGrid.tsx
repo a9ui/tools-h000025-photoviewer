@@ -4,7 +4,13 @@ import React, { useMemo, useRef, useEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
-import { getArrowSelectionIndex, getZoomCenteredScrollTop, type GridMetricsSnapshot } from '../lib/viewerUi';
+import {
+  getArrowSelectionIndex,
+  getEmptyResultMessage,
+  getZoomCenteredScrollTop,
+  shouldIgnoreViewerShortcut,
+  type GridMetricsSnapshot,
+} from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
 import { buildImageIndexById } from '../lib/imageListState';
@@ -120,46 +126,6 @@ export default function ImageGrid() {
   useEffect(() => {
     thumbSizeRef.current = view.thumbSize;
   }, [view.thumbSize]);
-
-  useEffect(() => {
-    const container = containerRef.current;
-    const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    if (!container || !scrollEl) return;
-
-    let metricsFrameId: number | null = null;
-
-    const updateMetrics = () => {
-      metricsFrameId = null;
-      const style = window.getComputedStyle(container);
-      const leftPad = Number.parseFloat(style.paddingLeft || '0') || 0;
-      const rightPad = Number.parseFloat(style.paddingRight || '0') || 0;
-      setHorizontalPadding(leftPad + rightPad);
-      setViewportHeight(scrollEl.clientHeight);
-      setViewportWidth(container.clientWidth);
-      setScrollTop(scrollEl.scrollTop);
-    };
-
-    const scheduleMetricsUpdate = () => {
-      if (metricsFrameId !== null) return;
-      metricsFrameId = window.requestAnimationFrame(updateMetrics);
-    };
-
-    updateMetrics();
-    scrollEl.addEventListener('scroll', scheduleMetricsUpdate, { passive: true });
-    const resizeObserver = new ResizeObserver(scheduleMetricsUpdate);
-    resizeObserver.observe(scrollEl);
-    resizeObserver.observe(container);
-    window.addEventListener('resize', scheduleMetricsUpdate);
-
-    return () => {
-      scrollEl.removeEventListener('scroll', scheduleMetricsUpdate);
-      resizeObserver.disconnect();
-      window.removeEventListener('resize', scheduleMetricsUpdate);
-      if (metricsFrameId !== null) {
-        window.cancelAnimationFrame(metricsFrameId);
-      }
-    };
-  }, []);
 
   const scrollMemoryKey = useMemo(
     () => JSON.stringify({
@@ -398,18 +364,7 @@ export default function ImageGrid() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!arrowKeys.has(event.key)) return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (document.querySelector('.modal-overlay, .settings-overlay, .confirm-overlay')) return;
-
-      const target = event.target as HTMLElement | null;
-      const tagName = target?.tagName;
-      if (
-        tagName === 'INPUT' ||
-        tagName === 'TEXTAREA' ||
-        tagName === 'SELECT' ||
-        target?.isContentEditable
-      ) {
-        return;
-      }
+      if (shouldIgnoreViewerShortcut(event.target)) return;
 
       const currentId = selectedIds[selectedIds.length - 1] ?? null;
       const currentIndex = currentId
@@ -461,6 +416,46 @@ export default function ImageGrid() {
       : {};
 
   const fullCount = isClientFiltered ? clientFilteredVisible.length : searchTotal;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
+    if (!container || !scrollEl) return;
+
+    let metricsFrameId: number | null = null;
+
+    const updateMetrics = () => {
+      metricsFrameId = null;
+      const style = window.getComputedStyle(container);
+      const leftPad = Number.parseFloat(style.paddingLeft || '0') || 0;
+      const rightPad = Number.parseFloat(style.paddingRight || '0') || 0;
+      setHorizontalPadding(leftPad + rightPad);
+      setViewportHeight(scrollEl.clientHeight);
+      setViewportWidth(container.clientWidth);
+      setScrollTop(scrollEl.scrollTop);
+    };
+
+    const scheduleMetricsUpdate = () => {
+      if (metricsFrameId !== null) return;
+      metricsFrameId = window.requestAnimationFrame(updateMetrics);
+    };
+
+    updateMetrics();
+    scrollEl.addEventListener('scroll', scheduleMetricsUpdate, { passive: true });
+    const resizeObserver = new ResizeObserver(scheduleMetricsUpdate);
+    resizeObserver.observe(scrollEl);
+    resizeObserver.observe(container);
+    window.addEventListener('resize', scheduleMetricsUpdate);
+
+    return () => {
+      scrollEl.removeEventListener('scroll', scheduleMetricsUpdate);
+      resizeObserver.disconnect();
+      window.removeEventListener('resize', scheduleMetricsUpdate);
+      if (metricsFrameId !== null) {
+        window.cancelAnimationFrame(metricsFrameId);
+      }
+    };
+  }, [fullCount, isSearching]);
   const loadedSearchCount = useMemo(
     () => searchResults.reduce((count, image) => count + (image ? 1 : 0), 0),
     [searchResults]
@@ -891,8 +886,7 @@ export default function ImageGrid() {
     viewportHeight,
   ]);
 
-  // Empty state: no results after searching
-  if (!isSearching && fullCount === 0 && searchQuery.trim()) {
+  if (!isSearching && fullCount === 0) {
     return (
       <div className="empty-state">
         <svg width="64" height="64" viewBox="0 0 24 24" fill="none"
@@ -901,7 +895,7 @@ export default function ImageGrid() {
           <line x1="15" y1="9" x2="9" y2="15" />
           <line x1="9" y1="9" x2="15" y2="15" />
         </svg>
-        <p>No images found for query: {searchQuery}</p>
+        <p>{getEmptyResultMessage(searchQuery, isClientFiltered)}</p>
       </div>
     );
   }

@@ -6,6 +6,7 @@ import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type Moda
 import { loadCachedImageUrl } from '../lib/clientImageCache';
 import { buildImageIndexById, removeImageSlot } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
+import { isInteractiveShortcutTarget } from '../lib/viewerUi';
 import CachedImage from './CachedImage';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
 
@@ -609,16 +610,16 @@ export default function ImageModal() {
   }, [hasEnhancedOutput, img]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
-    if (
-      document.activeElement?.tagName === 'INPUT' ||
-      document.activeElement?.tagName === 'TEXTAREA' ||
-      document.activeElement?.tagName === 'SELECT'
-    ) return;
+    if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
+    const key = e.key;
+    if (key === keyBindings.closeModal) {
+      close();
+      return;
+    }
+    if (isInteractiveShortcutTarget(e.target)) return;
     if (showConfirmDelete || isDeleting) return;
 
-    const key = e.key;
-    if (key === keyBindings.closeModal) close();
-    else if (key === keyBindings.prevImage) goPrev();
+    if (key === keyBindings.prevImage) goPrev();
     else if (key === keyBindings.nextImage) goNext();
     else if (isShortcutKey(key, keyBindings.toggleFavorite) && img) increaseFavorite();
     else if (isShortcutKey(key, keyBindings.decreaseFavorite) && img) decreaseFavorite();
@@ -839,8 +840,8 @@ export default function ImageModal() {
   if (!img) {
     return (
       <div className="modal-overlay">
-        <div className="modal-backdrop" onClick={close} />
-        <div className="modal-body">
+        <div className="modal-backdrop" aria-hidden="true" onClick={close} />
+        <div className="modal-body" role="dialog" aria-modal="true" aria-label="Image preview loading">
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">Loading...</span>
@@ -876,22 +877,22 @@ export default function ImageModal() {
   return (
     <>
       <div className="modal-overlay">
-        <div className="modal-backdrop" onClick={close} />
+        <div className="modal-backdrop" aria-hidden="true" onClick={close} />
 
-        <div className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`}>
+        <div className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`}>
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
               <span className="modal-counter">{modalCounter}</span>
             </div>
             <div className="modal-topbar-right">
-              <button className={`modal-icon-btn ${isFav ? 'fav-active' : ''}`} onClick={increaseFavorite} title="Favorite +1">
+              <button className={`modal-icon-btn ${isFav ? 'fav-active' : ''}`} onClick={increaseFavorite} title="Favorite +1" aria-label="Increase favorite level">
                 F
                 {favLevel > 0 && <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700 }}>{favLevel}</span>}
               </button>
-              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1">-</button>
-              <button className="modal-icon-btn" onClick={() => setFlipped((f) => !f)} title="Flip">H</button>
-              <button className="modal-icon-btn" onClick={() => openExternal(img.id)} title="Open external">O</button>
+              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1" aria-label="Decrease favorite level">-</button>
+              <button className="modal-icon-btn" onClick={() => setFlipped((f) => !f)} title="Flip" aria-label="Flip horizontally">H</button>
+              <button className="modal-icon-btn" onClick={() => openExternal(img.id)} title="Open external" aria-label="Open in external viewer">O</button>
               <button
                 className="modal-icon-btn"
                 onClick={(event) => {
@@ -899,6 +900,7 @@ export default function ImageModal() {
                   void handleEnhance();
                 }}
                 title="Enhance"
+                aria-label="Enhance image"
                 disabled={isEnhancing || enhancementInProgress}
               >
                 {isEnhancing ? '...' : enhancementInProgress ? `${activeEnhancementJob?.progress ?? 0}%` : 'AI'}
@@ -916,6 +918,7 @@ export default function ImageModal() {
                     void handleCancelEnhance();
                   }}
                   title="Cancel enhancement"
+                  aria-label="Cancel enhancement"
                 >
                   X
                 </button>
@@ -952,6 +955,7 @@ export default function ImageModal() {
                   toggleEnhancedView();
                 }}
                 title={hasEnhancedOutput ? `Toggle original/enhanced (E): ${formatEnhancementDetails(selectedEnhancedJob)}` : 'Toggle original/enhanced (E)'}
+                aria-label="Toggle original or enhanced image"
                 disabled={!hasEnhancedOutput}
               >
                 {showEnhanced ? 'UP' : 'OR'}
@@ -963,14 +967,19 @@ export default function ImageModal() {
                   void handleDeleteEnhancedOutput();
                 }}
                 title="Delete selected enhanced output only"
+                aria-label="Delete selected enhanced output only"
                 disabled={!selectedEnhancedJob}
               >
                 UP-
               </button>
               <button
                 className="modal-icon-btn"
-                onClick={() => setShowConfirmDelete(true)}
+                onClick={() => {
+                  if (confirmBeforeDelete) setShowConfirmDelete(true);
+                  else void handleDelete();
+                }}
                 title="Move to Recycle Bin"
+                aria-label="Move image to Recycle Bin"
                 disabled={isDeleting}
               >
                 {isDeleting ? '...' : 'D'}
@@ -979,10 +988,11 @@ export default function ImageModal() {
                 className="modal-icon-btn"
                 onClick={() => setSidebarCollapsed((prev) => !prev)}
                 title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
+                aria-label={sidebarCollapsed ? 'Show metadata sidebar' : 'Hide metadata sidebar'}
               >
                 {sidebarCollapsed ? '<' : '>'}
               </button>
-              <button className="modal-icon-btn close" onClick={close} title="Close">x</button>
+              <button className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
             </div>
           </div>
 
@@ -1040,7 +1050,7 @@ export default function ImageModal() {
 
             <div className="zoom-indicator">
               <span>{Math.round(zoom * 100)}%</span>
-              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom">x</button>
+              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">x</button>
             </div>
 
             {favoriteFeedback && (
@@ -1152,9 +1162,9 @@ export default function ImageModal() {
 
       {showConfirmDelete && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" onClick={() => setShowConfirmDelete(false)} />
-          <div className="confirm-panel">
-            <h3>Move this image to Recycle Bin?</h3>
+          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowConfirmDelete(false)} />
+          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title">
+            <h3 id="image-delete-title">Move this image to Recycle Bin?</h3>
             <p>{img.filename}</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
               <input

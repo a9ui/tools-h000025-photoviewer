@@ -71,6 +71,20 @@ const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
 
+function normalizeStoredView(value: unknown): ViewSettings {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return { ...DEFAULT_VIEW };
+  }
+
+  return {
+    ...DEFAULT_VIEW,
+    ...(value as Partial<ViewSettings>),
+    // `columns` belonged to an older UI. The current UI is size-driven and
+    // has no way to change or clear a persisted fixed-column value.
+    columns: 0,
+  };
+}
+
 // ── Context shape ──
 function normalizeFavorites(value: unknown): Record<string, number> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
@@ -89,11 +103,15 @@ function normalizeFavorites(value: unknown): Record<string, number> {
 
 function mergeFavorites(
   first: Record<string, number>,
-  second: Record<string, number>
+  second: Record<string, number>,
+  exactSecondIds: ReadonlySet<string> = new Set()
 ): Record<string, number> {
   const merged = { ...first };
   for (const [id, level] of Object.entries(second)) {
-    merged[id] = Math.max(merged[id] ?? 0, level);
+    merged[id] = exactSecondIds.has(id) ? level : Math.max(merged[id] ?? 0, level);
+  }
+  for (const id of exactSecondIds) {
+    if (!(id in second)) delete merged[id];
   }
   return merged;
 }
@@ -252,6 +270,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const pendingViewSettingsRef = useRef<ViewSettings | null>(null);
   const searchQueryRef = useRef('');
   const favoritesRef = useRef<Record<string, number>>({});
+  const favoritesHydratedRef = useRef(false);
+  const favoriteHydrationDirtyIdsRef = useRef<Set<string>>(new Set());
   const searchMetaRef = useRef<{
     query: string;
     sortBy: SortBy;
@@ -319,33 +339,26 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       .then((r) => r.json())
       .then((data) => {
         const serverFavorites = normalizeFavorites(data?.favorites);
-        const merged = mergeFavorites(serverFavorites, localFavorites);
-        setFavorites(merged);
-        favoritesRef.current = merged;
-        try {
-          const serialized = JSON.stringify(merged);
-          localStorage.setItem('pvu_favorites', serialized);
-          if (Object.keys(merged).length > 0) {
-            localStorage.setItem('pvu_favorites_backup', serialized);
-          }
-        } catch { /* ignore */ }
-        if (JSON.stringify(serverFavorites) !== JSON.stringify(merged)) {
-          fetch('/api/favorites', {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ favorites: merged }),
-          }).catch(() => {});
-        }
+        const dirtyIds = new Set(favoriteHydrationDirtyIdsRef.current);
+        setFavorites((currentFavorites) => mergeFavorites(
+          serverFavorites,
+          currentFavorites,
+          dirtyIds
+        ));
       })
-      .catch(() => {
-        favoritesRef.current = localFavorites;
-      })
+      .catch(() => {})
       .finally(() => {
+        favoritesHydratedRef.current = true;
+        favoriteHydrationDirtyIdsRef.current.clear();
         setFavoritesHydrated(true);
       });
     try {
       const sv = localStorage.getItem('pvu_view');
-      if (sv) setViewState({ ...DEFAULT_VIEW, ...JSON.parse(sv) });
+      if (sv) {
+        const normalizedView = normalizeStoredView(JSON.parse(sv));
+        setViewState(normalizedView);
+        writeJsonLocalStorage('pvu_view', normalizedView);
+      }
     } catch { /* ignore */ }
     try {
       const pinned = localStorage.getItem('pvu_pinned_tabs');
@@ -556,6 +569,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleFavorite = useCallback((id: string) => {
+    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites(prev => {
       const next = { ...prev };
       if ((next[id] ?? 0) > 0) delete next[id];
@@ -565,6 +579,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cycleFavoriteLevel = useCallback((id: string) => {
+    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       const next = { ...prev };
       const current = next[id] ?? 0;
@@ -575,6 +590,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearFavorite = useCallback((id: string) => {
+    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       if (!(id in prev)) return prev;
       const next = { ...prev };
@@ -584,6 +600,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const decreaseFavoriteLevel = useCallback((id: string) => {
+    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       const current = prev[id] ?? 0;
       if (current <= 0) return prev;

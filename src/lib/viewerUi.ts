@@ -32,8 +32,54 @@ export interface ArrowSelectionArgs {
   itemCount: number;
 }
 
+const INTERACTIVE_SHORTCUT_TARGET_SELECTOR = [
+  'input',
+  'textarea',
+  'select',
+  'button',
+  '[contenteditable]:not([contenteditable="false"])',
+].join(', ');
+
+const VIEWER_SHORTCUT_CONTEXT_SELECTOR = [
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+].join(', ');
+
+const VIEWER_SHORTCUT_OVERLAY_SELECTOR = [
+  '.modal-overlay',
+  '.settings-overlay',
+  '.confirm-overlay',
+].join(', ');
+
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+export function shouldIgnoreViewerShortcut(
+  target: EventTarget | null,
+  root: Pick<Document, 'querySelector'> | null = typeof document === 'undefined' ? null : document
+): boolean {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+
+  if (isInteractiveShortcutTarget(target)) return true;
+  if (element?.closest(VIEWER_SHORTCUT_CONTEXT_SELECTOR)) return true;
+  return Boolean(root?.querySelector(VIEWER_SHORTCUT_OVERLAY_SELECTOR));
+}
+
+export function isInteractiveShortcutTarget(target: EventTarget | null): boolean {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+  return Boolean(element?.closest(INTERACTIVE_SHORTCUT_TARGET_SELECTOR));
+}
+
+export function getEmptyResultMessage(searchQuery: string, hasClientFilters: boolean): string {
+  const query = searchQuery.trim();
+  if (query) return `No images found for query: ${query}`;
+  if (hasClientFilters) return 'No images match the active filters.';
+  return 'No supported images were found in the selected folders.';
 }
 
 export function sortFolderBuckets(

@@ -238,9 +238,9 @@ export default function RightPreviewPanel() {
 
       {confirmBulkDelete && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" onClick={() => setConfirmBulkDelete(false)} />
-          <div className="confirm-panel">
-            <h3>Move selected images to Recycle Bin?</h3>
+          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setConfirmBulkDelete(false)} />
+          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="preview-bulk-delete-title">
+            <h3 id="preview-bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
               <input
