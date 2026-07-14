@@ -1,207 +1,380 @@
-# Browser to WPF Parity Plan
+# Browser → WPF 実装パリティ計画
 
 最終更新: 2026-07-14
 
-browser contract: `docs/browser-feature-contract.md`
-WPF implementation: `local-native/PhotoViewer.Wpf/**`
+## 0. この文書の位置付け
 
-## 1. 目的
+この文書は、現行ブラウザ版の製品契約を、作りかけの WPF 版へ移すための実装判断と完成順を固定する。
+見た目を機械的にコピーする計画ではない。ユーザーがブラウザ版で使っている意味、状態、操作結果を
+Windows ネイティブ UI で再現し、WPF 固有の改善は契約を壊さない範囲だけ採用する。
 
-WPF を「ブラウザに似た画面」にするのではなく、ユーザーがブラウザで使っている操作と状態の意味を、native runtime で再現する。そのため、browser の現行機能を次の3種類に分ける。
+基準:
 
-- `REQUIRED`: surface が違っても意味を合わせる。
-- `NATIVE_EQUIVALENT`: gesture や layout は WPF に合わせてよいが、結果を合わせる。
-- `DEFER / DECIDE`: browser 固有の実装や既知の弱点。コピーせず product decision を先に置く。
+- Browser 契約: `docs/browser-feature-contract.md`
+- WPF live code: `local-native/PhotoViewer.Wpf/MainWindow.xaml`,
+  `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs`, `local-native/PhotoViewer.Wpf/App.xaml`
+- 監査 snapshot: commit `626b7dd5416f3619ae59fc66d47e79acd1a74fd5`
+- この文書の証拠行は上記 snapshot に対するもの。実装後は行番号と状態を更新する。
 
-この文書の WPF 状態は README の自己申告だけでなく、`MainWindow.xaml` / `MainWindow.xaml.cs` の live code を基準にした。
+仕様の優先順位は次の通り。
 
-## 2. 先に固定する non-negotiable contract
+1. `docs/browser-feature-contract.md` の現行契約
+2. 実際の Browser UI と回帰テスト
+3. WPF live code
+4. この計画
+5. WPF README や過去の milestone verification
 
-1. Favorite の値は共有 path -> `0..5` で、Lv filter は threshold ではなく exact-match の独立 multi-select。
-2. level を1つも選ばない Favorites only は `All`。Favorite 値1..5を全て含む。
-3. `Unseen dots` は既定 OFF の表示設定。seen state と unseen-only filter を消したり反転しない。
-4. seen は explicit selection / preview / modal navigation で付け、単に画面内へ realize しただけでは付けない。
-5. source Delete は Recycle Bin。成功後は現 order の隣へ継続し、hard delete fallback を持たない。
-6. enhancement は explicit action only。通常 browsing から job/worker を起動しない。
-7. 画像数を silent truncate しない。UI virtualization と scan/index limit は別問題として扱う。
-8. shared `.cache/favorites.json` と `.cache/recent-folders.json`、WPF側の `.cache/seen.json` を壊さず additive に扱う。browser seen は現状 `pvu_seen_images` で、自動共有しない。
+WPF README や `docs/local-native/m*-verification.md` は履歴資料であり、live code と矛盾した場合は
+根拠にしない。特に `docs/local-native/m*-verification.md` の多くは WinForms
+`PhotoViewer.Native` の検証で、WPF の実装証拠ではない。
 
-## 3. 現在の browser / WPF 差分
+## 1. 判定記号
 
-| Area | Browser current contract | WPF current state | Gap / decision | Priority |
+| 判定 | 意味 | 実装時の扱い |
+| --- | --- | --- |
+| `ADOPT` | 現在の WPF 実装が Browser の意味と一致する | 回帰テストで保護し、不要な作り直しをしない |
+| `ADAPT` | 機能はあるが意味、既定値、操作、保存方法が違う | 既存コードを Browser 契約へ変更する |
+| `ADD` | Browser 契約に必要だが WPF にない | 新規実装する |
+| `NATIVE-EXTENSION` | Browser にはないが Windows ネイティブでは有用 | Browser 契約を変えず、既定 UI を圧迫しない場合だけ残す |
+| `DEFER` | 完成条件から意図的に後ろへ送る | P0～P2 の途中で先回り実装しない |
+| `DROP` | Browser から削除済み、または誤った旧仕様 | WPF からも削除し、state/smoke の旧期待値も除去する |
+
+優先度:
+
+- `P0`: WPF を Browser 仕様の製品として成立させる必須条件。
+- `P1`: 日常利用の正確性、状態保存、検索、失敗時の安全性。
+- `P2`: 操作効率、複数選択、preview/modal の完成度。
+- `P3`: 明示的に後回しにできる高度機能、磨き込み、製品判断待ち。
+
+## 2. 絶対に変えない製品契約
+
+1. Favorite 値は共有 path ごとの `0..5`。
+2. Favorite filter は Lv1～Lv5 の独立 ON/OFF、各レベル完全一致。何も選ばない状態が `All`。
+3. `Unseen dots` は seen データを変えない表示設定で、既定値は OFF。
+4. seen は明示選択、preview 表示、modal navigation で付ける。画面内に realize しただけでは付けない。
+5. source Delete は Windows Recycle Bin のみ。成功後は現在の filtered order の隣へ継続し、
+   hard-delete fallback を持たない。
+6. 通常の閲覧、preview、modal navigation から enhancement job や worker を開始しない。
+7. 画像件数を無言で切り捨てない。全件 index と UI realization 上限を別概念として扱う。
+8. `.cache/favorites.json` と `.cache/recent-folders.json` は Browser と共有する。
+9. WPF seen は `.cache/seen.json` の加算型。Browser localStorage seen との自動双方向同期はしない。
+10. 既存ユーザー state/cache を削除して移行しない。
+
+Browser 側の根拠:
+
+- Favorite: `BR-DATA-005`, `BR-FAV-001`～`003`
+- seen / dots: `BR-DATA-006`, `BR-SEEN-001`～`002`
+- zoom / virtualization: `BR-GAL-001`, `BR-GAL-006`～`007`
+- selection: `BR-GAL-008`～`010`
+- Delete: `BR-DEL-001`～`007`
+- enhancement isolation: `BR-ENH-001`～`007`
+- Settings / state: `BR-SET-001`～`003`, `BR-PER-001`～`005`
+
+## 3. Browser → WPF live 差分表
+
+### 3.1 起動、folder set、scan、format
+
+| 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
 | --- | --- | --- | --- | --- |
-| Runtime | Next.js local server、port 3000 | .NET 8 WPF、server/Node/WebView不要 | native runtime の差は意図通り | Keep |
-| Landing | multi-folder picker、改行 paste、remove、last/recent、shared recent | multi-root、paste、recent/shared recent smoke あり | open/remove/refresh の manual sweep と malformed recovery を追加 | P1 |
-| Formats | PNG/JPEG/WebP/AVIF/GIF | PNG/JPEG/WebP/BMP/GIF/TIFF、AVIFなし | AVIF decoder追加か明示非対応。BMP/TIFFは native extension | P1 |
-| Scan/index | incremental cache、folder signature、変更差分、silent global capなし | recursive scan、parallel decode/metadata。ただし `MaxLoadedImages = 1200` で `Take(1200)` | 1200件以降が検索も閲覧もできない。最優先で撤去 | P0 |
-| Search token | comma区切り AND、prompt + filename | space区切り AND。real tile の initial `Prompt` は path、real PNG prompt は active preview lazy | query grammar と indexed prompt contract が不一致 | P1 |
-| Suggestions/chips | prompt tag suggestions、chip add/remove/reorder | plain search input と clear | chip UIをそのまま移す必要はない。comma AND と prompt検索を先に再現 | P2 |
-| Search presets | なし。Quick Search は browser UI から撤去 | quick search相当が限定的 | browser parity 対象外。WPFでも必須にしない | Drop |
-| Favorite values | `0..5`、+1/-1、shared file | `0..5`、+1/-1、shared favorites、import smokeあり | 値と保存はほぼ一致 | Keep |
-| Favorite filter | Lv1-5 checkbox独立、exact、empty=All | RadioButton 1つ、`Lv N+` threshold | ユーザーが指摘した主要回帰。意味を置換する | P0 |
-| Unrated | level 0 exact、Favoritesと排他 | Unrated onlyあり | interaction/count/persistenceの合同 testを追加 | P1 |
-| Seen store | explicit viewでadditive、browser localStorageのみ。`.cache/seen.json` との自動同期なし | shared `.cache/seen.json`、legacy merge、import/reload smokeあり | meaningは合わせる。共有が必要なら明示import/exportを別契約にする | Keep/P1 |
-| Unseen filter | browser contract上のseen mapを基準 | Unseen onlyあり | browserに同等UIが弱いので、shared meaningのみ合わせる | Keep |
-| Unseen dots | default OFF、visibility only | grid templateは `Tile.Unseen` を常時 dot表示。listはdotなし。設定なし | display setting追加、grid/list両方に適用 | P0 |
-| Date filter | created/birth date。Sidebar は manual From/To のみで preset なし | `ModifiedUtc` date + presets | 日付の意味は揃える。preset は native 独自の任意UIとして扱う | P1 |
-| Sort | modified new/old、created new/old、name、stable random + reshuffle | 同じsort modeとrandom seed実装あり | README/contractをlive codeへ同期し、fixture test追加 | Keep/P1 |
-| Folder buckets | show/hide、multi/range/invert/selected actions | show/hide/show selected/hide selected/clear。multi-rootあり、range selection不足 | range/invertとbucket key across rootsを追加 | P2 |
-| Grid/List | virtual page/overscan。双方 large collection対応 | gridは96 batch、384 bounded window。listはfull collectionをItemsSource | list virtualizationと全件collection costを計測 | P0 |
-| Display style | Standard/Compact/Poster | 3 style値あり | screenshotで実差とpersistを確認 | P1 |
-| Aspect | Original/1:1/2:3 | Original/Square/Portraitとsmokeあり | meaningはほぼ一致 | Keep |
-| Thumbnail zoom | 40..600、Ctrl-wheel/+/-/0、center anchor | size control/shortcut/wheelとsmokeあり | center anchorとlarge listで再確認 | P1 |
-| Date sections | bounded resultでsection headers | native同等なし | product valueを見て後段 | P3 |
-| Multi-selection | Ctrl toggle、Shift range、bulk favorite/delete | ListView multi-selection、selected count、background clearあり | range、bulk favorite、bulk recycleを追加 | P2 |
-| Drag out | browser DataTransferでsourceを外へdrag | なし | native drag/drop要否を決める | P3 |
-| Right preview | resize 240..900、persist、metadata、bulk actions | selected preview、async decode、splitter、metadata、open/tabあり | bulk actionsと詳細状態を追加 | P2 |
-| Preview tabs | open/hover/activate/pin/close/close all/reopen | 同等のUI/hover/pin/reopen/reload smokeあり | current READMEを更新すべきだが、このlaneではlocal-native文書を変更しない | Keep/P1 |
-| Pin semantics | browserはpin idのみでreload tab復元が弱い | WPFはpin state/tab persistenceを実装 | browserの弱点をコピーしない。WPFの強いsemanticsを維持 | DECIDE |
-| Modal order | current filtered order、端wrap、Delete後neighbor | previous/nextあり。端はclamp、Delete disabled | wrapとneighbor contractが不足 | P0/P2 |
-| Modal gestures | edge click、center chrome、double-click metadata、swipe | button/key nav、zoom/pan/flip、metadata sidebarあり | native equivalentを選び、edge/swipeの価値を別判定 | P2 |
-| Modal metadata | Prompt/Negative/Settings/PNG Info、copy、prompt tag search | lazy PNG metadata、Prompt/Negative/Settings、copy smokeあり | prompt tag -> search とfallbackを再確認 | P1/P2 |
-| Source Delete | guarded Windows Recycle Bin、confirm、neighbor、bulk | Delete button disabled、実装なし | 最重要 missing workflow | P0 |
-| Delete safety | project root/index/type guard、hard-deleteなし | なし | disposable copy smokeとguard test必須 | P0 |
-| Settings | confirm delete、Unseen dots、edge ratio、editable key bindings | settings shell/read-only keybinding decision。必要behavior setting不足 | Settings foundationをP0 contractの受け皿にする | P0 |
-| Enhancement view | explicit enqueue、queue、cancel/retry/open/delete、version toggle | enhanced job file read、Enhanced only、original/enhanced view。enqueueしない | read-only parityは維持。explicit enhancement実装は最後 | P3 |
-| Persistence | browser localStorage + shared cache、debounced writes | WPF state/SQLite/shared JSON、SaveState同期箇所あり | schema version、malformed fallback、UI-thread write costを整理 | P1 |
-| Errors | 一部inline、一部console/silent | status/MessageBox/一部silent | native向け統一error surfaceを作る | P1 |
-| Accessibility | focus-visible/dialog name改善、card semantics未完 | native keyboard/focusは部分的 | tab order、focus return、screen reader nameをmanual sweep | P1 |
+| ネイティブ runtime | `ADOPT` | — | .NET 8 WPF。Node/server/WebView 不要。 `PhotoViewer.Wpf.csproj:5-8` | ローカル folder の閲覧に server を要求しない |
+| 複数 folder picker / paste / recent / last | `ADOPT` | P1 | landing と共有 recent 読み込みがある。 `MainWindow.xaml:510-581`, `MainWindow.xaml.cs:192-206,3914-3965,4512-4669` | 複数 root、paste、remove、last、recent が reload 後も再現する |
+| Add folder と Change folder | `ADAPT` | P1 | 両方が同じ `OpenFolder_Click`。 `MainWindow.xaml:99-104`, `MainWindow.xaml.cs:190-206` | Add は現在 set へ追加、Change は現在 set を保持した folder-set 編集画面へ戻す |
+| 再帰 scan / 重複排除 / permission skip | `ADOPT` | P0 | recursive enumeration と path dedupe がある。 `MainWindow.xaml.cs:250-258,643-680` | 一部 folder の失敗で全 scan を失わず、重複画像を二重登録しない |
+| 1,200 枚上限 | `ADAPT` | P0 | `MaxLoadedImages = 1200` と `Take(MaxLoadedImages)`。 `MainWindow.xaml.cs:30,250-258` | silent cap を撤去し、1,201 枚目以降も検索、preview、modal 対象になる |
+| Grid bounded realization | `ADOPT` | P0 | 96 件単位、最大 384 件の realized window。 `MainWindow.xaml.cs:36-38,3110-3200` | 全件 index を維持したまま realized item 数が bounded |
+| List virtualization | `ADD` | P0 | `StackPanel` に full collection を bind。 `MainWindow.xaml:307-330` | 5,000 件で container 数が viewport 近傍に限定される |
+| 対応形式 | `ADAPT` | P1 | PNG/JPEG/WebP/BMP/GIF/TIFF。AVIF なし。 `MainWindow.xaml.cs:24-27,1729-1766` | PNG/JPEG/WebP/GIF/AVIF を fixture で decode。BMP/TIFF は extension として別判定 |
+| BMP / TIFF | `NATIVE-EXTENSION` | P2 | WPF decoder 対象として宣言。 `MainWindow.xaml.cs:24-27` | format fixture が通る場合だけ正式対応として残す |
 
-## 4. 実装順
+### 3.2 Sidebar、検索、filter、sort
 
-### Milestone WPF-P0A: contract sync and settings foundation
+| 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
+| --- | --- | --- | --- | --- |
+| Quick Search | `DROP` | P0 | 旧 preset UI と click handler が残る。 `MainWindow.xaml:108-125`, `MainWindow.xaml.cs:3026-3034` | UI、handler、state、旧 smoke 期待値を削除 |
+| 検索 grammar | `ADAPT` | P1 | 空白区切り AND。path/group/size/date 等も対象。 `MainWindow.xaml.cs:3215-3236` | カンマ区切り AND。空白 trim、空 token 無視、順不同で同じ結果 |
+| PNG prompt 検索 | `ADAPT` | P1 | 初期 `Prompt=file.FullName`。実 prompt は preview 時の lazy metadata で Tile へ戻らない。 `MainWindow.xaml.cs:683-715,2130-2207` | filename と index 済み PNG prompt を、preview 前から検索できる |
+| suggestions / chips / prompt tag action | `ADD` | P2 | plain TextBox のみ。 `MainWindow.xaml:44-52` | suggestions、chip add/remove、prompt tag→search を実装。P1 grammar 完了後に着手 |
+| Favorite 値 0..5 / +1 / -1 | `ADOPT` | P0 | shared favorites 読み書きと step 操作あり。 `MainWindow.xaml.cs:823-864,981-999,2726-2761` | 既存値を変換せず保持し、0..5 以外は境界で正規化 |
+| Favorite filter | `ADAPT` | P0 | 単一 RadioButton の `Lv N+` threshold。 `MainWindow.xaml:131-145`, `MainWindow.xaml.cs:2601-2698,3241-3248` | Lv1～5 独立 checkbox、exact-match、空集合=`All`、複数選択保存 |
+| Favorite shortcut | `ADAPT` | P0 | `F` が 0↔5、減算は `X`。 `MainWindow.xaml.cs:4682-4765` | `F` は +1、`U` は -1。TextBox/control/modal guard を共通化 |
+| Unrated | `ADAPT` | P1 | 専用 checkbox と Favorite 排他制御。 `MainWindow.xaml:131-145`, `MainWindow.xaml.cs:2525-2537` | level 0 exact として定義し、Lv checkbox/All との状態遷移を一意にする |
+| seen store / 明示選択 | `ADOPT` | P0 | WPF `.cache/seen.json`、legacy merge、選択時保存。 `MainWindow.xaml.cs:1007-1129,1898-1980` | realize/scroll だけでは増えず、明示表示時だけ additive に増える |
+| Unseen only | `NATIVE-EXTENSION` | P1 | filter が実装済み。 `MainWindow.xaml:143-145`, `MainWindow.xaml.cs:3064-3270` | dots 設定から独立し、ON/OFF で seen JSON を変更しない |
+| Unseen dots | `ADAPT` + `ADD` | P0 | Grid は常時 dot、List は dot なし、設定なし。 `App.xaml:319-430`, `MainWindow.xaml:278-330` | Settings に既定 OFF の toggle。Grid/List 両方へ同一可視性を適用 |
+| date preset | `DROP` | P0 | Today/7d/30d/This year/Clear が残る。 `MainWindow.xaml:146-170`, `MainWindow.xaml.cs:3591-3764` | preset UI、handler、state、旧 smoke 期待値を削除。manual From/To は残す |
+| manual date semantics | `ADAPT` | P1 | `ModifiedUtc` で絞り込む。 `MainWindow.xaml.cs:3255-3270` | Browser と同じ Created/Birth date。境界日は local date で固定 fixture 化 |
+| Folders collapse | `ADD` | P0 | 静的見出しで常時展開。 `MainWindow.xaml:174-204` | 既定展開。見出し button で折り畳み、child focus を残さない |
+| Folder bucket 基本操作 | `ADOPT` | P1 | Show All / Hide All / Invert と bucket 単体 toggle。 `MainWindow.xaml:174-204`, `MainWindow.xaml.cs:2539-2599` | hidden state を root 間で安定した key に保存 |
+| Folder bucket 範囲・選択操作 | `ADD` | P2 | bucket の複数/範囲選択と Show/Hide selected がない | Ctrl/Shift 選択、Show selected、Hide selected、Invert を一貫させる |
+| Sort | `ADOPT` | P1 | Modified/Created/Name/Random/Reshuffle 実装済み。 `MainWindow.xaml:206-220`, `MainWindow.xaml.cs:3273-3300,3521-3588` | reload 後も mode/方向/seed が再現し、modal order も同じ |
+| date section | `ADAPT` | P2 | Modified date で常時 group。 `MainWindow.xaml.cs:717-724` | Browser の sort と bounded-result 条件へ合わせ、非該当時は表示しない |
 
-Scope:
+### 3.3 Gallery、選択、zoom
 
-- Favorite level selector を checkbox 1..5 の独立選択へ変更。
-- selected set が空の時は All。
-- exact-match filter へ変更。
-- favorite filter state を versioned WPF state に保存。
-- `Unseen dots` setting を default OFF で追加。
-- grid/list の dot visibility を同じ setting に接続。
-- seen map と unseen-only filter は変更しない。
+| 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
+| --- | --- | --- | --- | --- |
+| Grid / List | `ADOPT` | P0 | 二つの view と選択同期がある。 `MainWindow.xaml:278-330`, `MainWindow.xaml.cs:1898-1980` | view 切替で primary/selected set/scroll context を失わない |
+| Standard / Compact / Poster | `ADOPT` | P1 | 3 style 実装済み。 `MainWindow.xaml:224-269` | style ごとの card size と state reload を screenshot で固定 |
+| Original / 1:1 / 2:3 | `ADOPT` | P1 | Original/Square/Portrait。 `MainWindow.xaml:224-269`, `MainWindow.xaml.cs:3456-3588` | crop/fit の意味を Browser と一致させ、state を保持 |
+| Zoom 範囲 | `ADAPT` | P0 | 130..280。 `MainWindow.xaml:224-269` | 40..600、Ctrl+wheel、+/-/0 が同じ clamp と reset 値を使う |
+| Zoom viewport anchor | `ADD` | P0 | slider/card size のみ更新し scroll 補正なし。 `MainWindow.xaml.cs:3381-3409` | zoom 前の viewport 中央画像と相対位置を zoom 後も維持 |
+| Zoom と sidebar | `ADOPT` を検証 | P0 | WPF card slider は Browser browser-zoom とは別だが、回帰証拠がない | card zoom で sidebar/header/font/window scale が変わらない smoke を追加 |
+| Zoom と List thumbnail | `ADAPT` | P0 | List thumbnail も card size に追随。 `MainWindow.xaml.cs:3417-3435` | Grid zoom は List row/thumb の寸法を変えない |
+| Ctrl/Shift 複数選択 | `ADOPT` | P1 | Extended selection、range/toggle、Grid/List 同期。 `MainWindow.xaml.cs:1898-1980` | range、toggle、background clear、primary の fixture を維持 |
+| Bulk Favorite | `ADD` | P2 | 複数選択件数はあるが一括 favorite UI なし | 全選択へ同一 level 設定。部分失敗を隠さず共有 JSON を一回でcommit |
+| Drag out | `ADD` | P3 | なし | Explorer 等へ source path を native FileDrop として渡す |
 
-Acceptance:
+### 3.4 Right preview、tabs、modal、Delete
 
-1. fixture に favorite level 0,1,2,3,4,5 を1枚ずつ作る。
-2. All は1..5の5枚、Lv1は1枚、Lv1+Lv4は2枚、全level OFFに戻すと5枚。
-3. reload後もLv1+Lv4を維持する。
-4. Unseen dots default OFFでdot 0、ONでunseen件数と同じdot数、OFFに戻してもseen JSONはbyte-equivalentまたは意味-equivalent。
-5. grid/list両方で同じ結果。
-6. shared favorites/recentとWPF seenの既存smokeが継続green。browser seenとの暗黙同期は受入条件にしない。
+| 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
+| --- | --- | --- | --- | --- |
+| Right preview 基本 | `ADOPT` | P1 | image/favorite/open/tab/metadata。 `MainWindow.xaml:335-439` | latest-selection guard を維持し、古い decode が新選択を上書きしない |
+| Right panel resize / persist | `ADD` | P2 | 列幅 340 固定、GridSplitter なし。 `MainWindow.xaml:82,335-439` | 240..900 の範囲で resize、reload 後に幅を復元 |
+| Right preview bulk state | `ADD` | P2 | single primary のみ | 複数選択時に件数、bulk favorite、bulk recycle を表示 |
+| Preview tabs 基本 | `ADOPT` | P1 | open/hover/activate/pin/close/reopen/close-all。 `MainWindow.xaml:442-489`, `MainWindow.xaml.cs:2807-3034` | 各操作と close stack 上限を回帰テストで保護 |
+| Open tab 集合の reload | `ADAPT` | P2 | pinned path ID は保存するが open tabs は自動復元しない。 `MainWindow.xaml.cs:2874-2919,4481-4497` | 復元する仕様なら tab order/active/pin をまとめて保存。採用しないなら文言を明確化 |
+| Modal 基本 | `ADOPT` | P1 | filtered order、zoom/pan/flip、metadata、Original/Enhanced。 `MainWindow.xaml:620-747`, `MainWindow.xaml.cs:3983-4385` | ordinary navigation で enhancement job を作らない |
+| Modal end wrap | `ADAPT` | P2 | 端で clamp。 `MainWindow.xaml.cs:4336-4356` | next/previous が末尾/先頭で wrap |
+| Modal chrome / edge / swipe | `ADAPT` | P2 | button/key navigation 中心。画像 single-click chrome toggle なし。 `MainWindow.xaml.cs:4141-4298` | native equivalent を明文化し、edge zone、chrome、操作 feedback を実装 |
+| Modal metadata tag→search | `ADD` | P2 | Prompt/Negative/Settings/copy はあるが tag action なし。 `MainWindow.xaml:697-737`, `MainWindow.xaml.cs:2130-2207` | prompt tag 操作で modal を閉じ、検索条件へ重複なく反映 |
+| Source Delete | `ADD` | P0 | Delete button disabled、処理なし。 `MainWindow.xaml:386-388` | Windows Recycle Bin の単体削除、確認、neighbor 継続、empty close |
+| Delete safety guard | `ADD` | P0 | なし | active root 内、index 登録済み、対応 image type、canonical path を全て確認 |
+| Bulk Delete | `ADD` | P2 | なし | 単体 Delete 契約が安定した後、選択 snapshot を一括 Recycle Bin へ送る |
 
-### Milestone WPF-P0B: Recycle Bin and neighbor continuation
+### 3.5 Settings、state、error、accessibility、enhancement
 
-Scope:
+| 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
+| --- | --- | --- | --- | --- |
+| App Settings surface | `ADD` | P0 | app settings なし。modal の Settings は PNG generation metadata。 `MainWindow.xaml:697-737` | Confirm before delete、Unseen dots、必要な modal 設定を一か所へ配置 |
+| WPF state schema | `ADAPT` | P1 | version なし JSON。scalar favorite threshold 等を保存。 `MainWindow.xaml.cs:4387-4508,5318-5337` | schema version、field normalization、未知 field 保持、旧 state の additive migration |
+| State write | `ADAPT` | P1 | UI thread で同期 `File.WriteAllText`。 `MainWindow.xaml.cs:4470-4500` | debounce、atomic replace、失敗時に既存ファイル保持、UI thread を止めない |
+| 保存対象 | `ADAPT` | P1 | mode/sidebar/right/scroll/dots/open tabs 等が不足。 `MainWindow.xaml.cs:4481-4497` | Browser 契約と native 必要項目を明示し、reload fixture で全項目確認 |
+| Error surface | `ADD` | P1 | status、MessageBox、silent catch が混在。例: decode failure は null。 `MainWindow.xaml.cs:1729-1766` | recoverable error を統一表示し、source/shared state を失わない |
+| Accessibility | `ADD` | P1 | logo が mouse-only TextBlock。focus/AutomationName 証拠不足。 `MainWindow.xaml:32-41` | keyboard 到達、focus return、読み上げ名、disabled reason、dialog focus trap |
+| Enhancement read-only view | `ADOPT` | P1 | 成功済み job/output のみ読む。 `MainWindow.xaml.cs:898-964` | missing output/job malformed でも source browsing を継続 |
+| Enhancement enqueue/worker | `DEFER` | P3 | WPF は enqueue しない | ownership と job schema の製品判断後だけ実装 |
+| Enhanced output delete/version UI | `DEFER` | P3 | なし | source Delete と別権限・別rootで設計後に実装 |
 
-- single selected source delete。
-- confirm/cancel、Do not ask again。
-- Windows Recycle Bin only。
-- modal/current filtered orderのneighbor選択。
-- bulk recycleはsingle flowが安定してから追加。
+## 4. 段階的完成順
 
-Acceptance:
+### WPF-P0A — Sidebar契約と状態意味の復旧
 
-1. test専用temp folderのcopyだけを使う。
-2. cancelでsource/index/selection不変。
-3. 3枚のmiddle削除 -> 次、last削除 -> 前、only削除 -> modal close/empty state。
-4. filter subset内で同じneighbor rule。
-5. project root、active set外、unsupported typeを拒否。
-6. Recycle Bin failureでindexから消さず、hard deleteしない。
-7. favorite/seen/recent/enhancement job fileを破損しない。
+実装:
 
-### Milestone WPF-P0C: remove the 1200-image product cap
+1. `DROP`: Quick Search を UI、handler、旧 smoke から削除。
+2. `DROP`: Today / 7d / 30d / This year / preset Clear を削除。manual From/To は残す。
+3. `ADD`: Folders を既定展開、見出し button で折り畳み可能にする。
+4. `ADAPT`: Favorite filter を独立 Lv1～5 checkbox、exact-match、empty=`All` に変更。
+5. `ADAPT`: scalar `FavoriteFilterLevel` を level set へ additive migration。
+6. `ADD`: `Unseen dots` setting を既定 OFF で追加し、Grid/List 両方へ適用。
+7. `ADAPT`: `F` +1、`U` -1 と共通 shortcut guard。
 
-Scope:
+受入条件:
 
-- scan/index collection と realized UI collectionを分離。
-- `Take(1200)`を削除。
-- gridのbounded realizationを維持。
-- listにもvirtualizationまたはpagingを適用。
-- search/filter/modal orderは全indexを対象にする。
+- fixture は favorite 0,1,2,3,4,5 を各1枚持つ。
+- All は level 1～5 の5枚、Lv1 は1枚、Lv1+Lv4 は2枚。全 checkbox OFF で5枚へ戻る。
+- reload 後も Lv1+Lv4 を保持。旧 scalar state は対応する単一 level set へ一度だけ移行。
+- dots 初回起動は Grid/List とも0個。ONで unseen 件数と同数、OFFへ戻しても seen JSON は同一。
+- `Unseen only` toggle は dots visibility と独立。
+- Quick Search と date preset の可視 text、focus target、event handler が0件。
+- Folders は初回展開。collapse 中は child が非表示かつTab移動対象外。
 
-Acceptance:
+### WPF-P0B — 全件catalog、List virtualization、zoom anchor
 
-1. 5,000画像fixtureで indexed/visible totalが5,000。
-2. 1,201件目以降をfilename searchで選択・preview・modal openできる。
-3. grid realized itemはbounded、listのcontainer realizationもbounded。
-4. scroll forward/backで欠落・重複・order driftなし。
-5. warm run、cold run、selection-to-preview latencyをbefore/afterで記録。
-6. cancellationとlatest-selection decode guardを維持。
+実装:
 
-### Milestone WPF-P1: search/date/state/error alignment
+1. `Take(1200)` と「1200+ loaded」の曖昧表示を撤去。
+2. 全件の軽量 catalog/query order と、thumbnail/visual realization を分離。
+3. Grid の bounded realization を保護し、List を virtualizing panel へ変更。
+4. search/filter/sort/modal/neighbor は常に全件 catalog を対象にする。
+5. zoom を 40..600 に統一し、Grid viewport 中央画像を anchor として補正。
+6. Grid zoom が sidebar/header/font/List row sizeを変えないよう分離。
 
-Scope:
+受入条件:
 
-- comma AND query grammar。
-- filename + indexed PNG prompt search。
-- created/birth date filter、またはUI labelをModifiedと明示するproduct decision。
-- state schema version + type normalization + malformed fallback。
-- debounced/async state save。
-- unified non-destructive error presentation。
-- AVIF support decision。
+- 5,000枚 fixture の total/indexed が5,000。
+- 1,201枚目以降をfilename検索し、選択、preview、modal表示できる。
+- Grid/List の realized container 数が viewport と overscan に対して bounded。
+- 先頭、中間、末尾へ往復して欠落、重複、order drift がない。
+- zoom 100→300→80 後も基準画像が viewport 内に残り、中心との差が許容範囲内。
+- sidebar/header の実測幅とfont sizeが zoom 前後で同一。
+- cold scan、warm load、selection-to-preview、peak memory を変更前後で記録。
 
-Acceptance:
+### WPF-P0C — Settings基盤と安全なDelete
 
-1. prompt-only token、filename-only token、2-token AND、comma whitespace、no-resultをfixtureで証明。
-2. createdとmodifiedが異なるfixtureでdate semanticsを証明。
-3. malformed/null/out-of-range stateでstartup crashなし、valid fieldは可能な範囲でpreserve。
-4. rapid search/resize/filter操作でUI thread stallを計測。
-5. missing permission、decode failure、open failureをsource stateを失わず表示。
+実装:
 
-### Milestone WPF-P2: interaction completion
+1. App Settings に Confirm before delete と Do not ask again を追加。
+2. 単体 source Delete を Windows Recycle Bin のみで実装。
+3. canonical path、active root、current index、対応拡張子を削除直前に再検証。
+4. 成功後に現在の filtered order の次、なければ前へ継続。
+5. 最後の1枚なら modal/preview を閉じ empty state へ移る。
+6. Recycle Bin 失敗時は catalog/stateから消さず、hard deleteへfallbackしない。
+7. bulk delete は単体契約の回帰が安定するまで P2。
 
-Scope候補:
+受入条件:
 
-- Shift range / Ctrl toggle と bulk favorite。
-- bulk Recycle Bin。
-- modal wrap、edge-zone equivalent、immersive chrome、feedback。
-- right preview bulk state。
-- folder bucket range/invert。
-- prompt tag -> search。
-- focus return / tab order / accessible naming。
+- Delete smoke は専用 temp folder に複製した fixture だけを使う。
+- cancel では source、catalog、selection、favorite、seen が不変。
+- 3枚のmiddle削除→next、last削除→previous、only削除→emptyを確認。
+- filter subset 内でも同じ neighbor rule。
+- active root外、index外、unsupported type、canonicalize失敗を拒否。
+- Recycle Bin API failureでsourceとcatalogを保持し、利用者へ復旧可能なerrorを表示。
+- favorite/seen/recent/enhancement job fileの他エントリーを破損しない。
 
-各sliceは1つのworkflowとして閉じ、large fixtureとstate regressionを毎回再実行する。
+### WPF-P0D — P0統合gate
 
-### Milestone WPF-P3: explicit enhancement
+- P0A～P0Cのsmokeを同一commitで実行。
+- 5,000枚fixture上でfavorite/dots/folder collapse/zoom/Deleteを連続操作。
+- reload後もstateが復元し、既存state/cacheを削除していない。
+- ordinary browsing前後でenhancement job fileとworker状態が不変。
+- malformed shared JSON、同時更新、Recycle Bin failureを含むfailure testを通す。
 
-browserのqueueをnativeへ移す前に、次をproduct decisionする。
+### WPF-P1 — Search、date、state、error、accessibility
 
-- WPFがjob enqueue ownerになるか、既存browser queueを監視するだけか。
-- ncnn / ComfyUI / local adapterをどこまで直接hostするか。
-- output version selectorとsource/original toggleを共有job schemaで扱うか。
+実装:
 
-Acceptance minimum:
+- comma AND、filename + indexed PNG prompt。
+- Created/Birth dateによるmanual From/To。
+- versioned/normalized WPF state とdebounced atomic write。
+- Add folder / Change folder の意味分離。Change はcurrent setを保持した編集画面へ戻す。
+- AVIF decoder採否とformat fixture。
+- unified error surface。
+- focus return、tab order、AutomationName、shortcut guard。
 
-- passive browsingでenqueue/worker startが0。
+受入条件:
+
+- prompt-only、filename-only、2-token AND、comma whitespace、no-resultをfixtureで固定。
+- createdとmodifiedが異なるfixtureでCreated date意味を証明。
+- malformed/null/out-of-range旧stateでstartup crashせず、正常fieldを可能な範囲で保持。
+- rapid search/resize/filterでUI thread stallとstate破損がない。
+- permission/decode/open failure後も他画像を閲覧できる。
+
+### WPF-P2 — 操作完成
+
+- Folder bucket Ctrl/Shift選択、Show selected、Hide selected。
+- Bulk Favorite、単体契約を再利用したBulk Recycle Bin。
+- right panel resize/persist、bulk state。
+- modal wrap、edge-zone、chrome、操作feedback。
+- Preview tab のmiddle-click/reorder/reload契約。
+- suggestions/chips、prompt tag→search。
+- date sectionの条件整合。
+
+各sliceは一つのworkflowとして閉じ、P0の5,000枚、state、Delete、enhancement isolationを毎回再実行する。
+
+### WPF-P3 — 製品判断後
+
+- native FileDropによるdrag out。
+- Enhancement enqueue/queue/cancel/retry/output delete/version selector。
+- 高度なgestureとvisual polish。
+
+Enhancementを実装する場合も、最低条件は次の通り。
+
+- passive browsingでenqueue 0、worker start 0。
 - explicit action 1回でjob 1件。
-- cancel/retry/open/delete outputをsource deleteと分離。
+- output deleteとsource Deleteを別権限・別rootで扱う。
 - managed output root外を削除しない。
 
-## 5. Browserの弱点をそのまま移さない
+## 5. 実装リスクと抑止策
 
-- client filter count mismatch
-- pinが完全なreload restoreではない点
-- card click-able divの不完全なkeyboard semantics
-- localStorageのunversioned `pvu_view`
-- scan cancel不在
-- errorがconsole/silentに散る点
-- multiple enhancement poller
+### R1. 巨大 code-behind
 
-WPFではこれらを「parity」と呼んでコピーしない。必要なuser outcomeを保ちつつ、native implementationで改善する。
+現状の `MainWindow.xaml.cs` は約5,600行で、scan、query、selection、preview、state、
+shared JSON、modal、shortcut が一つに集中している。P0機能を直接追加し続けると、
+Favorite変更がselectionやmodal orderを壊すような回帰が起こりやすい。
 
-## 6. 毎 milestone の共通 gate
+抑止策:
 
-1. `local-native/PhotoViewer.Wpf/**` 以外を変更しない。ただしshared contract docを更新するcloseout commitは分離してよい。
-2. Debug / Release build 0 error。
-3. 対象workflowの専用smoke。
-4. existing startup/state/favorites/seen/recent/folder-set/preview/modal/metadata smokesから影響範囲を再実行。
-5. disposable fixture以外をDeleteしない。
-6. ordinary browsing前後で `.cache/enhance/jobs.json` と isolation counterが不変。
-7. screenshotを実寸で確認し、overlap、crop、focus、text fitを記録。
-8. user/shared stateを削除しない。migrationはadditiveか明示export/importのみ。
-9. GitHub issue/PRとSQLite jobにtest evidenceを短く反映。
+1. 大規模全面rewriteはしない。先に現行smokeをcharacterization testとして固定。
+2. P0で必要な境界だけを順番に抽出する。
+   - `ImageCatalog`: 全件とquery order
+   - `GalleryViewport`: realized rangeとanchor
+   - `ViewerStateStore`: version/migration/atomic save
+   - `SharedJsonCoordinator`: favorite/recentのread-merge-write
+   - `RecycleBinDeleteService`: guardと結果
+3. UI event handlerはstate遷移を呼ぶだけにし、filter/delete/persistence規則を直接持たせない。
+4. 抽出ごとに挙動を変えないcommitと契約変更commitを分ける。
 
-## 7. 推奨する次の1件
+### R2. 大量画像
 
-次は `WPF-P0A: independent Favorite Lv1-5 + Unseen dots visibility + Settings foundation` を1マイルストーンとして実装する。これはユーザーが最初に指摘したbrowser回帰と直接対応し、Deleteより破壊性が低く、その後のDelete確認設定の受け皿も作れる。
+`Take(1200)` を消すだけでは、非virtualized List、thumbnail decode、検索毎の全件filterによって
+UI freezeやmemory急増が起きる。全件を「保持すること」と全件を「visual/decodeすること」を分離する。
+
+抑止策:
+
+- catalog recordはpath、日時、favorite、seen、軽量metadataに限定。
+- thumbnailはcancel可能な遅延decodeとbounded cache。
+- query結果は全件を表すが、WPF containerはviewport+overscanのみ。
+- search TextChangedはdebounceし、古いquery/decode結果が新stateを上書きしないgeneration guardを持つ。
+- 5,000枚を最低gateとし、20,000枚は性能観測用。silent truncateはどの件数でも禁止。
+
+### R3. 共有 JSON の競合
+
+BrowserとWPFは `.cache/favorites.json` と `.cache/recent-folders.json` を共有する。
+現在の同期 `File.WriteAllText` は、同時更新、途中終了、読み取り中の上書きでlast-writer-winsや破損を
+起こし得る。seenはWPF `.cache/seen.json` とBrowser localStorageで所有者が異なるため、
+同じ仕組みで自動同期してはいけない。
+
+抑止策:
+
+1. 書き込み直前に最新disk stateを再読込し、変更対象keyだけmerge。
+2. temp fileへflush後、同一volumeでatomic replace。
+3. 短いprocess間lock、bounded retry、mtime/hash競合検知。
+4. malformed fileを空として上書きしない。元ファイルを保持し、recoverable errorとして止める。
+5. 未知fieldと他path entryを保持。
+6. Bulk Favoriteは各画像ごとの書き込みではなく、一つのmerge transactionとしてcommit。
+7. WPF seenはadditive union。Browser seenの自動import/exportは明示仕様ができるまで行わない。
+
+### R4. Delete
+
+Deleteは唯一の破壊的workflowで、selectionやfiltered orderの不整合が実ファイル損失へ直結する。
+
+抑止策:
+
+- testは必ずtemp copy。
+- delete直前にcanonical pathとactive root membershipを再評価。
+- shell Recycle Bin成功を確認してからcatalogを更新。
+- hard delete APIをfallbackとして持たない。
+- shared JSON cleanupはsource recycle成功後の別処理。失敗しても他entryを失わない。
+- neighborは削除前のcurrent filtered orderとprimary indexから決定し、未選択画像へ飛ばない。
+
+### R5. State migration
+
+現在はunversioned stateにscalar favorite thresholdを保存している。新しいlevel setやdots設定を
+単純に追加すると、旧stateで起動不能、または既定値誤適用が起きる。
+
+抑止策:
+
+- version 0 readerを残し、scalar thresholdは同じ数字のsingle exact levelへ移行。
+- dots fieldなしは必ずOFF。
+- date presetは移行せずmanual rangeだけ保持。
+- 未知fieldを理由に全stateを捨てない。
+- migration結果を再保存する前に正常化し、元stateのbackupまたはatomic replaceを使う。
+
+## 6. 各milestoneの共通gate
+
+1. Debug / Release build 0 error。
+2. 対象workflowの専用smokeと既存startup/state/favorites/seen/recent/folder-set/preview/modal smoke。
+3. 5,000枚fixtureで件数、query order、scroll、selection、previewを確認。
+4. Deleteはtemp copy以外へ実行しない。
+5. ordinary browsing前後でenhancement job fileとworkerが不変。
+6. screenshotでsidebar幅、text fit、focus、overlap、Grid/List、modalを確認。
+7. malformed/permission/decoder/shared-state conflictを含むfailure test。
+8. user/shared stateを削除しない。migrationはadditive、atomic、または明示import/exportのみ。
+9. 実行commit、コマンド、結果、fixture、screenshot、console/errorをWPF専用verificationへ記録。
+
+## 7. 完成の判定
+
+WPF版を「Browser仕様を基に完成」と呼べるのは、少なくともP0とP1が完了し、次を満たした時。
+
+- Favorite Lv1～5＋All、Unseen dots既定OFF、Folders collapseが仕様通り。
+- Quick Searchとdate presetが存在しない。
+- 1,200枚を超えても全件が検索・preview・modal・Delete対象。
+- zoomでsidebarが変化せず、見ていた画像をviewport内に維持。
+- DeleteがRecycle Bin、guard、confirm、neighbor、failure保持を満たす。
+- search/date/state/shared JSONの意味がfixtureで固定されている。
+- passive browsingでenhancement副作用がない。
+- 既存ユーザーstate/cacheを消さずに移行できる。
+
+P2は「日常操作の完成」、P3は「製品判断後の拡張」として分ける。P3が未実装であることだけを理由に、
+Browser基準のWPF完成を無期限に延ばさない。
