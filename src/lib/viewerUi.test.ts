@@ -143,6 +143,64 @@ describe('getZoomCenteredScrollTop', () => {
 
     expect(nextScrollTop).toBe(0);
   });
+
+  it('keeps the same visible item at the same viewport offset when columns change', () => {
+    const nextScrollTop = getZoomCenteredScrollTop(
+      {
+        scrollTop: 1200,
+        viewportHeight: 800,
+        rowHeight: 200,
+        gridColumns: 5,
+        fullCount: 500,
+        totalHeight: 20000,
+        anchorIndex: 42,
+        anchorTop: 1600,
+        anchorViewportOffset: 400,
+      },
+      {
+        scrollTop: 1200,
+        viewportHeight: 800,
+        rowHeight: 320,
+        gridColumns: 3,
+        fullCount: 500,
+        totalHeight: 54000,
+        anchorIndex: 42,
+        anchorTop: 4480,
+        anchorViewportOffset: 3280,
+      }
+    );
+
+    expect(nextScrollTop).toBe(4080);
+  });
+
+  it('uses the explicit item top for a grid with date-section offsets', () => {
+    const nextScrollTop = getZoomCenteredScrollTop(
+      {
+        scrollTop: 920,
+        viewportHeight: 700,
+        rowHeight: 180,
+        gridColumns: 4,
+        fullCount: 80,
+        totalHeight: 5000,
+        anchorIndex: 31,
+        anchorTop: 1240,
+        anchorViewportOffset: 320,
+      },
+      {
+        scrollTop: 920,
+        viewportHeight: 700,
+        rowHeight: 260,
+        gridColumns: 3,
+        fullCount: 80,
+        totalHeight: 7600,
+        anchorIndex: 31,
+        anchorTop: 2790,
+        anchorViewportOffset: 1870,
+      }
+    );
+
+    expect(nextScrollTop).toBe(2470);
+  });
 });
 
 describe('getArrowSelectionIndex', () => {
