@@ -79,4 +79,34 @@ describe('Sidebar favorite level controls', () => {
     await user.click(screen.getByRole('button', { name: 'All' }));
     expect(clearFavoriteFilterLevels).toHaveBeenCalledTimes(1);
   });
+
+  it('keeps custom date inputs while omitting quick-search and date presets', () => {
+    render(<Sidebar />);
+
+    expect(screen.queryByText('Quick Search')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Today' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '7d' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: '30d' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'This year' })).not.toBeInTheDocument();
+    expect(screen.getByLabelText('Date from')).toBeInTheDocument();
+    expect(screen.getByLabelText('Date to')).toBeInTheDocument();
+  });
+
+  it('collapses and restores the Folders section from its heading', async () => {
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const foldersToggle = screen.getByRole('button', { name: 'Folders' });
+    const emptyFoldersMessage = screen.getByText('No folders found under this root.');
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(emptyFoldersMessage).toBeVisible();
+
+    await user.click(foldersToggle);
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(emptyFoldersMessage).not.toBeVisible();
+
+    await user.click(foldersToggle);
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(emptyFoldersMessage).toBeVisible();
+  });
 });

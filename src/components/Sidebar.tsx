@@ -6,13 +6,6 @@ import { getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../li
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
 
-function toDateInputValue(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
 function createRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
@@ -21,7 +14,6 @@ export default function Sidebar() {
   const {
     view,
     setView,
-    setSearchQuery,
     dirPath,
     setDirPath,
     startScan,
@@ -50,6 +42,7 @@ export default function Sidebar() {
   const [lastSelectedFolderKey, setLastSelectedFolderKey] = useState<string | null>(null);
   const [addingFolder, setAddingFolder] = useState(false);
   const [folderActionError, setFolderActionError] = useState('');
+  const [foldersExpanded, setFoldersExpanded] = useState(true);
 
   const hiddenFolderSet = useMemo(() => new Set(view.hiddenFolders), [view.hiddenFolders]);
   const selectedFolderSet = useMemo(() => new Set(selectedFolderKeys), [selectedFolderKeys]);
@@ -113,32 +106,6 @@ export default function Sidebar() {
   }, [folderBuckets]);
 
   if (!view.sidebarOpen) return null;
-
-  const applyDatePreset = (preset: 'today' | '7d' | '30d' | 'year' | 'clear') => {
-    const today = new Date();
-    const todayYmd = toDateInputValue(today);
-
-    if (preset === 'clear') {
-      setView({ dateFrom: '', dateTo: '' });
-      return;
-    }
-
-    if (preset === 'today') {
-      setView({ dateFrom: todayYmd, dateTo: todayYmd });
-      return;
-    }
-
-    if (preset === 'year') {
-      const from = `${today.getFullYear()}-01-01`;
-      setView({ dateFrom: from, dateTo: todayYmd });
-      return;
-    }
-
-    const days = preset === '7d' ? 7 : 30;
-    const fromDate = new Date(today);
-    fromDate.setDate(today.getDate() - (days - 1));
-    setView({ dateFrom: toDateInputValue(fromDate), dateTo: todayYmd });
-  };
 
   const toggleFolderVisibility = (folderKey: string) => {
     const isHidden = view.hiddenFolders.includes(folderKey);
@@ -270,25 +237,6 @@ export default function Sidebar() {
 
       <div className="sidebar-section">
         <div className="sidebar-section-header">
-          <span>Quick Search</span>
-        </div>
-        <div className="sidebar-pills">
-          {[
-            { label: 'Portrait', q: '1girl, portrait' },
-            { label: 'Landscape', q: 'landscape' },
-            { label: 'Anime', q: 'anime style' },
-            { label: 'Photoreal', q: 'photorealistic' },
-          ].map((preset) => (
-            <button key={preset.label} className="pill" onClick={() => setSearchQuery(preset.q)}>
-              {preset.label}
-            </button>
-          ))}
-          <button className="pill" onClick={() => setSearchQuery('')}>Clear</button>
-        </div>
-      </div>
-
-      <div className="sidebar-section">
-        <div className="sidebar-section-header">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
           </svg>
@@ -342,14 +290,6 @@ export default function Sidebar() {
         </label>
 
         <div className="sidebar-date-range">
-          <div className="sidebar-pills">
-            <button className="pill" onClick={() => applyDatePreset('today')}>Today</button>
-            <button className="pill" onClick={() => applyDatePreset('7d')}>7d</button>
-            <button className="pill" onClick={() => applyDatePreset('30d')}>30d</button>
-            <button className="pill" onClick={() => applyDatePreset('year')}>This year</button>
-            <button className="pill" onClick={() => applyDatePreset('clear')}>Clear</button>
-          </div>
-
           <label className="sidebar-date-label">
             <span>Date from</span>
             <input
@@ -379,21 +319,31 @@ export default function Sidebar() {
       </div>
 
       <div className="sidebar-section">
-        <div className="sidebar-section-header">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <button
+          type="button"
+          className="sidebar-section-header sidebar-section-toggle"
+          aria-expanded={foldersExpanded}
+          aria-controls="sidebar-folders-content"
+          onClick={() => setFoldersExpanded((expanded) => !expanded)}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M3 4h18M3 12h18M3 20h18" />
           </svg>
           <span>Folders</span>
-        </div>
+          <svg className="sidebar-section-chevron" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <polyline points="6 9 12 15 18 9" />
+          </svg>
+        </button>
 
-        {loadingFolders && <p className="sidebar-meta">Loading folder list...</p>}
+        <div id="sidebar-folders-content" hidden={!foldersExpanded}>
+            {loadingFolders && <p className="sidebar-meta">Loading folder list...</p>}
 
-        {!loadingFolders && folderBuckets.length === 0 && (
-          <p className="sidebar-meta">No folders found under this root.</p>
-        )}
+            {!loadingFolders && folderBuckets.length === 0 && (
+              <p className="sidebar-meta">No folders found under this root.</p>
+            )}
 
-        {folderBuckets.length > 0 && (
-          <>
+            {folderBuckets.length > 0 && (
+              <>
             <div className="sidebar-pills" style={{ marginBottom: '0.5rem' }}>
               <button
                 className={`pill ${view.folderSortBy === 'name-asc' ? 'active' : ''}`}
@@ -472,16 +422,17 @@ export default function Sidebar() {
                 );
               })}
             </div>
-          </>
-        )}
+              </>
+            )}
 
-        {view.hiddenFolders.length > 0 && (
-          <div className="sidebar-folder-actions">
-            <button className="sidebar-link" style={{ marginTop: '0.55rem' }} onClick={showAllFolders}>
-              Show all folders
-            </button>
-          </div>
-        )}
+            {view.hiddenFolders.length > 0 && (
+              <div className="sidebar-folder-actions">
+                <button className="sidebar-link" style={{ marginTop: '0.55rem' }} onClick={showAllFolders}>
+                  Show all folders
+                </button>
+              </div>
+            )}
+        </div>
       </div>
 
       <div className="sidebar-section">

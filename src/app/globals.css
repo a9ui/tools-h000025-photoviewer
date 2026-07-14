@@ -577,6 +577,25 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-tertiary);
   margin-bottom: 0.6rem;
 }
+.sidebar-section-toggle {
+  width: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.sidebar-section-toggle[aria-expanded="false"] {
+  margin-bottom: 0;
+}
+.sidebar-section-chevron {
+  margin-left: auto;
+  transition: transform var(--transition-fast);
+}
+.sidebar-section-toggle[aria-expanded="false"] .sidebar-section-chevron {
+  transform: rotate(-90deg);
+}
 .sidebar-path {
   font-size: 0.85rem;
   color: var(--text-primary);
