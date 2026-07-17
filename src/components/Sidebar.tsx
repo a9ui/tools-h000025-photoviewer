@@ -5,6 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
+import { useDialogFocus } from '../lib/useDialogFocus';
 
 function createRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -47,6 +48,8 @@ export default function Sidebar() {
   const [folderActionError, setFolderActionError] = useState('');
   const foldersToggleRef = useRef<HTMLButtonElement>(null);
   const foldersContentRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
   const foldersExpanded = view.foldersExpanded;
 
   const hiddenFolderSet = useMemo(() => new Set(view.hiddenFolders), [view.hiddenFolders]);
@@ -137,6 +140,21 @@ export default function Sidebar() {
     setSelectedFolderKeys((prev) => prev.filter((key) => available.has(key)));
     setLastSelectedFolderKey((prev) => (prev && available.has(prev) ? prev : null));
   }, [folderBuckets]);
+
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 768px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
+  }, []);
+
+  useDialogFocus({
+    open: isMobile && view.sidebarOpen,
+    dialogRef: drawerRef,
+    onEscape: () => setView({ sidebarOpen: false }),
+  });
 
   if (!view.sidebarOpen) return null;
 
@@ -255,7 +273,16 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <>
+      {isMobile && <button type="button" className="sidebar-drawer-backdrop" aria-label="Close filters" onClick={() => setView({ sidebarOpen: false })} />}
+      <aside
+        ref={drawerRef}
+        className={`sidebar ${isMobile ? 'sidebar-drawer' : ''}`}
+        role={isMobile ? 'dialog' : undefined}
+        aria-modal={isMobile || undefined}
+        aria-label={isMobile ? 'Filters and display options' : undefined}
+        tabIndex={isMobile ? -1 : undefined}
+      >
       <div className="sidebar-section">
         <div className="sidebar-section-header">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -606,6 +633,7 @@ export default function Sidebar() {
           Settings
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

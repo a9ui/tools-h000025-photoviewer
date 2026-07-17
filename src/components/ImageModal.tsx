@@ -178,6 +178,7 @@ export default function ImageModal() {
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<MetadataTab>('prompt');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [isMobileSheet, setIsMobileSheet] = useState(false);
   const [copied, setCopied] = useState(false);
   const [flipped, setFlipped] = useState(false);
   const [chromeHidden, setChromeHidden] = useState(false);
@@ -203,6 +204,7 @@ export default function ImageModal() {
   const enhancedDisplayChoiceRef = useRef<Record<string, boolean>>({});
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const modalCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const metadataSidebarRef = useRef<HTMLElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
   const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
 
@@ -345,6 +347,19 @@ export default function ImageModal() {
     open: selectedIndex !== null,
     dialogRef: modalBodyRef,
     initialFocusRef: modalCloseButtonRef,
+  });
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 768px)');
+    const sync = () => setIsMobileSheet(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
+  }, []);
+  useDialogFocus({
+    open: isMobileSheet && !sidebarCollapsed && selectedIndex !== null,
+    dialogRef: metadataSidebarRef,
+    onEscape: () => setSidebarCollapsed(true),
   });
   useDialogFocus({
     open: showConfirmDelete,
@@ -1094,7 +1109,18 @@ export default function ImageModal() {
             )}
           </div>
 
-          <aside id="modal-metadata-sidebar" className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}>
+          {isMobileSheet && !sidebarCollapsed && (
+            <button type="button" className="modal-sheet-backdrop" aria-label="Close metadata sidebar" onClick={() => setSidebarCollapsed(true)} />
+          )}
+          <aside
+            ref={metadataSidebarRef}
+            id="modal-metadata-sidebar"
+            className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}
+            role={isMobileSheet ? 'dialog' : undefined}
+            aria-modal={isMobileSheet || undefined}
+            aria-label={isMobileSheet ? 'Image metadata' : undefined}
+            tabIndex={isMobileSheet ? -1 : undefined}
+          >
             <MetadataTabList
               activeTab={sidebarTab}
               onActiveTabChange={setSidebarTab}
