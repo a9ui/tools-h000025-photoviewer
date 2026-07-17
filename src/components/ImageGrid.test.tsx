@@ -43,6 +43,8 @@ const cycleFavoriteLevel = vi.fn();
 const decreaseFavoriteLevel = vi.fn();
 const markImageSeen = vi.fn();
 const requestRevealImage = vi.fn();
+const retrySearch = vi.fn();
+const dismissSearchError = vi.fn();
 
 function createStore(
   viewMode: "grid" | "list" = "grid",
@@ -127,6 +129,24 @@ beforeEach(() => {
 });
 
 describe("ImageGrid keyboard primary controls", () => {
+  it("announces a search error above retained results and retries without showing the empty state", async () => {
+    vi.mocked(useImageStore).mockReturnValue({
+      ...createStore(),
+      searchError: "Search service temporarily unavailable",
+      retrySearch,
+      dismissSearchError,
+    });
+
+    const user = userEvent.setup();
+    renderGrid();
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Search error: Search service temporarily unavailable");
+    expect(screen.getByRole("button", { name: /select first\.png/i })).toBeInTheDocument();
+    expect(screen.queryByText(/no images match/i)).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Retry the current search" }));
+    expect(retrySearch).toHaveBeenCalledTimes(1);
+  });
+
   it("reaches the first card by keyboard, selects with Space, and opens with Enter", async () => {
     const user = userEvent.setup();
     renderGrid();

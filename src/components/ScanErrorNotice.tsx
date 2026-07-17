@@ -5,12 +5,29 @@ interface ScanErrorNoticeProps {
   canRetry: boolean;
   onRetry: () => void;
   onDismiss: () => void;
+  subject?: 'scan' | 'search';
 }
 
-export function ScanErrorNotice({ message, canRetry, onRetry, onDismiss }: ScanErrorNoticeProps) {
+export function ScanErrorNotice({
+  message,
+  canRetry,
+  onRetry,
+  onDismiss,
+  subject = 'scan',
+}: ScanErrorNoticeProps) {
+  const isSearch = subject === 'search';
+  const label = isSearch ? 'Search' : 'Scan';
+  const retryLabel = isSearch ? 'Retry search' : 'Retry scan';
+  const retryAriaLabel = isSearch
+    ? 'Retry the current search'
+    : 'Retry scan with the current folder set';
+  const disabledRetryAriaLabel = isSearch
+    ? 'Retry search is unavailable'
+    : 'Retry scan is unavailable because no folder set is selected';
+
   return (
     <div className="landing-error scan-error-notice" role="alert">
-      <span>Scan error: {message}</span>
+      <span>{label} error: {message}</span>
       <div className="scan-error-actions">
         <button
           className="sidebar-link"
@@ -18,10 +35,10 @@ export function ScanErrorNotice({ message, canRetry, onRetry, onDismiss }: ScanE
           onClick={onRetry}
           disabled={!canRetry}
           aria-label={canRetry
-            ? 'Retry scan with the current folder set'
-            : 'Retry scan is unavailable because no folder set is selected'}
+            ? retryAriaLabel
+            : disabledRetryAriaLabel}
         >
-          Retry scan
+          {retryLabel}
         </button>
         <button className="sidebar-link" type="button" onClick={onDismiss}>
           Dismiss

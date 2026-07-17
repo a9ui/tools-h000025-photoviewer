@@ -28,6 +28,7 @@ import {
   type DateSectionLayoutEntry,
 } from '../lib/dateSectionLayout';
 import CachedImage from './CachedImage';
+import { ScanErrorNotice } from './ScanErrorNotice';
 
 const OVERSCAN_ROWS = 4;
 const SEARCH_PAGE_SIZE = 100;
@@ -144,7 +145,7 @@ function getZoomAnchorIndex({
 
 export default function ImageGrid() {
   const {
-    searchQuery, searchResults, searchTotal, isSearching, ensureSearchRange,
+    searchQuery, searchResults, searchTotal, isSearching, searchError, ensureSearchRange, retrySearch, dismissSearchError,
     selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
     closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
@@ -1066,6 +1067,20 @@ export default function ImageGrid() {
     ? rovingImageId
     : fallbackRovingImage?.id ?? rovingImageId;
 
+  if (searchError && fullCount === 0) {
+    return (
+      <div className="empty-state">
+        <ScanErrorNotice
+          subject="search"
+          message={searchError}
+          canRetry
+          onRetry={retrySearch}
+          onDismiss={dismissSearchError}
+        />
+      </div>
+    );
+  }
+
   if (!isSearching && fullCount === 0) {
     return (
       <div className="empty-state">
@@ -1347,6 +1362,15 @@ export default function ImageGrid() {
   return (
     <div className="grid-container" ref={containerRef}
       onClick={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
+      {searchError && (
+        <ScanErrorNotice
+          subject="search"
+          message={searchError}
+          canRetry
+          onRetry={retrySearch}
+          onDismiss={dismissSearchError}
+        />
+      )}
       <div
         className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}
         style={{ height: virtualRange.totalHeight }}

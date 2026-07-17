@@ -79,6 +79,33 @@ function PreviewTabsProbe() {
   );
 }
 
+function SearchProbe() {
+  const {
+    phase,
+    setPhase,
+    setDirPath,
+    setSearchQuery,
+    searchResults,
+    searchError,
+    retrySearch,
+  } = useImageStore();
+  return (
+    <div>
+      <output aria-label="search phase">{phase}</output>
+      <output aria-label="search result ids">
+        {searchResults.filter((image): image is ImageFile => Boolean(image)).map((image) => image.id).join(',')}
+      </output>
+      <output aria-label="search error state">{searchError ?? ''}</output>
+      <button type="button" onClick={() => {
+        setDirPath('C:/images');
+        setPhase('viewer');
+      }}>Load initial search</button>
+      <button type="button" onClick={() => setSearchQuery('next query')}>Run failing search</button>
+      <button type="button" onClick={retrySearch}>Retry current search</button>
+    </div>
+  );
+}
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -626,6 +653,64 @@ describe('ImageProvider preview tab persistence', () => {
   });
 });
 
+describe('ImageProvider search recovery', () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('keeps the last successful result set visible after a current search fails and retries it', async () => {
+    const nextImage: ImageFile = {
+      ...previewProbeImage,
+      id: 'C:/images/retried.png',
+      filename: 'retried.png',
+    };
+    let searchCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/search')) {
+        searchCalls += 1;
+        if (searchCalls === 1) {
+          return {
+            ok: true,
+            json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }),
+          } as Response;
+        }
+        if (searchCalls === 2) throw new Error('Search service temporarily unavailable');
+        return {
+          ok: true,
+          json: async () => ({ results: [nextImage], total: 1, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ favorites: {}, jobs: [] }),
+      } as Response;
+    }));
+
+    render(
+      <ImageProvider>
+        <SearchProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load initial search' }));
+    await screen.findByText(previewProbeImage.id);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Run failing search' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search error state' }))
+        .toHaveTextContent('Search service temporarily unavailable');
+    });
+    expect(screen.getByRole('status', { name: 'search result ids' }))
+      .toHaveTextContent(previewProbeImage.id);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry current search' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(nextImage.id);
+      expect(screen.getByRole('status', { name: 'search error state' })).toHaveTextContent('');
+    });
+  });
+});
+
 describe('ImageProvider scan failures', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -662,6 +747,31 @@ describe('ImageProvider scan failures', () => {
     expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
     expect(window.alert).not.toHaveBeenCalled();
     expect(source.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows an SSE scan conflict reason instead of a generic connection-loss message', async () => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.onmessage?.({ data: JSON.stringify({
+        type: 'error',
+        message: 'A scan for this folder set is already running. Please retry when it completes.',
+      }) } as MessageEvent);
+      source.onerror?.(new Event('error'));
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'scan error' }))
+        .toHaveTextContent('A scan for this folder set is already running. Please retry when it completes.');
+    });
+    expect(screen.getByRole('status', { name: 'scan error' }))
+      .not.toHaveTextContent('Connection lost before the scan completed.');
   });
 
   it('stores connection loss, clears it for a retry, and remains clear after completion', async () => {

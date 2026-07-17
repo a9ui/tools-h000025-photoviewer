@@ -29,8 +29,10 @@ vi.mock('@/lib/thumbnailCache', () => ({
 
 import { GET } from './route';
 
-function scanRequest(dir: string) {
-  return new NextRequest(`http://127.0.0.1/api/scan?dir=${encodeURIComponent(dir)}`);
+function scanRequest(dir: string, accept?: string) {
+  return new NextRequest(`http://127.0.0.1/api/scan?dir=${encodeURIComponent(dir)}`, {
+    headers: accept ? { accept } : undefined,
+  });
 }
 
 afterEach(() => {
@@ -51,6 +53,15 @@ describe('GET /api/scan lifecycle', () => {
     expect(first.status).toBe(200);
     expect(duplicate.status).toBe(409);
     expect(await duplicate.json()).toMatchObject({ retryable: true });
+
+    const eventSourceConflict = await GET(
+      scanRequest('c:/pictures/b\nC:/PICTURES/a', 'text/event-stream')
+    );
+    expect(eventSourceConflict.status).toBe(200);
+    expect(eventSourceConflict.headers.get('content-type')).toContain('text/event-stream');
+    const eventSourceBody = await eventSourceConflict.text();
+    expect(eventSourceBody).toContain('"type":"error"');
+    expect(eventSourceBody).toContain('already running');
 
     await first.body?.cancel();
     await vi.waitFor(async () => {

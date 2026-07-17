@@ -227,7 +227,10 @@ interface Ctx {
   searchResults: Array<ImageFile | null>;
   searchTotal: number;
   isSearching: boolean;
+  searchError: string | null;
   ensureSearchRange: (startIndex: number, endIndex: number) => void;
+  retrySearch: () => void;
+  dismissSearchError: () => void;
 
   // Favorites
   favorites: Record<string, number>;
@@ -318,6 +321,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [searchResults, setSearchResults] = useState<Array<ImageFile | null>>([]);
   const [searchTotal, setSearchTotal] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
 
   const [favorites, setFavorites] = useState<Record<string, number>>({});
   const [showFavOnlyState, setShowFavOnlyState] = useState(false);
@@ -384,6 +388,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     dirPath: '',
   });
   const searchGenerationRef = useRef(0);
+  const committedSearchGenerationRef = useRef(0);
+  const lastFailedSearchPageRef = useRef<number | null>(null);
   const searchResultsRef = useRef<Array<ImageFile | null>>([]);
   const searchTotalRef = useRef(0);
   const pendingPreviewTabsRestoreRef = useRef<PersistedPreviewTabs | null>(null);
@@ -867,6 +873,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
     pendingPagesRef.current.add(pageKey);
     setIsSearching(true);
+    if (generation === searchGenerationRef.current) setSearchError(null);
     const startedAt = performance.now();
     const abortController = new AbortController();
     pendingSearchControllersRef.current.set(pageKey, abortController);
@@ -882,7 +889,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const dirParam = currentDirPath ? `&dir=${encodeURIComponent(currentDirPath)}` : '';
       const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${randomSeedParam}${fromParam}${toParam}${hiddenParam}${dirParam}`;
       const res = await fetch(url, { signal: abortController.signal });
-      const data: SearchResponse = await res.json();
+      const data = await res.json().catch(() => null) as SearchResponse | { error?: unknown } | null;
+      if (!res.ok) {
+        const errorData = data as { error?: unknown } | null;
+        const message = errorData && typeof errorData.error === 'string'
+          ? errorData.error
+          : `Search request failed (${res.status}).`;
+        throw new Error(message);
+      }
+      if (!data || !Array.isArray((data as SearchResponse).results)
+        || !Number.isFinite((data as SearchResponse).total)) {
+        throw new Error('Search returned an invalid response.');
+      }
+      const searchData = data as SearchResponse;
 
       // Ignore stale responses from previous query/sort/date state.
       const meta = searchMetaRef.current;
@@ -899,17 +918,20 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         return;
       }
 
-      const withFavs = data.results.map((img) => ({
+      const withFavs = searchData.results.map((img) => ({
         ...img,
         isFavorite: !!favoritesRef.current[img.id],
       }));
 
-      searchTotalRef.current = data.total;
-      setSearchTotal((prevTotal) => (prevTotal === data.total ? prevTotal : data.total));
+      const replacePreviousResults = committedSearchGenerationRef.current !== generation;
+      committedSearchGenerationRef.current = generation;
+      lastFailedSearchPageRef.current = null;
+      searchTotalRef.current = searchData.total;
+      setSearchTotal((prevTotal) => (prevTotal === searchData.total ? prevTotal : searchData.total));
       setSearchResults((prev) => {
-        const needsResize = prev.length !== data.total;
-        const next = needsResize ? Array<ImageFile | null>(data.total).fill(null) : [...prev];
-        if (needsResize) {
+        const needsResize = replacePreviousResults || prev.length !== searchData.total;
+        const next = needsResize ? Array<ImageFile | null>(searchData.total).fill(null) : [...prev];
+        if (needsResize && !replacePreviousResults) {
           const keep = Math.min(prev.length, next.length);
           for (let i = 0; i < keep; i++) next[i] = prev[i];
         }
@@ -930,6 +952,12 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       });
     } catch (e) {
       if (abortController.signal.aborted) return;
+      if (generation !== searchGenerationRef.current) return;
+      lastFailedSearchPageRef.current = page;
+      const message = e instanceof Error && e.message
+        ? e.message
+        : 'Search failed. Please retry.';
+      setSearchError(message);
       console.error('Search failed', e);
     } finally {
       pendingSearchControllersRef.current.delete(pageKey);
@@ -951,6 +979,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     hiddenFolders: string[],
     currentDirPath: string
   ) => {
+    const preserveCurrentResults = searchMetaRef.current.dirPath === currentDirPath;
     searchMetaRef.current = {
       query,
       sortBy,
@@ -965,11 +994,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     abortPendingSearchRequests();
     loadedPagesRef.current = new Set();
     pendingPagesRef.current = new Set();
-    searchTotalRef.current = 0;
-    searchResultsRef.current = [];
+    lastFailedSearchPageRef.current = null;
+    setSearchError(null);
+    if (!preserveCurrentResults) {
+      searchTotalRef.current = 0;
+      searchResultsRef.current = [];
+      setSearchTotal(0);
+      setSearchResults([]);
+    }
     setIsSearching(false);
-    setSearchTotal(0);
-    setSearchResults([]);
   }, [abortPendingSearchRequests, buildHiddenFoldersKey]);
 
   const ensureSearchRange = useCallback((startIndex: number, endIndex: number) => {
@@ -1002,6 +1035,28 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       );
     }
   }, [doSearchPage, getSearchPageKey, isSearchPageComplete, searchResults.length, searchTotal]);
+
+  const retrySearch = useCallback(() => {
+    const meta = searchMetaRef.current;
+    const generation = searchGenerationRef.current;
+    const page = lastFailedSearchPageRef.current ?? 0;
+    setSearchError(null);
+    void doSearchPage(
+      meta.query,
+      page,
+      meta.sortBy,
+      meta.randomSeed,
+      meta.dateFrom,
+      meta.dateTo,
+      meta.hiddenFolders,
+      meta.dirPath,
+      generation,
+    );
+  }, [doSearchPage]);
+
+  const dismissSearchError = useCallback(() => {
+    setSearchError(null);
+  }, []);
 
   const setSearchQuery = useCallback((q: string) => {
     setSearchQueryRaw(q);
@@ -1502,7 +1557,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     <ImageContext.Provider value={{
       phase, setPhase, dirPath, setDirPath, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
-      isSearching, ensureSearchRange,
+      isSearching, searchError, ensureSearchRange, retrySearch, dismissSearchError,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,
       cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite,

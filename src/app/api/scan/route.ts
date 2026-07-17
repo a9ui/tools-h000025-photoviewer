@@ -28,8 +28,25 @@ export async function GET(request: NextRequest) {
 
   const releaseScanRun = reserveScanRun(dirs);
   if (!releaseScanRun) {
+    const message = 'A scan for this folder set is already running. Please retry when it completes.';
+    if (request.headers.get('accept')?.includes('text/event-stream')) {
+      const event = JSON.stringify({
+        type: 'error',
+        processed: 0,
+        total: 0,
+        newFiles: 0,
+        message,
+      });
+      return new Response(`data: ${event}\n\n`, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      });
+    }
     return new Response(JSON.stringify({
-      error: 'A scan for this folder set is already running. Please retry when it completes.',
+      error: message,
       retryable: true,
     }), {
       status: 409,
