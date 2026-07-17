@@ -253,6 +253,11 @@ export default function RightPreviewPanel() {
   const activeId = activePreviewId;
   const active = activeId ? previewById[activeId] : null;
   const previewSrc = active ? (active.displayUrl || active.fileUrl) : null;
+  const activeIsOutsideCurrentSearch = Boolean(
+    activeId
+    && active
+    && !searchResults.some((image) => image?.id === activeId)
+  );
 
   if (!view.rightPanelOpen) return null;
 
@@ -299,6 +304,18 @@ export default function RightPreviewPanel() {
           </div>
         ) : (
           <div className="preview-content">
+            {activeIsOutsideCurrentSearch && (
+              <div
+                className="preview-context-status"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+                aria-label="Preview search availability"
+              >
+                <strong>Outside current search/filter</strong>
+                <span>Modal navigation is unavailable until filters change to include this image.</span>
+              </div>
+            )}
             <div className="preview-main">
               <div className="preview-image-wrap">
                 <CachedImage

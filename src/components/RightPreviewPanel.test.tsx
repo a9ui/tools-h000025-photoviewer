@@ -128,7 +128,7 @@ describe('RightPreviewPanel bulk favorite levels', () => {
 
     render(<RightPreviewPanel />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('Mixed levels (Lv1, Lv4) for 2 selected');
+    expect(screen.getByText('Mixed levels (Lv1, Lv4) for 2 selected')).toBeInTheDocument();
     expect(screen.getByText('1 unavailable')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Set selected images to favorite level 3' }));
     expect(store.setFavoriteLevels).toHaveBeenCalledWith([previewImage.id, secondImage.id], 3);
@@ -144,8 +144,40 @@ describe('RightPreviewPanel bulk favorite levels', () => {
     }));
     render(<RightPreviewPanel />);
 
-    expect(screen.getByRole('status')).toHaveTextContent('no longer in the current result');
+    expect(screen.getByText(/no longer in the current result/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Set selected images to favorite level 1' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Increase favorite level for selected images' })).toBeDisabled();
+  });
+});
+
+describe('RightPreviewPanel search availability', () => {
+  it('explains why modal navigation is unavailable for an active tab outside the loaded result', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({ withPreview: true, searchResults: [] }));
+
+    render(<RightPreviewPanel />);
+
+    const status = screen.getByRole('status', { name: 'Preview search availability' });
+    expect(status).toHaveTextContent('Outside current search/filter');
+    expect(status).toHaveTextContent('Modal navigation is unavailable until filters change to include this image.');
+    expect(screen.getByRole('button', { name: /Favorite \+1/i })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Open External' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Show Details' })).toBeEnabled();
+  });
+
+  it('hides the status when the active image joins the loaded result', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({ withPreview: true, searchResults: [] }));
+    const { rerender } = render(<RightPreviewPanel />);
+    expect(screen.getByRole('status', { name: 'Preview search availability' })).toBeInTheDocument();
+
+    vi.mocked(useImageStore).mockReturnValue(createStore({ withPreview: true, searchResults: [previewImage] }));
+    rerender(<RightPreviewPanel />);
+
+    expect(screen.queryByRole('status', { name: 'Preview search availability' })).not.toBeInTheDocument();
+  });
+
+  it('does not show search availability without an active preview tab', () => {
+    render(<RightPreviewPanel />);
+
+    expect(screen.queryByRole('status', { name: 'Preview search availability' })).not.toBeInTheDocument();
   });
 });
