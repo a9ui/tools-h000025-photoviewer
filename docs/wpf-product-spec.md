@@ -553,6 +553,7 @@ Accessibility:
 | --- | --- |
 | Retired UI regression guard | `powershell -File scripts/verify-ui-regression-guard.ps1` |
 | P0 integrated / 5,000 | `powershell -File scripts/verify-wpf-p0.ps1` |
+| Browser/WPF shared Favorite/Seen concurrent stress | `powershell -File scripts/verify-cross-runtime-shared-state.ps1 -Iterations 20` |
 | Catalog stress / 20,000 | `powershell -File scripts/verify-wpf-catalog-stress.ps1 -Count 20000` |
 | P1 search/date/folder | `powershell -File scripts/verify-wpf-p1a.ps1` |
 | Date preset retirement/migration | `powershell -File scripts/verify-wpf-date-filter.ps1` |
@@ -577,6 +578,7 @@ Accessibility:
 - disposable fixture以外をDeleteしない。
 - source count、catalog count、filtered order、selection、previewが期待通り。
 - existing state/cacheを削除しない。
+- Browser route workerとWPF writerを同じtemp Favorite/Seenへ20回並走し、別path 40件をlost updateなしで保持する。valid JSON、lock/tmp residue 0、real port/user cache非使用を確認する。
 - malformed/lock/decode/Recycle failureで元データ保持。
 - passive workflow前後でenhancement jobs hash不変。
 - 5,000/20,000件でsilent truncateなし、realized UI bounded。時間/working set/GCは観測値としてJSONへ残す。
