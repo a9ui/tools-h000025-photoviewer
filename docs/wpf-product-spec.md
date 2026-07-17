@@ -603,7 +603,7 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
-通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めない。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、`-IncludeReloadSoak`で既定24-cycleの同一process soakをaggregate内へ追加し、cross-runtime 2本を別途実行する。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。verified implementation commit `6352c71`の`-IncludeReloadSoak` inventoryは44 checks。この数はscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
+通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めない。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、`-IncludeReloadSoak`で既定24-cycleの同一process soakをaggregate内へ追加し、cross-runtime 2本を別途実行する。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。shared-state latency gate追加後のverified implementation commit `2e62965`の`-IncludeReloadSoak` inventoryは45 checks、276,690ms。この数はscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
 
 | Area | Command |
 | --- | --- |

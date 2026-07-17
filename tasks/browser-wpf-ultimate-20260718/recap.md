@@ -4,7 +4,7 @@
 
 Browser版を製品挙動の正本として再定義し、その契約をWPFへP0〜P2まで適用した。実装、正規仕様、focused verifier、20,000画像stress、同一process reload soak、Browser production runtime、Browser/WPF共有state競合を同じbranchで検証した。
 
-このmilestoneで最終検証した実装headは`6352c71`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`だった。
+このmilestoneで最終検証した実装baselineは`2e62965`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`だった。`2e62965`ではWPF 45/45 checksを276,690msで通し、Browser final build/runtimeとWPF launcher provenanceも同じ実装内容で再確認した。
 
 Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement write ownership、cache quota/eviction、installer/signing/public packagingはこの判定へ含めない。公開、deployment、user port 3000のrestart、user state/cache削除は実施していない。
 
@@ -112,7 +112,7 @@ user root checkoutは`main` / `626b7dd...`、既存の`M next-env.d.ts`だけを
 
 ## Quality scorecard
 
-`docs/product-quality-review-framework.md`の8軸を、最終implementation `6352c71`のBrowser/WPF aggregate、fault injection、cross-runtime、runtime/launcher、visual evidenceへ適用した。
+`docs/product-quality-review-framework.md`の8軸を、最終implementation baseline `2e62965`のBrowser/WPF aggregate、fault injection、cross-runtime、runtime/launcher、visual evidenceへ適用した。
 
 | Axis | Score / 5 | 根拠 |
 | --- | ---: | --- |
