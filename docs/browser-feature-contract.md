@@ -319,7 +319,7 @@ type RecentFoldersState = {
 };
 ```
 
-- recentは最大8 set。
+- recentは最大12 set。共有writeでは各writerの最新setをadditive historyへ残し、単一のlastFolderSetは最後に成功したlock holderを採用する。
 - set比較はcase-insensitive。
 - last setをrecentの先頭へ置く。
 - browser local folder memoryが空の時だけshared stateを初期importする。
@@ -574,7 +574,7 @@ Style shortcut:
 - current inputをsubstringで含むtagを候補にする。
 - current chip/exact current valueを除外。
 - prefix matchを先、次にcount降順。
-- 最大8件。
+- 最大12件。
 - ArrowDown/ArrowUp、Enter/Tab、Escape、mouseで操作。
 - outside clickで閉じる。
 

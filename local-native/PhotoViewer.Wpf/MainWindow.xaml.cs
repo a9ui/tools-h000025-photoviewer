@@ -38,7 +38,7 @@ public partial class MainWindow : Window
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
-    private const int MaxRecentFolderSets = 8;
+    private const int MaxRecentFolderSets = 12;
     private const int PersistenceLockTimeoutMilliseconds = 2_000;
     private const int PersistenceLockRetryMilliseconds = 25;
     private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
@@ -6880,7 +6880,11 @@ public partial class MainWindow : Window
 
     private static SharedRecentReadResult ReadSharedRecentFolders()
     {
-        string path = ResolvedSharedRecentPath;
+        return ReadSharedRecentFolders(ResolvedSharedRecentPath);
+    }
+
+    private static SharedRecentReadResult ReadSharedRecentFolders(string path)
+    {
         if (!File.Exists(path))
             return new SharedRecentReadResult(true, NormalizeSharedRecentFolders(null), null);
 
@@ -7561,6 +7565,36 @@ public partial class MainWindow : Window
         string seenKey)
         => TryMergeFavoriteForSmoke(favoritesPath, favoriteKey, favoriteLevel)
             && TryMergeSeenForSmoke(seenPath, seenKey);
+
+    /// <summary>
+    /// Cross-runtime verifier writer.  It intentionally uses the same create-new
+    /// lock, read/merge/atomic-replace path as the interactive recent writer.
+    /// The single lastFolderSet is last-lock-holder-wins; recentFolderSets retains
+    /// the newest distinct sets from every writer up to the shared cap.
+    /// </summary>
+    internal static bool TryMergeSharedRecentForSmoke(string path, string folderMarker)
+    {
+        string normalizedMarker = NormalizeRecentFolderPath(folderMarker) ?? "";
+        if (string.IsNullOrWhiteSpace(normalizedMarker))
+            return false;
+
+        return TryWithPersistenceLock(path, () =>
+        {
+            var current = ReadSharedRecentFolders(path);
+            if (!current.Ok)
+                return false;
+
+            var next = new SharedRecentFoldersState
+            {
+                LastFolderSet = [normalizedMarker],
+                RecentFolderSets = NormalizeRecentFolderSets(
+                    new[] { (IReadOnlyList<string>)[normalizedMarker] }.Concat(current.Recent.RecentFolderSets)),
+                UpdatedAtUtc = DateTime.UtcNow.ToString("O"),
+                ExtensionData = CloneExtensionData(current.Recent.ExtensionData),
+            };
+            return TryWriteAtomicText(path, JsonSerializer.Serialize(next, SharedRecentJsonOptions));
+        });
+    }
 
     private static bool TryMergeFavoriteForSmoke(string path, string key, int level)
         => TryWithPersistenceLock(path, () =>

@@ -37,6 +37,7 @@ describe('shared recent folders', () => {
         'I:/Sixth',
         'J:/Seventh',
         'K:/Eighth',
+        'L:/Over limit',
       ],
       lastDirSet: 'M:/Last',
     });

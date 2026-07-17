@@ -124,7 +124,7 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 - Pasteは1行1absolute path。blankを除きcase-insensitive dedupeする。
 - Openは現在setをscanする。
 - Change folderは現在setを保持してLanding編集へ戻る。即replaceしない。
-- Last folder setと最大8件のrecent setを表示する。
+- Last folder setと最大12件のrecent setを表示する。
 - recent shared fileがmalformed/future versionなら上書きせずrecoverable statusを出す。
 
 ### WPF-LND-003 Scan
@@ -547,6 +547,7 @@ Accessibility:
 - statusはaction、原因、継続可否、retry可能ならretryを示す。
 - persistence lock busyはbounded retry後に明示する。
 - malformed Favorite/Seen/state/recentは元fileを保持し、書込みを拒否する。
+- shared recentの同時書込みは `<target>.lock` create-new lock と atomic replace を使い、Browser/WPF/独立writerの最新folder setを加算的に残す。`lastFolderSet` は単一値のため最後にlockを正常取得したwriterを採用する。
 - decode failureは該当画像だけ。
 - scan partial failureは成功件数とskipを示す。
 - normal zero-result、no supported images、scan failure、filter emptyを別copyにする。

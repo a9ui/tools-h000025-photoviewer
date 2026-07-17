@@ -59,6 +59,13 @@ public partial class App : Application
             return;
         }
 
+        int crossRuntimeRecentIdx = Array.IndexOf(e.Args, "--cross-runtime-recent-smoke");
+        if (crossRuntimeRecentIdx >= 0 && crossRuntimeRecentIdx + 1 < e.Args.Length)
+        {
+            CaptureCrossRuntimeRecentSmoke(e.Args[crossRuntimeRecentIdx + 1], e.Args);
+            return;
+        }
+
         int modalNavSmokeIdx = Array.IndexOf(e.Args, "--modal-nav-smoke");
         if (modalNavSmokeIdx >= 0 && modalNavSmokeIdx + 1 < e.Args.Length)
         {
@@ -640,6 +647,55 @@ public partial class App : Application
         string fullPath = Path.GetFullPath(resultPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void CaptureCrossRuntimeRecentSmoke(string resultPath, string[] args)
+    {
+        string? recentPath = ArgValue(args, "--recent-path");
+        string? keyRoot = ArgValue(args, "--key-root");
+        int iterations = ArgInt(args, "--iterations", 20);
+        if (string.IsNullOrWhiteSpace(recentPath) || string.IsNullOrWhiteSpace(keyRoot) || iterations < 1)
+        {
+            WriteCrossRuntimeSharedStateResult(resultPath, new { ok = false, message = "missing --recent-path, --key-root, or valid --iterations", iterations });
+            Shutdown(1);
+            return;
+        }
+
+        recentPath = Path.GetFullPath(recentPath);
+        keyRoot = Path.GetFullPath(keyRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = true;
+            string? error = null;
+            try
+            {
+                Directory.CreateDirectory(keyRoot);
+                string marker = Path.Combine(keyRoot, "wpf-latest");
+                for (int index = 0; index < iterations; index++)
+                {
+                    bool wrote = await Task.Run(() => PhotoViewer.Wpf.MainWindow.TryMergeSharedRecentForSmoke(recentPath, marker));
+                    if (!wrote)
+                        throw new InvalidOperationException($"WPF shared recent merge failed at iteration {index}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                ok = false;
+                error = ex.Message;
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, new
+            {
+                ok,
+                message = ok ? "WPF shared recent writer completed" : error,
+                iterations,
+                recentWrites = ok ? iterations : 0,
+                recentPath,
+                keyRoot,
+            });
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void CaptureFavoriteSmoke(string resultPath, string[] args)

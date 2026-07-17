@@ -50,6 +50,7 @@ implementation. The normative current behavior is documented in
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
+- `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
 - `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
@@ -535,6 +536,15 @@ save, preserving existing shared folder sets additively. Malformed shared recent
 JSON is not overwritten; local WPF `state.json` still saves so passive browsing
 is not blocked. No richer multi-folder WPF history UI is added in this slice.
 WinForms and browser code remain untouched by this WPF lane.
+
+## Cross-runtime recent stress
+
+`scripts/verify-cross-runtime-recent.ps1` starts no browser server and uses a
+fresh temp root. It races 20 Browser route writes, 20 real WPF writes, and 20
+independent protocol-compatible writes against one `recent-folders.json`. The
+verifier requires valid JSON, schema/unknown-field preservation, no `.lock` or
+`.tmp` residue, all three newest owner markers in the bounded 12-set history,
+and documents `lastFolderSet` as last-successful-lock-holder wins.
 
 ## WPF M14 Performance Final Gate
 

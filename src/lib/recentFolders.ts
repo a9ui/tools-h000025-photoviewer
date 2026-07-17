@@ -12,7 +12,7 @@ export type RecentFolderMemory = {
   lastDirSet: string;
 };
 
-const MAX_RECENT_FOLDER_SETS = 8;
+export const MAX_RECENT_FOLDER_SETS = 12;
 
 function normalizeFolderSet(value: unknown): string[] {
   if (Array.isArray(value)) {
