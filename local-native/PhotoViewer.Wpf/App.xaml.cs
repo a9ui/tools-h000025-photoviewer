@@ -13,6 +13,21 @@ public partial class App : Application
 {
     protected override void OnStartup(StartupEventArgs e)
     {
+        if (IsAutomationInvocation(e.Args))
+        {
+            try
+            {
+                ConfigureAutomationStorage(e.Args);
+            }
+            catch (ArgumentException ex)
+            {
+                Trace.TraceError(ex.Message);
+                Environment.ExitCode = 1;
+                Shutdown(1);
+                return;
+            }
+        }
+
         var startupWatch = Stopwatch.StartNew();
         base.OnStartup(e);
 
@@ -353,6 +368,58 @@ public partial class App : Application
         }
 
         new MainWindow().Show();
+    }
+
+    private static bool IsAutomationInvocation(IReadOnlyList<string> args)
+        => args.Any(static arg => string.Equals(arg, "--shot", StringComparison.OrdinalIgnoreCase)
+            || string.Equals(arg, "--startup-smoke", StringComparison.OrdinalIgnoreCase)
+            || arg.EndsWith("-smoke", StringComparison.OrdinalIgnoreCase));
+
+    private static void ConfigureAutomationStorage(IReadOnlyList<string> args)
+    {
+        ValidateAutomationPathArguments(args);
+
+        string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-automation", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(root);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", Path.Combine(root, "state.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", Path.Combine(root, "favorites.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", Path.Combine(root, "seen.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", Path.Combine(root, "recent-folders.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", Path.Combine(root, "enhance", "jobs.json"));
+    }
+
+    private static void ValidateAutomationPathArguments(IReadOnlyList<string> args)
+    {
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        string[] commandLine = args.ToArray();
+        string[] protectedOptions = [
+            "--state-path",
+            "--favorites-path",
+            "--seen-path",
+            "--recent-path",
+            "--enhancement-jobs-path",
+            "--key-root",
+        ];
+
+        foreach (string option in protectedOptions)
+        {
+            string? candidate = ArgValue(commandLine, option);
+            if (string.IsNullOrWhiteSpace(candidate))
+                continue;
+
+            string fullPath;
+            try
+            {
+                fullPath = Path.GetFullPath(candidate);
+            }
+            catch (Exception ex)
+            {
+                throw new ArgumentException($"Automation {option} path is invalid: {ex.Message}");
+            }
+
+            if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+                throw new ArgumentException($"Automation {option} must be under the temp directory. Refusing to touch '{fullPath}'.");
+        }
     }
 
     /// <summary>Open the shell to dispatcher-idle readiness, write timing evidence, and exit.</summary>
