@@ -1,5 +1,6 @@
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
+using System.Collections.Frozen;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
@@ -31,6 +32,7 @@ public partial class MainWindow : Window
     private const int MaxThumbnailDecodeWorkers = 12;
     private const int MaxMetadataReadWorkers = 4;
     private const int MaxPngMetadataChunkBytes = 4 * 1024 * 1024;
+    private const int SearchFilterDebounceMilliseconds = 150;
     private const int SearchStateSaveDebounceMilliseconds = 300;
     private const int InitialGridRealizationCount = 96;
     private const int GridRealizationBatchSize = 96;
@@ -139,7 +141,13 @@ public partial class MainWindow : Window
     private long _previewDeferredDecodeMs;
     private long _lastPreviewImmediateMs;
     private string? _previewDecodedPath;
+    private readonly DispatcherTimer _searchFilterTimer;
     private readonly DispatcherTimer _searchStateSaveTimer;
+    private CancellationTokenSource? _searchFilterCts;
+    private long _searchFilterGeneration;
+    private long _scheduledSearchFilterGeneration;
+    private long _lastAppliedSearchFilterGeneration;
+    private TaskCompletionSource<SearchFilterCompletion>? _pendingSearchFilterCompletion;
     private string _displayStyle = DisplayStyleStandard;
     private string _aspectMode = AspectOriginalValue;
     private string _sortBy = SortModifiedNewestValue;
@@ -171,6 +179,11 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _searchFilterTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(SearchFilterDebounceMilliseconds),
+        };
+        _searchFilterTimer.Tick += SearchFilterTimer_Tick;
         _searchStateSaveTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(SearchStateSaveDebounceMilliseconds),
@@ -209,6 +222,41 @@ public partial class MainWindow : Window
         var cvs = new CollectionViewSource { Source = source };
         cvs.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Tile.Group)));
         return cvs.View;
+    }
+
+    private sealed record FilterSnapshot(
+        FilterTileSnapshot[] Tiles,
+        string[] QueryTokens,
+        bool FavoritesOnly,
+        bool UnfavoriteOnly,
+        bool EnhancedOnly,
+        bool UnseenOnly,
+        FrozenSet<int> FavoriteLevels,
+        FrozenSet<string> HiddenFolderBuckets,
+        DateTime? DateFromLocal,
+        DateTime? DateToLocal,
+        string SortBy,
+        string RandomSortSeed);
+
+    private sealed record FilterTileSnapshot(
+        Tile Tile,
+        string FileName,
+        string Prompt,
+        string Path,
+        bool IsRealFile,
+        int FavoriteLevel,
+        bool Enhanced,
+        bool Unseen,
+        string FolderBucketKey,
+        DateTime ModifiedUtc,
+        DateTime CreatedUtc);
+
+    private sealed record FilterResult(List<Tile> Tiles);
+
+    public readonly record struct SearchFilterCompletion(bool Applied, bool Discarded, string? Error)
+    {
+        public static SearchFilterCompletion AppliedResult => new(true, false, null);
+        public static SearchFilterCompletion DiscardedResult => new(false, true, null);
     }
 
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
@@ -2737,8 +2785,69 @@ public partial class MainWindow : Window
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
     {
         if (_initializing || _settingSearchQuery) return;
-        ApplyFilters();
+        ScheduleSearchFilter();
         ScheduleSearchStateSave();
+    }
+
+    private void ScheduleSearchFilter()
+    {
+        CancelPendingSearchFilter(completePending: true);
+        long generation = ++_searchFilterGeneration;
+        _scheduledSearchFilterGeneration = generation;
+        _pendingSearchFilterCompletion = new TaskCompletionSource<SearchFilterCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _searchFilterTimer.Stop();
+        _searchFilterTimer.Start();
+    }
+
+    private void SearchFilterTimer_Tick(object? sender, EventArgs e)
+    {
+        _searchFilterTimer.Stop();
+        _ = ApplySearchFilterAsync(_scheduledSearchFilterGeneration, _pendingSearchFilterCompletion);
+    }
+
+    private async Task ApplySearchFilterAsync(long generation, TaskCompletionSource<SearchFilterCompletion>? completion)
+    {
+        CancellationTokenSource cts = new();
+        _searchFilterCts = cts;
+        FilterSnapshot snapshot = CaptureFilterSnapshot();
+        try
+        {
+            FilterResult result = await Task.Run(() => ComputeFilterResult(snapshot, cts.Token), cts.Token);
+            if (cts.IsCancellationRequested || generation != _searchFilterGeneration)
+            {
+                completion?.TrySetResult(SearchFilterCompletion.DiscardedResult);
+                return;
+            }
+
+            ApplyFilterResult(result, selectFirst: true);
+            _lastAppliedSearchFilterGeneration = generation;
+            completion?.TrySetResult(SearchFilterCompletion.AppliedResult);
+        }
+        catch (OperationCanceledException)
+        {
+            completion?.TrySetResult(SearchFilterCompletion.DiscardedResult);
+        }
+        catch (Exception ex)
+        {
+            completion?.TrySetResult(new SearchFilterCompletion(false, false, ex.Message));
+            SetStatusToast("Search could not be updated. Retry the query.");
+        }
+        finally
+        {
+            if (ReferenceEquals(_searchFilterCts, cts))
+                _searchFilterCts = null;
+            cts.Dispose();
+        }
+    }
+
+    private void CancelPendingSearchFilter(bool completePending)
+    {
+        _searchFilterTimer.Stop();
+        _searchFilterCts?.Cancel();
+        _searchFilterCts = null;
+        if (completePending)
+            _pendingSearchFilterCompletion?.TrySetResult(SearchFilterCompletion.DiscardedResult);
+        _pendingSearchFilterCompletion = null;
     }
 
     private void ScheduleSearchStateSave()
@@ -3395,6 +3504,15 @@ public partial class MainWindow : Window
         }
     }
 
+    public Task<SearchFilterCompletion> SetSearchInputForSmokeAsync(string query)
+    {
+        SearchInput.Text = query;
+        return _pendingSearchFilterCompletion?.Task
+            ?? Task.FromResult(new SearchFilterCompletion(false, false, "search input did not schedule a filter"));
+    }
+
+    public long LastAppliedSearchFilterGenerationForSmoke => _lastAppliedSearchFilterGeneration;
+
     public void SuppressStatePersistence()
     {
         _suppressStateSave = true;
@@ -3404,21 +3522,114 @@ public partial class MainWindow : Window
     {
         if (CardsList is null || RowsList is null) return;
 
-        var previous = SelectedTile();
-        string query = SearchInput?.Text?.Trim() ?? "";
-        bool favoritesOnly = FavoriteOnlyFilter?.IsChecked == true;
-        bool unfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true;
-        bool enhancedOnly = EnhancedOnlyFilter?.IsChecked == true;
-        bool unseenOnly = UnseenOnlyFilter?.IsChecked == true;
+        ++_searchFilterGeneration;
+        CancelPendingSearchFilter(completePending: true);
+        ApplyFilterResult(ComputeFilterResult(CaptureFilterSnapshot(), CancellationToken.None), selectFirst);
+    }
 
-        var filtered = SortTiles(_allTiles
-            .Where(tile => MatchesSearch(tile, query))
-            .Where(tile => MatchesFavoriteFilter(tile, favoritesOnly, unfavoriteOnly))
-            .Where(tile => !enhancedOnly || tile.Enhanced)
-            .Where(tile => !unseenOnly || tile.Unseen)
-            .Where(MatchesFolderBucketFilter)
-            .Where(MatchesDateFilter))
-            .ToList();
+    private FilterSnapshot CaptureFilterSnapshot()
+    {
+        string query = SearchInput?.Text?.Trim() ?? "";
+        return new FilterSnapshot(
+            _allTiles.Select(static tile => new FilterTileSnapshot(
+                tile,
+                tile.FileName,
+                tile.Prompt,
+                tile.Path,
+                tile.IsRealFile,
+                tile.Fav,
+                tile.Enhanced,
+                tile.Unseen,
+                tile.FolderBucketKey,
+                tile.ModifiedUtc,
+                tile.CreatedUtc)).ToArray(),
+            query.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
+            FavoriteOnlyFilter?.IsChecked == true,
+            UnfavoriteOnlyFilter?.IsChecked == true,
+            EnhancedOnlyFilter?.IsChecked == true,
+            UnseenOnlyFilter?.IsChecked == true,
+            _favoriteFilterLevels.ToFrozenSet(),
+            _hiddenFolderBuckets.ToFrozenSet(StringComparer.OrdinalIgnoreCase),
+            _dateFromLocal,
+            _dateToLocal,
+            _sortBy,
+            _randomSortSeed);
+    }
+
+    private static FilterResult ComputeFilterResult(FilterSnapshot snapshot, CancellationToken cancellationToken)
+    {
+        var filtered = new List<FilterTileSnapshot>(snapshot.Tiles.Length);
+        for (int index = 0; index < snapshot.Tiles.Length; index++)
+        {
+            if ((index & 63) == 0)
+                cancellationToken.ThrowIfCancellationRequested();
+
+            FilterTileSnapshot tile = snapshot.Tiles[index];
+            if (!MatchesFilterSnapshot(tile, snapshot))
+                continue;
+            filtered.Add(tile);
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        IEnumerable<FilterTileSnapshot> ordered = snapshot.SortBy switch
+        {
+            SortModifiedOldestValue => filtered
+                .OrderBy(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedNewestValue => filtered
+                .OrderByDescending(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedOldestValue => filtered
+                .OrderBy(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortRandomValue => filtered
+                .OrderBy(tile => StableRandomSortKey(snapshot.RandomSortSeed, tile.Path))
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortNameValue => filtered
+                .OrderBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            _ => filtered
+                .OrderByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+        };
+        return new FilterResult(ordered.Select(static tile => tile.Tile).ToList());
+    }
+
+    private static bool MatchesFilterSnapshot(FilterTileSnapshot tile, FilterSnapshot snapshot)
+    {
+        foreach (string token in snapshot.QueryTokens)
+        {
+            if (!ContainsText(tile.FileName, token) && !ContainsText(tile.Prompt, token))
+                return false;
+        }
+
+        if (snapshot.FavoritesOnly && (tile.FavoriteLevel <= 0 || (snapshot.FavoriteLevels.Count > 0 && !snapshot.FavoriteLevels.Contains(tile.FavoriteLevel))))
+            return false;
+        if (snapshot.UnfavoriteOnly && tile.FavoriteLevel > 0)
+            return false;
+        if (snapshot.EnhancedOnly && !tile.Enhanced)
+            return false;
+        if (snapshot.UnseenOnly && !tile.Unseen)
+            return false;
+        if (tile.IsRealFile && !string.IsNullOrWhiteSpace(tile.FolderBucketKey) && snapshot.HiddenFolderBuckets.Contains(tile.FolderBucketKey))
+            return false;
+        if (!tile.IsRealFile || (!snapshot.DateFromLocal.HasValue && !snapshot.DateToLocal.HasValue))
+            return true;
+
+        DateTime createdDate = tile.CreatedUtc.ToLocalTime().Date;
+        return (!snapshot.DateFromLocal.HasValue || createdDate >= snapshot.DateFromLocal.Value.Date)
+            && (!snapshot.DateToLocal.HasValue || createdDate <= snapshot.DateToLocal.Value.Date);
+    }
+
+    private void ApplyFilterResult(FilterResult filterResult, bool selectFirst)
+    {
+        var previous = SelectedTile();
+        List<Tile> filtered = filterResult.Tiles;
 
         var availablePaths = new HashSet<string>(filtered.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
         _selectedPaths.IntersectWith(availablePaths);

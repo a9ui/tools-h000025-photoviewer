@@ -247,6 +247,13 @@ public partial class App : Application
             return;
         }
 
+        int searchStallSmokeIdx = Array.IndexOf(e.Args, "--search-stall-smoke");
+        if (searchStallSmokeIdx >= 0 && searchStallSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSearchStallSmoke(e.Args[searchStallSmokeIdx + 1]);
+            return;
+        }
+
         int p1bSmokeIdx = Array.IndexOf(e.Args, "--p1b-smoke");
         if (p1bSmokeIdx >= 0 && p1bSmokeIdx + 1 < e.Args.Length)
         {
@@ -3423,6 +3430,115 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureSearchStallSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-search-stall-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+
+        Directory.CreateDirectory(folder);
+        for (int index = 0; index < 4_999; index++)
+            WriteSmokePng(Path.Combine(folder, $"rapid-noise-{index:0000}.png"), 4, 3, Color.FromRgb((byte)(30 + index % 180), 90, 160));
+        const string finalFileName = "rapid-final-target.png";
+        WriteSmokePng(Path.Combine(folder, finalFileName), 4, 3, Color.FromRgb(230, 90, 120));
+
+        Environment.CurrentDirectory = smokeRoot;
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            SearchStallSmokeResult result;
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(15),
+            };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool initialSelected = win.SelectFileNameForSmoke("rapid-noise-0000.png");
+                heartbeat.Start();
+                var inputWatch = Stopwatch.StartNew();
+                string[] rapidQueries = ["r", "ra", "rap", "rapid", "rapid-", "rapid-n", "rapid-no", "rapid-noi", "rapid-nois", "rapid-noise", "rapid-final", "rapid-final-target"];
+                Task<MainWindow.SearchFilterCompletion>? finalCompletion = null;
+                foreach (string query in rapidQueries)
+                    finalCompletion = win.SetSearchInputForSmokeAsync(query);
+                inputWatch.Stop();
+
+                Task timeout = Task.Delay(TimeSpan.FromSeconds(8));
+                Task completed = await Task.WhenAny(finalCompletion!, timeout);
+                MainWindow.SearchFilterCompletion completion = completed == finalCompletion
+                    ? await finalCompletion!
+                    : new MainWindow.SearchFilterCompletion(false, false, "timed out waiting for the final search filter");
+                await Task.Delay(120);
+                heartbeat.Stop();
+
+                List<string> finalMatches = win.FilteredFileNamesForSmoke(10);
+                bool finalQueryApplied = completion.Applied
+                    && string.Equals(win.SearchQueryForSmoke, "rapid-final-target", StringComparison.Ordinal)
+                    && SameNameOrder(finalMatches, [finalFileName]);
+                bool selectionAndPreviewStable = string.Equals(win.SelectedFileNameForSmoke, finalFileName, StringComparison.Ordinal)
+                    && win.SelectedCountForSmoke == 1;
+                bool heartbeatAdvanced = heartbeatCount >= 4;
+                bool ok = initialSelected && heartbeatAdvanced && finalQueryApplied && selectionAndPreviewStable;
+                result = new SearchStallSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "5,000-image rapid search debounced on the UI thread and applied only the final query"
+                        : "rapid search did not preserve UI responsiveness or the final selection",
+                    CatalogCount = win.CatalogCountForSmoke,
+                    InputMs = inputWatch.ElapsedMilliseconds,
+                    HeartbeatCount = heartbeatCount,
+                    FinalCompletionApplied = completion.Applied,
+                    FinalCompletionDiscarded = completion.Discarded,
+                    CompletionError = completion.Error,
+                    FinalQuery = win.SearchQueryForSmoke,
+                    FinalMatches = finalMatches,
+                    SelectedFileName = win.SelectedFileNameForSmoke,
+                    SelectedCount = win.SelectedCountForSmoke,
+                    LastAppliedGeneration = win.LastAppliedSearchFilterGenerationForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                result = new SearchStallSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                win.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
             }
 
             Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
@@ -7603,6 +7719,23 @@ public partial class App : Application
         public List<string> LandingFolderSet { get; init; } = [];
         public int CatalogAfterAdd { get; init; }
         public bool LandingVisible { get; init; }
+    }
+
+    private sealed class SearchStallSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public int CatalogCount { get; init; }
+        public long InputMs { get; init; }
+        public int HeartbeatCount { get; init; }
+        public bool FinalCompletionApplied { get; init; }
+        public bool FinalCompletionDiscarded { get; init; }
+        public string? CompletionError { get; init; }
+        public string FinalQuery { get; init; } = "";
+        public List<string> FinalMatches { get; init; } = [];
+        public string? SelectedFileName { get; init; }
+        public int SelectedCount { get; init; }
+        public long LastAppliedGeneration { get; init; }
     }
 
     private sealed class BulkFavoriteSmokeResult
