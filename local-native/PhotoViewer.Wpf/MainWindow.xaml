@@ -276,7 +276,9 @@
        <Grid>
         <ListBox x:Name="CardsList" Background="Transparent" BorderThickness="0" Padding="20,16,12,24"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
-                 ItemContainerStyle="{StaticResource CardItem}" SelectionMode="Extended" SelectionChanged="CardsList_SelectionChanged">
+                 ItemContainerStyle="{StaticResource CardItem}" SelectionMode="Extended" SelectionChanged="CardsList_SelectionChanged"
+                 PreviewMouseLeftButtonDown="FileDragSurface_PreviewMouseLeftButtonDown" PreviewMouseMove="FileDragSurface_PreviewMouseMove" PreviewMouseLeftButtonUp="FileDragSurface_PreviewMouseLeftButtonUp"
+                 ToolTip="Drag images to Explorer to copy file paths" AutomationProperties.Name="Image grid" AutomationProperties.HelpText="Select images, then drag beyond the system threshold to copy the real files to Explorer.">
           <ListBox.ItemsPanel>
             <ItemsPanelTemplate><WrapPanel/></ItemsPanelTemplate>
           </ListBox.ItemsPanel>
@@ -305,6 +307,8 @@
         <!-- List mode -->
         <ListBox x:Name="RowsList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="8,8,4,24"
                  ItemContainerStyle="{StaticResource ListRowItem}" SelectionMode="Extended" SelectionChanged="CardsList_SelectionChanged"
+                 PreviewMouseLeftButtonDown="FileDragSurface_PreviewMouseLeftButtonDown" PreviewMouseMove="FileDragSurface_PreviewMouseMove" PreviewMouseLeftButtonUp="FileDragSurface_PreviewMouseLeftButtonUp"
+                 ToolTip="Drag images to Explorer to copy file paths" AutomationProperties.Name="Image list" AutomationProperties.HelpText="Select images, then drag beyond the system threshold to copy the real files to Explorer."
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
                  VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling">
           <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
@@ -355,7 +359,9 @@
           <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="14">
               <!-- image -->
-              <Border CornerRadius="12" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="PreviewImage_Click" Margin="0,0,0,12">
+              <Border x:Name="PreviewImageDragSurface" CornerRadius="12" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="PreviewImage_Click"
+                      PreviewMouseLeftButtonDown="FileDragSurface_PreviewMouseLeftButtonDown" PreviewMouseMove="FileDragSurface_PreviewMouseMove" PreviewMouseLeftButtonUp="FileDragSurface_PreviewMouseLeftButtonUp"
+                      ToolTip="Click to open. Drag the current image to Explorer to copy it." AutomationProperties.Name="Preview image" AutomationProperties.HelpText="Click to open the modal. Drag beyond the system threshold to copy the current real file to Explorer." Margin="0,0,0,12">
                 <Border.Effect><DropShadowEffect BlurRadius="16" ShadowDepth="0" Opacity="0.5" Color="Black"/></Border.Effect>
                 <Grid Height="380">
                   <Rectangle x:Name="PreviewArtBase"/>

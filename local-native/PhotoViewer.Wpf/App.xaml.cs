@@ -107,6 +107,13 @@ public partial class App : Application
             return;
         }
 
+        int fileDragOutSmokeIdx = Array.IndexOf(e.Args, "--file-drag-out-smoke");
+        if (fileDragOutSmokeIdx >= 0 && fileDragOutSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFileDragOutSmoke(e.Args[fileDragOutSmokeIdx + 1]);
+            return;
+        }
+
         int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
         if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
         {
@@ -5316,9 +5323,11 @@ public partial class App : Application
         string statePath = Path.Combine(smokeRoot, "state.json");
         string seenPath = Path.Combine(smokeRoot, "seen.json");
         string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
         string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
         string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
         string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
         Directory.CreateDirectory(folder);
         const string firstName = "a-modal.png";
         const string secondName = "b-modal.png";
@@ -6780,6 +6789,116 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureFileDragOutSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-file-drag-out-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string[] names = ["alpha.png", "bravo.png", "charlie.png"];
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            for (int index = 0; index < names.Length; index++)
+            {
+                string path = Path.Combine(folder, names[index]);
+                WriteSmokePng(path, 64, 48, Color.FromRgb((byte)(52 + index * 30), (byte)(152 - index * 20), (byte)(219 - index * 30)));
+                File.SetLastWriteTime(path, DateTime.Today.AddMinutes(-index));
+            }
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteFileDragOutSmokeResult(resultPath, new FileDragOutSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            FileDragOutSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                List<string> displayOrder = win.FilteredFileNamesForSmoke(10);
+                bool selectedRange = win.SelectRangeForSmoke(0, 1);
+                FileDragOutSmokeSnapshot selectedPayload = win.BuildFileDropPayloadForSmoke(displayOrder[0], originWasSelected: true);
+                bool selectedSingle = win.SelectIndexForSmoke(0);
+                string stateBefore = FileFingerprint(statePath);
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+                FileDragOutSmokeSnapshot originOnlyPayload = win.BuildFileDropPayloadForSmoke(displayOrder[2], originWasSelected: false);
+                FileDragOutSmokeSnapshot invalidPayload = win.BuildFileDropPayloadForSmoke("missing.png", originWasSelected: false);
+                List<string> expectedSelectedPaths = displayOrder.Take(2)
+                    .Select(name => win.PathForFileNameForSmoke(name)!)
+                    .Select(Path.GetFullPath)
+                    .ToList();
+                string expectedOriginOnlyPath = Path.GetFullPath(win.PathForFileNameForSmoke(displayOrder[2])!);
+                int sourceCountAfter = Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count();
+                bool mutableStateUntouched = string.Equals(stateBefore, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool ok = selectedRange && selectedSingle
+                    && selectedPayload.Built && selectedPayload.FileDropFormatPresent && selectedPayload.ExceedsThreshold && selectedPayload.SurfaceContractReady
+                    && selectedPayload.Paths.SequenceEqual(expectedSelectedPaths, StringComparer.OrdinalIgnoreCase)
+                    && originOnlyPayload.Built && originOnlyPayload.Paths.SequenceEqual([expectedOriginOnlyPath], StringComparer.OrdinalIgnoreCase)
+                    && !invalidPayload.Built && !string.IsNullOrWhiteSpace(invalidPayload.Reason)
+                    && win.FileDragThresholdRejectsExactDistanceForSmoke
+                    && sourceCountAfter == names.Length
+                    && mutableStateUntouched
+                    && win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                result = new FileDragOutSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "FileDrop payload validation, selected display order, threshold contract, source surfaces, and no-side-effect checks passed without starting an OS drag"
+                        : "file drag-out smoke did not meet the payload or source-surface contract",
+                    SmokeRoot = smokeRoot,
+                    DisplayOrder = displayOrder,
+                    SelectedPayload = selectedPayload,
+                    OriginOnlyPayload = originOnlyPayload,
+                    InvalidPayload = invalidPayload,
+                    ExactThresholdRejected = win.FileDragThresholdRejectsExactDistanceForSmoke,
+                    SourceCountAfter = sourceCountAfter,
+                    MutableStateUntouched = mutableStateUntouched,
+                    EnhancementJobsRead = win.EnhancementJobsReadForSmoke,
+                    EnhancementCandidates = win.EnhancedCandidateCountForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new FileDragOutSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteFileDragOutSmokeResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewDecodeSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -7148,6 +7267,15 @@ public partial class App : Application
         {
             return null;
         }
+    }
+
+    private static string FileFingerprint(string path)
+    {
+        if (!File.Exists(path))
+            return "missing";
+
+        byte[] bytes = File.ReadAllBytes(path);
+        return $"{bytes.LongLength}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))}";
     }
 
     private static void WriteLegacyDateFilterState(string path, string preset, string? from, string? to)
@@ -7866,6 +7994,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteFileDragOutSmokeResult(string path, FileDragOutSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteFormatSmokeResult(string path, FormatSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8118,6 +8252,22 @@ public partial class App : Application
         public int EnhancementJobsAfter { get; init; }
         public int EnhancementCandidatesBefore { get; init; }
         public int EnhancementCandidatesAfter { get; init; }
+    }
+
+    private sealed class FileDragOutSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public List<string> DisplayOrder { get; init; } = [];
+        public FileDragOutSmokeSnapshot? SelectedPayload { get; init; }
+        public FileDragOutSmokeSnapshot? OriginOnlyPayload { get; init; }
+        public FileDragOutSmokeSnapshot? InvalidPayload { get; init; }
+        public bool ExactThresholdRejected { get; init; }
+        public int SourceCountAfter { get; init; }
+        public bool MutableStateUntouched { get; init; }
+        public int EnhancementJobsRead { get; init; }
+        public int EnhancementCandidates { get; init; }
     }
 
     private sealed record ModalNavigationSmokeResult(

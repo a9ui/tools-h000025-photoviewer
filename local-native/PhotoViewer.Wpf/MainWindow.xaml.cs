@@ -114,6 +114,8 @@ public partial class MainWindow : Window
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
     private bool _dateFilterMigrationPending;
+    private FileDragSession? _fileDragSession;
+    private bool _suppressPreviewClickAfterFileDrag;
     private bool _settingSearchQuery;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
@@ -286,6 +288,8 @@ public partial class MainWindow : Window
         DateTime CreatedUtc);
 
     private sealed record FilterResult(List<Tile> Tiles);
+
+    private sealed record FileDragSession(FrameworkElement Surface, Tile Origin, Point Start, bool OriginWasSelected);
 
     public readonly record struct SearchFilterCompletion(bool Applied, bool Discarded, string? Error)
     {
@@ -5299,7 +5303,185 @@ public partial class MainWindow : Window
     }
 
     // ─────────── Modal ───────────
-    private void PreviewImage_Click(object sender, MouseButtonEventArgs e) => OpenModal();
+    private void PreviewImage_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (_suppressPreviewClickAfterFileDrag)
+            return;
+        OpenModal();
+    }
+
+    private void FileDragSurface_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not FrameworkElement surface || e.ChangedButton != MouseButton.Left)
+            return;
+
+        Tile? origin = ResolveFileDragOrigin(surface, e.OriginalSource as DependencyObject);
+        if (origin is null || !origin.IsRealFile)
+        {
+            _fileDragSession = null;
+            return;
+        }
+
+        _fileDragSession = new FileDragSession(surface, origin, e.GetPosition(surface), _selectedPaths.Contains(origin.Path));
+    }
+
+    private void FileDragSurface_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement surface
+            || _fileDragSession is not FileDragSession session
+            || !ReferenceEquals(session.Surface, surface)
+            || e.LeftButton != MouseButtonState.Pressed)
+        {
+            return;
+        }
+
+        Point current = e.GetPosition(surface);
+        if (!ExceedsFileDragThreshold(session.Start, current))
+            return;
+
+        _fileDragSession = null;
+        if (!TryBuildFileDropPayload(session.Origin, session.OriginWasSelected, out string[] paths, out string reason))
+        {
+            SetStatusToast($"Explorer drag was not started: {reason}.");
+            return;
+        }
+
+        try
+        {
+            if (ReferenceEquals(surface, PreviewImageDragSurface))
+                _suppressPreviewClickAfterFileDrag = true;
+            var data = new DataObject(DataFormats.FileDrop, paths);
+            DragDrop.DoDragDrop(surface, data, DragDropEffects.Copy);
+        }
+        catch (Exception ex)
+        {
+            SetStatusToast($"Explorer drag could not start: {ex.Message}");
+        }
+        finally
+        {
+            Dispatcher.BeginInvoke(() => _suppressPreviewClickAfterFileDrag = false, DispatcherPriority.Input);
+        }
+    }
+
+    private void FileDragSurface_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement surface
+            && _fileDragSession is FileDragSession session
+            && ReferenceEquals(session.Surface, surface))
+        {
+            _fileDragSession = null;
+        }
+    }
+
+    private Tile? ResolveFileDragOrigin(FrameworkElement surface, DependencyObject? originalSource)
+    {
+        if (ReferenceEquals(surface, PreviewImageDragSurface))
+            return SelectedTile();
+
+        for (DependencyObject? current = originalSource; current is not null; current = current is Visual or System.Windows.Media.Media3D.Visual3D
+            ? VisualTreeHelper.GetParent(current)
+            : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is FrameworkElement { DataContext: Tile tile })
+                return tile;
+            if (ReferenceEquals(current, surface))
+                break;
+        }
+
+        return null;
+    }
+
+    private static bool ExceedsFileDragThreshold(Point start, Point current)
+        => Math.Abs(current.X - start.X) > SystemParameters.MinimumHorizontalDragDistance
+            || Math.Abs(current.Y - start.Y) > SystemParameters.MinimumVerticalDragDistance;
+
+    private bool TryBuildFileDropPayload(Tile origin, bool originWasSelected, out string[] paths, out string reason)
+    {
+        IReadOnlyList<Tile> candidates = originWasSelected
+            ? _tiles.Where(tile => tile.IsRealFile && _selectedPaths.Contains(tile.Path)).ToList()
+            : [origin];
+        if (candidates.Count == 0)
+        {
+            paths = [];
+            reason = "no real selected image";
+            return false;
+        }
+
+        var canonicalPaths = new List<string>(candidates.Count);
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Tile tile in candidates)
+        {
+            if (!TryValidateFileDropTile(tile, out string canonical, out reason))
+            {
+                paths = [];
+                return false;
+            }
+            if (seen.Add(canonical))
+                canonicalPaths.Add(canonical);
+        }
+
+        if (canonicalPaths.Count == 0)
+        {
+            paths = [];
+            reason = "no valid source image";
+            return false;
+        }
+
+        paths = canonicalPaths.ToArray();
+        reason = "";
+        return true;
+    }
+
+    private bool TryValidateFileDropTile(Tile tile, out string canonical, out string reason)
+    {
+        canonical = "";
+        if (!tile.IsRealFile || string.IsNullOrWhiteSpace(tile.Path))
+            return Fail("not a source image", out reason);
+        if (!_allTiles.Contains(tile))
+            return Fail("not in the current catalog", out reason);
+        if (!Path.IsPathFullyQualified(tile.Path))
+            return Fail("path is not absolute", out reason);
+        if (!SupportedImageExtensions.Contains(Path.GetExtension(tile.Path)))
+            return Fail("unsupported file type", out reason);
+        if (!File.Exists(tile.Path))
+            return Fail("source no longer exists", out reason);
+
+        string lexical;
+        try
+        {
+            lexical = Path.GetFullPath(tile.Path);
+            canonical = _resolveFinalPath(lexical);
+            if (!File.Exists(canonical))
+                return Fail("canonical source no longer exists", out reason);
+        }
+        catch (Exception ex)
+        {
+            return Fail($"canonical path failed ({ex.Message})", out reason);
+        }
+
+        List<string> activeRoots = _currentFolderSet.Count > 0 ? _currentFolderSet : _currentFolder is null ? [] : [_currentFolder];
+        if (activeRoots.Count == 0)
+            return Fail("no active source root", out reason);
+        foreach (string root in activeRoots)
+        {
+            try
+            {
+                string lexicalRoot = Path.GetFullPath(root);
+                string canonicalRoot = _resolveFinalPath(lexicalRoot);
+                if (IsPathInside(lexical, lexicalRoot) && IsPathInside(canonical, canonicalRoot))
+                {
+                    reason = "";
+                    return true;
+                }
+            }
+            catch
+            {
+                // A broken root cannot authorize an Explorer FileDrop payload.
+            }
+        }
+
+        return Fail("source is outside the active root", out reason);
+    }
 
     private void OpenModal()
     {
@@ -6955,6 +7137,30 @@ public partial class MainWindow : Window
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedCountForSmoke => SelectedTiles().Count;
     public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
+    public FileDragOutSmokeSnapshot BuildFileDropPayloadForSmoke(string originFileName, bool originWasSelected)
+    {
+        Tile? origin = _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, originFileName, StringComparison.OrdinalIgnoreCase));
+        string[] paths = [];
+        string reason = "origin was not found";
+        bool built = origin is not null && TryBuildFileDropPayload(origin, originWasSelected, out paths, out reason);
+        if (!built)
+            return new FileDragOutSmokeSnapshot(false, [], false, reason, false, FileDragSurfaceContractForSmoke);
+
+        var data = new DataObject(DataFormats.FileDrop, paths);
+        return new FileDragOutSmokeSnapshot(
+            true,
+            paths.ToList(),
+            data.GetDataPresent(DataFormats.FileDrop),
+            "",
+            ExceedsFileDragThreshold(new Point(0, 0), new Point(SystemParameters.MinimumHorizontalDragDistance + 0.1, 0)),
+            FileDragSurfaceContractForSmoke);
+    }
+    public bool FileDragThresholdRejectsExactDistanceForSmoke
+        => !ExceedsFileDragThreshold(new Point(0, 0), new Point(SystemParameters.MinimumHorizontalDragDistance, 0));
+    public bool FileDragSurfaceContractForSmoke
+        => !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(CardsList))
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(RowsList))
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(PreviewImageDragSurface));
     public bool RightPreviewEmptyForSmoke
         => string.Equals(PreviewFileName.Text, "No matching image", StringComparison.Ordinal)
             && PreviewBitmap.Visibility == Visibility.Collapsed;
@@ -8102,6 +8308,14 @@ public sealed record PromptTagSearchSmokeSnapshot(
     bool SearchFocused,
     bool AccessibilityReady,
     List<string> FilteredNames);
+
+public sealed record FileDragOutSmokeSnapshot(
+    bool Built,
+    List<string> Paths,
+    bool FileDropFormatPresent,
+    string Reason,
+    bool ExceedsThreshold,
+    bool SurfaceContractReady);
 
 public sealed record PngMetadataSmokeSnapshot(
     bool Selected,
