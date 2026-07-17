@@ -313,7 +313,7 @@ public partial class MainWindow : Window
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
             foreach (var file in files)
-                _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions));
+                _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
             PruneHiddenFolderBucketsToCurrentSet();
             RefreshFolderBucketViews();
@@ -699,12 +699,17 @@ public partial class MainWindow : Window
         }
     }
 
-    private Tile MakeFileTile(FileInfo file, double width, IReadOnlyDictionary<string, ImageDimensions> dimensions)
+    private Tile MakeFileTile(
+        FileInfo file,
+        double width,
+        IReadOnlyDictionary<string, ImageDimensions> dimensions,
+        IReadOnlyDictionary<string, string> prompts)
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
         dimensions.TryGetValue(file.FullName, out var imageSize);
+        prompts.TryGetValue(file.FullName, out string? indexedPrompt);
         var folderBucket = ResolveFolderBucket(file.FullName);
         var tile = new Tile
         {
@@ -718,7 +723,7 @@ public partial class MainWindow : Window
             CardWidth = width,
             ModifiedUtc = file.LastWriteTimeUtc,
             CreatedUtc = file.CreationTimeUtc,
-            Prompt = file.FullName,
+            Prompt = indexedPrompt ?? "",
             Path = file.FullName,
             IsRealFile = true,
             FolderBucketKey = folderBucket.Key,
@@ -1965,6 +1970,7 @@ public partial class MainWindow : Window
 
         var watch = Stopwatch.StartNew();
         var dimensions = new ConcurrentDictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase);
+        var prompts = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int workers = Math.Max(1, Math.Min(Math.Min(MaxMetadataReadWorkers, Environment.ProcessorCount), files.Count));
         int completed = 0;
         Parallel.ForEach(
@@ -1975,10 +1981,13 @@ public partial class MainWindow : Window
                 token.ThrowIfCancellationRequested();
                 TryReadBitmapSize(file.FullName, out int width, out int height);
                 dimensions[file.FullName] = new ImageDimensions(width, height);
+                PngParametersMetadata? metadata = ReadPngParametersMetadata(file.FullName, token);
+                if (!string.IsNullOrWhiteSpace(metadata?.Prompt))
+                    prompts[file.FullName] = metadata.Prompt;
                 Interlocked.Increment(ref completed);
             });
         watch.Stop();
-        return new ImageMetadataLoadMetrics(dimensions, workers, completed, watch.ElapsedMilliseconds);
+        return new ImageMetadataLoadMetrics(dimensions, prompts, workers, completed, watch.ElapsedMilliseconds);
     }
 
     // ─────────── Sample data (shell only — no real files, procedural art) ───────────
@@ -3432,15 +3441,11 @@ public partial class MainWindow : Window
     {
         if (string.IsNullOrWhiteSpace(query)) return true;
 
-        var tokens = query.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var tokens = query.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
         foreach (var token in tokens)
         {
             if (ContainsText(tile.FileName, token)
-                || ContainsText(tile.Path, token)
-                || ContainsText(tile.Prompt, token)
-                || ContainsText(tile.Group, token)
-                || ContainsText(tile.SizeText, token)
-                || ContainsText(tile.ModifiedText, token))
+                || ContainsText(tile.Prompt, token))
             {
                 continue;
             }
@@ -4171,6 +4176,51 @@ public partial class MainWindow : Window
     }
 
     private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
+
+    private async void AddFolderToViewer_Click(object sender, RoutedEventArgs e)
+    {
+        IReadOnlyList<string> selected = ChooseFolders("Add image folders");
+        if (selected.Count == 0)
+            return;
+
+        await AddFoldersToCurrentSetAsync(selected);
+    }
+
+    private void ChangeFolderSet_Click(object sender, RoutedEventArgs e)
+        => ReturnToFolderSetEditor();
+
+    private IReadOnlyList<string> ChooseFolders(string title)
+    {
+        var dialog = new OpenFolderDialog
+        {
+            Title = title,
+            Multiselect = true,
+        };
+
+        if (dialog.ShowDialog(this) != true)
+            return [];
+
+        string[] folders = dialog.FolderNames.Length > 0 ? dialog.FolderNames : [dialog.FolderName];
+        return NormalizeFolderSet(folders).Where(Directory.Exists).ToList();
+    }
+
+    private async Task<bool> AddFoldersToCurrentSetAsync(IEnumerable<string> folders)
+    {
+        var merged = NormalizeFolderSet(_currentFolderSet.Concat(folders))
+            .Where(Directory.Exists)
+            .ToList();
+        if (merged.Count == 0 || merged.SequenceEqual(_currentFolderSet, StringComparer.OrdinalIgnoreCase))
+            return false;
+
+        await LoadFolderSetAsync(merged);
+        return true;
+    }
+
+    private void ReturnToFolderSetEditor()
+    {
+        SetLandingFolderSet(_currentFolderSet);
+        SetPhase(landing: true);
+    }
 
     private void SetPhase(bool landing)
     {
@@ -5528,6 +5578,7 @@ public partial class MainWindow : Window
     public string? CurrentFolderForSmoke => _currentFolder;
     public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
     public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
+    public bool LandingVisibleForSmoke => Landing.Visibility == Visibility.Visible;
     public int RecentFolderSetCountForSmoke => _recentFolderSetViews.Count;
     public string LastFolderSetDisplayForSmoke => LastFolderSetText.Text;
     public int FolderBucketCountForSmoke => _folderBucketViews.Count;
@@ -5892,6 +5943,12 @@ public partial class MainWindow : Window
     public int AppendPastedFoldersForSmoke(string folderText)
         => AppendLandingFolders(SplitFolderSet(folderText));
 
+    public Task<bool> AddFoldersToCurrentSetForSmokeAsync(IEnumerable<string> folders)
+        => AddFoldersToCurrentSetAsync(folders);
+
+    public void ReturnToFolderSetEditorForSmoke()
+        => ReturnToFolderSetEditor();
+
     public void SetLandingFolderSetForSmoke(IEnumerable<string> folders)
         => SetLandingFolderSet(folders);
 
@@ -6143,6 +6200,9 @@ public partial class MainWindow : Window
 
     public string? PathForFileNameForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
+
+    public string? PromptForFileNameForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Prompt;
 
     public bool? IsFileUnseenForSmoke(string fileName)
         => _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Unseen;
@@ -6461,9 +6521,19 @@ public sealed record PngMetadataSmokeSnapshot(
 
 public readonly record struct ImageDimensions(int Width, int Height);
 
-public readonly record struct ImageMetadataLoadMetrics(IReadOnlyDictionary<string, ImageDimensions> Dimensions, int Workers, int Completed, long ElapsedMs)
+public readonly record struct ImageMetadataLoadMetrics(
+    IReadOnlyDictionary<string, ImageDimensions> Dimensions,
+    IReadOnlyDictionary<string, string> Prompts,
+    int Workers,
+    int Completed,
+    long ElapsedMs)
 {
-    public static ImageMetadataLoadMetrics Empty => new(new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase), 0, 0, 0);
+    public static ImageMetadataLoadMetrics Empty => new(
+        new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase),
+        new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        0,
+        0,
+        0);
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);

@@ -233,6 +233,13 @@ public partial class App : Application
             return;
         }
 
+        int p1aSmokeIdx = Array.IndexOf(e.Args, "--p1a-smoke");
+        if (p1aSmokeIdx >= 0 && p1aSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP1ASmoke(e.Args[p1aSmokeIdx + 1]);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -3258,6 +3265,141 @@ public partial class App : Application
             }
 
             WriteDateFilterSmokeResult(resultFullPath, result);
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureP1ASmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        string folderA = Path.Combine(smokeRoot, "folder-a");
+        string folderB = Path.Combine(smokeRoot, "folder-b");
+        Directory.CreateDirectory(folderA);
+        Directory.CreateDirectory(folderB);
+
+        string filenameCatPath = Path.Combine(folderA, "filename-cat.png");
+        string promptPath = Path.Combine(folderA, "prompt-only.png");
+        string reversedPath = Path.Combine(folderA, "reversed-words.png");
+        string addedPath = Path.Combine(folderB, "added-folder.png");
+        WriteSmokePng(filenameCatPath, 64, 48, Color.FromRgb(52, 152, 219));
+        WritePngTextFixture(
+            promptPath,
+            "parameters",
+            "night cat portrait\nNegative prompt: forbidden wolf\nSteps: 20, Sampler: Euler",
+            Color.FromRgb(46, 204, 113));
+        WritePngTextFixture(
+            reversedPath,
+            "parameters",
+            "cat beneath a bright night sky\nNegative prompt: artifact\nSteps: 24, Sampler: DPM++ 2M",
+            Color.FromRgb(155, 89, 182));
+        WriteSmokePng(addedPath, 64, 48, Color.FromRgb(241, 196, 15));
+
+        File.SetCreationTime(filenameCatPath, new DateTime(2026, 1, 10, 10, 0, 0));
+        File.SetLastWriteTime(filenameCatPath, new DateTime(2026, 7, 15, 10, 0, 0));
+        File.SetCreationTime(promptPath, new DateTime(2026, 7, 15, 12, 0, 0));
+        File.SetLastWriteTime(promptPath, new DateTime(2026, 1, 10, 12, 0, 0));
+        File.SetCreationTime(reversedPath, new DateTime(2026, 7, 17, 12, 0, 0));
+        File.SetLastWriteTime(reversedPath, new DateTime(2026, 7, 17, 12, 0, 0));
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            P1ASmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folderA);
+                string? indexedPrompt = win.PromptForFileNameForSmoke("prompt-only.png");
+
+                win.SetSearchQuery("filename-cat", persist: false);
+                List<string> filenameMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetSearchQuery("night cat", persist: false);
+                List<string> phraseMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetSearchQuery("cat, night", persist: false);
+                List<string> andMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetSearchQuery("cat,, night,", persist: false);
+                List<string> emptyTokenMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetSearchQuery("forbidden wolf", persist: false);
+                List<string> negativeMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetSearchQuery(Path.GetFileName(smokeRoot), persist: false);
+                List<string> pathMatches = win.FilteredFileNamesForSmoke(10);
+
+                win.SetSearchQuery("", persist: false);
+                bool dateChanged = win.SetManualDateRangeForSmoke("2026-07-14", "2026-07-16");
+                List<string> createdDateMatches = win.FilteredFileNamesForSmoke(10);
+                win.SetManualDateRangeForSmoke(null, null);
+
+                bool folderAdded = await win.AddFoldersToCurrentSetForSmokeAsync([folderB]);
+                List<string> currentFolderSet = win.CurrentFolderSetForSmoke;
+                int catalogAfterAdd = win.CatalogCountForSmoke;
+                win.ReturnToFolderSetEditorForSmoke();
+                List<string> landingFolderSet = win.LandingFolderSetForSmoke;
+
+                bool searchOk = string.Equals(indexedPrompt, "night cat portrait", StringComparison.Ordinal)
+                    && SameNameOrder(filenameMatches, ["filename-cat.png"])
+                    && SameNameOrder(phraseMatches, ["prompt-only.png"])
+                    && SameNameOrder(andMatches, ["reversed-words.png", "prompt-only.png"])
+                    && SameNameOrder(emptyTokenMatches, andMatches)
+                    && negativeMatches.Count == 0
+                    && pathMatches.Count == 0;
+                bool dateOk = dateChanged && SameNameOrder(createdDateMatches, ["prompt-only.png"]);
+                bool folderOk = folderAdded
+                    && currentFolderSet.Count == 2
+                    && currentFolderSet.Contains(folderA, StringComparer.OrdinalIgnoreCase)
+                    && currentFolderSet.Contains(folderB, StringComparer.OrdinalIgnoreCase)
+                    && catalogAfterAdd == 4
+                    && win.LandingVisibleForSmoke
+                    && SameNameOrder(landingFolderSet, currentFolderSet);
+                bool ok = searchOk && dateOk && folderOk;
+
+                result = new P1ASmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "comma-AND filename/prompt search, Created/Birth manual date filtering, and Add/Change folder semantics passed"
+                        : "P1A search/date/folder expectations did not match",
+                    SearchOk = searchOk,
+                    DateOk = dateOk,
+                    FolderOk = folderOk,
+                    IndexedPrompt = indexedPrompt,
+                    FilenameMatches = filenameMatches,
+                    PhraseMatches = phraseMatches,
+                    AndMatches = andMatches,
+                    EmptyTokenMatches = emptyTokenMatches,
+                    NegativeMatches = negativeMatches,
+                    PathMatches = pathMatches,
+                    CreatedDateMatches = createdDateMatches,
+                    CurrentFolderSet = currentFolderSet,
+                    LandingFolderSet = landingFolderSet,
+                    CatalogAfterAdd = catalogAfterAdd,
+                    LandingVisible = win.LandingVisibleForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new P1ASmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                win.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
@@ -6829,6 +6971,27 @@ public partial class App : Application
         public string? RestoredDateTo { get; init; }
         public List<string> RestoredOrder { get; init; } = [];
         public string? RestoredSelected { get; init; }
+    }
+
+    private sealed class P1ASmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool SearchOk { get; init; }
+        public bool DateOk { get; init; }
+        public bool FolderOk { get; init; }
+        public string? IndexedPrompt { get; init; }
+        public List<string> FilenameMatches { get; init; } = [];
+        public List<string> PhraseMatches { get; init; } = [];
+        public List<string> AndMatches { get; init; } = [];
+        public List<string> EmptyTokenMatches { get; init; } = [];
+        public List<string> NegativeMatches { get; init; } = [];
+        public List<string> PathMatches { get; init; } = [];
+        public List<string> CreatedDateMatches { get; init; } = [];
+        public List<string> CurrentFolderSet { get; init; } = [];
+        public List<string> LandingFolderSet { get; init; } = [];
+        public int CatalogAfterAdd { get; init; }
+        public bool LandingVisible { get; init; }
     }
 
     private sealed class EnhancedFilterSmokeResult

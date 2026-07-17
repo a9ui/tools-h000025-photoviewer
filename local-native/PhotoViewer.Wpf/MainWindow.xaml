@@ -102,8 +102,8 @@
                 <TextBlock x:Name="FolderPathText" Text="D:\SD\outputs  (+3)" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" Margin="0,0,0,3"/>
                 <TextBlock x:Name="FolderCountText" Text="12,480 images indexed" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,7"/>
                 <StackPanel Orientation="Horizontal">
-                  <Button Style="{StaticResource SidebarLink}" Content="Add folder" Margin="0,0,14,0" Click="OpenFolder_Click"/>
-                  <Button Style="{StaticResource SidebarLink}" Content="Change folder" Click="OpenFolder_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Add folder" Margin="0,0,14,0" Click="AddFolderToViewer_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Change folder" Click="ChangeFolderSet_Click"/>
                 </StackPanel>
               </StackPanel>
             </Border>
