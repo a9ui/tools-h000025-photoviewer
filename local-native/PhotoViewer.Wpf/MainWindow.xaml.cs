@@ -158,6 +158,8 @@ public partial class MainWindow : Window
     private string _loadPhase = "idle";
     private int _scanEnumerationDelayForSmokeMs;
     private int _scanMetadataDelayForSmokeMs;
+    private int _previewDecodeDelayForSmokeMs;
+    private int _modalDecodeDelayForSmokeMs;
     private int _loadCtsCreatedCount;
     private int _loadCtsRetiredCount;
     private CancellationTokenSource? _modalCts;
@@ -217,6 +219,8 @@ public partial class MainWindow : Window
     private int _shutdownPersistenceFlushCount;
     private Tile? _pendingDeleteTile;
     private DeleteSnapshot? _pendingBulkDeleteSnapshot;
+    private readonly Dictionary<string, long> _sourceRecycleGenerationByPath = new(StringComparer.OrdinalIgnoreCase);
+    private long _sourceRecycleGeneration;
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
     private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
     private Func<IReadOnlyList<string>> _protectedDeleteRoots = ResolveProtectedDeleteRoots;
@@ -393,6 +397,11 @@ public partial class MainWindow : Window
         _previewMs = 0;
         _previewDeferredDecodeCount = 0;
         _previewDeferredDecodeMs = 0;
+        // A fresh enumeration is allowed to discover a newly-created file at a
+        // path recycled by an earlier operation. Only recycles that happen
+        // after this load starts can invalidate this load's captured file list.
+        _sourceRecycleGenerationByPath.Clear();
+        long sourceRecycleGenerationAtStart = _sourceRecycleGeneration;
         bool modalWasVisibleBeforePublish = Modal.Visibility == Visibility.Visible;
         bool modalHadFocusBeforePublish = Modal.IsKeyboardFocusWithin;
         string? focusedPreviewTabPathBeforePublish = TryGetFocusedPreviewTab(out PreviewTabView? focusedPreviewTab)
@@ -497,6 +506,13 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
+        files = files
+            .Where(file => File.Exists(file.FullName)
+                && !WasSourceRecycledAfter(file.FullName, sourceRecycleGenerationAtStart))
+            .ToList();
+        string? selectedPathAfterConcurrentRecycle = _sourceRecycleGeneration > sourceRecycleGenerationAtStart
+            ? SelectedTile()?.Path
+            : null;
         _scanCancelable = false;
         _loadPhase = "publishing";
         CancelScanButton.Visibility = Visibility.Collapsed;
@@ -504,6 +520,7 @@ public partial class MainWindow : Window
 
         var materializeWatch = Stopwatch.StartNew();
         Tile? restoredActivePreviewTile = null;
+        Tile? concurrentRecycleSelectionTile = null;
         bool previousSuppress = _suppressStateSave;
         _suppressStateSave = true;
         try
@@ -530,6 +547,11 @@ public partial class MainWindow : Window
             FolderPathText.Text = resolvedFolderSummary;
             ApplyFilters(selectFirst: false);
             restoredActivePreviewTile = ReconcilePreviewTabsWithCurrentCatalog();
+            if (!string.IsNullOrWhiteSpace(selectedPathAfterConcurrentRecycle))
+            {
+                concurrentRecycleSelectionTile = _allTiles.FirstOrDefault(tile =>
+                    string.Equals(tile.Path, selectedPathAfterConcurrentRecycle, StringComparison.OrdinalIgnoreCase));
+            }
             UpdateFolderStats();
         }
         finally
@@ -575,7 +597,9 @@ public partial class MainWindow : Window
         }
 
         SetPhase(landing: false);
-        if (restoredActivePreviewTile is not null)
+        if (concurrentRecycleSelectionTile is not null)
+            _restoredSelectedPath = concurrentRecycleSelectionTile.Path;
+        else if (restoredActivePreviewTile is not null)
             _restoredSelectedPath = restoredActivePreviewTile.Path;
         SelectRestoredOrFirst();
         ReconcileOpenSurfacesAfterCatalogReload(
@@ -2776,6 +2800,8 @@ public partial class MainWindow : Window
             decoded = await Task.Run(
                 () =>
                 {
+                    if (_previewDecodeDelayForSmokeMs > 0)
+                        Thread.Sleep(_previewDecodeDelayForSmokeMs);
                     var watch = Stopwatch.StartNew();
                     var bitmap = LoadBitmap(path, 900);
                     bool hasSize = TryReadBitmapSize(path, out int width, out int height);
@@ -6084,7 +6110,12 @@ public partial class MainWindow : Window
         BitmapSource? bitmap;
         try
         {
-            bitmap = await Task.Run(() => LoadBitmap(displayPath, 1400), token);
+            bitmap = await Task.Run(() =>
+            {
+                if (_modalDecodeDelayForSmokeMs > 0)
+                    Thread.Sleep(_modalDecodeDelayForSmokeMs);
+                return LoadBitmap(displayPath, 1400);
+            }, token);
         }
         catch (OperationCanceledException)
         {
@@ -6882,6 +6913,9 @@ public partial class MainWindow : Window
     {
         var deletedPaths = new HashSet<string>(deletedTiles.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
         var deletedKeys = new HashSet<string>(deletedPaths.Select(NormalizeFavoritePath), StringComparer.OrdinalIgnoreCase);
+        long recycleGeneration = ++_sourceRecycleGeneration;
+        foreach (string key in deletedKeys)
+            _sourceRecycleGenerationByPath[key] = recycleGeneration;
         bool refreshModal = Modal.Visibility == Visibility.Visible;
         bool deletedModalSource = refreshModal
             && !string.IsNullOrWhiteSpace(_modalSourceTilePath)
@@ -6923,6 +6957,10 @@ public partial class MainWindow : Window
         RefreshPreviewTabs();
         return refreshModal;
     }
+
+    private bool WasSourceRecycledAfter(string path, long generation)
+        => _sourceRecycleGenerationByPath.TryGetValue(NormalizeFavoritePath(path), out long recycledAt)
+            && recycledAt > generation;
 
     private Tile? FindBulkDeleteNeighbor(IReadOnlyList<Tile> priorFilteredOrder, IReadOnlyList<Tile> targets)
     {
@@ -8125,6 +8163,11 @@ public partial class MainWindow : Window
         _scanEnumerationDelayForSmokeMs = Math.Max(0, enumerationMilliseconds);
         _scanMetadataDelayForSmokeMs = Math.Max(0, metadataMilliseconds);
     }
+    public void ConfigureImageDecodeDelaysForSmoke(int previewMilliseconds, int modalMilliseconds)
+    {
+        _previewDecodeDelayForSmokeMs = Math.Max(0, previewMilliseconds);
+        _modalDecodeDelayForSmokeMs = Math.Max(0, modalMilliseconds);
+    }
     public int RecentFolderSetCountForSmoke => _recentFolderSetViews.Count;
     public string LastFolderSetDisplayForSmoke => LastFolderSetText.Text;
     public int FolderBucketCountForSmoke => _folderBucketViews.Count;
@@ -8140,6 +8183,9 @@ public partial class MainWindow : Window
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ShowSelectedFolderBucketsButton), "Show selected folder buckets", StringComparison.Ordinal)
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(HideSelectedFolderBucketsButton), "Hide selected folder buckets", StringComparison.Ordinal);
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+    public string? PreviewDecodedPathForSmoke => _previewDecodedPath;
+    public string? PreviewMetadataPathForSmoke => _currentPreviewMetadataPath;
+    public string? ModalSourcePathForSmoke => _modalSourceTilePath;
     public bool FocusModalCloseForSmoke() => ModalCloseBtn.Focus();
     public bool ModalCloseFocusedForSmoke => ModalCloseBtn.IsKeyboardFocused;
     public bool PreviewPlaceholderVisibleForSmoke

@@ -94,6 +94,8 @@ Prompt tag→search、Explorerへのnative FileDrop drag-out、Right Preview/Mod
 
 Favorite filter中のlevel変更後の即時再同期、sparse paged resultのmodal/Delete full-order neighbor、Source Recycle後のownership方針は完了した。Browser/WPFともsuccessful source pathをcatalog、selection、open/active/pinned/closed tab、preview/modal、persisted UI参照から除去する一方、Favorite/Seenはmulti-owner path履歴、Enhancement job/outputは別削除権限として保持する。WPFはさらにlexical/canonical repository/project/app-root guardとsingle/bulk共通reconciliationを`verify-wpf-delete-correctness.ps1`で固定した。
 
+WPFでRefreshのmetadata処理中にsource Recycleが成功すると、Refresh開始時のold file listが削除pathをcatalogへ復活させるP0 raceを再現して修正した。successful Recycleだけをload generation付きtombstoneへ記録し、stale publishを除外してpost-Delete neighbor/Modal/focusを維持する。failed/cancelは非対象、次のfresh Refreshでは同名再生成sourceを再発見する契約を`verify-wpf-delete-race.ps1`で固定した。
+
 ### P2-C 共通性能・回帰
 
 1. rapid search/selection/decode、Grid/List、display/aspect、right-panel resize commit、Favorite/Unseen、tab reorder/close/pinを321件fixtureでstress済み。filter外tab/pinがreloadで消える欠陥をfull-catalog reconciliationへ修正し、最終入力だけの復元、heartbeat、Enhancement 0を`verify-wpf-rapid-ui-state.ps1`で固定した。

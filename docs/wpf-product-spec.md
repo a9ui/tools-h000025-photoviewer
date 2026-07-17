@@ -447,6 +447,8 @@ Delete直前に毎回すべて再検証する。
 - confirmationはCancel、Recycle、Do not ask againを持つ。
 - Recycle成功を確認してからcatalog/stateを更新する。
 - failure/cancelではsource、catalog、Favorite、Seen、selection、tabsを変えない。
+- Refreshがenumeration/metadata中にRecycle成功した場合、そのRefreshが先にcaptureしたold sourceをpublishしてはならない。successful pathだけをload-start generationより新しいtombstoneとして扱い、post-Deleteのneighbor selection、preview、Modal、focusを維持する。
+- tombstoneはfailed/cancel pathへ付けず、次のfresh Refresh開始時に失効する。同じpathへ後から生成された新sourceを永久に隠さない。
 
 ### WPF-DEL-003 Neighbor
 
@@ -612,6 +614,7 @@ Accessibility:
 | Explorer folder drag-in | `powershell -File scripts/verify-wpf-folder-drag-in.ps1` |
 | Bulk Recycle | `powershell -File scripts/verify-wpf-bulk-recycle.ps1` |
 | Delete protected roots / ownership reconciliation | `powershell -File scripts/verify-wpf-delete-correctness.ps1` |
+| Delete decode/Refresh race / tombstone lifetime | `powershell -File scripts/verify-wpf-delete-race.ps1` |
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
 | Exact visual viewports / Browser comparison states | `powershell -File scripts/verify-wpf-visual-layout.ps1 -EvidenceDir <path>` |
 

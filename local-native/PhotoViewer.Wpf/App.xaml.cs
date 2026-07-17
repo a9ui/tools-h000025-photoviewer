@@ -269,6 +269,13 @@ public partial class App : Application
             return;
         }
 
+        int deleteRaceSmokeIdx = Array.IndexOf(e.Args, "--delete-race-smoke");
+        if (deleteRaceSmokeIdx >= 0 && deleteRaceSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDeleteRaceSmoke(e.Args[deleteRaceSmokeIdx + 1]);
+            return;
+        }
+
         int externalStaleSourceSmokeIdx = Array.IndexOf(e.Args, "--external-stale-source-smoke");
         if (externalStaleSourceSmokeIdx >= 0 && externalStaleSourceSmokeIdx + 1 < e.Args.Length)
         {
@@ -6321,6 +6328,348 @@ public partial class App : Application
             {
                 if (reload?.IsVisible == true)
                     reload.Close();
+                if (win.IsVisible)
+                    win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureDeleteRaceSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-delete-race-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string recycle = Path.Combine(smokeRoot, "fake-recycle-bin");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhancement-jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        static async Task<bool> WaitForPhaseAsync(MainWindow window, string phase, int timeoutMilliseconds = 4000)
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                if (string.Equals(window.LoadPhaseForSmoke, phase, StringComparison.Ordinal))
+                    return true;
+                await Task.Delay(10);
+            }
+            return false;
+        }
+
+        static bool StateExcludes(ViewerState? state, IEnumerable<string> paths)
+        {
+            var removed = new HashSet<string>(paths, StringComparer.OrdinalIgnoreCase);
+            return state?.PreviewTabPaths?.All(path => !removed.Contains(path)) != false
+                && state?.PinnedPreviewPaths?.All(path => !removed.Contains(path)) != false
+                && (string.IsNullOrWhiteSpace(state?.ActivePreviewTabPath) || !removed.Contains(state.ActivePreviewTabPath))
+                && (string.IsNullOrWhiteSpace(state?.SelectedPath) || !removed.Contains(state.SelectedPath));
+        }
+
+        Directory.CreateDirectory(folder);
+        string[] names = ["alpha.png", "bravo.png", "charlie.png", "delta.png", "echo.png", "foxtrot.png", "golf.png", "hotel.png", "india.png"];
+        for (int index = 0; index < names.Length; index++)
+            WriteSmokePng(Path.Combine(folder, names[index]), 64, 48, Color.FromRgb((byte)(55 + index * 18), (byte)(105 + index * 9), 190));
+        File.WriteAllText(jobsPath, JsonSerializer.Serialize(new
+        {
+            version = 1,
+            jobs = new[]
+            {
+                new { id = "retained-charlie-history", sourcePath = Path.Combine(folder, "charlie.png"), status = "succeeded", progress = 100 },
+                new { id = "retained-hotel-history", sourcePath = Path.Combine(folder, "hotel.png"), status = "failed", progress = 45 },
+            },
+        }, new JsonSerializerOptions { WriteIndented = true }));
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                int[] favoriteLevels = [1, 2, 3, 4, 5, 1, 2, 3, 5];
+                foreach ((string name, int index) in names.Select((name, index) => (name, index)))
+                {
+                    if (!win.SelectFileNameForSmoke(name) || !win.SetSelectedFavoriteLevelForSmoke(favoriteLevels[index]))
+                        throw new InvalidOperationException($"could not seed Favorite history for {name}");
+                    win.MarkSelectedSeenForSmoke();
+                }
+
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+                int backendCalls = 0;
+                bool failEcho = false;
+                win.SetRecycleBinDeleteBackendForSmoke(path =>
+                {
+                    backendCalls++;
+                    if (failEcho && string.Equals(Path.GetFileName(path), "echo.png", StringComparison.OrdinalIgnoreCase))
+                        return RecycleBinDeleteResult.Failed("synthetic partial failure");
+                    Directory.CreateDirectory(recycle);
+                    File.Move(path, Path.Combine(recycle, Path.GetFileName(path)));
+                    return RecycleBinDeleteResult.Success;
+                });
+                win.SetConfirmBeforeDeleteForSmoke(false);
+
+                string charliePath = Path.Combine(folder, "charlie.png");
+                string deltaPath = Path.Combine(folder, "delta.png");
+                win.ConfigureImageDecodeDelaysForSmoke(350, 350);
+                bool charliePrepared = win.SelectFileNameForSmoke("charlie.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("charlie.png")
+                    && win.OpenModalForSmoke();
+                Task<PreviewDecodeSmokeSnapshot> stalePreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("charlie.png");
+                bool modalFocused = win.FocusModalCloseForSmoke();
+                bool charlieDeleted = win.RequestDeleteSelectedForSmoke();
+                PreviewDecodeSmokeSnapshot stalePreview = await stalePreviewTask;
+                await Task.Delay(500);
+                ViewerState? stateAfterAsyncDelete = ReadPersistedState(statePath);
+                bool asyncModalFocus = win.ModalCloseFocusedForSmoke;
+                string? asyncPreviewPath = win.PreviewDecodedPathForSmoke;
+                string? asyncMetadataPath = win.PreviewMetadataPathForSmoke;
+                bool asyncDeleteReconciled = charliePrepared && modalFocused && charlieDeleted
+                    && !File.Exists(charliePath) && File.Exists(Path.Combine(recycle, "charlie.png"))
+                    && string.Equals(win.SelectedFileNameForSmoke, "delta.png", StringComparison.OrdinalIgnoreCase)
+                    && !stalePreview.StableLatestSelection && !stalePreview.DeferredDecodeApplied
+                    && string.Equals(asyncPreviewPath, deltaPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(asyncMetadataPath, charliePath, StringComparison.OrdinalIgnoreCase)
+                    && win.ModalVisibleForSmoke
+                    && string.Equals(win.ModalSourcePathForSmoke, deltaPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.ModalDisplayPathForSmoke, deltaPath, StringComparison.OrdinalIgnoreCase)
+                    && asyncModalFocus
+                    && !win.PreviewTabNamesForSmoke.Contains("charlie.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.IsPreviewTabPinnedForSmoke("charlie.png")
+                    && StateExcludes(stateAfterAsyncDelete, [charliePath]);
+
+                win.CloseModalForSmoke();
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+                win.SetFavoriteFilterLevelsForSmoke(2, 4);
+                win.SetFavoriteOnlyFilterForSmoke(true);
+                bool sparseOrderPrepared = win.FilteredFileNamesForSmoke().SequenceEqual(["bravo.png", "delta.png", "golf.png"], StringComparer.OrdinalIgnoreCase);
+                foreach (string target in new[] { "delta.png", "golf.png", "bravo.png" })
+                {
+                    if (!win.SelectFileNameForSmoke(target) || !win.OpenSelectedPreviewTabForSmoke() || !win.TogglePreviewTabPinForSmoke(target))
+                        throw new InvalidOperationException($"could not prepare sparse delete for {target}");
+                }
+                bool selectedDelta = win.SelectFileNameForSmoke("delta.png");
+                bool deltaToNext = win.RequestDeleteSelectedForSmoke()
+                    && string.Equals(win.SelectedFileNameForSmoke, "golf.png", StringComparison.OrdinalIgnoreCase);
+                bool golfToPrevious = win.RequestDeleteSelectedForSmoke()
+                    && string.Equals(win.SelectedFileNameForSmoke, "bravo.png", StringComparison.OrdinalIgnoreCase);
+                bool bravoToEmpty = win.RequestDeleteSelectedForSmoke()
+                    && win.FilteredCountForSmoke == 0
+                    && win.SelectedCountForSmoke == 0
+                    && win.RightPreviewEmptyForSmoke
+                    && !win.ModalVisibleForSmoke;
+                string[] sparseRemoved = [Path.Combine(folder, "delta.png"), Path.Combine(folder, "golf.png"), Path.Combine(folder, "bravo.png")];
+                ViewerState? stateAfterSparse = ReadPersistedState(statePath);
+                bool sparseDeleteReconciled = sparseOrderPrepared && selectedDelta && deltaToNext && golfToPrevious && bravoToEmpty
+                    && sparseRemoved.All(path => !File.Exists(path))
+                    && sparseRemoved.All(path => File.Exists(Path.Combine(recycle, Path.GetFileName(path))))
+                    && sparseRemoved.All(path => !win.PreviewTabNamesForSmoke.Contains(Path.GetFileName(path), StringComparer.OrdinalIgnoreCase))
+                    && sparseRemoved.All(path => !win.IsPreviewTabPinnedForSmoke(Path.GetFileName(path)))
+                    && StateExcludes(stateAfterSparse, sparseRemoved);
+
+                win.ClearFavoriteFiltersForSmoke();
+                string alphaPath = Path.Combine(folder, "alpha.png");
+                string echoPath = Path.Combine(folder, "echo.png");
+                string foxtrotPath = Path.Combine(folder, "foxtrot.png");
+                bool closedAlphaPrepared = win.SelectFileNameForSmoke("alpha.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("alpha.png")
+                    && win.ClosePreviewTabForSmoke("alpha.png")
+                    && win.ClosedPreviewTabCountForSmoke == 1;
+                bool echoTabPrepared = win.SelectFileNameForSmoke("echo.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("echo.png");
+                bool foxtrotTabPrepared = win.SelectFileNameForSmoke("foxtrot.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("foxtrot.png");
+                List<string> bulkOrder = win.FilteredFileNamesForSmoke();
+                int echoIndex = bulkOrder.FindIndex(name => string.Equals(name, "echo.png", StringComparison.OrdinalIgnoreCase));
+                int foxtrotIndex = bulkOrder.FindIndex(name => string.Equals(name, "foxtrot.png", StringComparison.OrdinalIgnoreCase));
+                bool sparseBulkSelected = win.SelectFileNameForSmoke("alpha.png")
+                    && win.ToggleSelectionForSmoke(echoIndex)
+                    && win.ToggleSelectionForSmoke(foxtrotIndex);
+                bool bulkModal = win.OpenModalForSmoke() && win.FocusModalCloseForSmoke();
+                failEcho = true;
+                bool bulkPartialExecuted = win.RequestBulkDeleteSelectedForSmoke();
+                failEcho = false;
+                ViewerState? stateAfterBulk = ReadPersistedState(statePath);
+                string[] bulkRemoved = [alphaPath, foxtrotPath];
+                bool bulkPartialReconciled = closedAlphaPrepared && echoTabPrepared && foxtrotTabPrepared
+                    && sparseBulkSelected && bulkModal && bulkPartialExecuted
+                    && !File.Exists(alphaPath) && File.Exists(echoPath) && !File.Exists(foxtrotPath)
+                    && win.SelectedFileNamesForSmoke.Contains("echo.png", StringComparer.OrdinalIgnoreCase)
+                    && win.SelectedFileNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(win.SelectedFileNameForSmoke, "hotel.png", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusForSmoke.Contains("1 failed", StringComparison.OrdinalIgnoreCase)
+                    && win.ClosedPreviewTabCountForSmoke == 0
+                    && !win.PreviewTabNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.PreviewTabNamesForSmoke.Contains("foxtrot.png", StringComparer.OrdinalIgnoreCase)
+                    && win.PreviewTabNamesForSmoke.Contains("echo.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.IsPreviewTabPinnedForSmoke("alpha.png")
+                    && !win.IsPreviewTabPinnedForSmoke("foxtrot.png")
+                    && win.IsPreviewTabPinnedForSmoke("echo.png")
+                    && win.ModalVisibleForSmoke
+                    && string.Equals(win.ModalSourcePathForSmoke, Path.Combine(folder, "hotel.png"), StringComparison.OrdinalIgnoreCase)
+                    && win.ModalCloseFocusedForSmoke
+                    && StateExcludes(stateAfterBulk, bulkRemoved);
+
+                int callsBeforeCancel = backendCalls;
+                win.CloseModalForSmoke();
+                win.SetConfirmBeforeDeleteForSmoke(true);
+                bool cancelPrompted = win.SelectFileNameForSmoke("india.png")
+                    && win.RequestDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke;
+                win.CancelDeleteForSmoke();
+                bool cancelWasNonDestructive = cancelPrompted
+                    && backendCalls == callsBeforeCancel
+                    && File.Exists(Path.Combine(folder, "india.png"))
+                    && win.AllFileNamesForSmoke.Contains("india.png", StringComparer.OrdinalIgnoreCase);
+                win.SetConfirmBeforeDeleteForSmoke(false);
+
+                string hotelPath = Path.Combine(folder, "hotel.png");
+                string indiaPath = Path.Combine(folder, "india.png");
+                win.ConfigureImageDecodeDelaysForSmoke(300, 300);
+                bool hotelPrepared = win.SelectFileNameForSmoke("hotel.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("hotel.png")
+                    && win.OpenModalForSmoke()
+                    && win.FocusModalCloseForSmoke();
+                Task<PreviewDecodeSmokeSnapshot> staleRefreshPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("hotel.png");
+                win.ConfigureScanPhaseDelaysForSmoke(0, 500);
+                Task refreshTask = win.RefreshActiveFolderForSmokeAsync();
+                bool refreshReachedMetadata = await WaitForPhaseAsync(win, "metadata");
+                bool hotelDeletedDuringRefresh = refreshReachedMetadata && win.RequestDeleteSelectedForSmoke();
+                string? refreshError = null;
+                try
+                {
+                    await refreshTask;
+                }
+                catch (Exception ex)
+                {
+                    refreshError = ex.GetType().Name + ": " + ex.Message;
+                }
+                PreviewDecodeSmokeSnapshot staleRefreshPreview = await staleRefreshPreviewTask;
+                await Task.Delay(500);
+                ViewerState? stateAfterRefreshRace = ReadPersistedState(statePath);
+                bool refreshCatalogClean = !win.AllFileNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.FilteredFileNamesForSmoke().Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.PreviewTabNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.IsPreviewTabPinnedForSmoke("hotel.png");
+                bool refreshSelectionPreserved = string.Equals(win.SelectedFileNameForSmoke, "india.png", StringComparison.OrdinalIgnoreCase);
+                bool refreshPreviewSafe = !staleRefreshPreview.StableLatestSelection
+                    && !staleRefreshPreview.DeferredDecodeApplied
+                    && string.Equals(win.PreviewDecodedPathForSmoke, indiaPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(win.PreviewMetadataPathForSmoke, hotelPath, StringComparison.OrdinalIgnoreCase);
+                bool refreshModalSafe = win.ModalVisibleForSmoke
+                    && string.Equals(win.ModalSourcePathForSmoke, indiaPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.ModalDisplayPathForSmoke, indiaPath, StringComparison.OrdinalIgnoreCase)
+                    && win.ModalCloseFocusedForSmoke;
+                bool refreshStateClean = StateExcludes(stateAfterRefreshRace, [hotelPath]);
+                bool refreshRaceReconciled = hotelPrepared && refreshReachedMetadata && hotelDeletedDuringRefresh
+                    && refreshError is null
+                    && !File.Exists(hotelPath) && File.Exists(Path.Combine(recycle, "hotel.png"))
+                    && refreshCatalogClean && refreshSelectionPreserved && refreshPreviewSafe
+                    && refreshModalSafe && refreshStateClean;
+
+                WriteSmokePng(hotelPath, 72, 54, Color.FromRgb(210, 85, 135));
+                win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                await win.RefreshActiveFolderForSmokeAsync();
+                await Task.Delay(150);
+                bool sameNameRegenerationAllowed = win.AllFileNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && win.FavoriteLevelForFileForSmoke("hotel.png") == 3
+                    && !win.UnseenForFileForSmoke("hotel.png")
+                    && !win.PreviewTabNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.IsPreviewTabPinnedForSmoke("hotel.png");
+
+                bool historiesRetained = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && FavoriteFileContainsPath(favoritesPath, charliePath)
+                    && FavoriteFileContainsPath(favoritesPath, hotelPath)
+                    && ReadSeenFlag(seenPath, charliePath)
+                    && ReadSeenFlag(seenPath, hotelPath);
+                string[] recycledNames = ["alpha.png", "bravo.png", "charlie.png", "delta.png", "foxtrot.png", "golf.png", "hotel.png"];
+                bool tempRecycleOnly = backendCalls == 8
+                    && recycledNames.All(name => File.Exists(Path.Combine(recycle, name)))
+                    && File.Exists(echoPath) && File.Exists(indiaPath) && File.Exists(hotelPath);
+
+                ok = asyncDeleteReconciled && sparseDeleteReconciled && bulkPartialReconciled
+                    && cancelWasNonDestructive && refreshRaceReconciled && sameNameRegenerationAllowed
+                    && historiesRetained && tempRecycleOnly;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "Delete preview/modal races, sparse navigation, partial bulk failure, and concurrent Refresh reconciled without stale UI or history loss"
+                        : "WPF destructive-workflow race contract failed",
+                    asyncDeleteReconciled,
+                    sparseDeleteReconciled,
+                    bulkPartialReconciled,
+                    cancelWasNonDestructive,
+                    refreshRaceReconciled,
+                    sameNameRegenerationAllowed,
+                    historiesRetained,
+                    tempRecycleOnly,
+                    refreshReachedMetadata,
+                    hotelDeletedDuringRefresh,
+                    refreshError,
+                    refreshCatalogClean,
+                    refreshSelectionPreserved,
+                    refreshPreviewSafe,
+                    refreshModalSafe,
+                    refreshStateClean,
+                    stalePreview,
+                    staleRefreshPreview,
+                    asyncModalFocus,
+                    asyncPreviewPath,
+                    asyncMetadataPath,
+                    selected = win.SelectedFileNameForSmoke,
+                    catalog = win.AllFileNamesForSmoke,
+                    tabs = win.PreviewTabNamesForSmoke,
+                    pins = win.PinnedPreviewCountForSmoke,
+                    closed = win.ClosedPreviewTabCountForSmoke,
+                    modalPath = win.ModalDisplayPathForSmoke,
+                    previewPath = win.PreviewDecodedPathForSmoke,
+                    metadataPath = win.PreviewMetadataPathForSmoke,
+                    backendCalls,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString() };
+            }
+            finally
+            {
                 if (win.IsVisible)
                     win.Close();
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
