@@ -890,6 +890,8 @@ Reorderはactive/pin/image dataを変えず、tab orderだけを変更する。u
 - edge click。
 - swipe。
 - orderの端でwrap。
+- sparse searchではabsolute full-order indexから目的方向のpageを必要時だけfetchし、未load slotを飛び越えない。同じpageの同時requestはdedupeしてawaitする。
+- resolver開始後にquery、sort、random seed、date、hidden folders、folder set、index token、search generation、active client filterが変わった場合、古い結果で移動しない。
 - move後にSeen。
 - flipをreset。
 - pan/swipeをreset。
@@ -1014,7 +1016,7 @@ Modal/current orderで削除前に候補を決める。
 3. 残り0ならmodal close。
 4. API failureならcurrent画像のまま。
 
-このMUSTは完全なcurrent filtered orderを基準にする。ただし現行Browserのfallback orderは、明示`modalImageIds`がない時にloaded non-null search resultsだけから作るため、page未load境界では本来の直隣を飛ばし得る。通常loaded orderのneighborは実装済みだが、sparse境界は未解決のCURRENT LIMITATION。
+このMUSTは完全なcurrent filtered orderを基準にする。現行Browserはabsolute search indexをたどり、必要pageをawaitして削除slotのnext、なければpreviousを解決する。query/window/filterが途中で変わればstale結果を捨て、fetch不能なら削除済みblank modalを残さずclose/clearする。Delete API failure/例外後もnavigation lockを解除する。
 
 ### BR-DEL-005 Client reconciliation
 
@@ -1901,7 +1903,7 @@ Disposable source copyだけを使用。
 3. last削除で前へ。
 4. only削除でmodal close。
 5. filtered subsetでもそのorderのneighbor。
-6. page未load境界をまたぐ削除でもfull query orderの直隣。現行Browserはこのcaseが未解決なので改善acceptanceとして追跡。
+6. page未load境界をまたぐ削除でもfull query orderの直隣。未load pageをfetchし、stale windowの結果は採用しない。
 7. project root、active index外、unsupportedを拒否。
 8. Recycle failureでindexを消さない。
 9. hard delete fallbackなし。
@@ -1955,7 +1957,6 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 
 1. Original gridはmasonryではない。
 2. Show selectedはisolate filterではない。
-4. Modal sparse orderで未fetchの直隣をDelete candidateから飛ばす可能性がある。
 6. Delete後にFavorite/Seen/pin/enhance history orphanが残る。
 7. cold processのmerged cache/tagsがactive scan外のhistorical rootを含み得る。
 8. Same-name overwriteをincremental signatureで見逃す可能性があり、full scanが回復経路。
@@ -1968,7 +1969,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 19. unknown enhancement preset IDは明示rejectせず先頭presetへfallbackする。
 20. ComfyUIのtimeout既定0は無期限待機を意味する。
 21. Browser interaction E2Eはcomponent/unit契約より範囲が狭く、Landing/recent中心の既存suiteに依存する。
-22. Sparse resultのrange/keyboard/Delete neighborはloaded subsetに制限される。
+22. Sparse resultのgallery range selectionとmodal外keyboard selectionはloaded subsetに制限される。Modal navigation/Delete neighborはfull sparse order resolverを使う。
 23. Current result外のPreview tab clickはmodalを開かない。
 24. Favorite unmount flushはbrowser localStorageだけで、pending shared PUTを完了させない。
 25. thumb/display/enhance output disk cacheにquota/LRU evictionがない。
