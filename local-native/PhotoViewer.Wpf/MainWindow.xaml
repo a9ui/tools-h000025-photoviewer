@@ -130,7 +130,7 @@
                 <TextBlock x:Name="FavoriteFilterSummary" Text="All ratings" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,6"/>
                 <CheckBox x:Name="EnhancedOnlyFilter" Content="Enhanced only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,6" Checked="Filter_Changed" Unchecked="Filter_Changed" ToolTip="Read-only filter from .cache/enhance/jobs.json"/>
                 <CheckBox x:Name="UnseenOnlyFilter" Content="Unseen only" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="Filter_Changed" Unchecked="Filter_Changed"/>
-                <CheckBox x:Name="ShowUnseenDots" Content="Unseen dots" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="ShowUnseenDots_Changed" Unchecked="ShowUnseenDots_Changed"/>
+                <CheckBox x:Name="ShowUnseenDots" Content="Unseen dots" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,0,0,8" Checked="ShowUnseenDots_Changed" Unchecked="ShowUnseenDots_Changed" AutomationProperties.Name="Show unseen dots in gallery" AutomationProperties.HelpText="Changes dot visibility only. Seen history is not changed."/>
                 <TextBlock Text="DATE" Foreground="{StaticResource TextTertiary}" FontSize="9.5" FontWeight="Bold" Margin="0,0,0,4"/>
                 <Grid Margin="0,2,0,4">
                   <Grid.RowDefinitions>
@@ -698,6 +698,9 @@
           <TextBlock Text="SAFETY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <CheckBox x:Name="ConfirmBeforeDeleteCheckBox" Content="Confirm before delete" Foreground="{StaticResource TextSecondary}" Checked="ConfirmBeforeDelete_Changed" Unchecked="ConfirmBeforeDelete_Changed" AutomationProperties.Name="Confirm before delete"/>
           <TextBlock Text="Moves source images to the Windows Recycle Bin; it never uses a hard-delete fallback." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
+          <TextBlock Text="DISPLAY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <CheckBox x:Name="AppSettingsUnseenDotsCheckBox" Content="Unseen dots" Foreground="{StaticResource TextSecondary}" Checked="ShowUnseenDots_Changed" Unchecked="ShowUnseenDots_Changed" AutomationProperties.Name="Show unseen dots in gallery" AutomationProperties.HelpText="Changes dot visibility only. Seen history is not changed."/>
+          <TextBlock Text="Shows a dot on images that have not been viewed. This display option never changes seen history." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
           <TextBlock Text="ABOUT / DIAGNOSTICS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <Border Background="#161820" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" CornerRadius="7" Padding="10" Margin="0,0,0,8">
             <StackPanel>

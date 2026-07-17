@@ -181,7 +181,7 @@ WPF App SettingsにはAbout / Diagnosticsを追加する。clipboard exportはsa
 
 | 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
 | --- | --- | --- | --- | --- |
-| App Settings surface | `ADD` | P0 | app settings なし。modal の Settings は PNG generation metadata。 `MainWindow.xaml:697-737` | Confirm before delete、Unseen dots、必要な modal 設定を一か所へ配置 |
+| App Settings surface | `ADOPT` | P0 | Confirm before delete、About / Diagnostics、sidebarと同一stateへ同期するUnseen dotsを実装。`MainWindow.xaml`, `MainWindow.xaml.cs`, `verify-wpf-settings-unseen-dots.ps1` | Unseen dotsは両surfaceで即時同期、既定OFF、reload永続化、Seen JSON不変、keyboard/UIA到達を維持 |
 | Runtime / Version | `ADAPT` | P1 | native build identityを安全に表示・copyするsurfaceなし | Product、assembly/source revision、dirty/clean、build ID/time、architectureをread-only表示。nativeに存在しないserver portは表示せず、path/state/cache/process IDをcopyしない |
 | WPF state schema | `ADAPT` | P1 | version なし JSON。scalar favorite threshold 等を保存。 `MainWindow.xaml.cs:4387-4508,5318-5337` | schema version、field normalization、未知 field 保持、旧 state の additive migration |
 | State write | `ADAPT` | P1 | UI thread で同期 `File.WriteAllText`。 `MainWindow.xaml.cs:4470-4500` | debounce、atomic replace、失敗時に既存ファイル保持、UI thread を止めない |

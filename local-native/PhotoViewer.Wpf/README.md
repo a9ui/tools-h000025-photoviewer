@@ -53,6 +53,7 @@ implementation. The normative current behavior is documented in
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
+- `--settings-unseen-dots-smoke <path>` temp-only sidebar/App Settings Unseen dots synchronization, persistence, accessibility, and Seen/cache isolation smoke
 - `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
 - `--recent-write-ownership-smoke <path>` temp-only explicit folder-set commit ownership, retry, and byte-isolation smoke
 - `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
@@ -208,6 +209,17 @@ P0A sidebar contract smoke uses only temporary state/favorites/seen files. It ve
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0a-smoke "$env:TEMP\photoviewer-wpf-p0a-smoke.json"
+```
+
+The same `ShowUnseenDots` state is available from both the sidebar and App
+Settings. Either checkbox updates the other immediately; the setting defaults
+OFF, persists across reload, and changes only dot visibility. The focused smoke
+keeps all persistence under a temporary root and proves the Seen JSON, source
+fixture, favorites, recent history after folder-open setup, and enhancement jobs
+stay byte-identical while the two controls are exercised:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-settings-unseen-dots.ps1
 ```
 
 P0C adds the App Settings `Confirm before delete` default (persisted in the WPF

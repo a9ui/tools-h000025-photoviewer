@@ -190,6 +190,7 @@ public partial class MainWindow : Window
     private DateTime? _dateToLocal;
     private readonly HashSet<int> _favoriteFilterLevels = [];
     private bool _showUnseenDots;
+    private bool _syncingUnseenDotsControls;
     private bool _foldersSectionExpanded = true;
     private bool _syncingFolderBucketSelection;
     private string? _primarySelectedFolderBucketKey;
@@ -3187,10 +3188,29 @@ public partial class MainWindow : Window
 
     private void ShowUnseenDots_Changed(object sender, RoutedEventArgs e)
     {
-        if (_initializing) return;
-        _showUnseenDots = ShowUnseenDots?.IsChecked == true;
+        if (_initializing || _syncingUnseenDotsControls) return;
+        bool enabled = sender is CheckBox checkBox && checkBox.IsChecked == true;
+        SetShowUnseenDots(enabled, persist: true);
+    }
+
+    private void SetShowUnseenDots(bool enabled, bool persist)
+    {
+        _showUnseenDots = enabled;
+        _syncingUnseenDotsControls = true;
+        try
+        {
+            if (ShowUnseenDots is not null)
+                ShowUnseenDots.IsChecked = enabled;
+            if (AppSettingsUnseenDotsCheckBox is not null)
+                AppSettingsUnseenDotsCheckBox.IsChecked = enabled;
+        }
+        finally
+        {
+            _syncingUnseenDotsControls = false;
+        }
         RefreshUnseenDots();
-        SaveState();
+        if (persist && !_initializing)
+            SaveState();
     }
 
     private void ToggleFoldersSection_Click(object sender, RoutedEventArgs e)
@@ -6306,6 +6326,7 @@ public partial class MainWindow : Window
     {
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
+        SetShowUnseenDots(_showUnseenDots, persist: false);
         DiagnosticsText.Text = BuildDiagnosticsText();
         DiagnosticsStatusText.Text = "Read-only diagnostics. Copy excludes paths, image metadata, prompts, and personal state.";
         AppSettingsDialog.Visibility = Visibility.Visible;
@@ -6841,7 +6862,7 @@ public partial class MainWindow : Window
         _foldersSectionExpanded = state.FoldersSectionExpanded ?? true;
         SyncFoldersSectionControls();
         if (ConfirmBeforeDeleteCheckBox is not null) ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
-        if (ShowUnseenDots is not null) ShowUnseenDots.IsChecked = _showUnseenDots;
+        SetShowUnseenDots(_showUnseenDots, persist: false);
         SetFavoriteFilterState(state.ShowFavoritesOnly, !state.ShowFavoritesOnly && state.ShowUnfavoriteOnly, apply: false, persist: false);
         _hiddenFolderBuckets.Clear();
         foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
@@ -7933,6 +7954,17 @@ public partial class MainWindow : Window
     public bool ShowFavoritesOnlyForSmoke => FavoriteOnlyFilter?.IsChecked == true;
     public bool ShowUnfavoriteOnlyForSmoke => UnfavoriteOnlyFilter?.IsChecked == true;
     public bool ShowUnseenDotsForSmoke => _showUnseenDots;
+    public bool SidebarUnseenDotsCheckedForSmoke => ShowUnseenDots.IsChecked == true;
+    public bool AppSettingsUnseenDotsCheckedForSmoke => AppSettingsUnseenDotsCheckBox.IsChecked == true;
+    public bool UnseenDotsSurfaceContractForSmoke
+        => string.Equals(AutomationProperties.GetName(ShowUnseenDots), "Show unseen dots in gallery", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(AppSettingsUnseenDotsCheckBox), "Show unseen dots in gallery", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ShowUnseenDots))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(AppSettingsUnseenDotsCheckBox));
+    public bool FocusSidebarUnseenDotsForSmoke() => ShowUnseenDots.Focus();
+    public bool FocusAppSettingsUnseenDotsForSmoke() => AppSettingsUnseenDotsCheckBox.Focus();
+    public bool IsSidebarUnseenDotsFocusedForSmoke => ShowUnseenDots.IsKeyboardFocused;
+    public bool IsAppSettingsUnseenDotsFocusedForSmoke => AppSettingsUnseenDotsCheckBox.IsKeyboardFocused;
     public bool UnseenOnlyForSmoke => UnseenOnlyFilter?.IsChecked == true;
     public List<int> FavoriteFilterLevelsForSmoke => _favoriteFilterLevels.OrderBy(static level => level).ToList();
     public bool GridModeVisibleForSmoke => CardsList.Visibility == Visibility.Visible;
@@ -8042,11 +8074,9 @@ public partial class MainWindow : Window
     public bool SetManualDateRangeForSmoke(string? from, string? to) => SetManualDateRange(ParseStateDate(from), ParseStateDate(to));
     public bool SetFavoriteFilterLevelsForSmoke(params int[] levels) => SetFavoriteFilterLevels(levels);
     public void SetShowUnseenDotsForSmoke(bool enabled)
-    {
-        _showUnseenDots = enabled;
-        ShowUnseenDots.IsChecked = enabled;
-        RefreshUnseenDots();
-    }
+        => SetShowUnseenDots(enabled, persist: true);
+    public void SetSidebarUnseenDotsForSmoke(bool enabled) => ShowUnseenDots.IsChecked = enabled;
+    public void SetAppSettingsUnseenDotsForSmoke(bool enabled) => AppSettingsUnseenDotsCheckBox.IsChecked = enabled;
     public void ToggleFoldersSectionForSmoke() => ToggleFoldersSection_Click(this, new RoutedEventArgs());
     public bool FocusFolderBucketListForSmoke() => SidebarFolderSetList.Focus();
     public bool SelectFolderBucketRangeForSmoke(int firstIndex, int lastIndex)

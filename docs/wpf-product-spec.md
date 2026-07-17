@@ -467,6 +467,8 @@ Delete直前に毎回すべて再検証する。
 
 App Settingsはread-onlyのAbout / Diagnosticsを含む。表示とCopy payloadは製品/version、exe build UTC/local time、process architecture、.NET runtime、catalog/visible count、safety flagsだけであり、folder/file path、prompt、metadata、favorites、state/cache内容を含めない。revision/dirtyは`PVU_SOURCE_REVISION` / `PVU_SOURCE_DIRTY`がある時だけ示し、ない時はlocal buildとする。
 
+Unseen dotsはsidebarとApp Settingsの両方に同じ`ShowUnseenDots`設定として置く。どちらから変更しても他方へ即時同期し、既定OFF、stateへ1回だけ保存する。これは表示設定であり、ON/OFF、dialog open/close、reloadのいずれもSeen JSONを追加・削除・再書き込みしない。両surfaceは同じAutomation name/helpを持ち、keyboard focus可能とする。
+
 ### WPF-STATE-001 ViewerState v2
 
 保存field:

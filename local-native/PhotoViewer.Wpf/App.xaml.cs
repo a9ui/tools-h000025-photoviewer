@@ -52,6 +52,13 @@ public partial class App : Application
             return;
         }
 
+        int settingsUnseenDotsSmokeIdx = Array.IndexOf(e.Args, "--settings-unseen-dots-smoke");
+        if (settingsUnseenDotsSmokeIdx >= 0 && settingsUnseenDotsSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSettingsUnseenDotsSmoke(e.Args[settingsUnseenDotsSmokeIdx + 1]);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -527,6 +534,180 @@ public partial class App : Application
             win.Close();
             Shutdown(ok ? 0 : 1);
             }, DispatcherPriority.Input);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureSettingsUnseenDotsSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-settings-unseen-dots-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "source fixture");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhance", "jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+        DateTime fixtureTime = new(2026, 7, 18, 0, 0, 0, DateTimeKind.Utc);
+        for (int index = 0; index < 3; index++)
+        {
+            string fixturePath = Path.Combine(folder, $"unseen-setting-{index}.png");
+            WriteSmokePng(fixturePath, 96, 72, Color.FromRgb((byte)(70 + index * 35), 105, 165));
+            // The viewer marks the first selected image Seen. Keep that selection deterministic
+            // so this smoke can distinguish selection semantics from the display-only toggle.
+            File.SetLastWriteTimeUtc(fixturePath, fixtureTime.AddMinutes(-index));
+        }
+        string seededSeenPath = Path.Combine(folder, "unseen-setting-0.png");
+        File.WriteAllText(favoritesPath, "{}");
+        File.WriteAllText(seenPath, JsonSerializer.Serialize(new Dictionary<string, bool> { [seededSeenPath] = true }));
+        File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\"}");
+        File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+
+        string sourceBefore = FolderFingerprint(folder);
+        string favoritesBefore = FileFingerprint(favoritesPath);
+        string seenBefore = FileFingerprint(seenPath);
+        string jobsBefore = FileFingerprint(jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var windows = new List<MainWindow>();
+        var first = HiddenWindow();
+        windows.Add(first);
+        first.Show();
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                bool defaultOff = !first.ShowUnseenDotsForSmoke
+                    && !first.SidebarUnseenDotsCheckedForSmoke
+                    && !first.AppSettingsUnseenDotsCheckedForSmoke;
+                await first.LoadFolderAsync(folder);
+                string recentAfterFolderOpen = FileFingerprint(recentPath);
+                int unseenCount = first.UnseenCountForSmoke;
+                bool sidebarFocused = first.FocusSidebarUnseenDotsForSmoke() && first.IsSidebarUnseenDotsFocusedForSmoke;
+
+                first.OpenAppSettingsForSmoke();
+                await first.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool settingsFocused = first.FocusAppSettingsUnseenDotsForSmoke() && first.IsAppSettingsUnseenDotsFocusedForSmoke;
+                bool accessible = first.UnseenDotsSurfaceContractForSmoke
+                    && first.SettingsFocusTrapConfiguredForSmoke
+                    && first.IsSettingsDialogFocusedForSmoke;
+                bool defaultSyncedInSettings = !first.SidebarUnseenDotsCheckedForSmoke && !first.AppSettingsUnseenDotsCheckedForSmoke;
+
+                first.SetAppSettingsUnseenDotsForSmoke(true);
+                bool settingsToSidebar = first.ShowUnseenDotsForSmoke
+                    && first.AppSettingsUnseenDotsCheckedForSmoke
+                    && first.SidebarUnseenDotsCheckedForSmoke
+                    && first.VisibleUnseenDotCountForSmoke == unseenCount
+                    && unseenCount == 2;
+                first.CloseTopmostOverlayForSmoke();
+                first.SetSidebarUnseenDotsForSmoke(false);
+                bool sidebarToSettings = !first.ShowUnseenDotsForSmoke
+                    && !first.SidebarUnseenDotsCheckedForSmoke
+                    && !first.AppSettingsUnseenDotsCheckedForSmoke
+                    && first.VisibleUnseenDotCountForSmoke == 0;
+                first.OpenAppSettingsForSmoke();
+                await first.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool settingsReopenedSynced = !first.AppSettingsUnseenDotsCheckedForSmoke;
+                first.SetAppSettingsUnseenDotsForSmoke(true);
+                ViewerState? persistedOn = ReadPersistedState(statePath);
+                bool persistedEnabled = persistedOn?.ShowUnseenDots == true;
+                first.Close();
+
+                var reload = HiddenWindow();
+                windows.Add(reload);
+                reload.Show();
+                reload.OpenAppSettingsForSmoke();
+                await reload.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool reloadSynced = reload.ShowUnseenDotsForSmoke
+                    && reload.SidebarUnseenDotsCheckedForSmoke
+                    && reload.AppSettingsUnseenDotsCheckedForSmoke;
+                bool reloadSettingsFocused = reload.FocusAppSettingsUnseenDotsForSmoke() && reload.IsAppSettingsUnseenDotsFocusedForSmoke;
+                reload.Close();
+
+                File.WriteAllText(statePath, "{\"Version\":1,\"futureDisplay\":{\"mode\":\"preserve\"}}");
+                var migration = HiddenWindow();
+                windows.Add(migration);
+                migration.Show();
+                migration.OpenAppSettingsForSmoke();
+                await migration.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool migrationDefaultOff = !migration.ShowUnseenDotsForSmoke
+                    && !migration.SidebarUnseenDotsCheckedForSmoke
+                    && !migration.AppSettingsUnseenDotsCheckedForSmoke;
+                migration.Close();
+                bool migrationUnknownPreserved = File.ReadAllText(statePath).Contains("futureDisplay", StringComparison.Ordinal);
+
+                bool seenByteIdentical = string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal);
+                bool cacheIsolation = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && string.Equals(recentAfterFolderOpen, FileFingerprint(recentPath), StringComparison.Ordinal);
+                bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                string rootPrefix = Path.GetFullPath(smokeRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase));
+                bool residueFree = NoPersistenceResidue(smokeRoot);
+                ok = defaultOff && defaultSyncedInSettings && sidebarFocused && settingsFocused && accessible
+                    && settingsToSidebar && sidebarToSettings && settingsReopenedSynced && persistedEnabled
+                    && reloadSynced && reloadSettingsFocused && migrationDefaultOff && migrationUnknownPreserved
+                    && seenByteIdentical && cacheIsolation && sourceUntouched && isolated && residueFree;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "sidebar and App Settings unseen-dot controls share one persisted display setting without mutating Seen or unrelated cache"
+                        : "unseen-dot Settings parity smoke did not meet its synchronization and isolation contract",
+                    defaultOff,
+                    defaultSyncedInSettings,
+                    sidebarFocused,
+                    settingsFocused,
+                    accessible,
+                    settingsToSidebar,
+                    sidebarToSettings,
+                    settingsReopenedSynced,
+                    persistedEnabled,
+                    reloadSynced,
+                    reloadSettingsFocused,
+                    migrationDefaultOff,
+                    migrationUnknownPreserved,
+                    unseenCount,
+                    seenByteIdentical,
+                    cacheIsolation,
+                    sourceUntouched,
+                    isolated,
+                    residueFree,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message, smokeRoot };
+            }
+            finally
+            {
+                foreach (MainWindow window in windows)
+                {
+                    try { if (window.IsLoaded) window.Close(); } catch { }
+                }
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
