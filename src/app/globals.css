@@ -1818,9 +1818,14 @@ a { color: inherit; text-decoration: none; }
   transition: background 0.15s;
 }
 .preview-resize-handle:hover,
-.preview-resize-handle:active {
+.preview-resize-handle:active,
+.preview-resize-handle:focus-visible {
   background: var(--accent);
   opacity: 0.5;
+}
+.preview-resize-handle:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: -2px;
 }
 .preview-panel.empty {
   align-items: center;

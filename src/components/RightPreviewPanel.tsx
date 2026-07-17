@@ -1,10 +1,45 @@
 'use client';
 
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
 import { useDialogFocus } from '../lib/useDialogFocus';
+
+const MIN_PANEL_WIDTH = 240;
+const MAX_PANEL_WIDTH = 900;
+const PANEL_WIDTH_STEP = 20;
+const PANEL_WIDTH_LARGE_STEP = 100;
+
+function clampPanelWidth(width: number) {
+  return Math.max(MIN_PANEL_WIDTH, Math.min(MAX_PANEL_WIDTH, width));
+}
+
+interface PreviewResizeHandleProps {
+  width: number;
+  onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => void;
+  onMouseDown: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onKeyDown: (event: React.KeyboardEvent<HTMLDivElement>) => void;
+}
+
+function PreviewResizeHandle({ width, onPointerDown, onMouseDown, onKeyDown }: PreviewResizeHandleProps) {
+  return (
+    <div
+      className="preview-resize-handle"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize preview panel"
+      aria-valuemin={MIN_PANEL_WIDTH}
+      aria-valuemax={MAX_PANEL_WIDTH}
+      aria-valuenow={width}
+      aria-valuetext={`${width} pixels`}
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onMouseDown={onMouseDown}
+      onKeyDown={onKeyDown}
+    />
+  );
+}
 
 function formatDateTime(value?: number): string {
   if (!value) return '-';
@@ -44,7 +79,7 @@ export default function RightPreviewPanel() {
     onEscape: () => setConfirmBulkDelete(false),
   });
 
-  const [panelWidth, setPanelWidth] = useState(view.rightPanelWidth ?? 320);
+  const [panelWidth, setPanelWidth] = useState(() => clampPanelWidth(view.rightPanelWidth ?? 320));
   const isResizing = useRef(false);
   const dragStartX = useRef(0);
   const dragStartWidth = useRef(0);
@@ -54,19 +89,50 @@ export default function RightPreviewPanel() {
     widthRef.current = panelWidth;
   }, [panelWidth]);
 
-  const onHandleMouseDown = (e: React.MouseEvent) => {
+  const setWidth = useCallback((nextWidth: number) => {
+    const next = clampPanelWidth(nextWidth);
+    widthRef.current = next;
+    setPanelWidth(next);
+    return next;
+  }, []);
+
+  const beginResize = (clientX: number) => {
     isResizing.current = true;
-    dragStartX.current = e.clientX;
+    dragStartX.current = clientX;
     dragStartWidth.current = widthRef.current;
-    e.preventDefault();
+  };
+
+  const onHandlePointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    beginResize(event.clientX);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    event.preventDefault();
+  };
+
+  const onHandleMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0 || isResizing.current) return;
+    beginResize(event.clientX);
+    event.preventDefault();
+  };
+
+  const onHandleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const step = event.shiftKey ? PANEL_WIDTH_LARGE_STEP : PANEL_WIDTH_STEP;
+    let nextWidth: number | null = null;
+    if (event.key === 'ArrowLeft') nextWidth = panelWidth + step;
+    else if (event.key === 'ArrowRight') nextWidth = panelWidth - step;
+    else if (event.key === 'Home') nextWidth = MIN_PANEL_WIDTH;
+    else if (event.key === 'End') nextWidth = MAX_PANEL_WIDTH;
+    if (nextWidth === null) return;
+
+    event.preventDefault();
+    setView({ rightPanelWidth: setWidth(nextWidth) });
   };
 
   useEffect(() => {
-    const onMove = (e: MouseEvent) => {
+    const onMove = (clientX: number) => {
       if (!isResizing.current) return;
-      const delta = dragStartX.current - e.clientX;
-      const next = Math.max(240, Math.min(900, dragStartWidth.current + delta));
-      setPanelWidth(next);
+      const delta = dragStartX.current - clientX;
+      setWidth(dragStartWidth.current + delta);
     };
 
     const onUp = () => {
@@ -75,13 +141,19 @@ export default function RightPreviewPanel() {
       setView({ rightPanelWidth: widthRef.current });
     };
 
-    document.addEventListener('mousemove', onMove);
+    const onMouseMove = (event: MouseEvent) => onMove(event.clientX);
+    const onPointerMove = (event: PointerEvent) => onMove(event.clientX);
+    document.addEventListener('mousemove', onMouseMove);
+    document.addEventListener('pointermove', onPointerMove);
     document.addEventListener('mouseup', onUp);
+    document.addEventListener('pointerup', onUp);
     return () => {
-      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mousemove', onMouseMove);
+      document.removeEventListener('pointermove', onPointerMove);
       document.removeEventListener('mouseup', onUp);
+      document.removeEventListener('pointerup', onUp);
     };
-  }, [setView]);
+  }, [setView, setWidth]);
 
   const handleFavoriteSelected = () => {
     if (selectedCount === 0) return;
@@ -146,6 +218,14 @@ export default function RightPreviewPanel() {
   };
 
   const panelStyle = { width: panelWidth, minWidth: panelWidth, maxWidth: panelWidth };
+  const resizeHandle = (
+    <PreviewResizeHandle
+      width={panelWidth}
+      onPointerDown={onHandlePointerDown}
+      onMouseDown={onHandleMouseDown}
+      onKeyDown={onHandleKeyDown}
+    />
+  );
 
   const activeId = activePreviewId;
   const active = activeId ? previewById[activeId] : null;
@@ -156,7 +236,7 @@ export default function RightPreviewPanel() {
   if (previewTabIds.length === 0 && !activePreviewId) {
     return (
       <aside className="preview-panel empty" style={panelStyle}>
-        <div className="preview-resize-handle" onMouseDown={onHandleMouseDown} />
+        {resizeHandle}
         <div className="preview-empty">
           <p>Click an image to open preview.</p>
           <p>Use Ctrl/Shift for multi-select.</p>
@@ -168,7 +248,7 @@ export default function RightPreviewPanel() {
   return (
     <>
       <aside className="preview-panel" style={panelStyle}>
-        <div className="preview-resize-handle" onMouseDown={onHandleMouseDown} />
+        {resizeHandle}
 
         <div className="bulk-toolbar">
           <span className="bulk-count">{selectedCount > 0 ? `${selectedCount} selected` : 'No selection'}</span>
