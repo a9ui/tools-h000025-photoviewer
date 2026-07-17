@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+import { withFileWriteLock } from '@/lib/fileWriteLock';
+
 const MAX_FAVORITE_LEVEL = 5;
 
 function favoritesPath() {
@@ -18,7 +20,12 @@ function normalizeStoredFavorites(value: unknown): Record<string, number> | null
   if (!isObjectMap(value)) return null;
   const normalized: Record<string, number> = {};
   for (const [id, levelValue] of Object.entries(value)) {
-    if (!id) continue;
+    if (!id) return null;
+    if (typeof levelValue !== 'number'
+      && typeof levelValue !== 'boolean'
+      && typeof levelValue !== 'string'
+      && levelValue !== null) return null;
+    if (typeof levelValue === 'number' && !Number.isFinite(levelValue)) return null;
     const level = typeof levelValue === 'number'
       ? Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)))
       : levelValue
@@ -91,6 +98,25 @@ async function writeFavorites(favorites: Record<string, number>) {
   }
 }
 
+function mergeFavoriteChanges(
+  current: Record<string, number>,
+  incoming: Record<string, number>,
+  base: Record<string, number> | undefined,
+) {
+  if (!base) return incoming;
+
+  const merged = { ...current };
+  const candidateIds = new Set([...Object.keys(base), ...Object.keys(incoming)]);
+  for (const id of candidateIds) {
+    const previousLevel = base[id] ?? 0;
+    const nextLevel = incoming[id] ?? 0;
+    if (previousLevel === nextLevel) continue;
+    if (nextLevel > 0) merged[id] = nextLevel;
+    else delete merged[id];
+  }
+  return merged;
+}
+
 export async function GET() {
   const result = await readFavorites();
   return NextResponse.json({
@@ -101,16 +127,6 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const current = await readFavorites();
-  if (!current.ok) {
-    return NextResponse.json({
-      ok: false,
-      error: 'Shared favorites JSON is malformed; refusing to overwrite it.',
-      favorites: current.favorites,
-      malformed: true,
-    }, { status: 409 });
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -126,6 +142,36 @@ export async function PUT(req: Request) {
     return NextResponse.json({ ok: false, error: incoming.error }, { status: 400 });
   }
 
-  await writeFavorites(incoming.favorites);
-  return NextResponse.json({ ok: true, favorites: incoming.favorites, malformed: false });
+  let base: Record<string, number> | undefined;
+  if (Object.hasOwn(body, 'baseFavorites')) {
+    const normalizedBase = normalizeIncomingFavorites(body.baseFavorites);
+    if (!normalizedBase.ok) {
+      return NextResponse.json({ ok: false, error: `baseFavorites: ${normalizedBase.error}` }, { status: 400 });
+    }
+    base = normalizedBase.favorites;
+  }
+
+  try {
+    return await withFileWriteLock(favoritesPath(), async () => {
+      const current = await readFavorites();
+      if (!current.ok) {
+        return NextResponse.json({
+          ok: false,
+          error: 'Shared favorites JSON is malformed; refusing to overwrite it.',
+          favorites: current.favorites,
+          malformed: true,
+        }, { status: 409 });
+      }
+
+      const favorites = mergeFavoriteChanges(current.favorites, incoming.favorites, base);
+      await writeFavorites(favorites);
+      return NextResponse.json({ ok: true, favorites, malformed: false });
+    });
+  } catch (error) {
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      malformed: false,
+    }, { status: 503 });
+  }
 }

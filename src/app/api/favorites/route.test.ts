@@ -54,6 +54,7 @@ describe('favorites route write safety', () => {
     ['missing favorites field', JSON.stringify({})],
     ['array favorites', JSON.stringify({ favorites: [] })],
     ['invalid favorite value', JSON.stringify({ favorites: { bad: { level: 5 } } })],
+    ['invalid base favorites', JSON.stringify({ favorites: {}, baseFavorites: { bad: [] } })],
   ])('rejects %s without replacing the existing file', async (_name, body) => {
     const original = '{"keep":3}\n';
     await fs.writeFile(favoritesPath, original, 'utf8');
@@ -74,5 +75,50 @@ describe('favorites route write safety', () => {
     expect(await fs.readFile(favoritesPath, 'utf8')).toBe(malformed);
     const getResponse = await GET();
     expect(await getResponse.json()).toMatchObject({ favorites: {}, malformed: true });
+  });
+
+  it('treats an invalid field inside an object document as malformed', async () => {
+    const malformed = JSON.stringify({ keep: 3, invalid: { level: 5 } });
+    await fs.writeFile(favoritesPath, malformed, 'utf8');
+
+    const response = await PUT(putRequest(JSON.stringify({
+      favorites: { replacement: 5 },
+      baseFavorites: {},
+    })));
+
+    expect(response.status).toBe(409);
+    expect(await fs.readFile(favoritesPath, 'utf8')).toBe(malformed);
+  });
+
+  it('applies only changes from the client base and preserves an external writer', async () => {
+    await fs.writeFile(favoritesPath, JSON.stringify({ existing: 1, external: 4 }), 'utf8');
+
+    const response = await PUT(putRequest(JSON.stringify({
+      favorites: { existing: 2 },
+      baseFavorites: { existing: 1 },
+    })));
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(favoritesPath, 'utf8'))).toEqual({
+      existing: 2,
+      external: 4,
+    });
+  });
+
+  it('serializes concurrent independent changes without losing either key', async () => {
+    await fs.writeFile(favoritesPath, '{}', 'utf8');
+
+    const [first, second] = await Promise.all([
+      PUT(putRequest(JSON.stringify({ favorites: { first: 1 }, baseFavorites: {} }))),
+      PUT(putRequest(JSON.stringify({ favorites: { second: 5 }, baseFavorites: {} }))),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(favoritesPath, 'utf8'))).toEqual({
+      first: 1,
+      second: 5,
+    });
+    await expect(fs.stat(`${favoritesPath}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

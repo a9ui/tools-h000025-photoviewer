@@ -49,6 +49,7 @@ describe('recent folders route write safety', () => {
       lastFolderSet: ['D:\\existing'],
       recentFolderSets: [['D:\\existing']],
       updatedAtUtc: '2026-07-18T00:00:00.000Z',
+      futureFlag: { keep: true },
     }), 'utf8');
 
     const response = await PUT(putRequest(JSON.stringify({
@@ -60,7 +61,9 @@ describe('recent folders route write safety', () => {
     expect(response.status).toBe(200);
     expect(stored.lastFolderSet).toEqual(['E:\\new']);
     expect(stored.recentFolderSets).toEqual([['E:\\new'], ['D:\\existing']]);
+    expect(stored.futureFlag).toEqual({ keep: true });
     expect((await fs.readdir(root)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('preserves the current last folder set when a partial update only supplies recentDirs', async () => {
@@ -110,5 +113,28 @@ describe('recent folders route write safety', () => {
     const putResponse = await PUT(putRequest(JSON.stringify({ lastDirSet: 'E:\\new' })));
     expect(putResponse.status).toBe(409);
     expect(await fs.readFile(target, 'utf8')).toBe(malformed);
+  });
+
+  it('serializes concurrent folder-set merges without losing either update', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      version: 1,
+      lastFolderSet: [],
+      recentFolderSets: [],
+      updatedAtUtc: '2026-07-18T00:00:00.000Z',
+    }), 'utf8');
+
+    const [first, second] = await Promise.all([
+      PUT(putRequest(JSON.stringify({ recentDirs: ['D:\\one'] }))),
+      PUT(putRequest(JSON.stringify({ recentDirs: ['E:\\two'] }))),
+    ]);
+    const stored = JSON.parse(await fs.readFile(target, 'utf8'));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(stored.recentFolderSets).toEqual(expect.arrayContaining([
+      ['D:\\one'],
+      ['E:\\two'],
+    ]));
+    await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

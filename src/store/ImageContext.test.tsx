@@ -235,4 +235,46 @@ describe('ImageProvider browser UI preferences', () => {
       expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('{}');
     });
   });
+
+  it('persists favorites as a three-way change against the hydrated server base', async () => {
+    let putBody: unknown;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
+        return {
+          ok: true,
+          json: async () => ({ favorites: { 'same-key': 3, external: 4 } }),
+        } as Response;
+      }
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        putBody = JSON.parse(String(init.body));
+        return {
+          ok: true,
+          json: async () => ({ favorites: { external: 4 } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => (url.includes('/api/enhance/jobs') ? { jobs: [] } : {}),
+      } as Response;
+    }));
+    const user = userEvent.setup();
+
+    render(
+      <ImageProvider>
+        <FavoritesProbe />
+      </ImageProvider>
+    );
+
+    expect(await screen.findByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":3');
+    await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
+
+    await waitFor(() => {
+      expect(putBody).toEqual({
+        favorites: { external: 4 },
+        baseFavorites: { 'same-key': 3, external: 4 },
+      });
+    });
+  });
 });

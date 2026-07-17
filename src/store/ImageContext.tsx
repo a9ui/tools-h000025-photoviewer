@@ -270,6 +270,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const pendingViewSettingsRef = useRef<ViewSettings | null>(null);
   const searchQueryRef = useRef('');
   const favoritesRef = useRef<Record<string, number>>({});
+  const favoriteServerBaseRef = useRef<Record<string, number>>({});
   const favoritesHydratedRef = useRef(false);
   const favoriteHydrationDirtyIdsRef = useRef<Set<string>>(new Set());
   const searchMetaRef = useRef<{
@@ -339,6 +340,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       .then((r) => r.json())
       .then((data) => {
         const serverFavorites = normalizeFavorites(data?.favorites);
+        favoriteServerBaseRef.current = serverFavorites;
         const dirtyIds = new Set(favoriteHydrationDirtyIdsRef.current);
         setFavorites((currentFavorites) => mergeFavorites(
           serverFavorites,
@@ -431,8 +433,17 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       fetch('/api/favorites', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ favorites: snapshot }),
-      }).catch(() => {});
+        body: JSON.stringify({
+          favorites: snapshot,
+          baseFavorites: favoriteServerBaseRef.current,
+        }),
+      })
+        .then(async (response) => {
+          if (!response.ok) return;
+          const data = await response.json();
+          favoriteServerBaseRef.current = normalizeFavorites(data?.favorites);
+        })
+        .catch(() => {});
     }, FAVORITES_FLUSH_DELAY_MS);
   }, [favorites, favoritesHydrated]);
 

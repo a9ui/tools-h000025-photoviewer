@@ -2,6 +2,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 import { NextResponse } from 'next/server';
 
+import { withFileWriteLock } from '@/lib/fileWriteLock';
 import { formatDirSet } from '@/lib/pathSet';
 import { buildSharedRecentFolders, normalizeSharedRecentFolders } from '@/lib/recentFolders';
 
@@ -37,8 +38,8 @@ function isSupportedStoredDocument(value: unknown) {
 }
 
 async function readSharedRecentFolders(): Promise<
-  { ok: true; recent: ReturnType<typeof normalizeSharedRecentFolders>; malformed: false } |
-  { ok: false; recent: ReturnType<typeof normalizeSharedRecentFolders>; malformed: true; error: string }
+  { ok: true; recent: ReturnType<typeof normalizeSharedRecentFolders>; document: Record<string, unknown>; malformed: false } |
+  { ok: false; recent: ReturnType<typeof normalizeSharedRecentFolders>; document: Record<string, never>; malformed: true; error: string }
 > {
   try {
     const raw = await fs.readFile(recentFoldersPath(), 'utf8');
@@ -47,31 +48,41 @@ async function readSharedRecentFolders(): Promise<
       return {
         ok: false,
         recent: normalizeSharedRecentFolders({}),
+        document: {},
         malformed: true,
         error: 'recent-folders.json does not match the supported schema.',
       };
     }
-    return { ok: true, recent: normalizeSharedRecentFolders(parsed), malformed: false };
+    return {
+      ok: true,
+      recent: normalizeSharedRecentFolders(parsed),
+      document: parsed as Record<string, unknown>,
+      malformed: false,
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
-      return { ok: true, recent: normalizeSharedRecentFolders({}), malformed: false };
+      return { ok: true, recent: normalizeSharedRecentFolders({}), document: {}, malformed: false };
     }
     return {
       ok: false,
       recent: normalizeSharedRecentFolders({}),
+      document: {},
       malformed: true,
       error: error instanceof Error ? error.message : String(error),
     };
   }
 }
 
-async function writeSharedRecentFolders(recent: ReturnType<typeof normalizeSharedRecentFolders>) {
+async function writeSharedRecentFolders(
+  recent: ReturnType<typeof normalizeSharedRecentFolders>,
+  currentDocument: Record<string, unknown>,
+) {
   const target = recentFoldersPath();
   const dir = path.dirname(target);
   const temp = path.join(dir, `recent-folders-${process.pid}-${Date.now()}.tmp`);
   await fs.mkdir(dir, { recursive: true });
   try {
-    await fs.writeFile(temp, `${JSON.stringify(recent, null, 2)}\n`, 'utf8');
+    await fs.writeFile(temp, `${JSON.stringify({ ...currentDocument, ...recent }, null, 2)}\n`, 'utf8');
     await fs.rename(temp, target);
   } finally {
     await fs.unlink(temp).catch(() => {});
@@ -89,16 +100,6 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
-  const current = await readSharedRecentFolders();
-  if (!current.ok) {
-    return NextResponse.json({
-      ok: false,
-      recent: current.recent,
-      malformed: true,
-      error: 'Shared recent folders JSON is malformed; refusing to overwrite it.',
-    }, { status: 409 });
-  }
-
   let body: unknown;
   try {
     body = await req.json();
@@ -125,26 +126,46 @@ export async function PUT(req: Request) {
   )) {
     return NextResponse.json({ ok: false, error: 'lastDirSet must be a bounded string.' }, { status: 400 });
   }
-  const incoming = buildSharedRecentFolders({
-    recentDirs: Array.isArray(input.recentDirs)
-      ? input.recentDirs as string[]
-      : [],
-    lastDirSet: typeof input.lastDirSet === 'string'
-      ? input.lastDirSet
-      : formatDirSet(current.recent.lastFolderSet),
-  });
-  const incomingRecentDirs = incoming.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
-  const existingRecentDirs = current.recent.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
-  const recent = buildSharedRecentFolders({
-    lastDirSet: Object.hasOwn(input, 'lastDirSet')
-      ? formatDirSet(incoming.lastFolderSet)
-      : formatDirSet(current.recent.lastFolderSet),
-    recentDirs: [
-      ...incomingRecentDirs,
-      ...existingRecentDirs,
-    ],
-  });
+  try {
+    return await withFileWriteLock(recentFoldersPath(), async () => {
+      const current = await readSharedRecentFolders();
+      if (!current.ok) {
+        return NextResponse.json({
+          ok: false,
+          recent: current.recent,
+          malformed: true,
+          error: 'Shared recent folders JSON is malformed; refusing to overwrite it.',
+        }, { status: 409 });
+      }
 
-  await writeSharedRecentFolders(recent);
-  return NextResponse.json({ ok: true, recent, malformed: false });
+      const incoming = buildSharedRecentFolders({
+        recentDirs: Array.isArray(input.recentDirs)
+          ? input.recentDirs as string[]
+          : [],
+        lastDirSet: typeof input.lastDirSet === 'string'
+          ? input.lastDirSet
+          : formatDirSet(current.recent.lastFolderSet),
+      });
+      const incomingRecentDirs = incoming.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
+      const existingRecentDirs = current.recent.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
+      const recent = buildSharedRecentFolders({
+        lastDirSet: Object.hasOwn(input, 'lastDirSet')
+          ? formatDirSet(incoming.lastFolderSet)
+          : formatDirSet(current.recent.lastFolderSet),
+        recentDirs: [
+          ...incomingRecentDirs,
+          ...existingRecentDirs,
+        ],
+      });
+
+      await writeSharedRecentFolders(recent, current.document);
+      return NextResponse.json({ ok: true, recent, malformed: false });
+    });
+  } catch (error) {
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      malformed: false,
+    }, { status: 503 });
+  }
 }

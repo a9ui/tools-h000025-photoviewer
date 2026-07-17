@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { promises as fs } from 'fs';
 import path from 'path';
 
+import { withFileWriteLock } from '@/lib/fileWriteLock';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
 
@@ -147,16 +148,6 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
-  const current = await readSettings();
-  if (!current.ok) {
-    return NextResponse.json({
-      ok: false,
-      error: 'Shared settings JSON is malformed; refusing to overwrite it.',
-      ...current.settings,
-      malformed: true,
-    }, { status: 409 });
-  }
-
   let body: unknown;
   try {
     body = await request.json();
@@ -168,24 +159,44 @@ export async function PUT(request: Request) {
     return NextResponse.json({ ok: false, error: incoming.error }, { status: 400 });
   }
 
-  const incomingBindings = isObject(incoming.update.keyBindings)
-    ? incoming.update.keyBindings
-    : {};
-  const currentBindings = isObject(current.document.keyBindings)
-    ? current.document.keyBindings
-    : {};
-  const updated: SettingsDocument = {
-    ...current.document,
-    ...incoming.update,
-    keyBindings: {
-      ...currentBindings,
-      ...incomingBindings,
-    },
-  };
-  await writeSettings(updated);
-  return NextResponse.json({
-    ok: true,
-    ...publicSettings(updated),
-    malformed: false,
-  });
+  try {
+    return await withFileWriteLock(settingsPath(), async () => {
+      const current = await readSettings();
+      if (!current.ok) {
+        return NextResponse.json({
+          ok: false,
+          error: 'Shared settings JSON is malformed; refusing to overwrite it.',
+          ...current.settings,
+          malformed: true,
+        }, { status: 409 });
+      }
+
+      const incomingBindings = isObject(incoming.update.keyBindings)
+        ? incoming.update.keyBindings
+        : {};
+      const currentBindings = isObject(current.document.keyBindings)
+        ? current.document.keyBindings
+        : {};
+      const updated: SettingsDocument = {
+        ...current.document,
+        ...incoming.update,
+        keyBindings: {
+          ...currentBindings,
+          ...incomingBindings,
+        },
+      };
+      await writeSettings(updated);
+      return NextResponse.json({
+        ok: true,
+        ...publicSettings(updated),
+        malformed: false,
+      });
+    });
+  } catch (error) {
+    return NextResponse.json({
+      ok: false,
+      error: error instanceof Error ? error.message : String(error),
+      malformed: false,
+    }, { status: 503 });
+  }
 }

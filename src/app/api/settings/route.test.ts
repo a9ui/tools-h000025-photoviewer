@@ -70,6 +70,7 @@ describe('settings route write safety', () => {
       keyBindings: { nextImage: 'n', prevImage: 'p', futureAction: 'q' },
     });
     expect((await fs.readdir(root)).filter((name) => name.endsWith('.tmp'))).toEqual([]);
+    await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it.each([
@@ -114,5 +115,25 @@ describe('settings route write safety', () => {
 
     expect(response.status).toBe(409);
     expect(await fs.readFile(target, 'utf8')).toBe(original);
+  });
+
+  it('serializes concurrent partial updates without dropping either field', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      confirmBeforeDelete: true,
+      keyBindings: {},
+    }), 'utf8');
+
+    const [first, second] = await Promise.all([
+      PUT(putRequest(JSON.stringify({ confirmBeforeDelete: false }))),
+      PUT(putRequest(JSON.stringify({ keyBindings: { nextImage: 'n' } }))),
+    ]);
+    const stored = JSON.parse(await fs.readFile(target, 'utf8'));
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(stored).toMatchObject({
+      confirmBeforeDelete: false,
+      keyBindings: { nextImage: 'n' },
+    });
   });
 });
