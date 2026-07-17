@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ImageProvider, reorderPreviewTabIds, useImageStore } from './ImageContext';
+import { ImageProvider, normalizeStoredView, reorderPreviewTabIds, useImageStore } from './ImageContext';
 import type { ImageFile } from '../lib/types';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 
@@ -162,6 +162,74 @@ function ScanProbe() {
     </div>
   );
 }
+
+describe('normalizeStoredView', () => {
+  it.each([
+    {
+      name: 'keeps valid sibling settings while clamping or defaulting only malformed fields',
+      snapshot: {
+        viewMode: 'list', thumbSize: 999, aspectMode: 'not-an-aspect', displayStyle: 'compact', columns: 12,
+        sidebarOpen: false, rightPanelOpen: 'yes', rightPanelWidth: 120, sortBy: 'name',
+        randomSeed: '  fixed-seed  ', folderSortBy: 'count-desc', modalEdgeRatio: 0.6, enhanceQueueOpen: false,
+        dateFrom: '2024-02-29', dateTo: '2024-02-30',
+        hiddenFolders: [' C:/Images/Hidden ', 'c:/images/hidden', 12, 'C:/Images/Other'],
+        showUnseenMarkers: true, foldersExpanded: false,
+      },
+      expected: {
+        viewMode: 'list', thumbSize: 600, aspectMode: 'original', displayStyle: 'compact', columns: 0,
+        sidebarOpen: false, rightPanelOpen: true, rightPanelWidth: 240, sortBy: 'name',
+        randomSeed: 'fixed-seed', folderSortBy: 'count-desc', modalEdgeRatio: 0.4, enhanceQueueOpen: false,
+        dateFrom: '2024-02-29', dateTo: '', hiddenFolders: ['C:/Images/Hidden', 'C:/Images/Other'],
+        showUnseenMarkers: true, foldersExpanded: false,
+      },
+    },
+    {
+      name: 'uses defaults for NaN, infinity, invalid enum, and non-boolean values',
+      snapshot: {
+        viewMode: 'masonry', thumbSize: Number.NaN, rightPanelWidth: Infinity, modalEdgeRatio: -Infinity,
+        sidebarOpen: 1, rightPanelOpen: null, enhanceQueueOpen: 'false', showUnseenMarkers: 0, foldersExpanded: 'true',
+      },
+      expected: {
+        viewMode: 'grid', thumbSize: 200, rightPanelWidth: 320, modalEdgeRatio: 0.28,
+        sidebarOpen: true, rightPanelOpen: true, enhanceQueueOpen: true, showUnseenMarkers: false, foldersExpanded: true,
+      },
+    },
+    {
+      name: 'keeps legacy snapshots usable while permanently clearing obsolete columns',
+      snapshot: { columns: 48, thumbSize: 160, sidebarOpen: false },
+      expected: {
+        columns: 0, thumbSize: 160, sidebarOpen: false, foldersExpanded: true, displayStyle: 'standard', showUnseenMarkers: false,
+      },
+    },
+  ])('$name', ({ snapshot, expected }) => {
+    expect(normalizeStoredView(snapshot)).toMatchObject(expected);
+  });
+
+  it('ignores inherited and accessor-backed values without losing valid own fields', () => {
+    const inherited = Object.create({ viewMode: 'list', thumbSize: 560, sidebarOpen: false }) as Record<string, unknown>;
+    Object.defineProperty(inherited, 'rightPanelWidth', { enumerable: true, get: () => 900 });
+    inherited.displayStyle = 'poster';
+
+    expect(normalizeStoredView(inherited)).toMatchObject({
+      viewMode: 'grid', thumbSize: 200, sidebarOpen: true, rightPanelWidth: 320, displayStyle: 'poster',
+    });
+  });
+
+  it('bounds long persisted text and folder lists without corrupting valid entries', () => {
+    const folders = Array.from({ length: 505 }, (_, index) => `C:/Images/Hidden-${index}`);
+    const normalized = normalizeStoredView({
+      randomSeed: 'x'.repeat(257), hiddenFolders: ['x'.repeat(4097), ...folders],
+      dateFrom: 'not-a-date', dateTo: '2025-01-01T00:00:00Z',
+    });
+
+    expect(normalized.randomSeed).toBe('default');
+    expect(normalized.hiddenFolders).toHaveLength(500);
+    expect(normalized.hiddenFolders[0]).toBe('C:/Images/Hidden-0');
+    expect(normalized.hiddenFolders.at(-1)).toBe('C:/Images/Hidden-499');
+    expect(normalized.dateFrom).toBe('');
+    expect(normalized.dateTo).toBe('');
+  });
+});
 
 describe('ImageProvider browser UI preferences', () => {
   beforeEach(() => {

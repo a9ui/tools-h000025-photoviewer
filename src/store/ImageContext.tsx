@@ -80,6 +80,25 @@ const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
 const MAX_CLOSED_PREVIEW_TABS = 30;
+const MIN_THUMB_SIZE = 40;
+const MAX_THUMB_SIZE = 600;
+const MIN_RIGHT_PANEL_WIDTH = 240;
+const MAX_RIGHT_PANEL_WIDTH = 900;
+const MIN_MODAL_EDGE_RATIO = 0.10;
+const MAX_MODAL_EDGE_RATIO = 0.40;
+const MAX_RANDOM_SEED_LENGTH = 256;
+const MAX_HIDDEN_FOLDERS = 500;
+const MAX_HIDDEN_FOLDER_LENGTH = 4096;
+
+const VIEW_MODES: readonly ViewMode[] = ['grid', 'list'];
+const ASPECT_MODES: readonly AspectMode[] = ['original', 'square', 'portrait'];
+const DISPLAY_STYLES: readonly DisplayStyle[] = ['standard', 'compact', 'poster'];
+const SORT_ORDERS: readonly SortBy[] = [
+  'newest', 'oldest', 'created-newest', 'created-oldest', 'name', 'random',
+];
+const FOLDER_SORT_ORDERS: readonly FolderSortBy[] = [
+  'name-asc', 'name-desc', 'count-desc', 'count-asc',
+];
 
 export function reorderPreviewTabIds(tabIds: string[], id: string, destinationIndex: number): string[] {
   if (!id || !Number.isInteger(destinationIndex)) return tabIds;
@@ -93,23 +112,118 @@ export function reorderPreviewTabIds(tabIds: string[], id: string, destinationIn
   return next;
 }
 
-function normalizeStoredView(value: unknown): ViewSettings {
+function readOwnStoredValue(stored: object, key: string): unknown {
+  try {
+    // Do not trust inherited values (or accessors). localStorage normally
+    // contains plain JSON, but this also makes the boundary safe for callers
+    // that hand us a prototype-backed object in tests or future migrations.
+    const descriptor = Object.getOwnPropertyDescriptor(stored, key);
+    return descriptor && 'value' in descriptor ? descriptor.value : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeEnum<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  return typeof value === 'string' && allowed.includes(value as T) ? value as T : fallback;
+}
+
+function normalizeBoolean(value: unknown, fallback: boolean): boolean {
+  return typeof value === 'boolean' ? value : fallback;
+}
+
+function normalizeBoundedNumber(value: unknown, fallback: number, min: number, max: number): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(max, Math.max(min, value));
+}
+
+function normalizeStoredDate(value: unknown): string {
+  if (typeof value !== 'string' || value === '') return value === '' ? '' : DEFAULT_VIEW.dateFrom;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return DEFAULT_VIEW.dateFrom;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (year < 1 || month < 1 || month > 12 || day < 1 || day > 31) return DEFAULT_VIEW.dateFrom;
+
+  const parsed = new Date(Date.UTC(year, month - 1, day));
+  return parsed.getUTCFullYear() === year
+    && parsed.getUTCMonth() === month - 1
+    && parsed.getUTCDate() === day
+    ? value
+    : DEFAULT_VIEW.dateFrom;
+}
+
+function normalizeHiddenFolders(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+
+  const normalized: string[] = [];
+  const seen = new Set<string>();
+  for (const candidate of value) {
+    if (normalized.length >= MAX_HIDDEN_FOLDERS) break;
+    if (typeof candidate !== 'string') continue;
+    const folder = candidate.trim();
+    if (!folder || folder.length > MAX_HIDDEN_FOLDER_LENGTH) continue;
+    const dedupeKey = folder.toLowerCase();
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    normalized.push(folder);
+  }
+  return normalized;
+}
+
+function normalizeRandomSeed(value: unknown): string {
+  if (typeof value !== 'string') return DEFAULT_VIEW.randomSeed;
+  const seed = value.trim();
+  return seed && seed.length <= MAX_RANDOM_SEED_LENGTH ? seed : DEFAULT_VIEW.randomSeed;
+}
+
+export function normalizeStoredView(value: unknown): ViewSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return { ...DEFAULT_VIEW };
+    return { ...DEFAULT_VIEW, hiddenFolders: [] };
   }
 
-  const stored = value as Partial<ViewSettings>;
+  const stored = value as object;
   return {
-    ...DEFAULT_VIEW,
-    ...stored,
+    viewMode: normalizeEnum(readOwnStoredValue(stored, 'viewMode'), VIEW_MODES, DEFAULT_VIEW.viewMode),
+    thumbSize: normalizeBoundedNumber(
+      readOwnStoredValue(stored, 'thumbSize'), DEFAULT_VIEW.thumbSize, MIN_THUMB_SIZE, MAX_THUMB_SIZE,
+    ),
+    aspectMode: normalizeEnum(readOwnStoredValue(stored, 'aspectMode'), ASPECT_MODES, DEFAULT_VIEW.aspectMode),
+    displayStyle: normalizeEnum(readOwnStoredValue(stored, 'displayStyle'), DISPLAY_STYLES, DEFAULT_VIEW.displayStyle),
     // `columns` belonged to an older UI. The current UI is size-driven and
     // has no way to change or clear a persisted fixed-column value.
     columns: 0,
+    sidebarOpen: normalizeBoolean(readOwnStoredValue(stored, 'sidebarOpen'), DEFAULT_VIEW.sidebarOpen),
+    rightPanelOpen: normalizeBoolean(readOwnStoredValue(stored, 'rightPanelOpen'), DEFAULT_VIEW.rightPanelOpen),
+    rightPanelWidth: normalizeBoundedNumber(
+      readOwnStoredValue(stored, 'rightPanelWidth'), DEFAULT_VIEW.rightPanelWidth,
+      MIN_RIGHT_PANEL_WIDTH, MAX_RIGHT_PANEL_WIDTH,
+    ),
+    sortBy: normalizeEnum(readOwnStoredValue(stored, 'sortBy'), SORT_ORDERS, DEFAULT_VIEW.sortBy),
+    randomSeed: normalizeRandomSeed(readOwnStoredValue(stored, 'randomSeed')),
+    folderSortBy: normalizeEnum(
+      readOwnStoredValue(stored, 'folderSortBy'), FOLDER_SORT_ORDERS, DEFAULT_VIEW.folderSortBy,
+    ),
+    modalEdgeRatio: normalizeBoundedNumber(
+      readOwnStoredValue(stored, 'modalEdgeRatio'), DEFAULT_VIEW.modalEdgeRatio,
+      MIN_MODAL_EDGE_RATIO, MAX_MODAL_EDGE_RATIO,
+    ),
+    enhanceQueueOpen: normalizeBoolean(
+      readOwnStoredValue(stored, 'enhanceQueueOpen'), DEFAULT_VIEW.enhanceQueueOpen,
+    ),
+    dateFrom: normalizeStoredDate(readOwnStoredValue(stored, 'dateFrom')),
+    dateTo: normalizeStoredDate(readOwnStoredValue(stored, 'dateTo')),
+    hiddenFolders: normalizeHiddenFolders(readOwnStoredValue(stored, 'hiddenFolders')),
+    showUnseenMarkers: normalizeBoolean(
+      readOwnStoredValue(stored, 'showUnseenMarkers'), DEFAULT_VIEW.showUnseenMarkers,
+    ),
     // Older snapshots predate this field. An invalid value must not collapse
     // the only folder-management surface after reload.
-    foldersExpanded: typeof stored.foldersExpanded === 'boolean'
-      ? stored.foldersExpanded
-      : DEFAULT_VIEW.foldersExpanded,
+    foldersExpanded: normalizeBoolean(
+      readOwnStoredValue(stored, 'foldersExpanded'), DEFAULT_VIEW.foldersExpanded,
+    ),
   };
 }
 
