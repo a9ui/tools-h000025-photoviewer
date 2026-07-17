@@ -5,6 +5,12 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($OutputPath.Contains('"')) { throw 'OutputPath cannot contain a double quote.' }
+$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath())
+$fullOutputPath = [IO.Path]::GetFullPath($OutputPath)
+if (-not $fullOutputPath.StartsWith($tempRoot, [StringComparison]::OrdinalIgnoreCase)) {
+    throw 'External-open smoke output must stay under the temp directory.'
+}
+$OutputPath = $fullOutputPath
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj'
