@@ -135,7 +135,7 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 - 複数rootの一部がmissing、切断、permission変更等で利用不能でも、利用可能なrootの画像はcatalogへpublishする。明示folder setの順序と利用不能rootはcurrent state/Recentに保持し、recoverable statusでskipを通知するため、Refreshで同じsetを再試行できる。成功runだけがstate/Recentを各1回所有し、cancel/stale runは所有しない。
 - 利用者が明示したroot自体はscan対象にできるが、その配下で見つけたjunction、symbolic link、mount point等のreparse file/directoryはcatalogへ入れず追跡しない。各rootのlexical tree外をcatalogへ入れず、visited directory setで循環を有限時間に止め、skip件数をrecoverable statusで知らせる。
 - permission/individual file failureは可能な項目を継続し、summary warningを出す。
-- unavailable/access/boundary skipとdecode failureが同じscanに存在する場合、後から判明したdecode warningで先のroot warningを上書きしない。1つのrecoverable statusに両方を残し、利用不能rootを保持したRefresh再試行と、存在するdecode不能画像のplaceholder継続を同時に説明する。
+- unavailable/access/boundary skipまたはpersistence refusalとdecode failureが同時に存在する場合、後から判明したdecode warningで先の復旧手順やRetry actionを上書きしない。1つのrecoverable statusに両方を残し、利用不能rootを保持したRefresh再試行、保護されたshared state、存在するdecode不能画像のplaceholder継続を同時に説明する。
 - supported extension以外をcatalogへ入れない。
 - recursive enumerationまたはmetadata読取中だけ`Cancel scan`を表示・有効化する。cancelはcurrent generationだけを無効化し、100ms以内を目標にLandingへ戻る。ordered folder draftを保持し、progressを0へ戻し、polite live statusでcancelを通知し、`Open folder set`へfocusを戻す。double cancelはno-op。
 - cancelされたrunはpartial catalog/current folder/state/recent/Seenをpublishしない。source、Favorite、Seen、Enhancement jobsを変更しない。遅延完了してもViewerへ遷移せず、直後に開始したnewer scanのcatalog、metrics、stateを上書きしない。

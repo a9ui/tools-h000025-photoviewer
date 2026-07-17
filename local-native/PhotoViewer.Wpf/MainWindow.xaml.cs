@@ -7300,21 +7300,26 @@ public partial class MainWindow : Window
     private void ReportCurrentImageDecodeFailure()
     {
         const string currentFailure = "Image could not be decoded. It may be locked, changing, or unavailable. Refresh after fixing the file.";
-        bool previousIsScanWarning = _deleteStatus.Contains("selected root(s) were unavailable", StringComparison.OrdinalIgnoreCase)
+        bool previousIsRecoverableStatus = _deleteStatus.Contains("selected root(s) were unavailable", StringComparison.OrdinalIgnoreCase)
             || _deleteStatus.Contains("folders could not be scanned", StringComparison.OrdinalIgnoreCase)
             || _deleteStatus.Contains("junction or symbolic-link", StringComparison.OrdinalIgnoreCase)
-            || _deleteStatus.Contains("image file(s) could not be decoded", StringComparison.OrdinalIgnoreCase);
-        if (!previousIsScanWarning)
+            || _deleteStatus.Contains("image file(s) could not be decoded", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("could not be saved", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("is busy in another PhotoViewer window", StringComparison.OrdinalIgnoreCase);
+        if (!previousIsRecoverableStatus)
         {
             SetStatusToast(currentFailure);
             return;
         }
 
-        // Scan warnings explain how to recover missing roots and boundary
-        // skips. A later preview failure must not erase those instructions.
-        SetStatusToast(_deleteStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase)
-            ? _deleteStatus
-            : $"{_deleteStatus} {currentFailure}");
+        // Scan warnings and persistence refusals explain how to recover data
+        // or retry a protected write. A later preview failure must not erase
+        // those instructions or its retry action.
+        SetStatusToast(
+            _deleteStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase)
+                ? _deleteStatus
+                : $"{_deleteStatus} {currentFailure}",
+            _statusRetryAction);
     }
 
     private void SetDeleteStatus(string status, bool isFailure = false, Tile? retryTile = null)
