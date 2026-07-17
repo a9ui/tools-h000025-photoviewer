@@ -153,7 +153,7 @@ export default function ImageGrid() {
     searchQuery, searchResults, searchTotal, isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
     selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
-    closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
+    closeAllPreviews, clearSelection, setSearchScrollPosition, getSearchScrollPosition,
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     requestRevealImage, showSettings,
@@ -1372,7 +1372,7 @@ export default function ImageGrid() {
 
   return (
     <div className="grid-container" ref={containerRef}
-      onClick={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
+      onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}>
       {searchError && (
         <ScanErrorNotice
           subject="search"
@@ -1386,6 +1386,9 @@ export default function ImageGrid() {
       <div
         className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}
         style={{ height: virtualRange.totalHeight }}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) clearSelection();
+        }}
       >
         {items}
       </div>

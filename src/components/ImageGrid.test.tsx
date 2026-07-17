@@ -46,6 +46,7 @@ const requestRevealImage = vi.fn();
 const retrySearch = vi.fn();
 const rescanExpiredSearchSession = vi.fn();
 const dismissSearchError = vi.fn();
+const clearSelection = vi.fn();
 
 function createStore(
   viewMode: "grid" | "list" = "grid",
@@ -83,6 +84,7 @@ function createStore(
     showEnhancedOnly: false,
     enhancedSourceIds: {},
     closeAllPreviews: vi.fn(),
+    clearSelection,
     setSearchScrollPosition: vi.fn(),
     getSearchScrollPosition: () => null,
     seenImageIds: {},
@@ -283,5 +285,15 @@ describe("ImageGrid keyboard primary controls", () => {
         screen.getByRole("button", { name: /select second\.png/i }),
       ).toHaveFocus();
     });
+  });
+
+  it.each(["grid", "list"] as const)("clears selection from %s background but not image controls", (viewMode) => {
+    vi.mocked(useImageStore).mockReturnValue(createStore(viewMode, { selectedIds: [firstImage.id] }));
+    renderGrid();
+    const canvas = document.querySelector('.virtual-canvas') as HTMLDivElement;
+    fireEvent.click(canvas);
+    expect(clearSelection).toHaveBeenCalledTimes(1);
+    fireEvent.click(screen.getByRole('button', { name: /select first\.png/i }));
+    expect(clearSelection).toHaveBeenCalledTimes(1);
   });
 });
