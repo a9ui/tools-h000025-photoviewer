@@ -182,6 +182,8 @@ public partial class MainWindow : Window
         Process.Start(startInfo);
         return true;
     };
+    private Func<ProcessStartInfo, bool> _externalFileLauncher = static startInfo
+        => Process.Start(startInfo) is not null;
     private string _lastDiagnosticsCopyText = "";
     private int _previewUpdateCount;
     private long _previewMs;
@@ -6822,12 +6824,49 @@ public partial class MainWindow : Window
     }
 
     private void OpenSelectedExternally_Click(object sender, RoutedEventArgs e)
-    {
-        if (SelectedTile() is not { IsRealFile: true } tile || !File.Exists(tile.Path))
-            return;
+        => TryOpenSelectedExternally();
 
-        Process.Start(new ProcessStartInfo(tile.Path) { UseShellExecute = true });
+    private bool TryOpenSelectedExternally()
+    {
+        Tile? tile = SelectedTile();
+        string canonical = "";
+        string reason = "select a source image";
+        if (tile is null || !TryValidateFileDropTile(tile, out canonical, out reason))
+        {
+            SetStatusToast($"Open externally unavailable: {reason}.");
+            return false;
+        }
+
+        try
+        {
+            var startInfo = new ProcessStartInfo(canonical) { UseShellExecute = true };
+            if (!_externalFileLauncher(startInfo))
+            {
+                ReportExternalOpenFailure();
+                return false;
+            }
+
+            SetStatusToast("Opened the selected image externally.");
+            return true;
+        }
+        catch (Exception ex) when (ex is Win32Exception
+            or IOException
+            or UnauthorizedAccessException
+            or InvalidOperationException
+            or ArgumentException
+            or NotSupportedException
+            or System.Security.SecurityException)
+        {
+            Trace.TraceWarning($"External image open failed: {ex.GetType().Name}");
+            ReportExternalOpenFailure();
+            return false;
+        }
     }
+
+    private void ReportExternalOpenFailure()
+        => SetStatusToast(
+            "Open externally could not start the selected image. Check the default app and try again.",
+            () => { TryOpenSelectedExternally(); });
 
     private void ShowSelectedInFolder_Click(object sender, RoutedEventArgs e)
         => ShowSelectedInFolder();
@@ -8255,6 +8294,51 @@ public partial class MainWindow : Window
     }
     public bool FocusDiagnosticsForSmoke() => CopyDiagnosticsButton.Focus();
     public bool FocusAppSettingsDoneForSmoke() => AppSettingsDoneButton.Focus();
+    public ExternalOpenSmokeSnapshot ActivateExternalOpenForSmoke(string launcherBehavior)
+    {
+        ProcessStartInfo? captured = null;
+        Func<ProcessStartInfo, bool> previous = _externalFileLauncher;
+        _externalFileLauncher = info =>
+        {
+            captured = info;
+            return launcherBehavior switch
+            {
+                "success" => true,
+                "failure" => false,
+                "win32" => throw new Win32Exception(1155, "injected missing file association"),
+                "io" => throw new IOException("injected shell I/O failure"),
+                "access" => throw new UnauthorizedAccessException("injected shell access failure"),
+                "path" => throw new ArgumentException("injected shell path failure"),
+                _ => throw new ArgumentOutOfRangeException(nameof(launcherBehavior)),
+            };
+        };
+        try
+        {
+            string? selectedBefore = SelectedTile()?.Path;
+            bool focused = ModalOpenExternalButton.Focus();
+            ModalOpenExternalButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            bool launched = captured is not null
+                && string.Equals(_deleteStatus, "Opened the selected image externally.", StringComparison.Ordinal);
+            return new ExternalOpenSmokeSnapshot(
+                launched,
+                captured is not null,
+                captured?.FileName ?? "",
+                captured?.UseShellExecute ?? false,
+                _deleteStatus,
+                DeleteStatusRetryButton.Visibility == Visibility.Visible,
+                focused && ModalOpenExternalButton.IsKeyboardFocused,
+                string.Equals(selectedBefore, SelectedTile()?.Path, StringComparison.OrdinalIgnoreCase),
+                SelectedTile()?.Path,
+                Modal.Visibility == Visibility.Visible,
+                string.Equals(AutomationProperties.GetName(ModalOpenExternalButton), "Open selected image externally", StringComparison.Ordinal)
+                    && !string.IsNullOrWhiteSpace(ModalOpenExternalButton.ToolTip?.ToString()));
+        }
+        finally
+        {
+            _externalFileLauncher = previous;
+        }
+    }
+
     public ExplorerRevealSmokeSnapshot ShowSelectedInFolderForSmoke()
         => ActivateExplorerRevealForSmoke("right-preview", "success");
 
@@ -9939,6 +10023,19 @@ public sealed record DiagnosticsSmokeSnapshot(
     string Status,
     bool SurfaceContract,
     bool SettingsFocused);
+
+public sealed record ExternalOpenSmokeSnapshot(
+    bool Launched,
+    bool LauncherInvoked,
+    string FileName,
+    bool UseShellExecute,
+    string Status,
+    bool RetryVisible,
+    bool Focused,
+    bool SelectionStable,
+    string? SelectedPath,
+    bool ModalVisible,
+    bool AutomationReady);
 
 public sealed record ExplorerRevealSmokeSnapshot(
     bool Launched,

@@ -1,0 +1,44 @@
+param(
+    [string]$Configuration = 'Release',
+    [string]$OutputPath = (Join-Path $env:TEMP ('photoviewer-wpf-external-open-' + [guid]::NewGuid().ToString('N') + '.json'))
+)
+
+$ErrorActionPreference = 'Stop'
+if ($OutputPath.Contains('"')) { throw 'OutputPath cannot contain a double quote.' }
+
+$repoRoot = Split-Path -Parent $PSScriptRoot
+$project = Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj'
+$exe = Join-Path $repoRoot "local-native\PhotoViewer.Wpf\bin\$Configuration\net8.0-windows\PhotoViewer.Wpf.exe"
+
+dotnet build $project -c $Configuration --nologo
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+Remove-Item -LiteralPath $OutputPath -ErrorAction SilentlyContinue
+$process = Start-Process -FilePath $exe `
+    -ArgumentList @('--external-open-smoke', ('"{0}"' -f $OutputPath)) `
+    -WindowStyle Hidden -Wait -PassThru
+
+if (-not (Test-Path -LiteralPath $OutputPath)) {
+    throw "WPF external open process exited without producing $OutputPath"
+}
+
+$result = Get-Content -Raw -LiteralPath $OutputPath | ConvertFrom-Json
+$failures = @()
+if ($process.ExitCode -ne 0) { $failures += "process exit code $($process.ExitCode)" }
+if ($result.ok -ne $true) { $failures += 'result.ok was false' }
+if ($result.selected -ne $true -or $result.modalOpened -ne $true -or $result.modalDecodeSettled -ne $true) {
+    $failures += 'temp fixture was not selected and decoded in the modal'
+}
+if ($result.successfulLaunch -ne $true) { $failures += 'injected successful ShellExecute launch was not exact' }
+if ($result.expectedFailuresHandled -ne $true) { $failures += 'expected ShellExecute, I/O, access, or path failure escaped the event boundary' }
+if ($result.currentSourceRevalidated -ne $true) { $failures += 'current selected catalog source was not revalidated immediately before launch' }
+if ($result.interactionStable -ne $true) { $failures += 'focus, selection, modal, or Automation state changed during external open' }
+if ($result.sourceUntouched -ne $true -or $result.mutableStateUntouched -ne $true) {
+    $failures += 'source, state, favorites, seen, recent, or jobs fingerprint changed'
+}
+if ($result.passive -ne $true) { $failures += 'external open touched enhancement work' }
+
+$result | ConvertTo-Json -Depth 10
+if ($failures.Count -gt 0) {
+    throw ('WPF external open gate failed: ' + ($failures -join '; '))
+}

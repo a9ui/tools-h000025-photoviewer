@@ -234,6 +234,13 @@ public partial class App : Application
             return;
         }
 
+        int externalOpenSmokeIdx = Array.IndexOf(e.Args, "--external-open-smoke");
+        if (externalOpenSmokeIdx >= 0 && externalOpenSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureExternalOpenSmoke(e.Args[externalOpenSmokeIdx + 1]);
+            return;
+        }
+
         int folderDragInSmokeIdx = Array.IndexOf(e.Args, "--folder-drag-in-smoke");
         if (folderDragInSmokeIdx >= 0 && folderDragInSmokeIdx + 1 < e.Args.Length)
         {
@@ -11418,6 +11425,165 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureExternalOpenSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-external-open-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "Unicode images with spaces");
+        string validName = "external open source.png";
+        string validPath = Path.Combine(folder, validName);
+        string otherPath = Path.Combine(folder, "other.png");
+        string unavailablePath = validPath + ".temporarily-unavailable";
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhancement-jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            WriteSmokePng(validPath, 96, 64, Color.FromRgb(64, 132, 220));
+            WriteSmokePng(otherPath, 64, 96, Color.FromRgb(166, 94, 210));
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteExternalOpenSmokeResult(resultPath, new ExternalOpenSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ExternalOpenSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool selected = win.SelectFileNameForSmoke(validName);
+                bool modalOpened = win.OpenModalForSmoke();
+                bool modalDecodeSettled = await win.WaitForModalFullDecodeForSmokeAsync();
+                win.FlushStateForSmoke();
+
+                var sourceBefore = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [validPath] = FileFingerprint(validPath),
+                    [otherPath] = FileFingerprint(otherPath),
+                };
+                string stateBefore = FileFingerprint(statePath);
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+
+                ExternalOpenSmokeSnapshot success = win.ActivateExternalOpenForSmoke("success");
+                ExternalOpenSmokeSnapshot launcherFailure = win.ActivateExternalOpenForSmoke("failure");
+                ExternalOpenSmokeSnapshot win32Failure = win.ActivateExternalOpenForSmoke("win32");
+                ExternalOpenSmokeSnapshot ioFailure = win.ActivateExternalOpenForSmoke("io");
+                ExternalOpenSmokeSnapshot accessFailure = win.ActivateExternalOpenForSmoke("access");
+                ExternalOpenSmokeSnapshot pathFailure = win.ActivateExternalOpenForSmoke("path");
+
+                ExternalOpenSmokeSnapshot missing;
+                File.Move(validPath, unavailablePath);
+                try
+                {
+                    missing = win.ActivateExternalOpenForSmoke("success");
+                }
+                finally
+                {
+                    File.Move(unavailablePath, validPath);
+                }
+
+                string canonical = Path.GetFullPath(validPath);
+                const string failureStatus = "Open externally could not start the selected image. Check the default app and try again.";
+                ExternalOpenSmokeSnapshot[] expectedFailures = [launcherFailure, win32Failure, ioFailure, accessFailure, pathFailure];
+                bool successfulLaunch = success.Launched && success.LauncherInvoked
+                    && string.Equals(success.FileName, canonical, StringComparison.OrdinalIgnoreCase)
+                    && success.UseShellExecute && !success.RetryVisible;
+                bool expectedFailuresHandled = expectedFailures.All(snapshot =>
+                    !snapshot.Launched && snapshot.LauncherInvoked && snapshot.RetryVisible
+                    && string.Equals(snapshot.Status, failureStatus, StringComparison.Ordinal)
+                    && !snapshot.Status.Contains(smokeRoot, StringComparison.OrdinalIgnoreCase));
+                bool currentSourceRevalidated = !missing.Launched && !missing.LauncherInvoked && !missing.RetryVisible
+                    && missing.Status.Contains("source no longer exists", StringComparison.OrdinalIgnoreCase);
+                bool interactionStable = new[] { success, launcherFailure, win32Failure, ioFailure, accessFailure, pathFailure, missing }
+                    .All(snapshot => snapshot.Focused && snapshot.SelectionStable && snapshot.ModalVisible && snapshot.AutomationReady
+                        && string.Equals(snapshot.SelectedPath, canonical, StringComparison.OrdinalIgnoreCase));
+                bool sourceUntouched = sourceBefore.All(pair => string.Equals(pair.Value, FileFingerprint(pair.Key), StringComparison.Ordinal));
+                bool mutableStateUntouched = string.Equals(stateBefore, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool passive = win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                bool ok = selected && modalOpened && modalDecodeSettled && successfulLaunch && expectedFailuresHandled
+                    && currentSourceRevalidated && interactionStable && sourceUntouched && mutableStateUntouched && passive;
+
+                result = new ExternalOpenSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "external open handled expected ShellExecute failures without losing focus, selection, modal state, or local data"
+                        : "external open smoke did not meet its guarded event-boundary contract",
+                    SmokeRoot = smokeRoot,
+                    ValidPath = canonical,
+                    Selected = selected,
+                    ModalOpened = modalOpened,
+                    ModalDecodeSettled = modalDecodeSettled,
+                    Success = success,
+                    LauncherFailure = launcherFailure,
+                    Win32Failure = win32Failure,
+                    IoFailure = ioFailure,
+                    AccessFailure = accessFailure,
+                    PathFailure = pathFailure,
+                    Missing = missing,
+                    SuccessfulLaunch = successfulLaunch,
+                    ExpectedFailuresHandled = expectedFailuresHandled,
+                    CurrentSourceRevalidated = currentSourceRevalidated,
+                    InteractionStable = interactionStable,
+                    SourceUntouched = sourceUntouched,
+                    MutableStateUntouched = mutableStateUntouched,
+                    Passive = passive,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new ExternalOpenSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot, ValidPath = validPath };
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(unavailablePath) && !File.Exists(validPath))
+                        File.Move(unavailablePath, validPath);
+                }
+                catch { }
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteExternalOpenSmokeResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureExplorerRevealSmoke(string resultPath)
     {
         string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-explorer-reveal-" + Guid.NewGuid().ToString("N"));
@@ -12816,6 +12982,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteExternalOpenSmokeResult(string path, ExternalOpenSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteRapidUiStateSmokeResult(string path, RapidUiStateSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -13141,6 +13313,31 @@ public partial class App : Application
         public ExplorerRevealValidationSnapshot? Missing { get; init; }
         public ExplorerRevealValidationSnapshot? Unsupported { get; init; }
         public bool GenericErrors { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool MutableStateUntouched { get; init; }
+        public bool Passive { get; init; }
+    }
+
+    private sealed class ExternalOpenSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public string? ValidPath { get; init; }
+        public bool Selected { get; init; }
+        public bool ModalOpened { get; init; }
+        public bool ModalDecodeSettled { get; init; }
+        public ExternalOpenSmokeSnapshot? Success { get; init; }
+        public ExternalOpenSmokeSnapshot? LauncherFailure { get; init; }
+        public ExternalOpenSmokeSnapshot? Win32Failure { get; init; }
+        public ExternalOpenSmokeSnapshot? IoFailure { get; init; }
+        public ExternalOpenSmokeSnapshot? AccessFailure { get; init; }
+        public ExternalOpenSmokeSnapshot? PathFailure { get; init; }
+        public ExternalOpenSmokeSnapshot? Missing { get; init; }
+        public bool SuccessfulLaunch { get; init; }
+        public bool ExpectedFailuresHandled { get; init; }
+        public bool CurrentSourceRevalidated { get; init; }
+        public bool InteractionStable { get; init; }
         public bool SourceUntouched { get; init; }
         public bool MutableStateUntouched { get; init; }
         public bool Passive { get; init; }
