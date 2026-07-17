@@ -802,8 +802,10 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    expect(await screen.findByRole('status', { name: 'favorites state' }))
-      .toHaveTextContent('"same-key":1');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":1');
+    });
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
     expect(screen.getByRole('status', { name: 'favorites state' })).not.toHaveTextContent('same-key');
 
@@ -854,8 +856,10 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    expect(await screen.findByRole('status', { name: 'seen state' }))
-      .toHaveTextContent('"wpf-existing.png":true');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'seen state' }))
+        .toHaveTextContent('"wpf-existing.png":true');
+    });
     await user.click(screen.getByRole('button', { name: 'Mark seen' }));
 
     await waitFor(() => {
@@ -884,10 +888,12 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    const favorites = await screen.findByRole('status', { name: 'favorites state' });
-    expect(favorites).toHaveTextContent('"backup-favorite":4');
-    expect(favorites).toHaveTextContent('"legacy-boolean":1');
-    expect(favorites).toHaveTextContent('"future-string-level":1');
+    await waitFor(() => {
+      const favorites = screen.getByRole('status', { name: 'favorites state' });
+      expect(favorites).toHaveTextContent('"backup-favorite":4');
+      expect(favorites).toHaveTextContent('"legacy-boolean":1');
+      expect(favorites).toHaveTextContent('"future-string-level":1');
+    });
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('pvu_favorites') || '{}')).toEqual({
@@ -981,8 +987,10 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    expect(await screen.findByRole('status', { name: 'favorites state' }))
-      .toHaveTextContent('"same-key":3');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":3');
+    });
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
 
     await waitFor(() => {
@@ -1019,8 +1027,10 @@ describe('ImageProvider browser UI preferences', () => {
     const user = userEvent.setup();
     render(<ImageProvider><FavoritesProbe /></ImageProvider>);
 
-    expect(await screen.findByRole('status', { name: 'favorites state' }))
-      .toHaveTextContent('"same-key":3');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":3');
+    });
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
     expect(localStorage.getItem('pvu_favorites')).toBe('{}');
     expect(localStorage.getItem('pvu_favorites_pending')).not.toBeNull();
@@ -1063,8 +1073,10 @@ describe('ImageProvider browser UI preferences', () => {
     const user = userEvent.setup();
     render(<ImageProvider><FavoritesProbe /></ImageProvider>);
 
-    expect(await screen.findByRole('status', { name: 'favorites state' }))
-      .toHaveTextContent('"same-key":1');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":1');
+    });
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
     fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(favoritePuts).toHaveLength(1));
@@ -1110,8 +1122,10 @@ describe('ImageProvider browser UI preferences', () => {
     }));
     const user = userEvent.setup();
     const view = render(<ImageProvider><FavoritesProbe /></ImageProvider>);
-    expect(await screen.findByRole('status', { name: 'favorites state' }))
-      .toHaveTextContent('"same-key":3');
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":3');
+    });
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
     fireEvent(window, new Event('pagehide'));
     await waitFor(() => expect(favoritePutCount).toBe(1));
