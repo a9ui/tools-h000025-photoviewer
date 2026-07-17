@@ -101,6 +101,10 @@ Favorite filter中のlevel変更後の即時再同期、sparse paged resultのmo
 3. Browser route worker + WPF writer + 独立writerのRecent同時20回を完了した。さらにWPFのRecent書込みを明示folder-set commitだけへ限定し、通常state/refresh/closeのbyte-identical、latest-under-lock merge、unknown field、12件cap、lock失敗後retryを`verify-wpf-recent-write-ownership.ps1`で固定した。
 4. process crash/stale lock recoveryの長時間実機観測を続ける。
 
+### P2-D 外部source変化の回復
+
+Refresh前後でTile objectが作り直されるため、存在するclosed preview tabまで全消去される欠陥、外部削除/rename済みpathがpin stateへ残る欠陥、表示中Modalが旧sourceのbitmap/titleを保持する欠陥を再現して修正した。surviving closed tabはpathでrebindし、current root内で消えたopen/active/pin/selection/modal/state参照だけを除去する。Modalはfallback selectionへ同期してfocusを維持し、全source消失時は閉じてOpen folder setへfocusを戻す。Favorite/Seen/Recent/Enhancement JSONはbyte-identical、decode不能sourceはcatalog内placeholderで継続することを`verify-wpf-external-stale-source.ps1`で固定した。
+
 20,000件の初回観測値（このmachine/fixtureの証拠であり製品hard閾値ではない）: fixture 5,953ms、load 8,180ms、final rapid search 332ms、working set 147,943,424→370,585,600 bytes、GC gen0/1/2 = 25/16/6。source 20,000維持、Enhancement 0。
 
 ### P3 製品判断後

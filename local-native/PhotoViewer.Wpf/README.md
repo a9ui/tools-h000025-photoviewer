@@ -24,7 +24,7 @@ implementation. The normative current behavior is documented in
 - resizable/persisted right preview panel and multi-selection actions
 - guarded native FileDrop Copy from Grid, List, and right preview to Explorer, preserving display-order multi-selection
 - guarded Show in folder actions in Right Preview and Modal; they select the canonical active source in Explorer without modifying it
-- preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, and cancellable hover decode
+- preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, external delete/rename reconciliation, and cancellable hover decode
 - modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata Prompt chips that append to search, and Original/Enhanced display
 - refresh active folder
 - open the selected real image with the OS default app
@@ -62,6 +62,7 @@ implementation. The normative current behavior is documented in
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
 - `--delete-correctness-smoke <path>` temp-only protected project/app-root, single/bulk ownership reconciliation, retained Favorite/Seen/Enhancement history, reload, and partial-failure smoke
+- `--external-stale-source-smoke <path>` temp-only external delete/rename/corrupt-source Refresh, tab/pin/modal/focus/state recovery, and shared-history isolation smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
 - `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image tail-search/modal/heartbeat observation gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
@@ -80,6 +81,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
 - `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
 - `scripts/verify-wpf-monitor-work-area.ps1` current-monitor maximize, exact unchanged restore, disconnected/downsized/DPI-equivalent bounded restore, and fallback verifier
+- `scripts/verify-wpf-external-stale-source.ps1` temp-only external source lifecycle, recoverable decode, focus, state, and history-isolation verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier

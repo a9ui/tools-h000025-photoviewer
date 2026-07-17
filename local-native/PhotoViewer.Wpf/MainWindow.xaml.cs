@@ -393,6 +393,11 @@ public partial class MainWindow : Window
         _previewMs = 0;
         _previewDeferredDecodeCount = 0;
         _previewDeferredDecodeMs = 0;
+        bool modalWasVisibleBeforePublish = Modal.Visibility == Visibility.Visible;
+        bool modalHadFocusBeforePublish = Modal.IsKeyboardFocusWithin;
+        string? focusedPreviewTabPathBeforePublish = TryGetFocusedPreviewTab(out PreviewTabView? focusedPreviewTab)
+            ? focusedPreviewTab?.Path
+            : null;
         var requestedFolderSet = NormalizeFolderSet(folders);
         var existingFolderSet = requestedFolderSet.Where(Directory.Exists).ToList();
         var unavailableFolderSet = requestedFolderSet
@@ -535,6 +540,10 @@ public partial class MainWindow : Window
 
         if (files.Count == 0)
         {
+            ReconcileOpenSurfacesAfterCatalogReload(
+                modalWasVisibleBeforePublish,
+                modalHadFocusBeforePublish,
+                focusedPreviewTabPathBeforePublish);
             SaveState();
             if (commitRecent)
                 CommitSharedRecentFolderSet(_currentFolderSet);
@@ -569,6 +578,10 @@ public partial class MainWindow : Window
         if (restoredActivePreviewTile is not null)
             _restoredSelectedPath = restoredActivePreviewTile.Path;
         SelectRestoredOrFirst();
+        ReconcileOpenSurfacesAfterCatalogReload(
+            modalWasVisibleBeforePublish,
+            modalHadFocusBeforePublish,
+            focusedPreviewTabPathBeforePublish);
         SaveState();
         if (commitRecent)
             CommitSharedRecentFolderSet(_currentFolderSet);
@@ -3972,6 +3985,28 @@ public partial class MainWindow : Window
         var currentByPath = _allTiles
             .Where(static tile => tile.IsRealFile)
             .ToDictionary(tile => NormalizeFavoritePath(tile.Path), StringComparer.OrdinalIgnoreCase);
+
+        // Pin identity belongs to a source path. Keep pins from other folder
+        // sets, but remove paths that disappeared from the roots just scanned.
+        _pinnedPreviewPaths.RemoveWhere(path =>
+            _currentFolderSet.Any(root => IsPathWithinRoot(path, root))
+            && !currentByPath.ContainsKey(path));
+
+        // Closed tabs hold Tile instances from the previous catalog. Rebind
+        // surviving paths to the freshly materialized Tile objects so Refresh
+        // does not erase valid close history merely because object identity
+        // changed. Missing/renamed sources are intentionally discarded.
+        var reboundClosedTabs = new List<Tile>();
+        var reboundClosedPaths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (Tile closed in _closedPreviewTabs)
+        {
+            string path = NormalizeFavoritePath(closed.Path);
+            if (currentByPath.TryGetValue(path, out Tile? current)
+                && reboundClosedPaths.Add(path))
+            {
+                reboundClosedTabs.Add(current);
+            }
+        }
         var restoredTiles = new List<Tile>();
         foreach (string path in NormalizePreviewTabPaths(requestedPaths))
         {
@@ -3996,9 +4031,52 @@ public partial class MainWindow : Window
         _restoredPreviewTabPaths.Clear();
         _restoredActivePreviewTabPath = null;
         _previewTabsPersistenceReady = true;
-        _closedPreviewTabs.RemoveAll(tile => !_allTiles.Contains(tile));
+        _closedPreviewTabs.Clear();
+        _closedPreviewTabs.AddRange(reboundClosedTabs.Take(30));
         RefreshPreviewTabs();
         return active;
+    }
+
+    private void ReconcileOpenSurfacesAfterCatalogReload(
+        bool modalWasVisible,
+        bool modalHadFocus,
+        string? focusedPreviewTabPath)
+    {
+        if (modalWasVisible)
+        {
+            if (SelectedTile() is not null)
+            {
+                OpenModal();
+                if (modalHadFocus)
+                    Dispatcher.BeginInvoke(ModalCloseBtn.Focus, DispatcherPriority.Input);
+            }
+            else
+            {
+                CloseModal();
+                if (modalHadFocus)
+                    Dispatcher.BeginInvoke(OpenFolderSetButton.Focus, DispatcherPriority.Input);
+            }
+            return;
+        }
+
+        if (string.IsNullOrWhiteSpace(focusedPreviewTabPath))
+            return;
+
+        string? nextFocusPath = _previewTabs
+            .FirstOrDefault(tab => string.Equals(tab.Path, focusedPreviewTabPath, StringComparison.OrdinalIgnoreCase))?.Path
+            ?? _activePreviewTabPath;
+        if (!string.IsNullOrWhiteSpace(nextFocusPath))
+        {
+            FocusPreviewTab(nextFocusPath);
+        }
+        else if (_closedPreviewTabs.Count > 0)
+        {
+            FocusRestorePreviewTabButton();
+        }
+        else
+        {
+            Dispatcher.BeginInvoke(CardsList.Focus, DispatcherPriority.Input);
+        }
     }
 
     private bool OpenPreviewTab(Tile tile, bool makeActive)
@@ -8058,6 +8136,16 @@ public partial class MainWindow : Window
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ShowSelectedFolderBucketsButton), "Show selected folder buckets", StringComparison.Ordinal)
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(HideSelectedFolderBucketsButton), "Hide selected folder buckets", StringComparison.Ordinal);
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+    public bool FocusModalCloseForSmoke() => ModalCloseBtn.Focus();
+    public bool ModalCloseFocusedForSmoke => ModalCloseBtn.IsKeyboardFocused;
+    public bool PreviewPlaceholderVisibleForSmoke
+        => PreviewBitmap.Visibility == Visibility.Collapsed
+            && PreviewArtBase.Visibility == Visibility.Visible
+            && PreviewArtGlow.Visibility == Visibility.Visible;
+    public bool ModalPlaceholderVisibleForSmoke
+        => ModalBitmap.Visibility == Visibility.Collapsed
+            && ModalArtBase.Visibility == Visibility.Visible
+            && ModalArtGlow.Visibility == Visibility.Visible;
     public void CloseModalForSmoke() => CloseModal();
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedCountForSmoke => SelectedTiles().Count;
@@ -8112,6 +8200,12 @@ public partial class MainWindow : Window
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
     public int SeenStoreCountForSmoke => _seenPaths.Count;
     public int EnhancedStoreCountForSmoke => _enhancedOutputs.Count;
+    public int FavoriteLevelForFileForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Fav ?? -1;
+    public bool UnseenForFileForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Unseen == true;
+    public bool EnhancedForFileForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Enhanced == true;
     public int EnhancementJobsReadForSmoke => _enhancementJobsRead;
     public int EnhancedCandidateCountForSmoke => _enhancedCandidateCount;
     public bool EnhancementReadOkForSmoke => _enhancementReadOk;
