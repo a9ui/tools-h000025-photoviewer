@@ -77,6 +77,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
 - `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
+- `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
 - `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
 - `scripts/verify-wpf-monitor-work-area.ps1` current-monitor maximize, exact unchanged restore, disconnected/downsized/DPI-equivalent bounded restore, and fallback verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
@@ -901,3 +902,9 @@ Recursive scan does not descend into nested junctions, symbolic links, or
 other reparse-point directories. The scan-boundary verifier proves that only
 in-root images are indexed and that outside/cyclic targets and source files
 remain untouched.
+
+A partial multi-root scan keeps indexing every available root when another
+selected root is missing or becomes unavailable. The complete ordered folder
+set remains in WPF state and shared Recent so Refresh can retry it; only a
+successful current generation may commit those stores. Cancelled or stale runs
+publish neither catalog nor ownership changes.

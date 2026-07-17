@@ -131,6 +131,7 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 ### WPF-LND-003 Scan
 
 - 各rootをrecursive enumerationする。
+- 複数rootの一部がmissing、切断、permission変更等で利用不能でも、利用可能なrootの画像はcatalogへpublishする。明示folder setの順序と利用不能rootはcurrent state/Recentに保持し、recoverable statusでskipを通知するため、Refreshで同じsetを再試行できる。成功runだけがstate/Recentを各1回所有し、cancel/stale runは所有しない。
 - 利用者が明示したroot自体はscan対象にできるが、その配下で見つけたjunction、symbolic link、mount point等のreparse file/directoryはcatalogへ入れず追跡しない。各rootのlexical tree外をcatalogへ入れず、visited directory setで循環を有限時間に止め、skip件数をrecoverable statusで知らせる。
 - permission/individual file failureは可能な項目を継続し、summary warningを出す。
 - supported extension以外をcatalogへ入れない。
@@ -589,6 +590,7 @@ Accessibility:
 | Rapid UI/final-state stress | `powershell -File scripts/verify-wpf-rapid-ui-state.ps1` |
 | Shutdown final-state lifecycle | `powershell -File scripts/verify-wpf-shutdown-state.ps1` |
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
+| Partial multi-root scan / ownership | `powershell -File scripts/verify-wpf-partial-scan.ps1` |
 | Recursive scan boundary | `powershell -File scripts/verify-wpf-scan-boundary.ps1` |
 | Current-monitor maximize/topology-safe restore | `powershell -File scripts/verify-wpf-monitor-work-area.ps1` |
 | Preview hover | `powershell -File scripts/verify-wpf-preview-tab-hover.ps1` |

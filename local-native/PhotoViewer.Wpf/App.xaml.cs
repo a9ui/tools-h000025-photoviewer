@@ -73,6 +73,13 @@ public partial class App : Application
             return;
         }
 
+        int partialScanSmokeIdx = Array.IndexOf(e.Args, "--partial-scan-smoke");
+        if (partialScanSmokeIdx >= 0 && partialScanSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePartialScanSmoke(e.Args[partialScanSmokeIdx + 1]);
+            return;
+        }
+
         int windowWorkAreaSmokeIdx = Array.IndexOf(e.Args, "--window-work-area-smoke");
         if (windowWorkAreaSmokeIdx >= 0 && windowWorkAreaSmokeIdx + 1 < e.Args.Length)
         {
@@ -498,6 +505,218 @@ public partial class App : Application
         File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         Environment.ExitCode = ok ? 0 : 1;
         Shutdown(Environment.ExitCode);
+    }
+
+    private void CapturePartialScanSmoke(string resultPath)
+    {
+        static async Task<bool> WaitForPhaseAsync(MainWindow window, string phase, int timeoutMilliseconds = 4000)
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                if (string.Equals(window.LoadPhaseForSmoke, phase, StringComparison.Ordinal))
+                    return true;
+                await Task.Delay(10);
+            }
+            return false;
+        }
+
+        static bool JsonContainsString(string path, string expected)
+        {
+            if (!File.Exists(path))
+                return false;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+                return Contains(document.RootElement);
+            }
+            catch
+            {
+                return false;
+            }
+
+            bool Contains(JsonElement element)
+            {
+                if (element.ValueKind == JsonValueKind.String)
+                    return string.Equals(element.GetString(), expected, StringComparison.OrdinalIgnoreCase);
+                if (element.ValueKind == JsonValueKind.Object)
+                    return element.EnumerateObject().Any(property => Contains(property.Value));
+                if (element.ValueKind == JsonValueKind.Array)
+                    return element.EnumerateArray().Any(Contains);
+                return false;
+            }
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string statePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH")
+            ?? throw new InvalidOperationException("automation state path was not configured");
+        string favoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH")
+            ?? throw new InvalidOperationException("automation favorites path was not configured");
+        string seenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH")
+            ?? throw new InvalidOperationException("automation seen path was not configured");
+        string recentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH")
+            ?? throw new InvalidOperationException("automation recent path was not configured");
+        string jobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH")
+            ?? throw new InvalidOperationException("automation jobs path was not configured");
+        string smokeRoot = Path.GetDirectoryName(Path.GetFullPath(statePath))
+            ?? throw new InvalidOperationException("automation root was unavailable");
+        string sourcesRoot = Path.Combine(smokeRoot, "sources");
+        string validRoot = Path.Combine(sourcesRoot, "01 valid root");
+        string disappearingRoot = Path.Combine(sourcesRoot, "02 disappears during scan");
+        string missingRoot = Path.Combine(sourcesRoot, "03 missing root");
+        string canceledRoot = Path.Combine(sourcesRoot, "04 canceled root");
+        string canceledMissingRoot = Path.Combine(sourcesRoot, "05 canceled missing root");
+        string newerRoot = Path.Combine(sourcesRoot, "06 newer root");
+        string newerMissingRoot = Path.Combine(sourcesRoot, "07 newer missing root");
+        foreach (string folder in new[] { validRoot, disappearingRoot, canceledRoot, newerRoot })
+            Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+
+        WriteSmokePng(Path.Combine(validRoot, "valid-a.png"), 128, 96, Color.FromRgb(75, 120, 175));
+        WriteSmokePng(Path.Combine(validRoot, "valid-b.png"), 128, 96, Color.FromRgb(95, 135, 185));
+        WriteSmokePng(Path.Combine(disappearingRoot, "gone-before-enumeration.png"), 128, 96, Color.FromRgb(115, 145, 195));
+        WriteSmokePng(Path.Combine(canceledRoot, "must-not-publish.png"), 128, 96, Color.FromRgb(135, 155, 205));
+        WriteSmokePng(Path.Combine(newerRoot, "newer-wins.png"), 128, 96, Color.FromRgb(155, 165, 215));
+        File.WriteAllText(statePath, "{\"Version\":2,\"partialScanMarker\":\"preserve\"}");
+        File.WriteAllText(favoritesPath, "{}");
+        File.WriteAllText(seenPath, "{}");
+        File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\",\"partialRecentMarker\":\"preserve\"}");
+        File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+
+        var sourceFingerprints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [validRoot] = FolderFingerprint(validRoot),
+            [canceledRoot] = FolderFingerprint(canceledRoot),
+            [newerRoot] = FolderFingerprint(newerRoot),
+        };
+        string favoritesBefore = FileFingerprint(favoritesPath);
+        string jobsBefore = FileFingerprint(jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.Show();
+        window.Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                string[] partialSet = [validRoot, disappearingRoot, missingRoot];
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 500, metadataMilliseconds: 0);
+                Task partialTask = window.LoadFolderSetAsync(partialSet);
+                bool partialEnumerationPhase = await WaitForPhaseAsync(window, "enumeration");
+                Directory.Delete(disappearingRoot, recursive: true);
+                await partialTask;
+
+                List<string> partialNames = window.AllFileNamesForSmoke;
+                bool validImagesPublished = !window.LandingVisibleForSmoke
+                    && partialNames.Count == 2
+                    && partialNames.Contains("valid-a.png", StringComparer.OrdinalIgnoreCase)
+                    && partialNames.Contains("valid-b.png", StringComparer.OrdinalIgnoreCase)
+                    && !partialNames.Contains("gone-before-enumeration.png", StringComparer.OrdinalIgnoreCase);
+                bool requestedSetOwned = window.CurrentFolderSetForSmoke.SequenceEqual(partialSet, StringComparer.OrdinalIgnoreCase)
+                    && window.LandingFolderSetForSmoke.SequenceEqual(partialSet, StringComparer.OrdinalIgnoreCase);
+                string partialStatus = window.DeleteStatusForSmoke;
+                bool recoverableStatus = partialStatus.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                    && partialStatus.Contains("could not be scanned", StringComparison.OrdinalIgnoreCase);
+                bool partialStateOwned = partialSet.All(path => JsonContainsString(statePath, path));
+                bool partialRecentOwned = partialSet.All(path => JsonContainsString(recentPath, path));
+                bool oneRecentCommit = window.SharedRecentCommitAttemptCountForSmoke == 1
+                    && window.SharedRecentCommitSuccessCountForSmoke == 1;
+
+                string stateAfterPartial = FileFingerprint(statePath);
+                string recentAfterPartial = FileFingerprint(recentPath);
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 700, metadataMilliseconds: 0);
+                Task canceledTask = window.LoadFolderSetAsync([canceledRoot, canceledMissingRoot]);
+                bool canceledEnumerationPhase = await WaitForPhaseAsync(window, "enumeration");
+                bool cancelAccepted = window.CancelActiveScanForSmoke();
+                bool canceledImmediateIsolation = string.Equals(stateAfterPartial, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(recentAfterPartial, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && window.CurrentFolderSetForSmoke.SequenceEqual(partialSet, StringComparer.OrdinalIgnoreCase)
+                    && window.AllFileNamesForSmoke.SequenceEqual(partialNames, StringComparer.OrdinalIgnoreCase);
+
+                string[] newerSet = [newerRoot, newerMissingRoot];
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 0, metadataMilliseconds: 0);
+                await window.LoadFolderSetAsync(newerSet);
+                await canceledTask;
+                bool newerRunWon = !window.LandingVisibleForSmoke
+                    && window.CurrentFolderSetForSmoke.SequenceEqual(newerSet, StringComparer.OrdinalIgnoreCase)
+                    && window.LandingFolderSetForSmoke.SequenceEqual(newerSet, StringComparer.OrdinalIgnoreCase)
+                    && window.AllFileNamesForSmoke.SequenceEqual(["newer-wins.png"], StringComparer.OrdinalIgnoreCase)
+                    && window.DeleteStatusForSmoke.Contains("unavailable", StringComparison.OrdinalIgnoreCase);
+                bool canceledRunNeverPersisted = !JsonContainsString(statePath, canceledRoot)
+                    && !JsonContainsString(statePath, canceledMissingRoot)
+                    && !JsonContainsString(recentPath, canceledRoot)
+                    && !JsonContainsString(recentPath, canceledMissingRoot);
+                bool successfulSetsPersisted = partialSet.All(path => JsonContainsString(recentPath, path))
+                    && newerSet.All(path => JsonContainsString(statePath, path) && JsonContainsString(recentPath, path));
+                bool exactRecentOwnership = window.SharedRecentCommitAttemptCountForSmoke == 2
+                    && window.SharedRecentCommitSuccessCountForSmoke == 2;
+                bool unknownFieldsPreserved = JsonContainsString(statePath, "preserve")
+                    && JsonContainsString(recentPath, "preserve");
+                bool sourceUntouched = sourceFingerprints.All(pair => string.Equals(pair.Value, FolderFingerprint(pair.Key), StringComparison.Ordinal));
+                bool unrelatedCacheUntouched = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool missingRootsStayedMissing = !Directory.Exists(missingRoot)
+                    && !Directory.Exists(canceledMissingRoot)
+                    && !Directory.Exists(newerMissingRoot);
+                bool loadCtsBalanced = window.LoadCtsCreatedCountForSmoke == 3
+                    && window.LoadCtsRetiredCountForSmoke == window.LoadCtsCreatedCountForSmoke;
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(Path.GetFullPath(smokeRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                bool residueFree = NoPersistenceResidue(smokeRoot);
+                ok = partialEnumerationPhase && validImagesPublished && requestedSetOwned && recoverableStatus
+                    && partialStateOwned && partialRecentOwned && oneRecentCommit
+                    && canceledEnumerationPhase && cancelAccepted && canceledImmediateIsolation
+                    && newerRunWon && canceledRunNeverPersisted && successfulSetsPersisted && exactRecentOwnership
+                    && unknownFieldsPreserved && sourceUntouched && unrelatedCacheUntouched
+                    && missingRootsStayedMissing && loadCtsBalanced && isolated && residueFree;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "partial multi-root scans retained valid images and requested roots; canceled/stale work never took ownership"
+                        : "partial multi-root scan publication, recovery, or ownership contract failed",
+                    partialEnumerationPhase,
+                    validImagesPublished,
+                    requestedSetOwned,
+                    recoverableStatus,
+                    partialStatus,
+                    finalStatus = window.DeleteStatusForSmoke,
+                    partialStateOwned,
+                    partialRecentOwned,
+                    oneRecentCommit,
+                    canceledEnumerationPhase,
+                    cancelAccepted,
+                    canceledImmediateIsolation,
+                    newerRunWon,
+                    canceledRunNeverPersisted,
+                    successfulSetsPersisted,
+                    exactRecentOwnership,
+                    unknownFieldsPreserved,
+                    sourceUntouched,
+                    unrelatedCacheUntouched,
+                    missingRootsStayedMissing,
+                    loadCtsBalanced,
+                    isolated,
+                    residueFree,
+                    partialNames,
+                    currentFolderSet = window.CurrentFolderSetForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot };
+            }
+            finally
+            {
+                try { if (window.IsLoaded) window.Close(); } catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void CaptureWindowWorkAreaSmoke(string resultPath)

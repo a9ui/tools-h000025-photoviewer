@@ -395,6 +395,9 @@ public partial class MainWindow : Window
         _previewDeferredDecodeMs = 0;
         var requestedFolderSet = NormalizeFolderSet(folders);
         var existingFolderSet = requestedFolderSet.Where(Directory.Exists).ToList();
+        var unavailableFolderSet = requestedFolderSet
+            .Except(existingFolderSet, StringComparer.OrdinalIgnoreCase)
+            .ToList();
         if (existingFolderSet.Count == 0)
         {
             SetLandingFolderSet(requestedFolderSet);
@@ -405,7 +408,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        string resolvedFolderSummary = FormatFolderSetSummary(existingFolderSet);
+        string resolvedFolderSummary = FormatFolderSetSummary(requestedFolderSet);
 
         _loadCts?.Cancel();
         long generation = ++_loadGeneration;
@@ -459,8 +462,8 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
-        if (!scanAccessFailures.IsEmpty || !scanBoundarySkips.IsEmpty)
-            ReportScanTraversalWarnings(scanAccessFailures.Count, scanBoundarySkips.Count);
+        if (!scanAccessFailures.IsEmpty || !scanBoundarySkips.IsEmpty || unavailableFolderSet.Count > 0)
+            ReportScanTraversalWarnings(scanAccessFailures.Count, scanBoundarySkips.Count, unavailableFolderSet.Count);
 
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
         if (files.Count > 0)
@@ -500,8 +503,12 @@ public partial class MainWindow : Window
         _suppressStateSave = true;
         try
         {
-            _currentFolderSet = existingFolderSet;
-            _currentFolder = _currentFolderSet.FirstOrDefault();
+            // Keep the user's complete folder set, including temporarily
+            // unavailable roots.  The catalog is built only from roots that
+            // were available for this run, while Refresh can retry the same
+            // explicit set after a drive reconnects or permissions change.
+            _currentFolderSet = requestedFolderSet;
+            _currentFolder = existingFolderSet.FirstOrDefault();
             SetLandingFolderSet(_currentFolderSet);
             LoadFavorites();
             LoadSeenState();
@@ -651,13 +658,15 @@ public partial class MainWindow : Window
     }
 
     private void ReportScanAccessFailures(int skippedCount)
-        => ReportScanTraversalWarnings(skippedCount, 0);
+        => ReportScanTraversalWarnings(skippedCount, 0, 0);
 
-    private void ReportScanTraversalWarnings(int accessFailureCount, int boundarySkipCount)
+    private void ReportScanTraversalWarnings(int accessFailureCount, int boundarySkipCount, int unavailableRootCount)
     {
         var messages = new List<string>();
+        if (unavailableRootCount > 0)
+            messages.Add($"{unavailableRootCount:N0} selected root(s) were unavailable and skipped. The folder set was kept so Refresh can retry them.");
         if (accessFailureCount > 0)
-            messages.Add($"Some folders could not be scanned because access was denied. {accessFailureCount:N0} location(s) were skipped; fix access and refresh the folder.");
+            messages.Add($"Some folders could not be scanned. {accessFailureCount:N0} location(s) became unavailable or access was denied; fix access and refresh the folder.");
         if (boundarySkipCount > 0)
             messages.Add($"{boundarySkipCount:N0} junction or symbolic-link location(s) were not followed outside the selected folder tree.");
         SetStatusToast(string.Join(" ", messages));
@@ -5473,10 +5482,8 @@ public partial class MainWindow : Window
 
     private async Task<bool> AddFoldersToCurrentSetAsync(IEnumerable<string> folders)
     {
-        var merged = NormalizeFolderSet(_currentFolderSet.Concat(folders))
-            .Where(Directory.Exists)
-            .ToList();
-        if (merged.Count == 0 || merged.SequenceEqual(_currentFolderSet, StringComparer.OrdinalIgnoreCase))
+        var merged = NormalizeFolderSet(_currentFolderSet.Concat(folders));
+        if (!merged.Any(Directory.Exists) || merged.SequenceEqual(_currentFolderSet, StringComparer.OrdinalIgnoreCase))
             return false;
 
         await LoadFolderSetAsync(merged);
