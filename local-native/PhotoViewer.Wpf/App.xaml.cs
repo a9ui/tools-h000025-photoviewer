@@ -247,6 +247,13 @@ public partial class App : Application
             return;
         }
 
+        int formatSmokeIdx = Array.IndexOf(e.Args, "--format-smoke");
+        if (formatSmokeIdx >= 0 && formatSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFormatSmoke(e.Args[formatSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -3574,6 +3581,92 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureFormatSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string fixtureFolder = Path.GetFullPath(ArgValue(args, "--fixture-folder") ?? "");
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-state-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        if (!Directory.Exists(fixtureFolder))
+        {
+            WriteFormatSmokeResult(resultFullPath, new FormatSmokeResult { Message = "format fixture folder is unavailable" });
+            Shutdown(1);
+            return;
+        }
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            FormatSmokeResult result;
+            try
+            {
+                string[] expected =
+                [
+                    "format-avif.avif",
+                    "format-bmp.bmp",
+                    "format-gif.gif",
+                    "format-jpeg.jpg",
+                    "format-png.png",
+                    "format-tiff.tiff",
+                    "format-webp.webp",
+                ];
+                await win.LoadFolderAsync(fixtureFolder);
+                var previews = new List<PreviewDecodeSmokeSnapshot>();
+                foreach (string fileName in expected)
+                    previews.Add(await win.SelectPreviewForSmokeAsync(fileName));
+
+                List<string> catalogNames = win.AllFileNamesForSmoke;
+                List<string> extensions = PhotoViewer.Wpf.MainWindow.SupportedImageExtensionsForSmoke;
+                bool expectedCatalog = expected.All(name => catalogNames.Contains(name, StringComparer.OrdinalIgnoreCase))
+                    && !catalogNames.Contains("unsupported.txt", StringComparer.OrdinalIgnoreCase)
+                    && catalogNames.Count == expected.Length;
+                bool decoded = previews.Count == expected.Length
+                    && previews.All(static preview => preview.Selected && preview.DeferredDecodeApplied && preview.PreviewSourcePresent && preview.StableLatestSelection);
+                bool extensionContract = new[] { ".png", ".jpg", ".jpeg", ".webp", ".gif", ".avif" }
+                    .All(extension => extensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
+                bool nativeExtensions = new[] { ".bmp", ".tif", ".tiff" }
+                    .All(extension => extensions.Contains(extension, StringComparer.OrdinalIgnoreCase));
+                bool ok = expectedCatalog && decoded && extensionContract && nativeExtensions;
+                result = new FormatSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "PNG/JPEG/WebP/GIF/AVIF plus native BMP/TIFF catalog and preview decode passed"
+                        : "one or more advertised image formats did not catalog or decode",
+                    CatalogNames = catalogNames,
+                    Extensions = extensions,
+                    Previews = previews,
+                    BrowserContractFormats = extensionContract,
+                    NativeExtensionFormats = nativeExtensions,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new FormatSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                win.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            WriteFormatSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureEnhancedFilterSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -6268,6 +6361,12 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteFormatSmokeResult(string path, FormatSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteGridRealizationSmokeResult(string path, GridRealizationSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -7192,6 +7291,17 @@ public partial class App : Application
         public bool DeleteFocusRestored { get; init; }
         public bool LogoAccessible { get; init; }
         public bool LogoActivated { get; init; }
+    }
+
+    private sealed class FormatSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool BrowserContractFormats { get; init; }
+        public bool NativeExtensionFormats { get; init; }
+        public List<string> CatalogNames { get; init; } = [];
+        public List<string> Extensions { get; init; } = [];
+        public List<PreviewDecodeSmokeSnapshot> Previews { get; init; } = [];
     }
 
     private sealed class EnhancedFilterSmokeResult

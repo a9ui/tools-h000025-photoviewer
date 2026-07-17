@@ -23,7 +23,7 @@ public partial class MainWindow : Window
 {
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
-        ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".gif", ".tif", ".tiff",
+        ".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".gif", ".tif", ".tiff",
     };
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
@@ -5584,6 +5584,8 @@ public partial class MainWindow : Window
 
     public string? SelectedPathForSmoke => SelectedTile()?.Path;
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
+    public static List<string> SupportedImageExtensionsForSmoke
+        => SupportedImageExtensions.OrderBy(static extension => extension, StringComparer.OrdinalIgnoreCase).ToList();
     public string SearchQueryForSmoke => SearchInput.Text;
     public bool IsEditableTextInputFocusedForSmoke => Keyboard.FocusedElement is TextBoxBase;
     public string StatePathForSmoke => ResolvedStatePath;
@@ -5591,6 +5593,7 @@ public partial class MainWindow : Window
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
     public int CatalogCountForSmoke => _allTiles.Count;
+    public List<string> AllFileNamesForSmoke => _allTiles.Select(static tile => tile.FileName).ToList();
     public string DeleteStatusForSmoke => _deleteStatus;
     public bool DeleteConfirmationVisibleForSmoke => DeleteConfirmationDialog.Visibility == Visibility.Visible;
     public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
