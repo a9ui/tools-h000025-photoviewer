@@ -71,6 +71,7 @@ implementation. The normative current behavior is documented in
 - `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
 - `--rapid-ui-state-smoke <path>` temp-only rapid search/selection/layout/panel/filter/tab final-state and heartbeat stress
+- `--focus-filter-race-smoke <path>` temp-only 20-run search/filter/focus/Grid-List/selection/tab/modal dispatcher reconciliation stress
 - `--shutdown-state-smoke <path>` sub-debounce close flush, stale-work cancellation, refusal, and atomic-residue smoke
 - `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier

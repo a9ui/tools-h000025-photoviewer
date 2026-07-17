@@ -444,6 +444,13 @@ public partial class App : Application
             return;
         }
 
+        int focusFilterRaceSmokeIdx = Array.IndexOf(e.Args, "--focus-filter-race-smoke");
+        if (focusFilterRaceSmokeIdx >= 0 && focusFilterRaceSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFocusFilterRaceSmoke(e.Args[focusFilterRaceSmokeIdx + 1]);
+            return;
+        }
+
         int shutdownStateSmokeIdx = Array.IndexOf(e.Args, "--shutdown-state-smoke");
         if (shutdownStateSmokeIdx >= 0 && shutdownStateSmokeIdx + 1 < e.Args.Length)
         {
@@ -5597,6 +5604,271 @@ public partial class App : Application
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureFocusFilterRaceSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-focus-filter-race-" + Guid.NewGuid().ToString("N"));
+        string folderA = Path.Combine(smokeRoot, "bucket-a");
+        string folderB = Path.Combine(smokeRoot, "bucket-b");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        string[] names =
+        [
+            "a-level1-old.png", "a-level2-mid.png", "a-level3-new.png", "a-unrated.png", "a-unseen.png",
+            "b-level4-old.png", "b-level5-mid.png", "b-level3-new.png", "b-unrated.png", "b-unseen.png",
+        ];
+        var paths = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        try
+        {
+            Directory.CreateDirectory(folderA);
+            Directory.CreateDirectory(folderB);
+            DateTime today = DateTime.Today;
+            for (int index = 0; index < names.Length; index++)
+            {
+                string folder = index < 5 ? folderA : folderB;
+                string path = Path.Combine(folder, names[index]);
+                WriteSmokePng(path, 96, 72, Color.FromRgb((byte)(55 + index * 15), (byte)(95 + index * 9), (byte)(175 - index * 7)));
+                DateTime created = index % 3 == 0 ? today.AddDays(-30).AddHours(9) : index % 3 == 1 ? today.AddDays(-7).AddHours(10) : today.AddHours(11);
+                File.SetCreationTime(path, created);
+                File.SetLastWriteTime(path, today.AddMinutes(-index));
+                paths[names[index]] = path;
+            }
+
+            var favorites = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+            {
+                [paths["a-level1-old.png"]] = 1,
+                [paths["a-level2-mid.png"]] = 2,
+                [paths["a-level3-new.png"]] = 3,
+                [paths["b-level4-old.png"]] = 4,
+                [paths["b-level5-mid.png"]] = 5,
+                [paths["b-level3-new.png"]] = 3,
+            };
+            File.WriteAllText(favoritesPath, JsonSerializer.Serialize(favorites, new JsonSerializerOptions { WriteIndented = true }));
+            File.WriteAllText(seenPath, "{}");
+            File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"2026-07-18T00:00:00Z\"}");
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteFocusFilterRaceSmokeResult(resultFullPath, new FocusFilterRaceSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(10) };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            FocusFilterRaceSmokeResult result;
+            try
+            {
+                await win.LoadFolderSetAsync([folderA, folderB], commitRecent: false);
+                string sourceBefore = FolderFingerprint(folderA) + "|" + FolderFingerprint(folderB);
+                string jobsBefore = FileFingerprint(jobsPath);
+                heartbeat.Start();
+
+                bool tabOpened = win.SelectFileNameForSmoke("a-level1-old.png") && win.OpenSelectedPreviewTabForSmoke();
+                bool tabPinned = tabOpened && win.TogglePreviewTabPinForSmoke("a-level1-old.png");
+                bool searchFocused = win.FocusSearchInputForSmoke();
+                Task<MainWindow.SearchFilterCompletion> noResultTask = win.SetSearchInputForSmokeAsync("definitely-no-such-image");
+                bool modalOpenedDuringDebounce = win.OpenModalForSmoke();
+                MainWindow.SearchFilterCompletion noResult = await noResultTask;
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool noResultRecovered = noResult.Applied
+                    && win.FilteredCountForSmoke == 0
+                    && win.SelectedCountForSmoke == 0
+                    && !win.ModalVisibleForSmoke
+                    && win.ActivePreviewTabNameForSmoke is null
+                    && win.PreviewTabNamesForSmoke.Contains("a-level1-old.png", StringComparer.OrdinalIgnoreCase)
+                    && win.IsPreviewTabPinnedForSmoke("a-level1-old.png")
+                    && win.IsEditableTextInputFocusedForSmoke;
+
+                MainWindow.SearchFilterCompletion clearResult = await win.SetSearchInputForSmokeAsync("");
+                bool tabRecovered = clearResult.Applied
+                    && win.ActivatePreviewTabForSmoke("a-level1-old.png")
+                    && string.Equals(win.SelectedFileNameForSmoke, "a-level1-old.png", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.ActivePreviewTabNameForSmoke, "a-level1-old.png", StringComparison.OrdinalIgnoreCase);
+
+                bool favoriteExact = true;
+                bool unseenStable = true;
+                bool dateStable = true;
+                bool folderStable = true;
+                bool modeSelectionStable = true;
+                bool searchLatestWins = true;
+                const int iterations = 20;
+                for (int iteration = 0; iteration < iterations; iteration++)
+                {
+                    win.SetSearchQuery("");
+                    win.SetUnseenOnlyFilterForSmoke(false);
+                    win.ClearManualDateRangeForSmoke();
+                    win.ShowAllFolderBucketsForSmoke();
+                    win.SetFavoriteOnlyFilterForSmoke(false);
+                    win.ClearFavoriteFiltersForSmoke();
+
+                    win.SetFavoriteOnlyFilterForSmoke(true);
+                    win.SetFavoriteFilterLevelsForSmoke(2, 4);
+                    favoriteExact &= win.FilteredCountForSmoke == 2
+                        && win.FilteredFileNamesForSmoke(10).ToHashSet(StringComparer.OrdinalIgnoreCase).SetEquals(["a-level2-mid.png", "b-level4-old.png"]);
+                    win.SetFavoriteFilterLevelsForSmoke(5);
+                    favoriteExact &= win.FilteredCountForSmoke == 1
+                        && string.Equals(win.SelectedFileNameForSmoke, "b-level5-mid.png", StringComparison.OrdinalIgnoreCase);
+                    win.SetFavoriteFilterLevelsForSmoke();
+                    favoriteExact &= win.FilteredCountForSmoke == 6;
+                    win.SetFavoriteOnlyFilterForSmoke(false);
+                    favoriteExact &= win.FilteredCountForSmoke == names.Length;
+
+                    int seenBeforeDots = win.SeenStoreCountForSmoke;
+                    win.SetShowUnseenDotsForSmoke(iteration % 2 == 0);
+                    unseenStable &= win.SeenStoreCountForSmoke == seenBeforeDots;
+                    win.SetUnseenOnlyFilterForSmoke(true);
+                    unseenStable &= win.FilteredCountForSmoke == win.UnseenCountForSmoke && win.SelectedCountForSmoke == 0;
+                    win.SetUnseenOnlyFilterForSmoke(false);
+
+                    dateStable &= win.SetManualDateRangeForSmoke(DateTime.Today.ToString("yyyy-MM-dd"), DateTime.Today.ToString("yyyy-MM-dd"));
+                    dateStable &= win.FilteredCountForSmoke == 3;
+                    win.ClearManualDateRangeForSmoke();
+
+                    List<string> bucketKeys = win.FolderBucketKeysForSmoke;
+                    folderStable &= bucketKeys.Count == 2 && win.SetFolderBucketHiddenForSmoke(bucketKeys[iteration % 2], true);
+                    folderStable &= win.FilteredCountForSmoke == 5;
+                    win.ShowAllFolderBucketsForSmoke();
+
+                    modeSelectionStable &= win.SelectRangeForSmoke(1, 3)
+                        && win.SelectedCountForSmoke == 3
+                        && win.SetListModeForSmoke()
+                        && win.ListModeVisibleForSmoke
+                        && win.SelectedCountForSmoke == 3;
+                    string? rangePrimary = win.SelectedFileNameForSmoke;
+                    modeSelectionStable &= win.SetGridModeForSmoke()
+                        && win.GridModeVisibleForSmoke
+                        && win.SelectedCountForSmoke == 3
+                        && string.Equals(win.SelectedFileNameForSmoke, rangePrimary, StringComparison.OrdinalIgnoreCase);
+
+                    win.FocusSearchInputForSmoke();
+                    var searchTasks = new[]
+                    {
+                        win.SetSearchInputForSmokeAsync("a"),
+                        win.SetSearchInputForSmokeAsync("b"),
+                        win.SetSearchInputForSmokeAsync("b-level5"),
+                    };
+                    MainWindow.SearchFilterCompletion[] completions = await Task.WhenAll(searchTasks);
+                    searchLatestWins &= completions[0].Discarded && completions[1].Discarded && completions[2].Applied
+                        && win.FilteredCountForSmoke == 1
+                        && string.Equals(win.SelectedFileNameForSmoke, "b-level5-mid.png", StringComparison.OrdinalIgnoreCase)
+                        && win.IsEditableTextInputFocusedForSmoke;
+                }
+
+                win.SetSearchQuery("");
+                win.SetFavoriteOnlyFilterForSmoke(false);
+                win.ClearFavoriteFiltersForSmoke();
+                bool filteredTabSetup = win.SelectFileNameForSmoke("a-level1-old.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.OpenModalForSmoke();
+                win.SetFavoriteOnlyFilterForSmoke(true);
+                win.SetFavoriteFilterLevelsForSmoke(5);
+                bool filteredTabSafe = win.PreviewTabNamesForSmoke.Contains("a-level1-old.png", StringComparer.OrdinalIgnoreCase)
+                    && win.IsPreviewTabPinnedForSmoke("a-level1-old.png")
+                    && win.ActivePreviewTabNameForSmoke is null
+                    && string.Equals(win.SelectedFileNameForSmoke, "b-level5-mid.png", StringComparison.OrdinalIgnoreCase)
+                    && win.ModalVisibleForSmoke
+                    && string.Equals(Path.GetFileName(win.ModalDisplayPathForSmoke), "b-level5-mid.png", StringComparison.OrdinalIgnoreCase);
+                win.SetFavoriteOnlyFilterForSmoke(false);
+                win.ClearFavoriteFiltersForSmoke();
+                bool filteredTabRecovered = win.ActivatePreviewTabForSmoke("a-level1-old.png")
+                    && string.Equals(win.SelectedFileNameForSmoke, "a-level1-old.png", StringComparison.OrdinalIgnoreCase);
+                win.CloseModalForSmoke();
+                heartbeat.Stop();
+
+                win.FlushStateForSmoke();
+                bool jsonValid = TryReadJsonDocument(statePath) && TryReadJsonDocument(favoritesPath)
+                    && TryReadJsonDocument(seenPath) && TryReadJsonDocument(recentPath);
+                bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folderA) + "|" + FolderFingerprint(folderB), StringComparison.Ordinal);
+                bool passive = win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(Path.GetFullPath(smokeRoot), StringComparison.OrdinalIgnoreCase));
+                bool ok = win.CatalogCountForSmoke == names.Length
+                    && tabOpened && tabPinned && searchFocused && modalOpenedDuringDebounce && noResultRecovered && tabRecovered
+                    && favoriteExact && unseenStable && dateStable && folderStable && modeSelectionStable && searchLatestWins
+                    && filteredTabSetup && filteredTabSafe && filteredTabRecovered
+                    && heartbeatCount >= 20 && jsonValid && sourceUntouched && passive && isolated;
+                result = new FocusFilterRaceSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "filter, focus, selection, tab, and modal dispatcher races stayed synchronized" : "filter/focus surface reconciliation failed",
+                    SmokeRoot = smokeRoot,
+                    CatalogCount = win.CatalogCountForSmoke,
+                    Iterations = iterations,
+                    NoResultRecovered = noResultRecovered,
+                    PinRetained = tabPinned && win.IsPreviewTabPinnedForSmoke("a-level1-old.png"),
+                    TabRecovered = tabRecovered,
+                    FavoriteExact = favoriteExact,
+                    UnseenStable = unseenStable,
+                    DateStable = dateStable,
+                    FolderStable = folderStable,
+                    ModeSelectionStable = modeSelectionStable,
+                    SearchLatestWins = searchLatestWins,
+                    FilteredTabSafe = filteredTabSafe,
+                    FilteredTabRecovered = filteredTabRecovered,
+                    HeartbeatCount = heartbeatCount,
+                    JsonValid = jsonValid,
+                    SourceUntouched = sourceUntouched,
+                    EnhancementPassive = passive,
+                    Isolated = isolated,
+                };
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                result = new FocusFilterRaceSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot, HeartbeatCount = heartbeatCount };
+            }
+            finally
+            {
+                if (win.IsVisible) win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteFocusFilterRaceSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static bool TryReadJsonDocument(string path)
+    {
+        try
+        {
+            using JsonDocument _ = JsonDocument.Parse(File.ReadAllText(path));
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void CaptureShutdownStateSmoke(string resultPath)
@@ -11090,6 +11362,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteFocusFilterRaceSmokeResult(string path, FocusFilterRaceSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteShutdownStateSmokeResult(string path, ShutdownStateSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -12273,6 +12551,31 @@ public partial class App : Application
         public bool SourceUntouched { get; init; }
         public bool Isolated { get; init; }
         public long ElapsedMs { get; init; }
+    }
+
+    private sealed class FocusFilterRaceSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public int CatalogCount { get; init; }
+        public int Iterations { get; init; }
+        public bool NoResultRecovered { get; init; }
+        public bool PinRetained { get; init; }
+        public bool TabRecovered { get; init; }
+        public bool FavoriteExact { get; init; }
+        public bool UnseenStable { get; init; }
+        public bool DateStable { get; init; }
+        public bool FolderStable { get; init; }
+        public bool ModeSelectionStable { get; init; }
+        public bool SearchLatestWins { get; init; }
+        public bool FilteredTabSafe { get; init; }
+        public bool FilteredTabRecovered { get; init; }
+        public int HeartbeatCount { get; init; }
+        public bool JsonValid { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool EnhancementPassive { get; init; }
+        public bool Isolated { get; init; }
     }
 
     private sealed class ShutdownStateSmokeResult

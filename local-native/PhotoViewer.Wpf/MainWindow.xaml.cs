@@ -4705,6 +4705,38 @@ public partial class MainWindow : Window
         }
         else if (filtered.Count == 0)
             SelectTile(null);
+
+        ReconcileOpenSurfacesAfterFilterChange();
+    }
+
+    private void ReconcileOpenSurfacesAfterFilterChange()
+    {
+        Tile? selected = SelectedTile();
+        if (!string.IsNullOrWhiteSpace(_activePreviewTabPath)
+            && !_tiles.Any(tile => string.Equals(tile.Path, _activePreviewTabPath, StringComparison.OrdinalIgnoreCase)))
+        {
+            // Open tabs belong to the full catalog and must survive filters, but
+            // an active marker may not claim that its filtered-out image is the
+            // current right-preview selection.  The tab can be activated again
+            // as soon as the filter admits its path.
+            _activePreviewTabPath = null;
+            RefreshPreviewTabs();
+        }
+
+        if (Modal.Visibility != Visibility.Visible)
+            return;
+
+        if (selected is null)
+        {
+            bool modalHadFocus = Modal.IsKeyboardFocusWithin;
+            CloseModal();
+            if (modalHadFocus)
+                Dispatcher.BeginInvoke(SearchInput.Focus, DispatcherPriority.Input);
+            return;
+        }
+
+        if (!string.Equals(_modalSourceTilePath, selected.Path, StringComparison.OrdinalIgnoreCase))
+            OpenModal();
     }
 
     private void RebuildGridTiles(Tile? ensureTile = null)
