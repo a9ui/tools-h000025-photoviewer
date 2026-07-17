@@ -43,6 +43,21 @@ pnpm typecheck
 pnpm build
 ```
 
+Production launcher commands:
+
+```powershell
+node .\scripts\prod_launcher.js
+node .\scripts\prod_launcher.js --port 3100
+node .\scripts\prod_launcher.js --port=3100
+node .\scripts\prod_launcher.js --help
+```
+
+Without `--port`, the launcher keeps the normal behavior of selecting the first
+available port from 3000 through 3999. An explicit port is bound on
+`127.0.0.1` only; invalid or busy explicit ports fail without killing the
+listener or falling back to another port. `--help` and `-h` print usage without
+cleanup, port probing, build, server, ComfyUI, or browser side effects.
+
 ## Docs
 
 - `docs/ai-implementation-brief.md`: exact read order and non-negotiable build/verification handoff for another AI or team.

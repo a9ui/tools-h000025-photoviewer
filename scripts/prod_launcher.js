@@ -1,7 +1,7 @@
 /**
  * Production launcher for Photoviewer.
  *
- * 1. Finds an open port starting at 3000.
+ * 1. Uses an explicit loopback port or finds an open port starting at 3000.
  * 2. Builds the app if `.next/BUILD_ID` is missing or source/config files changed.
  * 3. Starts `next start` and opens the browser when ready.
  */
@@ -9,19 +9,19 @@ const net = require('net');
 const { spawn, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
+const {
+  DEFAULT_START_PORT,
+  dispatchLauncher,
+} = require('./prod_launcher_cli');
 
 const ROOT = path.join(__dirname, '..');
 const BUILD_ID_FILE = path.join(ROOT, '.next', 'BUILD_ID');
-const NEXT_BIN = require.resolve('next/dist/bin/next', { paths: [ROOT] });
-const START_PORT = 3000;
-const MAX_PORT = 3999;
 const SERVER_HOST = '127.0.0.1';
 const OPEN_BROWSER = process.env.PVU_NO_OPEN !== '1';
 const COMFY_ROOT = process.env.PVU_COMFY_ROOT || 'C:\\AI\\ComfyUI';
 const COMFY_HOST = process.env.PVU_COMFY_HOST || '127.0.0.1';
 const COMFY_PORT = Number(process.env.PVU_COMFY_PORT || 8188);
 const COMFY_URL = process.env.PVU_COMFY_URL || `http://${COMFY_HOST}:${COMFY_PORT}`;
-process.env.PVU_COMFY_URL = COMFY_URL;
 let serverChild = null;
 let comfyChild = null;
 let ownsComfy = false;
@@ -94,17 +94,12 @@ function cleanupStaleServers() {
   });
 }
 
-function findAvailablePort(port) {
-  return new Promise((resolve, reject) => {
-    if (port > MAX_PORT) {
-      reject(new Error('No available port found in range 3000-3999.'));
-      return;
-    }
-
+function isPortAvailable(port) {
+  return new Promise((resolve) => {
     const server = net.createServer();
-    server.once('error', () => resolve(findAvailablePort(port + 1)));
+    server.once('error', () => resolve(false));
     server.once('listening', () => {
-      server.close(() => resolve(port));
+      server.close(() => resolve(true));
     });
     // Probe the wildcard socket so a listener on either IPv4 or IPv6 reserves
     // the port. The real Next server is still started on loopback only.
@@ -240,7 +235,8 @@ function needsBuild() {
 
 function runBuild() {
   console.log('[Photoviewer] Running Next build... (first-time setup, please wait ~1 min)');
-  const result = spawnSync(process.execPath, [NEXT_BIN, 'build'], {
+  const nextBin = require.resolve('next/dist/bin/next', { paths: [ROOT] });
+  const result = spawnSync(process.execPath, [nextBin, 'build'], {
     cwd: ROOT,
     stdio: 'inherit',
     windowsHide: true,
@@ -320,12 +316,12 @@ async function startManagedComfy() {
   }
 }
 
-async function main() {
-  cleanupStaleServers();
-
-  const port = await findAvailablePort(START_PORT);
-  if (port !== START_PORT) {
-    console.log(`[Photoviewer] Port ${START_PORT} is busy. Using port ${port}.`);
+async function main({ port, explicitPort }) {
+  process.env.PVU_COMFY_URL = COMFY_URL;
+  if (explicitPort === null && port !== DEFAULT_START_PORT) {
+    console.log(`[Photoviewer] Port ${DEFAULT_START_PORT} is busy. Using port ${port}.`);
+  } else if (explicitPort !== null) {
+    console.log(`[Photoviewer] Using requested loopback port ${port}.`);
   }
 
   if (needsBuild()) {
@@ -403,26 +399,50 @@ async function main() {
   });
 }
 
-process.once('exit', cleanupServer);
-for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
-  process.once(signal, () => {
+let lifecycleHandlersInstalled = false;
+
+function installLifecycleHandlers() {
+  if (lifecycleHandlersInstalled) return;
+  lifecycleHandlersInstalled = true;
+  process.once('exit', cleanupServer);
+  for (const signal of ['SIGINT', 'SIGTERM', 'SIGHUP']) {
+    process.once(signal, () => {
+      cleanupServer();
+      process.exit(signal === 'SIGINT' ? 130 : 0);
+    });
+  }
+  process.once('uncaughtException', (err) => {
+    console.error(`[Photoviewer] ${err.message}`);
     cleanupServer();
-    process.exit(signal === 'SIGINT' ? 130 : 0);
+    process.exit(1);
+  });
+  process.once('unhandledRejection', (err) => {
+    console.error(`[Photoviewer] ${err instanceof Error ? err.message : String(err)}`);
+    cleanupServer();
+    process.exit(1);
   });
 }
-process.once('uncaughtException', (err) => {
-  console.error(`[Photoviewer] ${err.message}`);
-  cleanupServer();
-  process.exit(1);
-});
-process.once('unhandledRejection', (err) => {
-  console.error(`[Photoviewer] ${err instanceof Error ? err.message : String(err)}`);
-  cleanupServer();
-  process.exit(1);
-});
 
-main().catch((err) => {
+async function runCli(argv) {
+  const result = await dispatchLauncher(argv, {
+    writeUsage: (message) => console.log(message),
+    writeError: (message) => console.error(message),
+    prepare: ({ explicitPort }) => {
+      // Automatic stale-process cleanup belongs only to the historical default
+      // launch path. An explicit busy port must fail, never kill or replace it.
+      if (explicitPort === null) cleanupStaleServers();
+    },
+    isPortAvailable,
+    start: async (options) => {
+      installLifecycleHandlers();
+      await main(options);
+    },
+  });
+  if (result.exitCode !== 0) process.exitCode = result.exitCode;
+}
+
+runCli(process.argv.slice(2)).catch((err) => {
   console.error(`[Photoviewer] ${err.message}`);
   cleanupServer();
-  process.exit(1);
+  process.exitCode = 1;
 });
