@@ -17,7 +17,7 @@ import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDir
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import { sharedRecentToLocalMemory } from '../lib/recentFolders';
 import { useDialogFocus } from '../lib/useDialogFocus';
-import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
+import { FolderOpen, RefreshCw, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
   const {
@@ -350,7 +350,7 @@ function ViewerApp() {
                     onClick={() => removeFolder(folder)}
                     disabled={phase === 'scanning'}
                   >
-                    ×
+                    <X size={14} aria-hidden="true" />
                   </button>
                 </div>
               ))

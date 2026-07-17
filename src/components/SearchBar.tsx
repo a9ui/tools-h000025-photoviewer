@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useId, useRef, useCallback } from 'react';
+import { X } from 'lucide-react';
 import { useImageStore } from '../store/ImageContext';
 
 interface TagEntry { tag: string; count: number; }
@@ -251,7 +252,7 @@ export default function SearchBar() {
                 title={`Remove ${tag}`}
                 aria-label={`Remove tag ${tag}`}
               >
-                x
+                <X size={13} aria-hidden="true" />
               </button>
             </span>
           ))}

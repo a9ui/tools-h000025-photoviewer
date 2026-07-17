@@ -74,10 +74,15 @@ describe('SearchBar accessibility', () => {
     expect(input).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('gives clear and committed-tag removal controls explicit labels', () => {
+  it('keeps clear and committed-tag removal controls labeled after icon rendering', () => {
     renderSearchBar('cat');
 
     expect(screen.getByRole('button', { name: 'Clear all search tags' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Remove tag cat' })).toBeInTheDocument();
+    const removeTag = screen.getByRole('button', { name: 'Remove tag cat' });
+    expect(removeTag).toHaveAttribute('title', 'Remove cat');
+
+    fireEvent.click(removeTag);
+    expect(screen.queryByRole('button', { name: 'Remove tag cat' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Clear all search tags' })).not.toBeInTheDocument();
   });
 });

@@ -11,7 +11,7 @@ import { isInteractiveShortcutTarget } from '../lib/viewerUi';
 import CachedImage from './CachedImage';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
 import { MetadataTabList, type MetadataTab } from './MetadataTabList';
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Minus, X } from 'lucide-react';
 
 type PointerGesture = {
   mode: 'pan' | 'swipe';
@@ -909,7 +909,9 @@ export default function ImageModal() {
                 F
                 {favLevel > 0 && <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700 }}>{favLevel}</span>}
               </button>
-              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1" aria-label="Decrease favorite level">-</button>
+              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1" aria-label="Decrease favorite level">
+                <Minus size={16} aria-hidden="true" />
+              </button>
               <button className="modal-icon-btn" onClick={() => setFlipped((f) => !f)} title="Flip" aria-label="Flip horizontally">H</button>
               <button className="modal-icon-btn" onClick={() => openExternal(img.id)} title="Open external" aria-label="Open in external viewer">O</button>
               <button
@@ -939,7 +941,7 @@ export default function ImageModal() {
                   title="Cancel enhancement"
                   aria-label="Cancel enhancement"
                 >
-                  X
+                  <X size={16} aria-hidden="true" />
                 </button>
               )}
               {visibleEnhanceError && !enhancementInProgress && (
@@ -1015,7 +1017,9 @@ export default function ImageModal() {
                   ? <ChevronLeft size={16} aria-hidden="true" />
                   : <ChevronRight size={16} aria-hidden="true" />}
               </button>
-              <button ref={modalCloseButtonRef} className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
+              <button ref={modalCloseButtonRef} className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">
+                <X size={16} aria-hidden="true" />
+              </button>
             </div>
           </div>
 
@@ -1073,7 +1077,9 @@ export default function ImageModal() {
 
             <div className="zoom-indicator">
               <span>{Math.round(zoom * 100)}%</span>
-              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">x</button>
+              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">
+                <X size={14} aria-hidden="true" />
+              </button>
             </div>
 
             {favoriteFeedback && (

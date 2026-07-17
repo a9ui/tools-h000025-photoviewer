@@ -13,6 +13,7 @@ import {
 } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
+import { Minus } from 'lucide-react';
 import { buildImageIndexById } from '../lib/imageListState';
 import {
   buildDateSectionLayout,
@@ -1171,7 +1172,7 @@ export default function ImageGrid() {
             title="Decrease favorite level"
             aria-label={`Decrease favorite level for ${image.filename}`}
           >
-            -
+            <Minus size={13} aria-hidden="true" />
           </button>
           <button
             className={`card-fav ${isFav ? 'active' : ''}`}
@@ -1290,7 +1291,7 @@ export default function ImageGrid() {
               title="Decrease favorite level"
               aria-label={`Decrease favorite level for ${image.filename}`}
             >
-              -
+              <Minus size={13} aria-hidden="true" />
             </button>
             <button
               className={`card-fav ${isFav ? 'active' : ''}`}
