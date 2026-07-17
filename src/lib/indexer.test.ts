@@ -4,7 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { afterEach, describe, expect, it } from 'vitest';
 import type { ImageFile } from './types';
-import { getFolderBuckets, scanDirectory, searchIndex, setIndex } from './indexer';
+import { getFolderBuckets, ScanAbortedError, scanDirectory, searchIndex, setIndex } from './indexer';
 
 const ONE_BY_ONE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -106,6 +106,30 @@ describe('scanDirectory', () => {
 
     const verifiedRefresh = await scanDirectory(root, undefined, { forceFull: true });
     expect(verifiedRefresh[0].mtime).toBeGreaterThan(initial[0].mtime);
+  });
+
+  it('abandons a scan without publishing a partial cache snapshot', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'photoviewer-indexer-'));
+    createdRoots.push(root);
+    rememberCacheFiles(root);
+
+    const imagePath = path.join(root, 'abortable.png');
+    writePng(imagePath);
+    const initial = await scanDirectory(root);
+    const cachePath = path.join(process.cwd(), '.cache', `index_${cacheHash(root)}.json`);
+    const before = fs.readFileSync(cachePath, 'utf-8');
+
+    const future = new Date(Date.now() + 3000);
+    fs.utimesSync(imagePath, future, future);
+    const abortController = new AbortController();
+
+    await expect(scanDirectory(root, (_processed, _total, _newFiles, status) => {
+      if (status?.stage === 'scanning') abortController.abort();
+    }, { forceFull: true, signal: abortController.signal })).rejects.toBeInstanceOf(ScanAbortedError);
+
+    expect(fs.readFileSync(cachePath, 'utf-8')).toBe(before);
+    const recovered = await scanDirectory(root, undefined, { forceFull: true });
+    expect(recovered[0].mtime).toBeGreaterThan(initial[0].mtime);
   });
 
   it('indexes newly added non-PNG image files', async () => {

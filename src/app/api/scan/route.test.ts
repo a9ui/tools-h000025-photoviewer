@@ -1,0 +1,62 @@
+import { NextRequest } from 'next/server';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+const mocks = vi.hoisted(() => {
+  class MockScanAbortedError extends Error {
+    constructor() {
+      super('Scan aborted');
+      this.name = 'ScanAbortedError';
+    }
+  }
+  return {
+    scanDirectory: vi.fn(),
+    setIndex: vi.fn(),
+    cancelThumbnailWarmup: vi.fn(),
+    MockScanAbortedError,
+  };
+});
+
+vi.mock('@/lib/indexer', () => ({
+  scanDirectory: mocks.scanDirectory,
+  setIndex: mocks.setIndex,
+  ScanAbortedError: mocks.MockScanAbortedError,
+  isScanAbortedError: (error: unknown) => error instanceof mocks.MockScanAbortedError,
+}));
+
+vi.mock('@/lib/thumbnailCache', () => ({
+  cancelThumbnailWarmup: mocks.cancelThumbnailWarmup,
+}));
+
+import { GET } from './route';
+
+function scanRequest(dir: string) {
+  return new NextRequest(`http://127.0.0.1/api/scan?dir=${encodeURIComponent(dir)}`);
+}
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('GET /api/scan lifecycle', () => {
+  it('rejects an overlapping canonical folder set and releases it after cancellation', async () => {
+    mocks.scanDirectory.mockImplementation((_root: string, _progress: unknown, options: { signal?: AbortSignal }) => (
+      new Promise((_resolve, reject) => {
+        options.signal?.addEventListener('abort', () => reject(new mocks.MockScanAbortedError()), { once: true });
+      })
+    ));
+
+    const first = await GET(scanRequest('C:/Pictures/A\nC:/Pictures/B'));
+    const duplicate = await GET(scanRequest('c:/pictures/b\nC:/PICTURES/a'));
+
+    expect(first.status).toBe(200);
+    expect(duplicate.status).toBe(409);
+    expect(await duplicate.json()).toMatchObject({ retryable: true });
+
+    await first.body?.cancel();
+    await vi.waitFor(async () => {
+      const retry = await GET(scanRequest('C:/Pictures/B\nC:/Pictures/A'));
+      if (retry.status !== 200) throw new Error('scan reservation was not released');
+      await retry.body?.cancel();
+    });
+  });
+});

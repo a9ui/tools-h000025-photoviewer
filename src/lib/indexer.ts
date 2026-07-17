@@ -131,8 +131,10 @@ function isRecentlyActiveScanTarget(mtime: number, now: number) {
 
 async function buildScanTargetSignature(
   rootDir: string,
-  target: ScanTarget
+  target: ScanTarget,
+  signal?: AbortSignal
 ): Promise<{ signature: string; failed: boolean }> {
+  throwIfScanAborted(signal);
   const nested: Array<{ path: string; mtime: number }> = [];
   if (!target.recursive) {
     return { signature: buildFolderSignature(target.mtime, nested), failed: false };
@@ -145,8 +147,10 @@ async function buildScanTargetSignature(
       stats: true,
       followSymbolicLinks: false,
     })) as Array<string | { path: string; stats?: fs.Stats }>;
+    throwIfScanAborted(signal);
 
     for (const entry of directories) {
+      throwIfScanAborted(signal);
       const entryPath = typeof entry === 'string' ? entry : entry.path;
       const absPath = path.resolve(entryPath);
       const rel = path.relative(rootDir, absPath);
@@ -160,7 +164,8 @@ async function buildScanTargetSignature(
         mtime: stat.mtimeMs,
       });
     }
-  } catch {
+  } catch (error) {
+    if (isScanAbortedError(error)) throw error;
     // Missing permission or a transient directory read failure should not break scan.
     // The target folder mtime still gives the fast path a conservative baseline.
     return { signature: buildFolderSignature(target.mtime, nested), failed: true };
@@ -191,6 +196,15 @@ function loadCache(dirPath: string): CacheData {
   return emptyCache;
 }
 
+function cloneCache(cache: CacheData): CacheData {
+  return {
+    ...cache,
+    files: Object.fromEntries(
+      Object.entries(cache.files).map(([filePath, entry]) => [filePath, { ...entry }])
+    ),
+  };
+}
+
 function saveCache(cache: CacheData) {
   ensureDir(CACHE_DIR);
   const p = cacheFilePath(cache.dirPath);
@@ -215,6 +229,22 @@ export type ScanCallback = (
 ) => void;
 export interface ScanOptions {
   forceFull?: boolean;
+  signal?: AbortSignal;
+}
+
+export class ScanAbortedError extends Error {
+  constructor() {
+    super('Scan aborted');
+    this.name = 'ScanAbortedError';
+  }
+}
+
+export function isScanAbortedError(error: unknown): error is ScanAbortedError {
+  return error instanceof ScanAbortedError;
+}
+
+function throwIfScanAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new ScanAbortedError();
 }
 
 /**
@@ -226,8 +256,11 @@ export async function scanDirectory(
   onProgress?: ScanCallback,
   options: ScanOptions = {}
 ): Promise<ImageFile[]> {
+  throwIfScanAborted(options.signal);
   const normalised = path.resolve(dirPath);
-  const cache = loadCache(normalised);
+  // Keep mutations private until the scan has completed. An aborted scan must
+  // not leak a partial snapshot into the next scan through the memory cache.
+  const cache = cloneCache(loadCache(normalised));
   const folderSignatures = loadFolderSignatures(normalised);
   const nextFolderSignatures: Record<string, string> = {};
   const cachedByScanKey = new Map<string, string[]>();
@@ -249,6 +282,7 @@ export async function scanDirectory(
   let skippedCachedFiles = 0;
 
   const rootStat = fs.statSync(normalised);
+  throwIfScanAborted(options.signal);
   if (!rootStat.isDirectory()) {
     throw new Error(`Scan target is not a directory: ${normalised}`);
   }
@@ -257,6 +291,7 @@ export async function scanDirectory(
   scanTargets.push({ key: SCAN_ROOT_KEY, absPath: normalised, recursive: false, mtime: rootStat.mtimeMs });
 
   for (const entry of rootEntries) {
+    throwIfScanAborted(options.signal);
     if (!entry.isDirectory()) continue;
     const absPath = path.resolve(normalised, entry.name);
     try {
@@ -304,8 +339,14 @@ export async function scanDirectory(
   };
 
   for (const target of scanTargets) {
+    throwIfScanAborted(options.signal);
     currentScanKeys.add(target.key);
-    const { signature: currentSignature, failed: signatureFailed } = await buildScanTargetSignature(normalised, target);
+    const { signature: currentSignature, failed: signatureFailed } = await buildScanTargetSignature(
+      normalised,
+      target,
+      options.signal,
+    );
+    throwIfScanAborted(options.signal);
 
     const previousSignature = folderSignatures[target.key];
     const cachedPaths = cachedByScanKey.get(target.key) ?? [];
@@ -341,11 +382,13 @@ export async function scanDirectory(
         onlyFiles: true,
         followSymbolicLinks: false,
       })) as Array<string | { path: string; stats?: fs.Stats }>;
+      throwIfScanAborted(options.signal);
       allEntries.push(...entries);
       if (!signatureFailed) {
         nextFolderSignatures[target.key] = currentSignature;
       }
-    } catch {
+    } catch (error) {
+      if (isScanAbortedError(error)) throw error;
       failedScanKeys.add(target.key);
       changedScanKeys.delete(target.key);
     }
@@ -392,6 +435,7 @@ export async function scanDirectory(
   }
 
   for (const entry of allEntries) {
+    throwIfScanAborted(options.signal);
     const entryPath = typeof entry === 'string' ? entry : entry.path;
     const norm = path.resolve(entryPath);
     currentPaths.add(norm);
@@ -431,6 +475,7 @@ export async function scanDirectory(
     }
 
     const metadata = extractSDMetadata(norm);
+    throwIfScanAborted(options.signal);
     cache.files[norm] = { mtime, size, createdAt, metadata };
     changed = true;
     newFiles++;
@@ -445,6 +490,7 @@ export async function scanDirectory(
   }
 
   for (const p of existingPaths) {
+    throwIfScanAborted(options.signal);
     if (!currentPaths.has(p)) {
       delete cache.files[p];
       changed = true;
@@ -452,6 +498,7 @@ export async function scanDirectory(
   }
 
   if (changed) {
+    throwIfScanAborted(options.signal);
     cache.lastScan = new Date().toISOString();
     saveCache(cache);
   }
