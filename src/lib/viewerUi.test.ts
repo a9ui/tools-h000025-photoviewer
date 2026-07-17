@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   getEmptyResultMessage,
   getArrowSelectionIndex,
+  getLoadedResultCounts,
   getResultCountLabel,
   getZoomCenteredScrollTop,
   isInteractiveShortcutTarget,
@@ -66,25 +67,29 @@ describe('sortFolderBuckets', () => {
 });
 
 describe('getResultCountLabel', () => {
-  it('shows indexed total when no server-side filters are active', () => {
+  it('separates the loaded shown count from the indexed total without filters', () => {
     expect(getResultCountLabel({
       searchQuery: '',
       searchTotal: 42,
       totalIndexed: 900,
       hiddenFolders: [],
-    })).toBe('900 indexed');
+      loadedCount: 100,
+      shownCount: 100,
+    })).toBe('100 shown · 900 indexed');
   });
 
-  it('shows filtered result total when a search filter is active', () => {
+  it('keeps server-filtered and indexed totals distinct from what is loaded', () => {
     expect(getResultCountLabel({
       searchQuery: 'portrait',
       searchTotal: 42,
       totalIndexed: 900,
       hiddenFolders: [],
-    })).toBe('42 filtered / 900 indexed');
+      loadedCount: 10,
+      shownCount: 10,
+    })).toBe('10 shown · 42 filtered · 900 indexed');
   });
 
-  it('makes date-filtered counts explicit', () => {
+  it('makes date-filtered counts explicit without claiming sparse matches are total matches', () => {
     expect(getResultCountLabel({
       searchQuery: '',
       searchTotal: 5807,
@@ -92,7 +97,42 @@ describe('getResultCountLabel', () => {
       dateFrom: '2026-04-26',
       dateTo: '2026-05-25',
       hiddenFolders: [],
-    })).toBe('5,807 filtered / 71,773 indexed');
+      loadedCount: 100,
+      shownCount: 15,
+    })).toBe('15 shown · 5,807 filtered · 71,773 indexed');
+  });
+});
+
+describe('getLoadedResultCounts', () => {
+  const searchResults = [
+    { id: 'favorite' },
+    null,
+    { id: 'unrated' },
+    { id: 'enhanced' },
+  ];
+
+  it('counts only loaded client matches instead of sparse server slots', () => {
+    expect(getLoadedResultCounts({
+      searchResults,
+      favorites: { favorite: 3 },
+      showFavOnly: true,
+      showUnfavOnly: false,
+      favoriteFilterLevels: [3],
+      showEnhancedOnly: false,
+      enhancedSourceIds: { enhanced: true },
+    })).toEqual({ loadedCount: 3, shownCount: 1, hasClientFilters: true });
+  });
+
+  it('uses all materialized results as shown when client filters are off', () => {
+    expect(getLoadedResultCounts({
+      searchResults,
+      favorites: { favorite: 3 },
+      showFavOnly: false,
+      showUnfavOnly: false,
+      favoriteFilterLevels: [],
+      showEnhancedOnly: false,
+      enhancedSourceIds: {},
+    })).toEqual({ loadedCount: 3, shownCount: 3, hasClientFilters: false });
   });
 });
 

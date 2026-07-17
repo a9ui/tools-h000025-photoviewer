@@ -2,7 +2,7 @@
 
 import React, { useEffect, useMemo, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
-import { getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
+import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
 
@@ -19,7 +19,9 @@ export default function Sidebar() {
     startScan,
     totalIndexed,
     searchTotal,
+    searchResults,
     searchQuery,
+    favorites,
     showFavOnly,
     setShowFavOnly,
     showUnfavOnly,
@@ -29,6 +31,7 @@ export default function Sidebar() {
     clearFavoriteFilterLevels,
     showEnhancedOnly,
     setShowEnhancedOnly,
+    enhancedSourceIds,
     setShowSettings,
     setPhase,
     perfEnabled,
@@ -50,6 +53,23 @@ export default function Sidebar() {
     () => sortFolderBuckets(folderBuckets, view.folderSortBy),
     [folderBuckets, view.folderSortBy]
   );
+  const loadedResultCounts = useMemo(() => getLoadedResultCounts({
+    searchResults,
+    favorites,
+    showFavOnly,
+    showUnfavOnly,
+    favoriteFilterLevels,
+    showEnhancedOnly,
+    enhancedSourceIds,
+  }), [
+    enhancedSourceIds,
+    favoriteFilterLevels,
+    favorites,
+    searchResults,
+    showEnhancedOnly,
+    showFavOnly,
+    showUnfavOnly,
+  ]);
   const resultCountLabel = useMemo(() => getResultCountLabel({
     searchQuery,
     searchTotal,
@@ -57,7 +77,18 @@ export default function Sidebar() {
     dateFrom: view.dateFrom,
     dateTo: view.dateTo,
     hiddenFolders: view.hiddenFolders,
-  }), [searchQuery, searchTotal, totalIndexed, view.dateFrom, view.dateTo, view.hiddenFolders]);
+    loadedCount: loadedResultCounts.loadedCount,
+    shownCount: loadedResultCounts.shownCount,
+  }), [
+    loadedResultCounts.loadedCount,
+    loadedResultCounts.shownCount,
+    searchQuery,
+    searchTotal,
+    totalIndexed,
+    view.dateFrom,
+    view.dateTo,
+    view.hiddenFolders,
+  ]);
 
   useEffect(() => {
     if (!dirPath) {
@@ -225,7 +256,7 @@ export default function Sidebar() {
         </div>
 
         <p className="sidebar-path" title={dirPath}>{summarizeDirSet(dirPath) || dirPath}</p>
-        <p className="sidebar-meta">{resultCountLabel}</p>
+        <p className="sidebar-meta" aria-label={`Results: ${resultCountLabel}`}>{resultCountLabel}</p>
         <div className="sidebar-actions">
           <button className="sidebar-link" onClick={() => void addFolderFromSidebar()} disabled={addingFolder}>
             {addingFolder ? 'Adding folder...' : 'Add folder'}

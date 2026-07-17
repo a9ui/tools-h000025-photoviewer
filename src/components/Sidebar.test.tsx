@@ -13,7 +13,15 @@ const toggleFavoriteFilterLevel = vi.fn();
 const clearFavoriteFilterLevels = vi.fn();
 const setView = vi.fn();
 
-function createStore(options: { dirPath?: string; hiddenFolders?: string[] } = {}) {
+function createStore(options: {
+  dirPath?: string;
+  hiddenFolders?: string[];
+  searchTotal?: number;
+  totalIndexed?: number;
+  searchResults?: Array<{ id: string } | null>;
+  showFavOnly?: boolean;
+  favorites?: Record<string, number>;
+} = {}) {
   return {
     view: {
       viewMode: 'grid',
@@ -39,10 +47,12 @@ function createStore(options: { dirPath?: string; hiddenFolders?: string[] } = {
     dirPath: options.dirPath ?? '',
     setDirPath: vi.fn(),
     startScan: vi.fn(),
-    totalIndexed: 0,
-    searchTotal: 0,
+    totalIndexed: options.totalIndexed ?? 0,
+    searchTotal: options.searchTotal ?? 0,
+    searchResults: options.searchResults ?? [],
     searchQuery: '',
-    showFavOnly: true,
+    favorites: options.favorites ?? {},
+    showFavOnly: options.showFavOnly ?? true,
     setShowFavOnly: vi.fn(),
     showUnfavOnly: false,
     setShowUnfavOnly: vi.fn(),
@@ -51,6 +61,7 @@ function createStore(options: { dirPath?: string; hiddenFolders?: string[] } = {
     clearFavoriteFilterLevels,
     showEnhancedOnly: false,
     setShowEnhancedOnly: vi.fn(),
+    enhancedSourceIds: {},
     setShowSettings: vi.fn(),
     setPhase: vi.fn(),
     perfEnabled: false,
@@ -92,6 +103,21 @@ describe('Sidebar favorite level controls', () => {
     expect(screen.queryByRole('button', { name: 'This year' })).not.toBeInTheDocument();
     expect(screen.getByLabelText('Date from')).toBeInTheDocument();
     expect(screen.getByLabelText('Date to')).toBeInTheDocument();
+  });
+
+  it('labels sparse client-filtered matches separately from indexed totals without a live region', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({
+      searchTotal: 900,
+      totalIndexed: 900,
+      searchResults: [{ id: 'favorite' }, null, { id: 'unrated' }],
+      favorites: { favorite: 2 },
+    }));
+
+    render(<Sidebar />);
+
+    const count = screen.getByText('1 shown · 900 indexed');
+    expect(count).toHaveAttribute('aria-label', 'Results: 1 shown · 900 indexed');
+    expect(count).not.toHaveAttribute('aria-live');
   });
 
   it('collapses and restores the Folders section from its heading', async () => {

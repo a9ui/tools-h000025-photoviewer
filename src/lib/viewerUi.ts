@@ -1,3 +1,5 @@
+import { matchesFavoriteLevel, type FavoriteFilterLevel } from './browserUiPreferences';
+
 export type FolderSortBy = 'name-asc' | 'name-desc' | 'count-desc' | 'count-asc';
 
 export interface FolderBucket {
@@ -13,6 +15,18 @@ export interface ResultCountLabelArgs {
   dateFrom?: string;
   dateTo?: string;
   hiddenFolders?: string[];
+  loadedCount?: number;
+  shownCount?: number;
+}
+
+export interface LoadedResultCountArgs {
+  searchResults: Array<{ id: string } | null | undefined>;
+  favorites: Record<string, number>;
+  showFavOnly: boolean;
+  showUnfavOnly: boolean;
+  favoriteFilterLevels: FavoriteFilterLevel[];
+  showEnhancedOnly: boolean;
+  enhancedSourceIds: Record<string, true>;
 }
 
 export interface GridMetricsSnapshot {
@@ -85,6 +99,43 @@ export function getEmptyResultMessage(searchQuery: string, hasClientFilters: boo
   return 'No supported images were found in the selected folders.';
 }
 
+/**
+ * Server search is sparse/paged. Count only materialized entries, then apply
+ * the same client-side predicates used by the gallery before calling it shown.
+ */
+export function getLoadedResultCounts({
+  searchResults,
+  favorites,
+  showFavOnly,
+  showUnfavOnly,
+  favoriteFilterLevels,
+  showEnhancedOnly,
+  enhancedSourceIds,
+}: LoadedResultCountArgs) {
+  let loadedCount = 0;
+  let shownCount = 0;
+  const hasClientFilters = showFavOnly || showUnfavOnly || showEnhancedOnly;
+
+  for (const image of searchResults) {
+    if (!image) continue;
+    loadedCount += 1;
+    const level = favorites[image.id] ?? 0;
+    const matchesFavorite = showFavOnly
+      ? matchesFavoriteLevel(level, favoriteFilterLevels)
+      : showUnfavOnly
+        ? level === 0
+        : true;
+    const matchesEnhanced = showEnhancedOnly ? Boolean(enhancedSourceIds[image.id]) : true;
+    if (matchesFavorite && matchesEnhanced) shownCount += 1;
+  }
+
+  return {
+    loadedCount,
+    shownCount: hasClientFilters ? shownCount : loadedCount,
+    hasClientFilters,
+  };
+}
+
 export function sortFolderBuckets(
   buckets: FolderBucket[],
   sortBy: FolderSortBy
@@ -112,6 +163,8 @@ export function getResultCountLabel({
   dateFrom,
   dateTo,
   hiddenFolders = [],
+  loadedCount,
+  shownCount,
 }: ResultCountLabelArgs): string {
   const hasServerFilters = Boolean(
     searchQuery.trim() ||
@@ -120,9 +173,13 @@ export function getResultCountLabel({
     hiddenFolders.length > 0
   );
 
+  const fallbackShownCount = hasServerFilters ? searchTotal : totalIndexed;
+  const shown = Math.max(0, Math.trunc(shownCount ?? loadedCount ?? fallbackShownCount));
+  const shownLabel = `${shown.toLocaleString()} shown`;
+
   return hasServerFilters
-    ? `${searchTotal.toLocaleString()} filtered / ${totalIndexed.toLocaleString()} indexed`
-    : `${totalIndexed.toLocaleString()} indexed`;
+    ? `${shownLabel} · ${searchTotal.toLocaleString()} filtered · ${totalIndexed.toLocaleString()} indexed`
+    : `${shownLabel} · ${totalIndexed.toLocaleString()} indexed`;
 }
 
 export function getZoomCenteredScrollTop(

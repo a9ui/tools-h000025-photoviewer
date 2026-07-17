@@ -12,7 +12,7 @@ import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
 import { ScanProgressStatus } from '../components/ScanProgressStatus';
 import { ScanErrorNotice } from '../components/ScanErrorNotice';
-import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
+import { getLoadedResultCounts, getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import { sharedRecentToLocalMemory } from '../lib/recentFolders';
@@ -22,11 +22,12 @@ import { FolderOpen, RefreshCw, Sparkles, X } from 'lucide-react';
 function ViewerApp() {
   const {
     phase, dirPath, setDirPath, startScan, scanProgress, scanError, dismissScanError,
-    searchTotal, totalIndexed, searchQuery,
+    searchTotal, searchResults, totalIndexed, searchQuery,
     setPhase, view, setView,
     selectedIds, clearSelection, deleteImage,
     cycleFavoriteLevel, decreaseFavoriteLevel, selectedIndex,
     keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview,
+    favorites, showFavOnly, showUnfavOnly, favoriteFilterLevels, showEnhancedOnly, enhancedSourceIds,
   } = useImageStore();
 
   const [browseError, setBrowseError] = useState('');
@@ -44,6 +45,23 @@ function ViewerApp() {
     initialFocusRef: bulkDeleteCancelRef,
     onEscape: () => setShowBulkDeleteConfirm(false),
   });
+  const loadedResultCounts = useMemo(() => getLoadedResultCounts({
+    searchResults,
+    favorites,
+    showFavOnly,
+    showUnfavOnly,
+    favoriteFilterLevels,
+    showEnhancedOnly,
+    enhancedSourceIds,
+  }), [
+    enhancedSourceIds,
+    favoriteFilterLevels,
+    favorites,
+    searchResults,
+    showEnhancedOnly,
+    showFavOnly,
+    showUnfavOnly,
+  ]);
   const resultCountLabel = getResultCountLabel({
     searchQuery,
     searchTotal,
@@ -51,6 +69,8 @@ function ViewerApp() {
     dateFrom: view.dateFrom,
     dateTo: view.dateTo,
     hiddenFolders: view.hiddenFolders,
+    loadedCount: loadedResultCounts.loadedCount,
+    shownCount: loadedResultCounts.shownCount,
   });
 
   const rememberLastDirSet = useCallback((dir: string) => {
@@ -455,7 +475,7 @@ function ViewerApp() {
             <RefreshCw size={18} aria-hidden="true" />
           </button>
           <SearchBar />
-          <span className="header-stats">{resultCountLabel}</span>
+          <span className="header-stats" aria-label={`Results: ${resultCountLabel}`}>{resultCountLabel}</span>
           <button
             className="icon-btn sidebar-toggle-btn"
             onClick={() => setView({ rightPanelOpen: !view.rightPanelOpen })}
