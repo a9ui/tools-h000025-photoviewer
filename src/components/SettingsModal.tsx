@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useCallback, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
-import type { KeyBindings } from '../lib/types';
+import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../lib/types';
 import { clampModalEdgeRatio } from '../lib/modalNavigation';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import { getKeyBindingConflicts } from '../lib/keyBindings';
 
 const KEY_LABELS: Record<keyof KeyBindings, string> = {
   nextImage: 'Next image',
@@ -33,13 +34,21 @@ export default function SettingsModal() {
   } = useImageStore();
 
   const [recording, setRecording] = useState<keyof KeyBindings | null>(null);
+  const [draftKeyBindings, setDraftKeyBindings] = useState<KeyBindings>(keyBindings);
   const modalEdgePercent = Math.round(clampModalEdgeRatio(view.modalEdgeRatio) * 100);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const close = useCallback(() => {
     setShowSettings(false);
     setRecording(null);
-  }, [setShowSettings]);
+    setDraftKeyBindings(keyBindings);
+  }, [keyBindings, setShowSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    setDraftKeyBindings(keyBindings);
+    setRecording(null);
+  }, [keyBindings, showSettings]);
 
   useDialogFocus({
     open: showSettings,
@@ -48,12 +57,36 @@ export default function SettingsModal() {
     onEscape: close,
   });
 
+  const conflicts = useMemo(
+    () => getKeyBindingConflicts(draftKeyBindings),
+    [draftKeyBindings]
+  );
+  const conflictByAction = useMemo(() => {
+    const next = new Map<keyof KeyBindings, Array<keyof KeyBindings>>();
+    for (const conflict of conflicts) {
+      for (const action of conflict.actions) {
+        next.set(action, conflict.actions.filter((item) => item !== action));
+      }
+    }
+    return next;
+  }, [conflicts]);
+  const hasBindingConflicts = conflicts.length > 0;
+
   const handleKeyCapture = useCallback((e: React.KeyboardEvent, action: keyof KeyBindings) => {
     e.preventDefault();
     e.stopPropagation();
-    setKeyBindings({ ...keyBindings, [action]: e.key });
+    setDraftKeyBindings((current) => ({ ...current, [action]: e.key }));
     setRecording(null);
-  }, [keyBindings, setKeyBindings]);
+  }, []);
+  const saveKeyBindings = useCallback(() => {
+    if (hasBindingConflicts) return;
+    setKeyBindings(draftKeyBindings);
+    close();
+  }, [close, draftKeyBindings, hasBindingConflicts, setKeyBindings]);
+  const resetKeyBindings = useCallback(() => {
+    setDraftKeyBindings(DEFAULT_KEY_BINDINGS);
+    setRecording(null);
+  }, []);
 
   if (!showSettings) return null;
 
@@ -117,18 +150,44 @@ export default function SettingsModal() {
           <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '1rem 0' }}>
             Key bindings
           </h3>
-          {(Object.keys(KEY_LABELS) as (keyof KeyBindings)[]).map((action) => (
+          {(Object.keys(KEY_LABELS) as (keyof KeyBindings)[]).map((action) => {
+            const conflictsWith = conflictByAction.get(action) ?? [];
+            const errorId = `key-binding-error-${action}`;
+            return (
             <div key={action} className="setting-row">
               <span className="setting-label">{KEY_LABELS[action]}</span>
               <button
+                type="button"
                 className={`setting-key ${recording === action ? 'recording' : ''}`}
                 onClick={() => setRecording(action)}
                 onKeyDown={recording === action ? (e) => handleKeyCapture(e, action) : undefined}
+                aria-label={`${KEY_LABELS[action]} binding`}
+                aria-invalid={conflictsWith.length > 0 || undefined}
+                aria-describedby={conflictsWith.length > 0 ? errorId : undefined}
               >
-                {recording === action ? 'Press key...' : formatKey(keyBindings[action])}
+                {recording === action ? 'Press key...' : formatKey(draftKeyBindings[action])}
               </button>
+              {conflictsWith.length > 0 && (
+                <p id={errorId} className="sidebar-error" role="alert">
+                  Also assigned to {conflictsWith.map((item) => KEY_LABELS[item]).join(', ')}.
+                </p>
+              )}
             </div>
-          ))}
+            );
+          })}
+          <div className="sidebar-actions" style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="sidebar-link" onClick={resetKeyBindings}>
+              Reset to defaults
+            </button>
+            <button
+              type="button"
+              className="sidebar-link"
+              onClick={saveKeyBindings}
+              disabled={hasBindingConflicts}
+            >
+              Save key bindings
+            </button>
+          </div>
         </div>
       </div>
     </div>

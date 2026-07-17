@@ -117,6 +117,47 @@ describe('settings route write safety', () => {
     expect(await fs.readFile(target, 'utf8')).toBe(original);
   });
 
+  it('refuses a normalized key collision without replacing existing bindings', async () => {
+    const original = JSON.stringify({
+      confirmBeforeDelete: true,
+      keyBindings: { nextImage: 'ArrowRight', toggleFavorite: 'f' },
+    });
+    await fs.writeFile(target, original, 'utf8');
+
+    const response = await PUT(putRequest(JSON.stringify({
+      keyBindings: { nextImage: 'F' },
+    })));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: 'Key bindings must not assign the same key to multiple actions.',
+    });
+    expect(await fs.readFile(target, 'utf8')).toBe(original);
+  });
+
+  it('preserves an existing collision until an explicit valid replacement resolves it', async () => {
+    const original = JSON.stringify({
+      keyBindings: { nextImage: 'f', toggleFavorite: 'F' },
+    });
+    await fs.writeFile(target, original, 'utf8');
+
+    const unrelated = await PUT(putRequest(JSON.stringify({ confirmBeforeDelete: false })));
+    expect(unrelated.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toMatchObject({
+      keyBindings: { nextImage: 'f', toggleFavorite: 'F' },
+      confirmBeforeDelete: false,
+    });
+
+    const replacement = await PUT(putRequest(JSON.stringify({
+      keyBindings: { toggleFavorite: 'g' },
+    })));
+    expect(replacement.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toMatchObject({
+      keyBindings: { nextImage: 'f', toggleFavorite: 'g' },
+    });
+  });
+
   it('serializes concurrent partial updates without dropping either field', async () => {
     await fs.writeFile(target, JSON.stringify({
       confirmBeforeDelete: true,

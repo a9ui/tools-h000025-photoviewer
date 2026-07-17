@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { hasKeyBindingConflicts } from '@/lib/keyBindings';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
 
@@ -185,6 +186,15 @@ export async function PUT(request: Request) {
           ...incomingBindings,
         },
       };
+      if (Object.hasOwn(incoming.update, 'keyBindings')
+        && hasKeyBindingConflicts(publicSettings(updated).keyBindings)) {
+        return NextResponse.json({
+          ok: false,
+          error: 'Key bindings must not assign the same key to multiple actions.',
+          ...current.settings,
+          malformed: false,
+        }, { status: 409 });
+      }
       await writeSettings(updated);
       return NextResponse.json({
         ok: true,

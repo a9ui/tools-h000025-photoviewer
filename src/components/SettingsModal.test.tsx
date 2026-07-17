@@ -11,15 +11,19 @@ vi.mock('../store/ImageContext', () => ({
 }));
 
 const setView = vi.fn();
+const setKeyBindings = vi.fn();
+const setShowSettings = vi.fn();
 
 describe('SettingsModal unseen markers setting', () => {
   beforeEach(() => {
     setView.mockReset();
+    setKeyBindings.mockReset();
+    setShowSettings.mockReset();
     vi.mocked(useImageStore).mockReturnValue({
       showSettings: true,
-      setShowSettings: vi.fn(),
+      setShowSettings,
       keyBindings: DEFAULT_KEY_BINDINGS,
-      setKeyBindings: vi.fn(),
+      setKeyBindings,
       confirmBeforeDelete: true,
       setConfirmBeforeDelete: vi.fn(),
       view: {
@@ -39,5 +43,52 @@ describe('SettingsModal unseen markers setting', () => {
 
     await user.click(checkbox);
     expect(setView).toHaveBeenCalledWith({ showUnseenMarkers: false });
+  });
+
+  it('shows conflicting fields inline and never saves the invalid draft on close', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('f');
+
+    const nextBinding = screen.getByRole('button', { name: 'Next image binding' });
+    const favoriteBinding = screen.getByRole('button', { name: 'Toggle favorite binding' });
+    expect(nextBinding).toHaveAttribute('aria-invalid', 'true');
+    expect(favoriteBinding).toHaveAttribute('aria-invalid', 'true');
+    expect(nextBinding).toHaveAttribute('aria-describedby', 'key-binding-error-nextImage');
+    expect(screen.getByText('Also assigned to Toggle favorite.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save key bindings' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Close settings' }));
+    expect(setKeyBindings).not.toHaveBeenCalled();
+    expect(setShowSettings).toHaveBeenCalledWith(false);
+  });
+
+  it('resets bindings only through the explicit action, then saves a conflict-free draft', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('f');
+    await user.click(screen.getByRole('button', { name: 'Reset to defaults' }));
+
+    expect(screen.queryByText('Also assigned to Toggle favorite.')).not.toBeInTheDocument();
+    const save = screen.getByRole('button', { name: 'Save key bindings' });
+    expect(save).toBeEnabled();
+    await user.click(save);
+    expect(setKeyBindings).toHaveBeenCalledWith(DEFAULT_KEY_BINDINGS);
+    expect(setShowSettings).toHaveBeenCalledWith(false);
+  });
+
+  it('keeps Escape as a dialog close while capture is active', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('{Escape}');
+
+    expect(setShowSettings).toHaveBeenCalledWith(false);
+    expect(setKeyBindings).not.toHaveBeenCalled();
   });
 });
