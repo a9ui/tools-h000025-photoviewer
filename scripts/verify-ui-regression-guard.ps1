@@ -12,6 +12,7 @@ $targets = @($browserFiles.FullName) + @(
 $runtimeTargets = @(
     (Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\MainWindow.xaml.cs')
 )
+$browserStyles = Join-Path $repoRoot 'src\app\globals.css'
 
 $forbidden = [ordered]@{
     'retired Quick Search control' = '(?i)quick\s*search'
@@ -58,6 +59,40 @@ foreach ($target in $runtimeTargets) {
     }
 }
 
+if (-not (Test-Path -LiteralPath $browserStyles)) {
+    throw "Required Browser stylesheet is missing: $browserStyles"
+}
+$browserStyleText = Get-Content -LiteralPath $browserStyles -Raw
+if ($browserStyleText -notmatch '(?m)^\s*--sidebar-width:\s*240px\s*;') {
+    $findings += [pscustomobject]@{
+        Rule = 'Browser desktop sidebar width token must stay fixed at 240px'
+        File = [IO.Path]::GetRelativePath($repoRoot, $browserStyles)
+        Line = 0
+        Text = '--sidebar-width: 240px; is missing'
+    }
+}
+
+$sidebarBlock = [regex]::Match($browserStyleText, '(?ms)^\s*\.sidebar\s*\{(?<Body>.*?)^\s*\}')
+if (-not $sidebarBlock.Success) {
+    $findings += [pscustomobject]@{
+        Rule = 'Browser desktop sidebar fixed-width block is required'
+        File = [IO.Path]::GetRelativePath($repoRoot, $browserStyles)
+        Line = 0
+        Text = '.sidebar block is missing'
+    }
+} else {
+    foreach ($property in @('width', 'min-width', 'max-width', 'flex-basis')) {
+        if ($sidebarBlock.Groups['Body'].Value -notmatch "(?m)^\s*$([regex]::Escape($property)):\s*var\(--sidebar-width\)\s*;") {
+            $findings += [pscustomobject]@{
+                Rule = "Browser desktop sidebar $property must use the fixed 240px token"
+                File = [IO.Path]::GetRelativePath($repoRoot, $browserStyles)
+                Line = 0
+                Text = "$property`: var(--sidebar-width); is missing from .sidebar"
+            }
+        }
+    }
+}
+
 if ($findings.Count -gt 0) {
     $findings | Format-Table -AutoSize | Out-String | Write-Host
     throw 'Retired PhotoViewer UI semantics were reintroduced.'
@@ -65,7 +100,7 @@ if ($findings.Count -gt 0) {
 
 [pscustomobject]@{
     ok = $true
-    filesChecked = $targets.Count + $runtimeTargets.Count
-    rules = $forbidden.Keys
-    message = 'Quick Search, relative-date controls, and Favorite threshold labels are absent from live Browser/WPF UI; runtime has no active relative-date preset API or unchecked preset writer.'
+    filesChecked = $targets.Count + $runtimeTargets.Count + 1
+    rules = @($forbidden.Keys) + @('Browser desktop sidebar width/min/max/flex-basis fixed at 240px')
+    message = 'Quick Search, relative-date controls, and Favorite threshold labels are absent from live Browser/WPF UI; runtime has no active relative-date preset API or unchecked preset writer; Browser desktop sidebar width stays fixed at 240px.'
 } | ConvertTo-Json -Depth 4

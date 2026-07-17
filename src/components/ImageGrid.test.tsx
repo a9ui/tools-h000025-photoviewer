@@ -47,6 +47,8 @@ const retrySearch = vi.fn();
 const rescanExpiredSearchSession = vi.fn();
 const dismissSearchError = vi.fn();
 const clearSelection = vi.fn();
+let mockClientWidth = 960;
+let mockClientHeight = 640;
 
 function createStore(
   viewMode: "grid" | "list" = "grid",
@@ -104,7 +106,7 @@ function createStore(
 
 function renderGrid() {
   return render(
-    <div className="viewer-main">
+    <div className="viewer-main" data-testid="viewer-main">
       <ImageGrid />
     </div>,
   );
@@ -121,13 +123,15 @@ beforeAll(() => {
     vi.fn(() => Promise.resolve(new Response("{}"))),
   );
   Object.defineProperties(HTMLElement.prototype, {
-    clientHeight: { configurable: true, get: () => 640 },
-    clientWidth: { configurable: true, get: () => 960 },
+    clientHeight: { configurable: true, get: () => mockClientHeight },
+    clientWidth: { configurable: true, get: () => mockClientWidth },
   });
 });
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockClientWidth = 960;
+  mockClientHeight = 640;
   vi.mocked(useImageStore).mockReturnValue(createStore());
 });
 
@@ -342,6 +346,72 @@ describe("ImageGrid keyboard primary controls", () => {
 
     expect(wheel.defaultPrevented).toBe(true);
     expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
+  });
+
+  it("keeps the wheel-targeted image at the same viewport offset when zoom changes the column count", async () => {
+    mockClientWidth = 900;
+    const images = Array.from({ length: 80 }, (_, index): ImageFile => ({
+      ...firstImage,
+      id: `C:/images/zoom-${index}.png`,
+      filename: `zoom-${index}.png`,
+      absolutePath: `C:/images/zoom-${index}.png`,
+      fileUrl: `/api/image?zoom=${index}`,
+      displayUrl: `/api/image?zoom=${index}&display=1`,
+      fullUrl: `/api/image?zoom=${index}&full=1`,
+    }));
+    const initialStore = {
+      ...createStore(),
+      searchResults: images,
+      searchTotal: images.length,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(initialStore);
+
+    const { rerender } = renderGrid();
+    const scrollElement = screen.getByTestId("viewer-main");
+    Object.defineProperty(scrollElement, "scrollHeight", {
+      configurable: true,
+      get: () => 20_000,
+    });
+    scrollElement.scrollTop = 600;
+    fireEvent.scroll(scrollElement);
+
+    await waitFor(() => {
+      expect(initialStore.setSearchScrollPosition).toHaveBeenCalledWith(
+        expect.any(String),
+        600,
+      );
+    });
+    const targetBefore = screen.getByRole("group", { name: "Image zoom-10.png" });
+    expect(targetBefore).toHaveStyle({ top: "672px" });
+    const offsetBefore = Number.parseFloat(targetBefore.style.top) - scrollElement.scrollTop;
+
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(
+      screen.getByRole("button", { name: /select zoom-10\.png/i }),
+      wheel,
+    );
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(initialStore.setView).toHaveBeenCalledWith({ thumbSize: 220 });
+
+    vi.mocked(useImageStore).mockReturnValue({
+      ...initialStore,
+      view: { ...initialStore.view, thumbSize: 220 },
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+
+    await waitFor(() => expect(scrollElement.scrollTop).toBe(1278));
+    const targetAfter = screen.getByRole("group", { name: "Image zoom-10.png" });
+    expect(targetAfter).toHaveStyle({ top: "1350px" });
+    expect(Number.parseFloat(targetAfter.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
   });
 
   it("leaves native page zoom available outside the grid and in list mode", () => {
