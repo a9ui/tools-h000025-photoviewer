@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
@@ -53,9 +53,12 @@ export default function RightPreviewPanel() {
     previewById,
     cycleFavoriteLevel,
     decreaseFavoriteLevel,
+    setFavoriteLevels,
+    adjustFavoriteLevels,
     favorites,
     openExternal,
     selectedIds,
+    searchResults,
     clearSelection,
     deleteImage,
     view,
@@ -72,6 +75,17 @@ export default function RightPreviewPanel() {
   const [enhanceMessage, setEnhanceMessage] = useState('');
   const [showDetails, setShowDetails] = useState(false);
   const selectedCount = selectedIds.length;
+  const favoriteTargets = useMemo(() => {
+    const availableIds = new Set((searchResults ?? []).flatMap((image) => image ? [image.id] : []));
+    return [...new Set(selectedIds.filter((id) => availableIds.has(id)))];
+  }, [searchResults, selectedIds]);
+  const ignoredSelectionCount = selectedCount - favoriteTargets.length;
+  const favoriteLevels = [...new Set(favoriteTargets.map((id) => favorites[id] ?? 0))];
+  const favoriteSelectionState = favoriteTargets.length === 0
+    ? selectedCount > 0 ? 'Selected images are no longer in the current result.' : 'No selection'
+    : favoriteLevels.length === 1
+      ? `Lv${favoriteLevels[0]} for ${favoriteTargets.length} selected`
+      : `Mixed levels (${favoriteLevels.sort((a, b) => a - b).map((level) => `Lv${level}`).join(', ')}) for ${favoriteTargets.length} selected`;
 
   useDialogFocus({
     open: confirmBulkDelete,
@@ -156,10 +170,18 @@ export default function RightPreviewPanel() {
     };
   }, [setView, setWidth]);
 
-  const handleFavoriteSelected = () => {
-    if (selectedCount === 0) return;
-    for (const id of selectedIds) cycleFavoriteLevel(id);
-    setBulkMessage(`Raised favorite level for ${selectedCount} image(s).`);
+  const handleSetFavoriteSelected = (level: number) => {
+    if (favoriteTargets.length === 0) return;
+    setFavoriteLevels(favoriteTargets, level);
+    setBulkMessage(level === 0
+      ? `Cleared favorite level for ${favoriteTargets.length} image(s).`
+      : `Set favorite level ${level} for ${favoriteTargets.length} image(s).`);
+  };
+
+  const handleAdjustFavoriteSelected = (delta: number) => {
+    if (favoriteTargets.length === 0) return;
+    adjustFavoriteLevels(favoriteTargets, delta);
+    setBulkMessage(`${delta > 0 ? 'Increased' : 'Decreased'} favorite level for ${favoriteTargets.length} image(s).`);
   };
 
   const handleOpenSelected = () => {
@@ -253,7 +275,16 @@ export default function RightPreviewPanel() {
 
         <div className="bulk-toolbar">
           <span className="bulk-count">{selectedCount > 0 ? `${selectedCount} selected` : 'No selection'}</span>
-          <button className="pill" onClick={handleFavoriteSelected} disabled={selectedCount === 0}>Favorite</button>
+          <div className="bulk-favorite-controls" role="group" aria-label="Favorite level for selected images">
+            <span className="bulk-favorite-state" role="status" aria-live="polite">{favoriteSelectionState}</span>
+            <button className="pill" onClick={() => handleAdjustFavoriteSelected(-1)} disabled={favoriteTargets.length === 0} aria-label="Decrease favorite level for selected images">Lv −</button>
+            <button className="pill" onClick={() => handleSetFavoriteSelected(0)} disabled={favoriteTargets.length === 0}>Clear</button>
+            {[1, 2, 3, 4, 5].map((level) => (
+              <button key={level} className="pill" onClick={() => handleSetFavoriteSelected(level)} disabled={favoriteTargets.length === 0} aria-label={`Set selected images to favorite level ${level}`}>Lv{level}</button>
+            ))}
+            <button className="pill" onClick={() => handleAdjustFavoriteSelected(1)} disabled={favoriteTargets.length === 0} aria-label="Increase favorite level for selected images">Lv +</button>
+          </div>
+          {ignoredSelectionCount > 0 && <span className="bulk-stale-selection">{ignoredSelectionCount} unavailable</span>}
           <button className="pill" onClick={handleOpenSelected} disabled={selectedCount === 0}>Open</button>
           <button className="pill" onClick={() => void enhanceSelected()} disabled={selectedCount === 0}>Enhance selected</button>
           <button className="pill danger" onClick={handleBulkDeleteRequest} disabled={selectedCount === 0}>Recycle</button>

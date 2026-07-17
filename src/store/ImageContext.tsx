@@ -381,6 +381,8 @@ interface Ctx {
   cycleFavoriteLevel: (id: string) => void;
   decreaseFavoriteLevel: (id: string) => void;
   clearFavorite: (id: string) => void;
+  setFavoriteLevels: (ids: readonly string[], level: number) => void;
+  adjustFavoriteLevels: (ids: readonly string[], delta: number) => void;
   showFavOnly: boolean;
   setShowFavOnly: (v: boolean) => void;
   showUnfavOnly: boolean;
@@ -945,6 +947,49 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (!(id in prev)) return prev;
       const next = { ...prev };
       delete next[id];
+      return next;
+    });
+  }, []);
+
+  const setFavoriteLevels = useCallback((ids: readonly string[], level: number) => {
+    if (!Number.isInteger(level) || level < 0 || level > MAX_FAVORITE_LEVEL) return;
+    const targetIds = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (targetIds.length === 0) return;
+    favoriteLocalStorageReadOnlyRef.current = false;
+    if (!favoritesHydratedRef.current) {
+      for (const id of targetIds) favoriteHydrationDirtyIdsRef.current.add(id);
+    }
+    setFavorites((prev) => {
+      let next = prev;
+      for (const id of targetIds) {
+        const current = prev[id] ?? 0;
+        if (current === level) continue;
+        if (next === prev) next = { ...prev };
+        if (level === 0) delete next[id];
+        else next[id] = level;
+      }
+      return next;
+    });
+  }, []);
+
+  const adjustFavoriteLevels = useCallback((ids: readonly string[], delta: number) => {
+    if (!Number.isInteger(delta) || delta === 0) return;
+    const targetIds = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (targetIds.length === 0) return;
+    favoriteLocalStorageReadOnlyRef.current = false;
+    if (!favoritesHydratedRef.current) {
+      for (const id of targetIds) favoriteHydrationDirtyIdsRef.current.add(id);
+    }
+    setFavorites((prev) => {
+      let next = prev;
+      for (const id of targetIds) {
+        const current = prev[id] ?? 0;
+        const level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, current + delta));
+        if (current === level) continue;
+        if (next === prev) next = { ...prev };
+        if (level === 0) delete next[id];
+        else next[id] = level;
+      }
       return next;
     });
   }, []);
@@ -1765,7 +1810,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,
-      cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite,
+      cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite, setFavoriteLevels, adjustFavoriteLevels,
       favoriteFilterLevels, toggleFavoriteFilterLevel, clearFavoriteFilterLevels,
       showEnhancedOnly: showEnhancedOnlyState, setShowEnhancedOnly, enhancedSourceIds,
       selectedIndex, setSelectedIndex,

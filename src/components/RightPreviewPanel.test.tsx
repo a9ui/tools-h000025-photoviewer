@@ -29,7 +29,7 @@ const previewImage: ImageFile = {
   mtime: 1,
 };
 
-function createStore(options: { width?: number; withPreview?: boolean } = {}) {
+function createStore(options: { width?: number; withPreview?: boolean; selectedIds?: string[]; favorites?: Record<string, number>; searchResults?: ImageFile[] } = {}) {
   const withPreview = options.withPreview ?? false;
   return {
     previewTabIds: withPreview ? [previewImage.id] : [],
@@ -37,9 +37,12 @@ function createStore(options: { width?: number; withPreview?: boolean } = {}) {
     previewById: withPreview ? { [previewImage.id]: previewImage } : {},
     cycleFavoriteLevel: vi.fn(),
     decreaseFavoriteLevel: vi.fn(),
-    favorites: {},
+    setFavoriteLevels: vi.fn(),
+    adjustFavoriteLevels: vi.fn(),
+    favorites: options.favorites ?? {},
     openExternal: vi.fn(),
-    selectedIds: [],
+    selectedIds: options.selectedIds ?? [],
+    searchResults: options.searchResults ?? [],
     clearSelection: vi.fn(),
     deleteImage: vi.fn(),
     view: {
@@ -108,5 +111,41 @@ describe('RightPreviewPanel resize separator', () => {
     rerender(<RightPreviewPanel />);
 
     expect(screen.getAllByRole('separator', { name: 'Resize preview panel' })).toHaveLength(1);
+  });
+});
+
+describe('RightPreviewPanel bulk favorite levels', () => {
+  it('reports mixed selection, applies an exact level once, and leaves stale paths disabled', () => {
+    const selectedIds = [previewImage.id, 'C:/images/second.png', 'C:/images/stale.png'];
+    const secondImage = { ...previewImage, id: 'C:/images/second.png' };
+    const store = createStore({
+      withPreview: true,
+      selectedIds,
+      searchResults: [previewImage, secondImage],
+      favorites: { [previewImage.id]: 1, [secondImage.id]: 4 },
+    });
+    vi.mocked(useImageStore).mockReturnValue(store);
+
+    render(<RightPreviewPanel />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('Mixed levels (Lv1, Lv4) for 2 selected');
+    expect(screen.getByText('1 unavailable')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Set selected images to favorite level 3' }));
+    expect(store.setFavoriteLevels).toHaveBeenCalledWith([previewImage.id, secondImage.id], 3);
+    fireEvent.click(screen.getByRole('button', { name: 'Decrease favorite level for selected images' }));
+    expect(store.adjustFavoriteLevels).toHaveBeenCalledWith([previewImage.id, secondImage.id], -1);
+  });
+
+  it('disables favorite mutations when every selected path is stale', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({
+      withPreview: true,
+      selectedIds: ['C:/images/stale.png'],
+      searchResults: [],
+    }));
+    render(<RightPreviewPanel />);
+
+    expect(screen.getByRole('status')).toHaveTextContent('no longer in the current result');
+    expect(screen.getByRole('button', { name: 'Set selected images to favorite level 1' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Increase favorite level for selected images' })).toBeDisabled();
   });
 });

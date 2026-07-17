@@ -1914,6 +1914,20 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-tertiary);
   margin-right: 0.2rem;
 }
+.bulk-favorite-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+}
+.bulk-favorite-state,
+.bulk-stale-selection {
+  font-size: 0.68rem;
+  color: var(--text-tertiary);
+}
+.bulk-stale-selection {
+  color: #fbbf24;
+}
 .bulk-message {
   padding: 0.35rem 0.75rem;
   border-bottom: 1px solid rgba(255,255,255,0.04);

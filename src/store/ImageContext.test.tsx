@@ -32,7 +32,7 @@ function PreferencesProbe() {
 }
 
 function FavoritesProbe() {
-  const { favorites, cycleFavoriteLevel, toggleFavorite } = useImageStore();
+  const { favorites, cycleFavoriteLevel, toggleFavorite, setFavoriteLevels, adjustFavoriteLevels } = useImageStore();
   return (
     <div>
       <output aria-label="favorites state">{JSON.stringify(favorites)}</output>
@@ -41,6 +41,12 @@ function FavoritesProbe() {
       </button>
       <button type="button" onClick={() => toggleFavorite('same-key')}>
         Toggle same key before hydration
+      </button>
+      <button type="button" onClick={() => setFavoriteLevels(['bulk-a', 'bulk-b', 'bulk-a'], 3)}>
+        Set bulk favorites to level 3
+      </button>
+      <button type="button" onClick={() => adjustFavoriteLevels(['bulk-a', 'bulk-b'], -1)}>
+        Decrease bulk favorites
       </button>
     </div>
   );
@@ -438,6 +444,18 @@ describe('ImageProvider browser UI preferences', () => {
     });
     expect(screen.getByRole('status', { name: 'favorites state' }))
       .toHaveTextContent('"clicked-before-hydration":1');
+  });
+
+  it('sets and adjusts multiple favorite levels in one state transaction', async () => {
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+
+    await user.click(screen.getByRole('button', { name: 'Set bulk favorites to level 3' }));
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"bulk-a":3');
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"bulk-b":3');
+    await user.click(screen.getByRole('button', { name: 'Decrease bulk favorites' }));
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"bulk-a":2');
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"bulk-b":2');
   });
 
   it('does not resurrect a favorite cleared while the server snapshot is loading', async () => {
