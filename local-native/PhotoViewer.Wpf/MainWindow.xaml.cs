@@ -2677,6 +2677,7 @@ public partial class MainWindow : Window
                 ? settingsText
                 : "PNG parameters loaded";
         ModalPromptText.Text = hasPrompt ? metadata!.Prompt : "-";
+        SyncModalPromptChips(hasPrompt ? metadata!.Prompt : "");
         ModalNegativeText.Text = hasNegative ? metadata!.NegativePrompt : "-";
         CopyModalMetadataButton.IsEnabled = metadata is not null;
         CopyModalMetadataButton.ToolTip = metadata is null ? "No PNG metadata loaded" : "Copy PNG metadata";
@@ -2684,6 +2685,77 @@ public partial class MainWindow : Window
         CopyModalPromptButton.ToolTip = hasPrompt ? "Copy prompt" : "No prompt metadata loaded";
         CopyModalNegativeButton.IsEnabled = hasNegative;
         CopyModalNegativeButton.ToolTip = hasNegative ? "Copy negative prompt" : "No negative prompt metadata loaded";
+    }
+
+    private static List<string> ParsePromptTags(string? prompt)
+    {
+        var tags = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string tag in (prompt ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (seen.Add(tag))
+                tags.Add(tag);
+        }
+        return tags;
+    }
+
+    private void SyncModalPromptChips(string prompt)
+    {
+        if (ModalPromptChips is null)
+            return;
+
+        ModalPromptChips.Children.Clear();
+        List<string> tags = ParsePromptTags(prompt);
+        ModalPromptEmptyText.Visibility = tags.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        foreach (string tag in tags)
+        {
+            var chip = new Button
+            {
+                Content = tag,
+                Tag = tag,
+                Style = (Style)FindResource("GhostButton"),
+                Padding = new Thickness(8, 3, 8, 3),
+                Margin = new Thickness(0, 0, 6, 6),
+                FontSize = 11.5,
+                ToolTip = $"Search for {tag}",
+            };
+            System.Windows.Automation.AutomationProperties.SetName(chip, $"Search prompt tag {tag}");
+            System.Windows.Automation.AutomationProperties.SetHelpText(chip, "Append this tag to search, close the modal, and focus search.");
+            chip.Click += ModalPromptTag_Click;
+            chip.PreviewKeyDown += ModalPromptTag_PreviewKeyDown;
+            ModalPromptChips.Children.Add(chip);
+        }
+    }
+
+    private void ModalPromptTag_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string tag })
+            ApplyModalPromptTagSearch(tag);
+    }
+
+    private void ModalPromptTag_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Enter or Key.Space) || sender is not Button { Tag: string tag })
+            return;
+
+        e.Handled = true;
+        ApplyModalPromptTagSearch(tag);
+    }
+
+    private bool ApplyModalPromptTagSearch(string tag)
+    {
+        string normalizedTag = tag.Trim();
+        if (normalizedTag.Length == 0)
+            return false;
+
+        List<string> queryTags = ParsePromptTags(SearchInput.Text);
+        if (!queryTags.Contains(normalizedTag, StringComparer.OrdinalIgnoreCase))
+            queryTags.Add(normalizedTag);
+
+        SetSearchQuery(string.Join(", ", queryTags));
+        CloseModal();
+        SearchInput.Focus();
+        return true;
     }
 
     private void ClearPreviewMetadataCopyState()
@@ -7612,6 +7684,48 @@ public partial class MainWindow : Window
         return ModalMetadataForSmoke();
     }
 
+    public PromptTagSearchSmokeSnapshot SearchModalPromptTagForSmoke(string tag)
+    {
+        Button? chip = ModalPromptChips.Children
+            .OfType<Button>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Tag as string, tag, StringComparison.OrdinalIgnoreCase));
+        bool applied = chip is not null;
+        if (chip is not null)
+            chip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+        return PromptTagSearchSnapshotForSmoke(applied);
+    }
+
+    public List<string> ModalPromptTagsForSmoke => ModalPromptChips.Children
+        .OfType<Button>()
+        .Select(static chip => chip.Tag as string ?? "")
+        .ToList();
+
+    public bool ModalPromptTagsAccessibilityReadyForSmoke => ModalPromptChips.Children.OfType<Button>().All(chip =>
+        !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(chip))
+        && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(chip)));
+
+    public bool ModalPromptTagFallbackVisibleForSmoke => ModalPromptEmptyText.Visibility == Visibility.Visible;
+
+    private PromptTagSearchSmokeSnapshot PromptTagSearchSnapshotForSmoke(bool applied)
+    {
+        List<string> chips = ModalPromptChips.Children
+            .OfType<Button>()
+            .Select(static chip => chip.Tag as string ?? "")
+            .ToList();
+        bool accessibilityReady = ModalPromptChips.Children.OfType<Button>().All(chip =>
+            !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(chip))
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(chip)));
+        return new PromptTagSearchSmokeSnapshot(
+            applied,
+            chips,
+            SearchInput.Text,
+            Modal.Visibility == Visibility.Visible,
+            SearchInput.IsKeyboardFocusWithin,
+            accessibilityReady,
+            FilteredFileNamesForSmoke());
+    }
+
     private ModalMetadataSmokeSnapshot ModalMetadataForSmoke()
     {
         bool current = SelectedTile() is Tile selected
@@ -7979,6 +8093,15 @@ public sealed record ModalMetadataSmokeSnapshot(
     bool CopyMetadataEnabled,
     bool CopyPromptEnabled,
     bool CopyNegativeEnabled);
+
+public sealed record PromptTagSearchSmokeSnapshot(
+    bool Applied,
+    List<string> Chips,
+    string SearchQuery,
+    bool ModalVisible,
+    bool SearchFocused,
+    bool AccessibilityReady,
+    List<string> FilteredNames);
 
 public sealed record PngMetadataSmokeSnapshot(
     bool Selected,

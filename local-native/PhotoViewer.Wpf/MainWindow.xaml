@@ -794,7 +794,9 @@
                   <Button x:Name="CopyModalPromptButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
                           Content="Copy" IsEnabled="False" ToolTip="No prompt metadata loaded" Click="CopyPreviewPrompt_Click"/>
                 </DockPanel>
-                <TextBlock x:Name="ModalPromptText" Text="-" Foreground="{StaticResource TextSecondary}" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
+                <WrapPanel x:Name="ModalPromptChips" Margin="0,0,0,12" AutomationProperties.Name="Prompt search tags" AutomationProperties.HelpText="Choose a prompt tag to append it to search, close the modal, and focus search."/>
+                <TextBlock x:Name="ModalPromptEmptyText" Text="No prompt tags available." Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="0,0,0,12"/>
+                <TextBlock x:Name="ModalPromptText" Text="-" Visibility="Collapsed"/>
               </StackPanel>
 
               <StackPanel x:Name="ModalNegativePanel" Visibility="Collapsed">

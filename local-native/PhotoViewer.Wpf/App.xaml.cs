@@ -100,6 +100,13 @@ public partial class App : Application
             return;
         }
 
+        int promptTagSearchSmokeIdx = Array.IndexOf(e.Args, "--prompt-tag-search-smoke");
+        if (promptTagSearchSmokeIdx >= 0 && promptTagSearchSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePromptTagSearchSmoke(e.Args[promptTagSearchSmokeIdx + 1]);
+            return;
+        }
+
         int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
         if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
         {
@@ -6635,6 +6642,144 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePromptTagSearchSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-prompt-tag-search-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string taggedName = "tagged.png";
+        string otherName = "other.png";
+        string taggedPath = Path.Combine(folder, taggedName);
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            WritePngTextFixture(
+                taggedPath,
+                "parameters",
+                "studio portrait, soft light, Studio Portrait, ,   \nNegative prompt: lowres\nSteps: 12, Sampler: Euler",
+                Color.FromRgb(52, 152, 219));
+            WriteSmokePng(Path.Combine(folder, otherName), 64, 48, Color.FromRgb(46, 204, 113));
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        }
+        catch (Exception ex)
+        {
+            WritePromptTagSearchSmokeResult(resultPath, new PromptTagSearchSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PromptTagSearchSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSearchQuery("studio portrait", persist: false);
+                PngMetadataSmokeSnapshot metadata = await win.SelectPngMetadataForSmokeAsync(taggedName);
+                bool opened = win.OpenModalForSmoke();
+                bool sidebarVisible = win.ToggleModalMetadataSidebarForSmoke().SidebarVisible;
+                List<string> initialTags = win.ModalPromptTagsForSmoke;
+                bool initialAccessibilityReady = win.ModalPromptTagsAccessibilityReadyForSmoke;
+                long sourceLengthBefore = new FileInfo(taggedPath).Length;
+                DateTime sourceWriteBefore = File.GetLastWriteTimeUtc(taggedPath);
+                int enhancementJobsBefore = win.EnhancementJobsReadForSmoke;
+                int enhancementCandidatesBefore = win.EnhancedCandidateCountForSmoke;
+
+                PromptTagSearchSmokeSnapshot appended = win.SearchModalPromptTagForSmoke("soft light");
+                bool reopened = win.OpenModalForSmoke();
+                PngMetadataSmokeSnapshot refreshedMetadata = await win.WaitForPreviewPngMetadataForSmokeAsync(taggedName);
+                PromptTagSearchSmokeSnapshot deduped = win.SearchModalPromptTagForSmoke("soft light");
+                ViewerState? persistedState = ReadPersistedState(statePath);
+                var reloaded = HiddenWindow();
+                reloaded.Show();
+                await reloaded.LoadFolderAsync(folder);
+                string reloadedQuery = reloaded.SearchQueryForSmoke;
+                List<string> reloadedNames = reloaded.FilteredFileNamesForSmoke();
+                reloaded.Close();
+                win.SetSearchQuery("", persist: false);
+                PngMetadataSmokeSnapshot missingMetadata = await win.SelectPngMetadataForSmokeAsync(otherName);
+                bool missingModalOpened = win.OpenModalForSmoke();
+                bool missingSidebarVisible = win.ToggleModalMetadataSidebarForSmoke().SidebarVisible;
+                bool promptFallbackVisible = win.ModalPromptTagsForSmoke.Count == 0 && win.ModalPromptTagFallbackVisibleForSmoke;
+                win.CloseModalForSmoke();
+                bool sourceUntouched = sourceLengthBefore == new FileInfo(taggedPath).Length
+                    && sourceWriteBefore == File.GetLastWriteTimeUtc(taggedPath);
+                bool searchPersisted = string.Equals(persistedState?.SearchQuery, "studio portrait, soft light", StringComparison.Ordinal)
+                    && string.Equals(reloadedQuery, "studio portrait, soft light", StringComparison.Ordinal)
+                    && reloadedNames.SequenceEqual([taggedName], StringComparer.OrdinalIgnoreCase);
+
+                bool ok = metadata.MetadataApplied
+                    && opened && sidebarVisible && reopened
+                    && appended.Applied && deduped.Applied
+                    && refreshedMetadata.MetadataApplied
+                    && initialTags.SequenceEqual(["studio portrait", "soft light"], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(appended.SearchQuery, "studio portrait, soft light", StringComparison.Ordinal)
+                    && string.Equals(deduped.SearchQuery, appended.SearchQuery, StringComparison.Ordinal)
+                    && !appended.ModalVisible && !deduped.ModalVisible
+                    && appended.SearchFocused && deduped.SearchFocused
+                    && initialAccessibilityReady && appended.AccessibilityReady && deduped.AccessibilityReady
+                    && appended.FilteredNames.SequenceEqual([taggedName], StringComparer.OrdinalIgnoreCase)
+                    && deduped.FilteredNames.SequenceEqual([taggedName], StringComparer.OrdinalIgnoreCase)
+                    && sourceUntouched && searchPersisted
+                    && !missingMetadata.MetadataApplied && missingModalOpened && missingSidebarVisible && promptFallbackVisible
+                    && enhancementJobsBefore == win.EnhancementJobsReadForSmoke
+                    && enhancementCandidatesBefore == win.EnhancedCandidateCountForSmoke;
+                result = new PromptTagSearchSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "modal prompt tags append a deduped comma query, close the modal, apply search, focus search, and persist only the search query without source, metadata, or enhancement mutation"
+                        : "prompt tag search smoke did not meet the modal/search isolation contract",
+                    SmokeRoot = smokeRoot,
+                    TaggedPath = taggedPath,
+                    MetadataApplied = metadata.MetadataApplied,
+                    MetadataRefreshed = refreshedMetadata.MetadataApplied,
+                    OpenedModal = opened,
+                    SidebarVisible = sidebarVisible,
+                    InitialTags = initialTags,
+                    InitialAccessibilityReady = initialAccessibilityReady,
+                    Appended = appended,
+                    Deduped = deduped,
+                    SourceUntouched = sourceUntouched,
+                    SearchPersisted = searchPersisted,
+                    ReloadedQuery = reloadedQuery,
+                    ReloadedNames = reloadedNames,
+                    PromptFallbackVisible = promptFallbackVisible,
+                    EnhancementJobsBefore = enhancementJobsBefore,
+                    EnhancementJobsAfter = win.EnhancementJobsReadForSmoke,
+                    EnhancementCandidatesBefore = enhancementCandidatesBefore,
+                    EnhancementCandidatesAfter = win.EnhancedCandidateCountForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new PromptTagSearchSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot, TaggedPath = taggedPath };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePromptTagSearchSmokeResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewDecodeSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -7715,6 +7860,12 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WritePromptTagSearchSmokeResult(string path, PromptTagSearchSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteFormatSmokeResult(string path, FormatSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -7942,6 +8093,31 @@ public partial class App : Application
         public PngMetadataSmokeSnapshot? Latest { get; init; }
         public MetadataCopySmokeSnapshot? LatestCopy { get; init; }
         public bool LatestSelectionStable { get; init; }
+    }
+
+    private sealed class PromptTagSearchSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public string? TaggedPath { get; init; }
+        public bool MetadataApplied { get; init; }
+        public bool MetadataRefreshed { get; init; }
+        public bool OpenedModal { get; init; }
+        public bool SidebarVisible { get; init; }
+        public List<string> InitialTags { get; init; } = [];
+        public bool InitialAccessibilityReady { get; init; }
+        public PromptTagSearchSmokeSnapshot? Appended { get; init; }
+        public PromptTagSearchSmokeSnapshot? Deduped { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool SearchPersisted { get; init; }
+        public string? ReloadedQuery { get; init; }
+        public List<string> ReloadedNames { get; init; } = [];
+        public bool PromptFallbackVisible { get; init; }
+        public int EnhancementJobsBefore { get; init; }
+        public int EnhancementJobsAfter { get; init; }
+        public int EnhancementCandidatesBefore { get; init; }
+        public int EnhancementCandidatesAfter { get; init; }
     }
 
     private sealed record ModalNavigationSmokeResult(
