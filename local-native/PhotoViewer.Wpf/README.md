@@ -185,15 +185,25 @@ fake recycle folder; it does not exercise the user's actual Windows Recycle Bin:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0c-smoke "$env:TEMP\photoviewer-wpf-p0c-smoke.json"
 ```
 
-P0D is the integrated local-native gate. It builds a temporary 5,000-image
-fixture and verifies catalog completeness, bounded Grid/List realization,
-favorites/dots/folder controls, anchored zoom, fake Recycle Bin continuation,
-reload state, atomic temp-store merges, and a byte-identical enhancement-jobs
-sentinel. It never uses browser, port 3000, the real Recycle Bin, or user cache:
+P0D is the integrated local-native gate. It builds and removes a temporary
+5,000-image fixture and verifies catalog completeness; bounded, recycling List
+realization at the first, middle, and final scroll positions; favorites/dots/folder
+controls; anchored zoom; fake Recycle Bin continuation; reload state; malformed
+field protection; future JSON preservation; cross-process temp+rename lock merges;
+and a byte-identical enhancement-jobs sentinel. It never uses browser, port 3000,
+the real Recycle Bin, or user cache:
 
 ```powershell
 .\scripts\verify-wpf-p0.ps1
 ```
+
+The shared persistence lock is `<target>.lock`: create-new JSON ownership, a
+2-second/25-ms bounded background retry, and a conservative 30-second stale-file
+recovery. Interactive WPF actions make one attempt and yield on contention so the
+UI does not wait behind another writer. Delete still has an unavoidable filesystem
+TOCTOU window between canonical-path validation and the Windows Recycle Bin API;
+the command revalidates immediately before that call, but adversarial reparse-point
+swaps remain a documented post-P1S hardening item.
 
 Favorite import smoke writes a temporary explicit browser-state export and
 imports only bounded favorite fields into the accepted WPF favorites JSON:

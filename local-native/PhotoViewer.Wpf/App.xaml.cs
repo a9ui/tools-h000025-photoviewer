@@ -848,13 +848,18 @@ public partial class App : Application
         string favorites = Path.Combine(root, "favorites.json");
         string seen = Path.Combine(root, "seen.json");
         string recent = Path.Combine(root, "recent.json");
+        string jobs = Path.Combine(root, "jobs.json");
         string state = Path.Combine(root, "state.json");
         string? oldFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
         string? oldSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
         string? oldState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? oldRecent = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? oldJobs = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recent);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobs);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var first = HiddenWindow();
         first.Show();
@@ -918,6 +923,8 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", oldFavorites);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", oldState);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", oldRecent);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", oldJobs);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -965,9 +972,7 @@ public partial class App : Application
                 await win.LoadFolderAsync(folder);
                 int catalog = win.CatalogCountForSmoke;
                 int grid = win.GridRealizedCountForSmoke;
-                bool listMode = win.SetListModeForSmoke();
-                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
-                int listRealized = win.ListRealizedContainerCountForSmoke;
+                ListVirtualizationProbe listProbe = await win.ProbeListVirtualizationForSmokeAsync();
                 string externalFavorite = Path.Combine(root, "external-favorite.png");
                 string externalSeen = Path.Combine(root, "external-seen.png");
                 File.WriteAllText(favorites, JsonSerializer.Serialize(new Dictionary<string, int> { [externalFavorite] = 4 }));
@@ -1006,10 +1011,44 @@ public partial class App : Application
                 await reload.LoadFolderAsync(folder);
                 bool stateReloaded = reload.ConfirmBeforeDeleteForSmoke == false && reload.FavoriteStoreCountForSmoke >= 2 && File.Exists(state);
                 reload.Close();
+                var safety = HiddenWindow(); safety.Show();
+                await safety.LoadFolderAsync(folder);
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1, futureState = new { keep = true } }));
+                safety.FlushStateForSmoke();
+                bool stateExternalUnknownPreserved = File.ReadAllText(state).Contains("futureState", StringComparison.Ordinal);
+                File.WriteAllText(recent, JsonSerializer.Serialize(new { version = 1, lastFolderSet = Array.Empty<string>(), recentFolderSets = Array.Empty<string[]>(), updatedAtUtc = DateTimeOffset.UtcNow.ToString("O"), futureRecent = new { keep = true } }));
+                safety.FlushStateForSmoke();
+                bool recentUnknownPreserved = File.ReadAllText(recent).Contains("futureRecent", StringComparison.Ordinal);
+                File.WriteAllText(favorites, "{\"broken\":{}}");
+                string favoriteMalformedBefore = File.ReadAllText(favorites);
+                safety.SelectFileNameForSmoke("item-0300.png");
+                bool favoriteMalformedProtected = !safety.AdjustSelectedFavoriteForSmoke(1) && File.ReadAllText(favorites) == favoriteMalformedBefore;
+                File.WriteAllText(seen, "{\"broken\":[]}");
+                string seenMalformedBefore = File.ReadAllText(seen);
+                safety.SelectFileNameForSmoke("item-0301.png");
+                bool seenMalformedProtected = !safety.MarkSelectedSeenForSmoke() && File.ReadAllText(seen) == seenMalformedBefore;
+                PersistenceLockProbe lockProbe = await PhotoViewer.Wpf.MainWindow.ProbePersistenceLockForSmokeAsync(Path.Combine(root, "lock-favorites.json"), Path.Combine(root, "writer-a.png"), Path.Combine(root, "writer-b.png"));
+                safety.Close();
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1 }));
+                var malformedStateWindow = HiddenWindow(); malformedStateWindow.Show();
+                await malformedStateWindow.LoadFolderAsync(folder);
+                File.WriteAllText(state, "{\"Version\":1,\"CardWidth\":{}}");
+                string malformedStateBefore = File.ReadAllText(state);
+                malformedStateWindow.FlushStateForSmoke();
+                bool stateMalformedProtected = File.ReadAllText(state) == malformedStateBefore;
+                malformedStateWindow.Close();
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1 }));
+                var futureStateWindow = HiddenWindow(); futureStateWindow.Show();
+                await futureStateWindow.LoadFolderAsync(folder);
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 2, futureVersion = true }));
+                string futureStateBefore = File.ReadAllText(state);
+                futureStateWindow.FlushStateForSmoke();
+                bool futureStateProtected = File.ReadAllText(state) == futureStateBefore;
+                futureStateWindow.Close();
                 watch.Stop();
-                ok = catalog == fixtureCount && grid <= win.GridMaxRealizationCountForSmoke && listMode && listRealized <= 384 && favoriteLevels
-                    && favoriteMerged && seenMerged && stateUnknownPreserved && dotsDisplayOnly && foldersCollapsed && anchorStable && deleted && stateReloaded && enhancementPassive;
-                result = new { ok, message = ok ? "P0D integrated 5000-image gate passed" : "P0D gate failed", folder, fixtureCount, catalog, grid, maxGrid = win.GridMaxRealizationCountForSmoke, listRealized, favoriteLevels, favoriteMerged, seenMerged, stateUnknownPreserved, dotsDisplayOnly, foldersCollapsed, anchor, drift300, drift80, drift200, deleted, stateReloaded, enhancementPassive, jobs, jobsHashBefore, jobsHashAfter, workingSet, elapsedMs = watch.ElapsedMilliseconds, metrics };
+                ok = catalog == fixtureCount && grid <= win.GridMaxRealizationCountForSmoke && listProbe.ListMode && listProbe.Recycling && listProbe.Bounded && favoriteLevels
+                    && favoriteMerged && seenMerged && stateUnknownPreserved && stateExternalUnknownPreserved && recentUnknownPreserved && favoriteMalformedProtected && seenMalformedProtected && stateMalformedProtected && futureStateProtected && lockProbe.ConcurrentMerged && lockProbe.StaleRecovered && lockProbe.MalformedLockProtected && dotsDisplayOnly && foldersCollapsed && anchorStable && deleted && stateReloaded && enhancementPassive;
+                result = new { ok, message = ok ? "P0D integrated 5000-image gate passed" : "P0D gate failed", folder, fixtureCount, catalog, grid, maxGrid = win.GridMaxRealizationCountForSmoke, listProbe, favoriteLevels, favoriteMerged, seenMerged, stateUnknownPreserved, stateExternalUnknownPreserved, recentUnknownPreserved, favoriteMalformedProtected, seenMalformedProtected, stateMalformedProtected, futureStateProtected, lockProbe, dotsDisplayOnly, foldersCollapsed, anchor, drift300, drift80, drift200, deleted, stateReloaded, enhancementPassive, jobs, jobsHashBefore, jobsHashAfter, workingSet, elapsedMs = watch.ElapsedMilliseconds, metrics };
             }
             catch (Exception ex) { result = new { ok = false, message = ex.ToString(), folder, fixtureCount }; }
             finally
@@ -1020,6 +1059,7 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", oldJobs);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", oldRecent);
+                try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); } catch { }
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -1037,6 +1077,8 @@ public partial class App : Application
         string state = Path.Combine(root, "state.json");
         string favorites = Path.Combine(root, "favorites.json");
         string seen = Path.Combine(root, "seen.json");
+        string recent = Path.Combine(root, "recent.json");
+        string jobs = Path.Combine(root, "jobs.json");
         Directory.CreateDirectory(folder);
         Directory.CreateDirectory(outside);
         Directory.CreateDirectory(sibling);
@@ -1051,9 +1093,13 @@ public partial class App : Application
         string? previousState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
         string? previousFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
         string? previousSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecent = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobs = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recent);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobs);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var win = HiddenWindow();
         win.Show();
@@ -1172,6 +1218,8 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousState);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavorites);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeen);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecent);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobs);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -1188,8 +1236,20 @@ public partial class App : Application
         for (int index = 0; index < fixtureCount; index++)
             WriteSmokePng(Path.Combine(folder, $"item-{index:0000}.png"), 16, 12, Color.FromRgb((byte)(index % 200 + 30), 80, 140));
         string state = Path.Combine(root, "state.json");
+        string favorites = Path.Combine(root, "favorites.json");
+        string seen = Path.Combine(root, "seen.json");
+        string recent = Path.Combine(root, "recent.json");
+        string jobs = Path.Combine(root, "jobs.json");
         string? previousState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecent = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobs = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recent);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobs);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var win = HiddenWindow();
         win.Show();
@@ -1246,6 +1306,10 @@ public partial class App : Application
             {
                 win.Close();
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousState);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavorites);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeen);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecent);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobs);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));

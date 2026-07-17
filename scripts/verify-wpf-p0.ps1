@@ -1,5 +1,5 @@
 param(
-    [string]$OutputPath = (Join-Path $env:TEMP "photoviewer-wpf-p0d-gate.json")
+    [string]$OutputPath = (Join-Path $env:TEMP ("photoviewer-wpf-p0d-gate-" + [guid]::NewGuid().ToString('N') + ".json"))
 )
 
 $ErrorActionPreference = 'Stop'

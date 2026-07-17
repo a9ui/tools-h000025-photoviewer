@@ -36,6 +36,9 @@ public partial class MainWindow : Window
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
     private const int MaxRecentFolderSets = 8;
+    private const int PersistenceLockTimeoutMilliseconds = 2_000;
+    private const int PersistenceLockRetryMilliseconds = 25;
+    private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
     private const double DefaultCardWidth = 200;
     private const double CardWidthStep = 20;
     private const double ModalZoomMin = 0.25;
@@ -846,38 +849,51 @@ public partial class MainWindow : Window
         if (!File.Exists(path))
             return;
 
-        try
-        {
-            using var document = JsonDocument.Parse(File.ReadAllText(path));
-            if (document.RootElement.ValueKind != JsonValueKind.Object)
-            {
-                _favoritesWriteBlocked = true;
-                return;
-            }
-
-            foreach (var property in document.RootElement.EnumerateObject())
-            {
-                if (TryReadFavoriteLevel(property.Value, out int level))
-                    _favorites[NormalizeFavoritePath(property.Name)] = level;
-            }
-        }
-        catch
+        if (!TryLoadFavoritesFile(path, _favorites))
         {
             _favorites.Clear();
             _favoritesWriteBlocked = true;
         }
     }
 
-    private static bool TryReadFavoriteLevel(JsonElement value, out int level)
+    private static bool TryLoadFavoritesFile(string path, Dictionary<string, int> destination)
+    {
+        if (!File.Exists(path))
+            return true;
+
+        try
+        {
+            using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+
+            foreach (var property in document.RootElement.EnumerateObject())
+            {
+                if (string.IsNullOrWhiteSpace(property.Name) || !TryReadFavoriteValue(property.Value, out int level))
+                    return false;
+                if (level > 0)
+                    destination[NormalizeFavoritePath(property.Name)] = level;
+            }
+
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryReadFavoriteValue(JsonElement value, out int level)
     {
         level = 0;
         if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
             level = numeric;
-        else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), out int parsed))
+        else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
             level = parsed;
+        else
+            return false;
 
-        level = Math.Clamp(level, 0, 5);
-        return level > 0;
+        return level is >= 0 and <= 5;
     }
 
     private static string NormalizeFavoritePath(string path)
@@ -1027,23 +1043,94 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool TryWithPersistenceLock(string targetPath, Func<bool> operation)
+    {
+        // Interactive handlers take one create-new attempt and yield on contention;
+        // background/smoke work follows the shared 2 s / 25 ms browser retry contract.
+        bool onUiThread = Application.Current?.Dispatcher?.CheckAccess() == true;
+        using var lease = TryAcquirePersistenceLock(targetPath, onUiThread ? 0 : PersistenceLockTimeoutMilliseconds);
+        return lease is not null && operation();
+    }
+
+    private static PersistenceLockLease? TryAcquirePersistenceLock(string targetPath, int timeoutMilliseconds)
+    {
+        string lockPath = targetPath + ".lock";
+        var wait = Stopwatch.StartNew();
+        while (true)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+                var stream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read);
+                try
+                {
+                    var payload = JsonSerializer.Serialize(new { pid = Environment.ProcessId, createdAtUtc = DateTimeOffset.UtcNow.ToString("O") });
+                    byte[] bytes = Encoding.UTF8.GetBytes(payload);
+                    stream.Write(bytes, 0, bytes.Length);
+                    stream.Flush(flushToDisk: true);
+                    return new PersistenceLockLease(lockPath, stream);
+                }
+                catch
+                {
+                    stream.Dispose();
+                    try { File.Delete(lockPath); } catch { }
+                    return null;
+                }
+            }
+            catch (IOException)
+            {
+                TryRemoveStalePersistenceLock(lockPath);
+                if (wait.ElapsedMilliseconds >= timeoutMilliseconds)
+                    return null;
+                Thread.Sleep(PersistenceLockRetryMilliseconds);
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+    }
+
+    private static void TryRemoveStalePersistenceLock(string lockPath)
+    {
+        try
+        {
+            if (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) <= PersistenceLockStaleAfter)
+                return;
+
+            File.Delete(lockPath);
+        }
+        catch
+        {
+            // A fresh or unreadable lock is authoritative until the shared stale limit.
+        }
+    }
+
+    private sealed class PersistenceLockLease(string path, FileStream stream) : IDisposable
+    {
+        public void Dispose()
+        {
+            stream.Dispose();
+            try { File.Delete(path); } catch { }
+        }
+    }
+
     private bool SaveFavorites()
     {
         if (_favoritesWriteBlocked)
             return false;
 
-        try
+        string path = ResolvedFavoritesPath;
+        Dictionary<string, int>? mergedResult = null;
+        bool malformed = false;
+        bool saved = TryWithPersistenceLock(path, () =>
         {
-            string path = ResolvedFavoritesPath;
             var merged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
-            if (File.Exists(path))
+            if (!TryLoadFavoritesFile(path, merged))
             {
-                using var document = JsonDocument.Parse(File.ReadAllText(path));
-                if (document.RootElement.ValueKind != JsonValueKind.Object)
-                    return false;
-                foreach (var property in document.RootElement.EnumerateObject())
-                    if (TryReadFavoriteLevel(property.Value, out int level))
-                        merged[NormalizeFavoritePath(property.Name)] = level;
+                malformed = true;
+                return false;
             }
             IEnumerable<string> dirtyKeys = _favoriteDirtyPaths.Count > 0 ? _favoriteDirtyPaths : _favorites.Keys.ToList();
             foreach (string key in dirtyKeys)
@@ -1057,15 +1144,21 @@ public partial class MainWindow : Window
             var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
             if (!TryWriteAtomicText(path, json))
                 return false;
-            _favorites.Clear();
-            foreach (var item in merged) _favorites[item.Key] = item.Value;
-            _favoriteDirtyPaths.Clear();
+            mergedResult = merged;
             return true;
-        }
-        catch
+        });
+
+        if (!saved || mergedResult is null)
         {
+            if (malformed)
+                _favoritesWriteBlocked = true;
             return false;
         }
+
+        _favorites.Clear();
+        foreach (var item in mergedResult) _favorites[item.Key] = item.Value;
+        _favoriteDirtyPaths.Clear();
+        return true;
     }
 
     private static string ResolvedSeenPath
@@ -1124,11 +1217,10 @@ public partial class MainWindow : Window
             foreach (var property in document.RootElement.EnumerateObject())
             {
                 if (string.IsNullOrWhiteSpace(property.Name))
-                    continue;
+                    return false;
 
-                bool seen = property.Value.ValueKind == JsonValueKind.True
-                    || (property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out int numeric) && numeric != 0)
-                    || (property.Value.ValueKind == JsonValueKind.String && bool.TryParse(property.Value.GetString(), out bool parsed) && parsed);
+                if (!TryReadSeenValue(property.Value, out bool seen))
+                    return false;
                 if (seen)
                     destination.Add(NormalizeFavoritePath(property.Name));
             }
@@ -1141,6 +1233,16 @@ public partial class MainWindow : Window
         }
     }
 
+    private static bool TryReadSeenValue(JsonElement value, out bool seen)
+    {
+        seen = false;
+        if (value.ValueKind == JsonValueKind.True) { seen = true; return true; }
+        if (value.ValueKind == JsonValueKind.False) return true;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric)) { seen = numeric != 0; return true; }
+        if (value.ValueKind == JsonValueKind.String && bool.TryParse(value.GetString(), out bool parsed)) { seen = parsed; return true; }
+        return false;
+    }
+
     private bool SeenStateContains(string path)
         => _seenPaths.Contains(NormalizeFavoritePath(path));
 
@@ -1149,12 +1251,17 @@ public partial class MainWindow : Window
         if (_seenWriteBlocked)
             return false;
 
-        try
+        string path = ResolvedSeenPath;
+        HashSet<string>? mergedResult = null;
+        bool malformed = false;
+        bool saved = TryWithPersistenceLock(path, () =>
         {
-            string path = ResolvedSeenPath;
             var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             if (!TryLoadSeenFile(path, merged))
+            {
+                malformed = true;
                 return false;
+            }
             merged.UnionWith(_seenPaths);
             var ordered = merged
                 .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
@@ -1162,13 +1269,17 @@ public partial class MainWindow : Window
             var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
             if (!TryWriteAtomicText(path, json))
                 return false;
-            _seenPaths.UnionWith(merged);
+            mergedResult = merged;
             return true;
-        }
-        catch
+        });
+        if (!saved || mergedResult is null)
         {
+            if (malformed)
+                _seenWriteBlocked = true;
             return false;
         }
+        _seenPaths.UnionWith(mergedResult);
+        return true;
     }
 
     private bool MarkTileSeen(Tile tile)
@@ -4871,16 +4982,46 @@ public partial class MainWindow : Window
 
     private ViewerState? ReadState()
     {
-        try
-        {
-            if (!File.Exists(ResolvedStatePath)) return null;
-            return JsonSerializer.Deserialize<ViewerState>(File.ReadAllText(ResolvedStatePath));
-        }
-        catch
+        if (!TryReadViewerStateFile(ResolvedStatePath, out var state))
         {
             _stateWriteBlocked = true;
             return null;
         }
+
+        return state;
+    }
+
+    private static bool TryReadViewerStateFile(string path, out ViewerState? state)
+    {
+        state = null;
+        if (!File.Exists(path))
+            return true;
+
+        try
+        {
+            string json = File.ReadAllText(path);
+            using var document = JsonDocument.Parse(json);
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return false;
+            state = JsonSerializer.Deserialize<ViewerState>(json);
+            return state is not null && state.Version <= 1;
+        }
+        catch
+        {
+            state = null;
+            return false;
+        }
+    }
+
+    private static Dictionary<string, JsonElement>? CloneExtensionData(Dictionary<string, JsonElement>? source)
+    {
+        if (source is null || source.Count == 0)
+            return null;
+
+        var clone = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+        foreach (var entry in source)
+            clone[entry.Key] = entry.Value.Clone();
+        return clone;
     }
 
     private void SaveState()
@@ -4889,7 +5030,7 @@ public partial class MainWindow : Window
 
         try
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(ResolvedStatePath)!);
+            string path = ResolvedStatePath;
             var selectedPath = SelectedTile() is { IsRealFile: true } selected ? selected.Path : null;
             _restoredSelectedPath = selectedPath;
             var state = new ViewerState
@@ -4914,11 +5055,27 @@ public partial class MainWindow : Window
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
-                ExtensionData = _stateExtensionData,
+                ExtensionData = CloneExtensionData(_stateExtensionData),
             };
-            var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            if (!TryWriteAtomicText(ResolvedStatePath, json))
+            bool malformed = false;
+            bool saved = TryWithPersistenceLock(path, () =>
+            {
+                if (!TryReadViewerStateFile(path, out var latest))
+                {
+                    malformed = true;
+                    return false;
+                }
+                state.ExtensionData = CloneExtensionData(latest?.ExtensionData ?? _stateExtensionData);
+                string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
+                return TryWriteAtomicText(path, json);
+            });
+            if (!saved)
+            {
+                if (malformed)
+                    _stateWriteBlocked = true;
                 return;
+            }
+            _stateExtensionData = CloneExtensionData(state.ExtensionData);
             if (_currentFolderSet.Count > 0)
                 SaveSharedRecentFolderSet(_currentFolderSet);
         }
@@ -4946,6 +5103,8 @@ public partial class MainWindow : Window
         try
         {
             using var document = JsonDocument.Parse(File.ReadAllText(path));
+            if (document.RootElement.ValueKind != JsonValueKind.Object)
+                return new SharedRecentReadResult(false, NormalizeSharedRecentFolders(null), "shared recent root is not an object");
             return new SharedRecentReadResult(true, NormalizeSharedRecentFolders(document.RootElement), null);
         }
         catch (Exception ex)
@@ -4964,13 +5123,37 @@ public partial class MainWindow : Window
         {
             var element = root.Value;
             if (element.TryGetProperty("lastFolderSet", out var lastFolderSetElement))
+            {
+                if (lastFolderSetElement.ValueKind is not (JsonValueKind.Array or JsonValueKind.String))
+                    throw new JsonException("lastFolderSet must be an array or string");
                 lastFolderSet = NormalizeFolderSet(lastFolderSetElement);
+            }
             if (element.TryGetProperty("recentFolderSets", out var recentFolderSetsElement))
+            {
+                if (recentFolderSetsElement.ValueKind != JsonValueKind.Array)
+                    throw new JsonException("recentFolderSets must be an array");
                 recentFolderSets = NormalizeRecentFolderSets(recentFolderSetsElement);
+            }
             if (element.TryGetProperty("updatedAtUtc", out var updatedAtElement) &&
-                updatedAtElement.ValueKind == JsonValueKind.String &&
-                !string.IsNullOrWhiteSpace(updatedAtElement.GetString()))
+                updatedAtElement.ValueKind != JsonValueKind.String)
+                throw new JsonException("updatedAtUtc must be a string");
+            if (element.TryGetProperty("updatedAtUtc", out updatedAtElement) && !string.IsNullOrWhiteSpace(updatedAtElement.GetString()))
                 updatedAtUtc = updatedAtElement.GetString()!;
+
+            var extensionData = new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+            foreach (var property in element.EnumerateObject())
+            {
+                if (property.Name is "version" or "lastFolderSet" or "recentFolderSets" or "updatedAtUtc")
+                    continue;
+                extensionData[property.Name] = property.Value.Clone();
+            }
+            return new SharedRecentFoldersState
+            {
+                LastFolderSet = lastFolderSet,
+                RecentFolderSets = recentFolderSets,
+                UpdatedAtUtc = updatedAtUtc,
+                ExtensionData = extensionData.Count > 0 ? extensionData : null,
+            };
         }
 
         return new SharedRecentFoldersState
@@ -5071,24 +5254,26 @@ public partial class MainWindow : Window
         if (folderSet.Count == 0)
             return true;
 
-        var current = ReadSharedRecentFolders();
-        if (!current.Ok)
-            return false;
-
-        var recentFolderSets = NormalizeRecentFolderSets(
-            new[] { folderSet }.Concat(current.Recent.RecentFolderSets));
-        var next = new SharedRecentFoldersState
-        {
-            LastFolderSet = folderSet,
-            RecentFolderSets = recentFolderSets,
-            UpdatedAtUtc = DateTime.UtcNow.ToString("O"),
-        };
-
         try
         {
             string path = ResolvedSharedRecentPath;
-            var json = JsonSerializer.Serialize(next, SharedRecentJsonOptions);
-            return TryWriteAtomicText(path, json);
+            return TryWithPersistenceLock(path, () =>
+            {
+                var current = ReadSharedRecentFolders();
+                if (!current.Ok)
+                    return false;
+                var recentFolderSets = NormalizeRecentFolderSets(
+                    new[] { folderSet }.Concat(current.Recent.RecentFolderSets));
+                var next = new SharedRecentFoldersState
+                {
+                    LastFolderSet = folderSet,
+                    RecentFolderSets = recentFolderSets,
+                    UpdatedAtUtc = DateTime.UtcNow.ToString("O"),
+                    ExtensionData = CloneExtensionData(current.Recent.ExtensionData),
+                };
+                var json = JsonSerializer.Serialize(next, SharedRecentJsonOptions);
+                return TryWriteAtomicText(path, json);
+            });
         }
         catch
         {
@@ -5392,6 +5577,78 @@ public partial class MainWindow : Window
         => VirtualizingPanel.GetIsVirtualizing(RowsList) && VirtualizingPanel.GetVirtualizationMode(RowsList) == VirtualizationMode.Recycling;
     public int ListRealizedContainerCountForSmoke
         => Enumerable.Range(0, RowsList.Items.Count).Count(index => RowsList.ItemContainerGenerator.ContainerFromIndex(index) is not null);
+    public static async Task<PersistenceLockProbe> ProbePersistenceLockForSmokeAsync(string favoritesPath, string firstPath, string secondPath)
+    {
+        var start = new ManualResetEventSlim(false);
+        Task<bool> first = Task.Run(() => { start.Wait(); return TryMergeFavoriteForSmoke(favoritesPath, firstPath, 1); });
+        Task<bool> second = Task.Run(() => { start.Wait(); return TryMergeFavoriteForSmoke(favoritesPath, secondPath, 5); });
+        start.Set();
+        bool[] writers = await Task.WhenAll(first, second);
+        var merged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        bool concurrentMerged = writers.All(static value => value)
+            && TryLoadFavoritesFile(favoritesPath, merged)
+            && merged.TryGetValue(NormalizeFavoritePath(firstPath), out int firstLevel) && firstLevel == 1
+            && merged.TryGetValue(NormalizeFavoritePath(secondPath), out int secondLevel) && secondLevel == 5;
+
+        string lockPath = favoritesPath + ".lock";
+        bool staleRecovered = await Task.Run(() =>
+        {
+            string stale = JsonSerializer.Serialize(new { pid = int.MaxValue, createdAtUtc = DateTimeOffset.UtcNow.ToString("O") });
+            File.WriteAllText(lockPath, stale);
+            File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow.Subtract(PersistenceLockStaleAfter + TimeSpan.FromSeconds(1)));
+            return TryMergeFavoriteForSmoke(favoritesPath, Path.Combine(Path.GetDirectoryName(favoritesPath)!, "stale.png"), 2)
+                && !File.Exists(lockPath);
+        });
+
+        bool malformedLockProtected = await Task.Run(() =>
+        {
+            File.WriteAllText(lockPath, "{\"pid\":\"unknown\"}");
+            string beforeMalformedLock = File.ReadAllText(favoritesPath);
+            bool protectedFile = !TryMergeFavoriteForSmoke(favoritesPath, Path.Combine(Path.GetDirectoryName(favoritesPath)!, "blocked.png"), 3)
+                && File.ReadAllText(favoritesPath) == beforeMalformedLock
+                && File.Exists(lockPath);
+            try { File.Delete(lockPath); } catch { }
+            return protectedFile;
+        });
+        return new PersistenceLockProbe(concurrentMerged, staleRecovered, malformedLockProtected);
+    }
+
+    private static bool TryMergeFavoriteForSmoke(string path, string key, int level)
+        => TryWithPersistenceLock(path, () =>
+        {
+            var merged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (!TryLoadFavoritesFile(path, merged))
+                return false;
+            merged[NormalizeFavoritePath(key)] = level;
+            string json = JsonSerializer.Serialize(merged.OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static item => item.Key, static item => item.Value, StringComparer.OrdinalIgnoreCase), new JsonSerializerOptions { WriteIndented = true });
+            return TryWriteAtomicText(path, json);
+        });
+    public async Task<ListVirtualizationProbe> ProbeListVirtualizationForSmokeAsync()
+    {
+        bool listMode = SetListModeForSmoke();
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(RowsList);
+        if (!listMode || viewer is null || viewer.ScrollableHeight <= 0)
+            return new ListVirtualizationProbe(listMode, ListUsesRecyclingVirtualizationForSmoke, false, 0, 0, 0);
+
+        async Task<int> MeasureAtAsync(double offset)
+        {
+            viewer.ScrollToVerticalOffset(offset);
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+            return ListRealizedContainerCountForSmoke;
+        }
+
+        int first = await MeasureAtAsync(0);
+        int middle = await MeasureAtAsync(viewer.ScrollableHeight / 2);
+        int last = await MeasureAtAsync(viewer.ScrollableHeight);
+        bool bounded = first is > 0 and <= MaxGridRealizationCount
+            && middle is > 0 and <= MaxGridRealizationCount
+            && last is > 0 and <= MaxGridRealizationCount;
+        return new ListVirtualizationProbe(listMode, ListUsesRecyclingVirtualizationForSmoke, bounded, first, middle, last);
+    }
     public double SidebarWidthForSmoke => Sidebar.ActualWidth;
     public double RightPanelWidthForSmoke => RightPanel.ActualWidth;
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
@@ -5916,6 +6173,19 @@ public readonly record struct DisplayStyleMetrics(
     double ListThumbnailSize,
     int FilteredCount);
 
+public readonly record struct ListVirtualizationProbe(
+    bool ListMode,
+    bool Recycling,
+    bool Bounded,
+    int FirstRealized,
+    int MiddleRealized,
+    int LastRealized);
+
+public readonly record struct PersistenceLockProbe(
+    bool ConcurrentMerged,
+    bool StaleRecovered,
+    bool MalformedLockProtected);
+
 public readonly record struct ModalTransformSnapshot(
     double Zoom,
     bool Flipped,
@@ -6002,6 +6272,8 @@ public sealed class SharedRecentFoldersState
     public List<string> LastFolderSet { get; set; } = [];
     public List<List<string>> RecentFolderSets { get; set; } = [];
     public string UpdatedAtUtc { get; set; } = "";
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public sealed record SharedRecentReadResult(
