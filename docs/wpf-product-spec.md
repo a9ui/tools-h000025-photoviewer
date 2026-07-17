@@ -42,6 +42,8 @@ NON-GOAL:
 
 - .NET 8 Windows WPF、single desktop process。
 - main project: `local-native/PhotoViewer.Wpf/PhotoViewer.Wpf.csproj`。
+- 通常起動入口はproject rootの`start_wpf.bat`。Release executableとWPF source/projectのtimestampを比較し、targetがmissing/staleならRelease build、currentならdirect executableを起動する。`PHOTOVIEWER_WPF_REBUILD=1`は明示rebuild、`PHOTOVIEWER_WPF_DOTNET_RUN=1`は開発用だけに使う。
+- launcherはBrowser serverやportを開始・停止せず、既存WPF processの探索・終了もしない。process ownershipをport番号や同名exeだけから推測しない。freshness分岐は`scripts/verify-wpf-launcher-freshness.ps1`で固定する。
 - BrowserのNode/Next serverを起動しない。
 - source folderをreadし、explicit Delete時だけShell Recycle Binを呼ぶ。
 - screenshot/smoke用CLIは専用temp fixtureとoverride pathを受け、実ユーザーstate/cacheを使わない。
@@ -599,17 +601,19 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
-通常の全WPF verifierは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。日常の短い回帰では`-SkipStress`を使い、closeoutでは20,000件stressを省略しない。40-cycle reload soakは重いため明示的な`-IncludeReloadSoak`で追加する。新しい`verify-wpf-*.ps1`は原則自動検出され、長時間soakだけを明示opt-inにする。
+通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めず、40-cycle reload soakも既定では除外する。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、cross-runtime 2本とreload soakを別途実行する。文書基準commit `64472dd`のinventoryはdefault 41 checks、`-SkipStress` 40、`-IncludeReloadSoak` 42。これはscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
 
 | Area | Command |
 | --- | --- |
 | Retired UI regression guard | `powershell -File scripts/verify-ui-regression-guard.ps1` |
 | P0 integrated / 5,000 | `powershell -File scripts/verify-wpf-p0.ps1` |
 | Browser/WPF shared Favorite/Seen concurrent stress | `powershell -File scripts/verify-cross-runtime-shared-state.ps1 -Iterations 20` |
+| Browser/WPF/third-writer shared Recent concurrent stress | `powershell -File scripts/verify-cross-runtime-recent.ps1 -Iterations 20` |
 | Catalog stress / 20,000 | `powershell -File scripts/verify-wpf-catalog-stress.ps1 -Count 20000` |
 | P1 search/date/folder | `powershell -File scripts/verify-wpf-p1a.ps1` |
 | Date preset retirement/migration | `powershell -File scripts/verify-wpf-date-filter.ps1` |
 | P1 error/a11y/state | `powershell -File scripts/verify-wpf-p1b.ps1` |
+| Smoke process/environment isolation | `powershell -File scripts/verify-wpf-automation-isolation.ps1` |
 | Formats | `powershell -File scripts/verify-wpf-formats.ps1` |
 | Oversized/high-aspect decode bounds | `powershell -File scripts/verify-wpf-decode-bounds.ps1` |
 | Right panel | `powershell -File scripts/verify-wpf-right-panel.ps1` |
@@ -622,9 +626,12 @@ Accessibility:
 | Filter/focus/selection dispatcher race | `powershell -File scripts/verify-wpf-focus-filter-race.ps1` |
 | Folder switch/Refresh same-process soak | `powershell -File scripts/verify-wpf-reload-soak.ps1 -Count 1000 -Cycles 40` |
 | Shutdown final-state lifecycle | `powershell -File scripts/verify-wpf-shutdown-state.ps1` |
+| Runtime/version safe diagnostics | `powershell -File scripts/verify-wpf-diagnostics.ps1` |
+| Normal launcher missing/current/stale freshness | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
 | Process crash/live lock/stale recovery | `powershell -File scripts/verify-wpf-crash-lock-recovery.ps1 -Iterations 3` |
 | Partial multi-root scan / ownership | `powershell -File scripts/verify-wpf-partial-scan.ps1` |
+| Explicit scan cancellation / supersession | `powershell -File scripts/verify-wpf-scan-cancel.ps1` |
 | Recursive scan boundary | `powershell -File scripts/verify-wpf-scan-boundary.ps1` |
 | Unicode/long path/lock/corrupt/mixed-root lifecycle | `powershell -File scripts/verify-wpf-path-robustness.ps1` |
 | Current-monitor maximize/topology-safe restore | `powershell -File scripts/verify-wpf-monitor-work-area.ps1` |
@@ -640,6 +647,7 @@ Accessibility:
 | Delete protected roots / ownership reconciliation | `powershell -File scripts/verify-wpf-delete-correctness.ps1` |
 | Delete decode/Refresh race / tombstone lifetime | `powershell -File scripts/verify-wpf-delete-race.ps1` |
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
+| Sidebar/App Settings Unseen dots synchronization | `powershell -File scripts/verify-wpf-settings-unseen-dots.ps1` |
 | Exact visual viewports / Browser comparison states | `powershell -File scripts/verify-wpf-visual-layout.ps1 -EvidenceDir <path>` |
 | Direct launcher provenance / fail-closed rebuild | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 
@@ -659,15 +667,19 @@ Reload soakのmemory correctness gateは、warm-up直後と終了時のforced-GC
 - 5,000/20,000件でsilent truncateなし、realized UI bounded。時間/working set/GCは観測値としてJSONへ残す。
 - screenshotは同一viewport/stateのBrowser referenceと並べて差分確認し、screenshotだけをQA完了証拠にしない。`--shot-width` / `--shot-height`はOS work areaに依存せずrequested content viewportをexactに出力する。
 
-## 18. 現在の完成境界
+## 18. 現在の完成境界とCURRENT LIMITATION
 
-Browser基準のWPF P0/P1は実装・専用smoke済み。日常利用のP2は、Bulk Favorite、Bulk Recycle、right panel resize、preview tab reload/hover/reorder/middle-close、modal end wrap/chrome/edge/swipe/feedback、Prompt tag→search、Folder bucket range selection/selected actions/collapse persistence、native Explorer FileDrop drag-outとfolder drag-inまでfocused verifier付きで実装済み。
+Browser基準のWPF P0〜P2は実装・専用smoke済み。Bulk Favorite、Bulk Recycle、right panel resize、preview tab reload/hover/reorder/middle-close、modal end wrap/chrome/edge/swipe/feedback、Prompt tag→search、Folder bucket range selection/selected actions/collapse persistence、native Explorer FileDrop drag-outとfolder drag-inまでfocused verifier付きで実装済み。Modalはnamed focusable root、Tab/Control+Tab cycle、focused child上のEscape、close後focus return、metadata/copy/edge-zone Automationを`verify-wpf-p1b.ps1`で実動作固定している。
 
 現行ledger上のP0〜P2実装残はない。以後は統合回帰、実操作visual、性能/競合stressで欠陥が再現した時だけ同じ契約内を修正する。
 
-P3として明示的に遅延:
+CURRENT LIMITATION / P3として明示的に遅延:
 
 - WPFからのEnhancement enqueue/worker/cancel/retry/output delete。
-- 高度gesture、animation、visual polish。
+- disk cache quota/eviction。既存cache retention契約なしに自動削除を追加しない。
+- 高度gesture、animation、追加visual polish。
+- installer/self-contained publish、code signing、auto-update。通常のlocal `start_wpf.bat`起動とは別scope。
+
+これらは現行P0〜P2の互換要件ではなく、別実装が勝手に補完してshared state、source、cache、配布境界を変えてはならない。Browser側Section 22のCURRENT LIMITATIONも、WPFが再現すべきMUSTではない。
 
 「完成」を無期限に伸ばさないため、P0/P1安全契約と日常workflowを製品完成線、P2を操作効率、P3を製品判断後の拡張として分ける。残差を実装するたびにこの文書、parity ledger、focused verifierを同じcommitで更新する。
