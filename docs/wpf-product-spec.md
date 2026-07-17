@@ -464,6 +464,8 @@ Delete直前に毎回すべて再検証する。
 
 ## 14. Settings、state、persistence
 
+App Settingsはread-onlyのAbout / Diagnosticsを含む。表示とCopy payloadは製品/version、exe build UTC/local time、process architecture、.NET runtime、catalog/visible count、safety flagsだけであり、folder/file path、prompt、metadata、favorites、state/cache内容を含めない。revision/dirtyは`PVU_SOURCE_REVISION` / `PVU_SOURCE_DIRTY`がある時だけ示し、ない時はlocal buildとする。
+
 ### WPF-STATE-001 ViewerState v2
 
 保存field:

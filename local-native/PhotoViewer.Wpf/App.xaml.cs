@@ -45,6 +45,13 @@ public partial class App : Application
             return;
         }
 
+        int diagnosticsSmokeIdx = Array.IndexOf(e.Args, "--diagnostics-smoke");
+        if (diagnosticsSmokeIdx >= 0 && diagnosticsSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDiagnosticsSmoke(e.Args[diagnosticsSmokeIdx + 1]);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -462,6 +469,37 @@ public partial class App : Application
             screenshotIsIsolated,
         }));
         Shutdown(ok ? 0 : 1);
+    }
+
+    private void CaptureDiagnosticsSmoke(string resultPath)
+    {
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(() =>
+        {
+            win.OpenAppSettingsForSmoke();
+            win.Dispatcher.BeginInvoke(() =>
+            {
+            win.FocusDiagnosticsForSmoke();
+            DiagnosticsSmokeSnapshot success = win.CopyDiagnosticsForSmoke(injectClipboardFailure: false);
+            DiagnosticsSmokeSnapshot failure = win.CopyDiagnosticsForSmoke(injectClipboardFailure: true);
+            bool doneReachable = win.FocusAppSettingsDoneForSmoke();
+            string payload = success.CopyText;
+            bool privateDataAbsent = !payload.Contains(win.StatePathForSmoke, StringComparison.OrdinalIgnoreCase)
+                && !payload.Contains(win.FavoritesPathForSmoke, StringComparison.OrdinalIgnoreCase)
+                && !payload.Contains(win.SeenPathForSmoke, StringComparison.OrdinalIgnoreCase)
+                && !payload.Contains("\\", StringComparison.Ordinal)
+                && !payload.Contains("prompt", StringComparison.OrdinalIgnoreCase);
+            bool ok = success.Copied && !failure.Copied && failure.Status.Contains("could not be copied", StringComparison.OrdinalIgnoreCase) && doneReachable
+                && success.SurfaceContract && success.SettingsFocused && privateDataAbsent
+                && payload.Contains("PhotoViewer.Wpf", StringComparison.Ordinal) && payload.Contains("Build:", StringComparison.Ordinal)
+                && payload.Contains("Process:", StringComparison.Ordinal) && payload.Contains("Catalog:", StringComparison.Ordinal);
+            WriteCrossRuntimeSharedStateResult(resultPath, new { ok, success, failure, privateDataAbsent, doneReachable, payload });
+            win.Close();
+            Shutdown(ok ? 0 : 1);
+            }, DispatcherPriority.Input);
+        }, DispatcherPriority.ContextIdle);
     }
 
     /// <summary>Open the shell to dispatcher-idle readiness, write timing evidence, and exit.</summary>

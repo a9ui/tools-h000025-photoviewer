@@ -173,6 +173,8 @@ Browser 側の根拠:
 
 ### 3.5 Settings、state、error、accessibility、enhancement
 
+WPF App SettingsにはAbout / Diagnosticsを追加する。clipboard exportはsafe build/runtime/counts/safety fieldsだけで、private stateや画像情報をexportしない。clipboard拒否はinline live statusで知らせる。
+
 | 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
 | --- | --- | --- | --- | --- |
 | App Settings surface | `ADD` | P0 | app settings なし。modal の Settings は PNG generation metadata。 `MainWindow.xaml:697-737` | Confirm before delete、Unseen dots、必要な modal 設定を一か所へ配置 |

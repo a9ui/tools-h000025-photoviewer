@@ -50,6 +50,7 @@ implementation. The normative current behavior is documented in
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
+- `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
 - `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
 - `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke

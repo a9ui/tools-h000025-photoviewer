@@ -5,6 +5,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -157,6 +158,8 @@ public partial class MainWindow : Window
     private PngParametersMetadata? _currentPreviewMetadata;
     private string? _currentPreviewMetadataPath;
     private string _lastMetadataCopyText = "";
+    private Action<string> _diagnosticsClipboardWriter = Clipboard.SetText;
+    private string _lastDiagnosticsCopyText = "";
     private int _previewUpdateCount;
     private long _previewMs;
     private int _previewDeferredDecodeCount;
@@ -6226,6 +6229,8 @@ public partial class MainWindow : Window
     {
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
+        DiagnosticsText.Text = BuildDiagnosticsText();
+        DiagnosticsStatusText.Text = "Read-only diagnostics. Copy excludes paths, image metadata, prompts, and personal state.";
         AppSettingsDialog.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(ConfirmBeforeDeleteCheckBox.Focus, DispatcherPriority.Input);
     }
@@ -6240,6 +6245,58 @@ public partial class MainWindow : Window
     {
         _confirmBeforeDelete = ConfirmBeforeDeleteCheckBox.IsChecked == true;
         SaveState();
+    }
+
+    private string BuildDiagnosticsText()
+    {
+        Assembly assembly = Assembly.GetEntryAssembly() ?? typeof(MainWindow).Assembly;
+        string version = assembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
+            ?? assembly.GetName().Version?.ToString() ?? "local build";
+        string sourceRevision = Environment.GetEnvironmentVariable("PVU_SOURCE_REVISION")?.Trim() ?? "";
+        string sourceDirty = Environment.GetEnvironmentVariable("PVU_SOURCE_DIRTY")?.Trim() ?? "";
+        string source = string.IsNullOrWhiteSpace(sourceRevision)
+            ? "local build"
+            : $"{sourceRevision[..Math.Min(12, sourceRevision.Length)]}{(string.Equals(sourceDirty, "1", StringComparison.OrdinalIgnoreCase) || string.Equals(sourceDirty, "true", StringComparison.OrdinalIgnoreCase) ? " (dirty)" : "")}";
+        string buildTime = "unavailable";
+        try
+        {
+            string? exe = Environment.ProcessPath;
+            if (!string.IsNullOrWhiteSpace(exe) && File.Exists(exe))
+            {
+                DateTime utc = File.GetLastWriteTimeUtc(exe);
+                buildTime = $"{utc:yyyy-MM-dd HH:mm:ss} UTC / {utc.ToLocalTime():yyyy-MM-dd HH:mm:ss} local";
+            }
+        }
+        catch { }
+        return string.Join(Environment.NewLine, [
+            $"PhotoViewer.Wpf {version}",
+            $"Source: {source}",
+            $"Build: {buildTime}",
+            $"Process: {RuntimeInformation.ProcessArchitecture} · {RuntimeInformation.FrameworkDescription}",
+            $"Catalog: {_allTiles.Count} · Visible: {_tiles.Count}",
+            $"Safety: confirm delete {(_confirmBeforeDelete ? "on" : "off")} · unseen dots {(_showUnseenDots ? "on" : "off")}",
+        ]);
+    }
+
+    private void CopyDiagnostics_Click(object sender, RoutedEventArgs e)
+        => TryCopyDiagnostics();
+
+    private bool TryCopyDiagnostics()
+    {
+        string text = BuildDiagnosticsText();
+        _lastDiagnosticsCopyText = text;
+        try
+        {
+            _diagnosticsClipboardWriter(text);
+            DiagnosticsStatusText.Text = "Diagnostics copied. It contains no paths, metadata, prompts, or saved image state.";
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning($"Diagnostics clipboard copy failed: {ex.GetType().Name}");
+            DiagnosticsStatusText.Text = "Diagnostics could not be copied. Try again after another app releases the clipboard.";
+            return false;
+        }
     }
 
     private bool RequestDeleteSelected()
@@ -7275,6 +7332,29 @@ public partial class MainWindow : Window
     public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
     public bool DeleteStatusRetryVisibleForSmoke => DeleteStatusRetryButton.Visibility == Visibility.Visible;
     public bool AppSettingsVisibleForSmoke => AppSettingsDialog.Visibility == Visibility.Visible;
+    public bool DiagnosticsSurfaceContractForSmoke
+        => !string.IsNullOrWhiteSpace(AutomationProperties.GetName(DiagnosticsText))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(CopyDiagnosticsButton))
+            && AutomationProperties.GetLiveSetting(DiagnosticsStatusText) == AutomationLiveSetting.Polite
+            && AppSettingsDialogSurface.MaxHeight > 0;
+    public DiagnosticsSmokeSnapshot CopyDiagnosticsForSmoke(bool injectClipboardFailure)
+    {
+        Action<string> previous = _diagnosticsClipboardWriter;
+        _diagnosticsClipboardWriter = injectClipboardFailure
+            ? _ => throw new ExternalException("clipboard unavailable")
+            : _ => { };
+        try
+        {
+            bool copied = TryCopyDiagnostics();
+            return new DiagnosticsSmokeSnapshot(copied, _lastDiagnosticsCopyText, DiagnosticsStatusText.Text, DiagnosticsSurfaceContractForSmoke, IsSettingsDialogFocusedForSmoke);
+        }
+        finally
+        {
+            _diagnosticsClipboardWriter = previous;
+        }
+    }
+    public bool FocusDiagnosticsForSmoke() => CopyDiagnosticsButton.Focus();
+    public bool FocusAppSettingsDoneForSmoke() => AppSettingsDoneButton.Focus();
     public bool SettingsFocusTrapConfiguredForSmoke
         => KeyboardNavigation.GetTabNavigation(AppSettingsDialogSurface) == KeyboardNavigationMode.Cycle;
     public bool DeleteFocusTrapConfiguredForSmoke
@@ -8602,6 +8682,13 @@ public sealed record MetadataCopySmokeSnapshot(
     string? SelectedPath,
     string? MetadataPath,
     string CopyText);
+
+public sealed record DiagnosticsSmokeSnapshot(
+    bool Copied,
+    string CopyText,
+    string Status,
+    bool SurfaceContract,
+    bool SettingsFocused);
 
 public sealed record ModalMetadataSmokeSnapshot(
     bool ModalVisible,
