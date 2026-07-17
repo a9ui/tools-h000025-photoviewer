@@ -125,6 +125,14 @@ public partial class MainWindow : Window
     private string? _restoredActivePreviewTabPath;
     private bool _previewTabsPersistenceReady = true;
     private string? _hoverPreviewTabPath;
+    private string? _hoverPreviewTabBitmapPath;
+    private CancellationTokenSource? _previewTabHoverCts;
+    private TaskCompletionSource<PreviewTabHoverDecodeCompletion>? _previewTabHoverCompletion;
+    private TaskCompletionSource<PreviewTabHoverDecodeCompletion>? _lastPreviewTabHoverCompletion;
+    private readonly Dictionary<string, int> _previewTabHoverDecodeDelaysForSmoke = new(StringComparer.OrdinalIgnoreCase);
+    private long _previewTabHoverGeneration;
+    private int _previewTabHoverDecodeStartCount;
+    private int _previewTabHoverDecodeFailureCount;
     private string? _modalTransformPath;
     private string? _modalSourceTilePath;
     private string? _modalDisplayPath;
@@ -213,6 +221,7 @@ public partial class MainWindow : Window
             if (CardsList.Items.Count > 0)
                 CardsList.SelectedIndex = 0;
         };
+        Closed += (_, _) => CancelPreviewTabHoverDecode();
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
         RefreshLandingFolderSetUi();
@@ -261,6 +270,13 @@ public partial class MainWindow : Window
     {
         public static SearchFilterCompletion AppliedResult => new(true, false, null);
         public static SearchFilterCompletion DiscardedResult => new(false, true, null);
+    }
+
+    public readonly record struct PreviewTabHoverDecodeCompletion(bool Applied, bool Discarded, bool Failed, string? Error)
+    {
+        public static PreviewTabHoverDecodeCompletion AppliedResult => new(true, false, false, null);
+        public static PreviewTabHoverDecodeCompletion DiscardedResult => new(false, true, false, null);
+        public static PreviewTabHoverDecodeCompletion FailedResult => new(false, false, true, "image could not be decoded");
     }
 
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
@@ -3517,20 +3533,124 @@ public partial class MainWindow : Window
             RestorePreviewTabButton.IsEnabled = _closedPreviewTabs.Count > 0;
     }
 
-    private bool ShowPreviewTabHover(PreviewTabView tab, FrameworkElement? placementTarget)
+    private bool ShowPreviewTabHover(PreviewTabView tab, FrameworkElement? placementTarget, bool forceDecode = false)
     {
         var tile = _allTiles.FirstOrDefault(candidate => string.Equals(candidate.Path, tab.Path, StringComparison.OrdinalIgnoreCase));
         if (tile is null || PreviewTabHoverPopup is null)
             return false;
 
+        if (PreviewTabHoverPopup.IsOpen
+            && string.Equals(_hoverPreviewTabPath, tile.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            if (placementTarget is not null)
+                PreviewTabHoverPopup.PlacementTarget = placementTarget;
+            return true;
+        }
+
+        CancelPreviewTabHoverDecode();
         _hoverPreviewTabPath = tile.Path;
         PreviewTabHoverName.Text = tile.FileName;
         PreviewTabHoverPath.Text = tile.Path;
-        PreviewTabHoverBitmap.Source = tile.Thumbnail ?? LoadBitmap(tile.Path, 360);
+        _hoverPreviewTabBitmapPath = null;
+        PreviewTabHoverBitmap.Source = null;
         if (placementTarget is not null)
             PreviewTabHoverPopup.PlacementTarget = placementTarget;
         PreviewTabHoverPopup.IsOpen = true;
+
+        if (!forceDecode && tile.Thumbnail is not null)
+        {
+            PreviewTabHoverBitmap.Source = tile.Thumbnail;
+            _hoverPreviewTabBitmapPath = tile.Path;
+            var immediate = new TaskCompletionSource<PreviewTabHoverDecodeCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+            immediate.TrySetResult(PreviewTabHoverDecodeCompletion.AppliedResult);
+            _previewTabHoverCompletion = immediate;
+            _lastPreviewTabHoverCompletion = immediate;
+            return true;
+        }
+
+        var cts = new CancellationTokenSource();
+        _previewTabHoverCts = cts;
+        long generation = ++_previewTabHoverGeneration;
+        var completion = new TaskCompletionSource<PreviewTabHoverDecodeCompletion>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _previewTabHoverCompletion = completion;
+        _lastPreviewTabHoverCompletion = completion;
+        _previewTabHoverDecodeStartCount++;
+        _ = DecodePreviewTabHoverAsync(tile.Path, generation, cts, completion);
         return true;
+    }
+
+    private async Task DecodePreviewTabHoverAsync(
+        string path,
+        long generation,
+        CancellationTokenSource cts,
+        TaskCompletionSource<PreviewTabHoverDecodeCompletion> completion)
+    {
+        try
+        {
+            if (_previewTabHoverDecodeDelaysForSmoke.TryGetValue(path, out int delayMilliseconds) && delayMilliseconds > 0)
+                await Task.Delay(delayMilliseconds, cts.Token);
+
+            BitmapSource? bitmap = await Task.Run(() => LoadBitmap(path, 360), cts.Token);
+            if (cts.IsCancellationRequested || generation != _previewTabHoverGeneration
+                || !string.Equals(_hoverPreviewTabPath, path, StringComparison.OrdinalIgnoreCase)
+                || PreviewTabHoverPopup?.IsOpen != true)
+            {
+                completion.TrySetResult(PreviewTabHoverDecodeCompletion.DiscardedResult);
+                return;
+            }
+
+            if (bitmap is null)
+            {
+                _previewTabHoverDecodeFailureCount++;
+                PreviewTabHoverBitmap.Source = null;
+                _hoverPreviewTabBitmapPath = null;
+                SetStatusToast("Preview tab image could not be decoded. You can continue browsing.");
+                completion.TrySetResult(PreviewTabHoverDecodeCompletion.FailedResult);
+                return;
+            }
+
+            PreviewTabHoverBitmap.Source = bitmap;
+            _hoverPreviewTabBitmapPath = path;
+            completion.TrySetResult(PreviewTabHoverDecodeCompletion.AppliedResult);
+        }
+        catch (OperationCanceledException)
+        {
+            completion.TrySetResult(PreviewTabHoverDecodeCompletion.DiscardedResult);
+        }
+        catch
+        {
+            if (generation == _previewTabHoverGeneration
+                && string.Equals(_hoverPreviewTabPath, path, StringComparison.OrdinalIgnoreCase)
+                && PreviewTabHoverPopup?.IsOpen == true)
+            {
+                _previewTabHoverDecodeFailureCount++;
+                PreviewTabHoverBitmap.Source = null;
+                _hoverPreviewTabBitmapPath = null;
+                SetStatusToast("Preview tab image could not be decoded. You can continue browsing.");
+                completion.TrySetResult(PreviewTabHoverDecodeCompletion.FailedResult);
+            }
+            else
+            {
+                completion.TrySetResult(PreviewTabHoverDecodeCompletion.DiscardedResult);
+            }
+        }
+        finally
+        {
+            if (ReferenceEquals(_previewTabHoverCts, cts))
+                _previewTabHoverCts = null;
+            if (ReferenceEquals(_previewTabHoverCompletion, completion))
+                _previewTabHoverCompletion = null;
+            cts.Dispose();
+        }
+    }
+
+    private void CancelPreviewTabHoverDecode()
+    {
+        _previewTabHoverGeneration++;
+        _previewTabHoverCts?.Cancel();
+        _previewTabHoverCts = null;
+        _previewTabHoverCompletion?.TrySetResult(PreviewTabHoverDecodeCompletion.DiscardedResult);
+        _previewTabHoverCompletion = null;
     }
 
     private bool HidePreviewTabHover(string? path = null)
@@ -3542,7 +3662,9 @@ public partial class MainWindow : Window
         }
 
         bool wasVisible = PreviewTabHoverPopup?.IsOpen == true || _hoverPreviewTabPath is not null;
+        CancelPreviewTabHoverDecode();
         _hoverPreviewTabPath = null;
+        _hoverPreviewTabBitmapPath = null;
         if (PreviewTabHoverPopup is not null)
             PreviewTabHoverPopup.IsOpen = false;
         if (PreviewTabHoverBitmap is not null)
@@ -6182,6 +6304,9 @@ public partial class MainWindow : Window
         ? null
         : _allTiles.FirstOrDefault(tile => string.Equals(tile.Path, _hoverPreviewTabPath, StringComparison.OrdinalIgnoreCase))?.FileName;
     public string? HoverPreviewTabPathForSmoke => _hoverPreviewTabPath;
+    public string? HoverPreviewTabBitmapPathForSmoke => _hoverPreviewTabBitmapPath;
+    public int PreviewTabHoverDecodeStartCountForSmoke => _previewTabHoverDecodeStartCount;
+    public int PreviewTabHoverDecodeFailureCountForSmoke => _previewTabHoverDecodeFailureCount;
     public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
     public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
@@ -6362,6 +6487,23 @@ public partial class MainWindow : Window
         var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
         return tab is not null && ShowPreviewTabHover(tab, PreviewTabList);
     }
+
+    public bool ShowPreviewTabHoverWithDecodeForSmoke(string fileName)
+    {
+        var tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && ShowPreviewTabHover(tab, PreviewTabList, forceDecode: true);
+    }
+
+    public void SetPreviewTabHoverDecodeDelayForSmoke(string fileName, int delayMilliseconds)
+    {
+        string? path = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Path;
+        if (!string.IsNullOrWhiteSpace(path))
+            _previewTabHoverDecodeDelaysForSmoke[path] = Math.Max(0, delayMilliseconds);
+    }
+
+    public Task<PreviewTabHoverDecodeCompletion> WaitForPreviewTabHoverDecodeForSmokeAsync()
+        => _lastPreviewTabHoverCompletion?.Task
+            ?? Task.FromResult(PreviewTabHoverDecodeCompletion.DiscardedResult);
 
     public bool HidePreviewTabHoverForSmoke(string? fileName = null)
     {

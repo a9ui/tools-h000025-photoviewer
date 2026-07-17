@@ -188,6 +188,11 @@ function writeJsonLocalStorage(key: string, value: unknown) {
   }
 }
 
+function withIndexToken(url: string, indexToken: string | null) {
+  if (!indexToken || /[?&]indexToken=/.test(url)) return url;
+  return `${url}${url.includes('?') ? '&' : '?'}indexToken=${encodeURIComponent(indexToken)}`;
+}
+
 type ScanEventStage = 'preparing' | 'scanning' | 'complete';
 
 function normalizeScanEventProgress(data: Record<string, unknown>) {
@@ -215,6 +220,7 @@ interface Ctx {
   setPhase: (p: 'landing' | 'scanning' | 'viewer') => void;
   dirPath: string;
   setDirPath: (d: string) => void;
+  indexToken: string | null;
 
   // Scan progress
   scanProgress: { processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null;
@@ -313,6 +319,7 @@ const ImageContext = createContext<Ctx | undefined>(undefined);
 export function ImageProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<'landing' | 'scanning' | 'viewer'>('landing');
   const [dirPath, setDirPath] = useState('');
+  const [indexToken, setIndexToken] = useState<string | null>(null);
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanRunRef = useRef(0);
@@ -377,6 +384,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     hiddenFolders: string[];
     hiddenFoldersKey: string;
     dirPath: string;
+    indexToken: string | null;
   }>({
     query: '',
     sortBy: DEFAULT_VIEW.sortBy,
@@ -386,6 +394,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     hiddenFolders: [],
     hiddenFoldersKey: '',
     dirPath: '',
+    indexToken: null,
   });
   const searchGenerationRef = useRef(0);
   const committedSearchGenerationRef = useRef(0);
@@ -864,6 +873,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     dateTo: string,
     hiddenFolders: string[],
     currentDirPath: string,
+    currentIndexToken: string | null,
     generation = searchGenerationRef.current
   ) => {
     const pageKey = getSearchPageKey(generation, page);
@@ -887,7 +897,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         ? `&hiddenFolders=${encodeURIComponent(JSON.stringify(hiddenFolders))}`
         : '';
       const dirParam = currentDirPath ? `&dir=${encodeURIComponent(currentDirPath)}` : '';
-      const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${randomSeedParam}${fromParam}${toParam}${hiddenParam}${dirParam}`;
+      const indexTokenParam = currentIndexToken ? `&indexToken=${encodeURIComponent(currentIndexToken)}` : '';
+      const url = `/api/search?q=${encodeURIComponent(query)}&page=${page}&size=${PAGE_SIZE}&sortBy=${sortBy}${randomSeedParam}${fromParam}${toParam}${hiddenParam}${dirParam}${indexTokenParam}`;
       const res = await fetch(url, { signal: abortController.signal });
       const data = await res.json().catch(() => null) as SearchResponse | { error?: unknown } | null;
       if (!res.ok) {
@@ -913,13 +924,17 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         meta.dateFrom !== dateFrom ||
         meta.dateTo !== dateTo ||
         meta.hiddenFoldersKey !== buildHiddenFoldersKey(hiddenFolders) ||
-        meta.dirPath !== currentDirPath
+        meta.dirPath !== currentDirPath ||
+        meta.indexToken !== currentIndexToken
       ) {
         return;
       }
 
       const withFavs = searchData.results.map((img) => ({
         ...img,
+        fileUrl: withIndexToken(img.fileUrl, currentIndexToken),
+        displayUrl: withIndexToken(img.displayUrl, currentIndexToken),
+        fullUrl: withIndexToken(img.fullUrl, currentIndexToken),
         isFavorite: !!favoritesRef.current[img.id],
       }));
 
@@ -977,7 +992,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     dateFrom: string,
     dateTo: string,
     hiddenFolders: string[],
-    currentDirPath: string
+    currentDirPath: string,
+    currentIndexToken: string | null,
   ) => {
     const preserveCurrentResults = searchMetaRef.current.dirPath === currentDirPath;
     searchMetaRef.current = {
@@ -989,6 +1005,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       hiddenFolders,
       hiddenFoldersKey: buildHiddenFoldersKey(hiddenFolders),
       dirPath: currentDirPath,
+      indexToken: currentIndexToken,
     };
     searchGenerationRef.current += 1;
     abortPendingSearchRequests();
@@ -1031,6 +1048,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         meta.dateTo,
         meta.hiddenFolders,
         meta.dirPath,
+        meta.indexToken,
         generation
       );
     }
@@ -1050,6 +1068,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       meta.dateTo,
       meta.hiddenFolders,
       meta.dirPath,
+      meta.indexToken,
       generation,
     );
   }, [doSearchPage]);
@@ -1063,17 +1082,17 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchQueryRef.current = q;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
-      resetSearch(q, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-      void doSearchPage(q, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
+      resetSearch(q, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
+      void doSearchPage(q, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
     }, 150);
-  }, [dirPath, doSearchPage, resetSearch, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders]);
+  }, [dirPath, doSearchPage, indexToken, resetSearch, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders]);
 
   useEffect(() => {
     if (phase !== 'viewer') return;
     const query = searchQueryRef.current;
-    resetSearch(query, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-    void doSearchPage(query, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath);
-  }, [view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, phase, doSearchPage, resetSearch]);
+    resetSearch(query, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
+    void doSearchPage(query, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
+  }, [view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken, phase, doSearchPage, resetSearch]);
 
   useEffect(() => {
     if (phase !== 'viewer' || !dirPath.trim() || totalIndexed <= 0 || searchTotal <= 0) return;
@@ -1088,6 +1107,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           dir: dirPath,
+          indexToken,
           priority: 'background',
           limit: Math.min(totalIndexed, AUTO_THUMB_WARM_LIMIT),
         }),
@@ -1096,7 +1116,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       });
     }, AUTO_THUMB_WARM_DELAY_MS);
     return () => window.clearTimeout(timer);
-  }, [dirPath, phase, searchTotal, totalIndexed]);
+  }, [dirPath, indexToken, phase, searchTotal, totalIndexed]);
 
   // Re-apply favorites flag when favorites change
   useEffect(() => {
@@ -1178,6 +1198,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const scanDir = formatDirSet(parseDirSet(options.dir ?? dirPath));
     if (!scanDir || phase === 'scanning') return;
     if (scanDir !== dirPath) setDirPath(scanDir);
+    setIndexToken(null);
     setScanError(null);
     warmedThumbDirRef.current = '';
     setViewState((prev) => {
@@ -1244,6 +1265,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           ...progress,
         });
         setTotalIndexed(progress.processed);
+        setIndexToken(typeof eventData.indexToken === 'string' && eventData.indexToken.trim()
+          ? eventData.indexToken
+          : null);
         es.close();
         options.onComplete?.(scanDir);
         setPhase('viewer');
@@ -1265,7 +1289,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   // ── Delete ──
   const deleteImage = useCallback(async (id: string): Promise<boolean> => {
     try {
-      const res = await fetch(`/api/delete?path=${encodeURIComponent(id)}`, { method: 'DELETE' });
+      const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
+      const res = await fetch(`/api/delete?path=${encodeURIComponent(id)}${tokenParam}`, { method: 'DELETE' });
       if (res.ok) {
         searchGenerationRef.current += 1;
         const generation = searchGenerationRef.current;
@@ -1309,6 +1334,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           meta.dateTo,
           meta.hiddenFolders,
           meta.dirPath,
+          meta.indexToken,
           generation
         );
         return true;
@@ -1320,12 +1346,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       console.error('Delete failed', error);
       return false;
     }
-  }, [abortPendingSearchRequests, doSearchPage]);
+  }, [abortPendingSearchRequests, doSearchPage, indexToken]);
 
   // ── Open in external viewer ──
   const openExternal = useCallback((id: string) => {
-    fetch(`/api/open?path=${encodeURIComponent(id)}`, { method: 'POST' }).catch(() => {});
-  }, []);
+    const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
+    fetch(`/api/open?path=${encodeURIComponent(id)}${tokenParam}`, { method: 'POST' }).catch(() => {});
+  }, [indexToken]);
 
   const setView = useCallback((partial: Partial<ViewSettings>) => {
     setViewState(prev => {
@@ -1555,7 +1582,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
   return (
     <ImageContext.Provider value={{
-      phase, setPhase, dirPath, setDirPath, scanProgress, scanError, dismissScanError,
+      phase, setPhase, dirPath, setDirPath, indexToken, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
       isSearching, searchError, ensureSearchRange, retrySearch, dismissSearchError,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,

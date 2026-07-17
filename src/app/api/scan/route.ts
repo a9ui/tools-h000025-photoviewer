@@ -2,7 +2,7 @@ import { NextRequest } from 'next/server';
 import { isScanAbortedError, ScanAbortedError, scanDirectory, setIndex } from '@/lib/indexer';
 import { cancelThumbnailWarmup } from '@/lib/thumbnailCache';
 import { basenameFromPath, parseDirSet } from '@/lib/pathSet';
-import { reserveScanRun } from '@/lib/scanRunCoordinator';
+import { canonicalScanFolderSet, reserveScanRun } from '@/lib/scanRunCoordinator';
 import type { ImageFile } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -154,7 +154,7 @@ export async function GET(request: NextRequest) {
 
         if (abortController.signal.aborted) throw new ScanAbortedError();
         // Store in memory for search
-        setIndex(allImages);
+        const indexToken = setIndex(allImages, canonicalScanFolderSet(dirs));
 
         const completeEvent = JSON.stringify({
           type: 'complete',
@@ -162,6 +162,7 @@ export async function GET(request: NextRequest) {
           total: allImages.length,
           newFiles: 0,
           stage: 'complete',
+          indexToken,
           message: failedRoots.length > 0
             ? `Scan complete with ${failedRoots.length} skipped folder(s). ${allImages.length} images indexed.`
             : `Scan complete. ${allImages.length} images indexed.`,

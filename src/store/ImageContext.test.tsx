@@ -118,12 +118,14 @@ class MockEventSource {
 }
 
 function ScanProbe() {
-  const { phase, dirPath, scanProgress, scanError, startScan, dismissScanError } = useImageStore();
+  const { phase, dirPath, indexToken, searchResults, scanProgress, scanError, startScan, dismissScanError } = useImageStore();
   return (
     <div>
       <output aria-label="scan phase">{phase}</output>
       <output aria-label="scan directory">{dirPath}</output>
       <output aria-label="scan error">{scanError ?? ''}</output>
+      <output aria-label="scan index token">{indexToken ?? ''}</output>
+      <output aria-label="scan first image url">{searchResults[0]?.fileUrl ?? ''}</output>
       <output aria-label="scan progress">{scanProgress ? 'active' : 'none'}</output>
       <output aria-label="scan processed">{scanProgress?.processed ?? ''}</output>
       <button type="button" onClick={() => startScan({ dir: 'C:/images' })}>Start test scan</button>
@@ -747,6 +749,45 @@ describe('ImageProvider scan failures', () => {
     expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
     expect(window.alert).not.toHaveBeenCalled();
     expect(source.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses a completed scan token for subsequent search and image requests', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/search')) {
+        return {
+          ok: true,
+          json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : { favorites: {} },
+      } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'complete', processed: 1, total: 1, newFiles: 1, stage: 'complete', indexToken: 'idx_session_a',
+        }),
+      } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'scan index token' })).toHaveTextContent('idx_session_a');
+      expect(screen.getByRole('status', { name: 'scan first image url' }))
+        .toHaveTextContent('indexToken=idx_session_a');
+      expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/search')
+        && String(input).includes('indexToken=idx_session_a'))).toBe(true);
+    });
   });
 
   it('shows an SSE scan conflict reason instead of a generic connection-loss message', async () => {

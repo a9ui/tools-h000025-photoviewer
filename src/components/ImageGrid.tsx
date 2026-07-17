@@ -46,12 +46,17 @@ function withThumbPriorityParams(fileUrl: string, priority: ThumbnailWarmupPrior
   return `${fileUrl}${separator}priority=${priority}`;
 }
 
-function dispatchThumbnailWarmup(paths: string[], dirPath: string, priority: ThumbnailWarmupPriority = 'nearby') {
+function dispatchThumbnailWarmup(
+  paths: string[],
+  dirPath: string,
+  priority: ThumbnailWarmupPriority = 'nearby',
+  indexToken?: string | null
+) {
   if (paths.length === 0) return;
   void fetch('/api/thumbs/warm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths, dir: dirPath, priority }),
+    body: JSON.stringify({ paths, dir: dirPath, priority, ...(indexToken ? { indexToken } : {}) }),
   }).catch(() => {
     // Best-effort only; rendered image requests can still generate thumbs.
   });
@@ -152,7 +157,7 @@ export default function ImageGrid() {
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     requestRevealImage, showSettings,
-    dirPath,
+    dirPath, indexToken,
   } = useImageStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -172,16 +177,21 @@ export default function ImageGrid() {
   const [rovingImageId, setRovingImageId] = useState<string | null>(null);
   const pendingPrimaryFocusIdRef = useRef<string | null>(null);
 
-  if (warmupBatcherRef.current === null) {
-    warmupBatcherRef.current = createThumbnailWarmupBatcher({
-      dispatch: dispatchThumbnailWarmup,
-    });
-  }
-
   useEffect(() => {
-    const batcher = warmupBatcherRef.current;
-    return () => batcher?.clear();
-  }, []);
+    const batcher = createThumbnailWarmupBatcher({
+      dispatch: (paths, currentDirPath, priority) => dispatchThumbnailWarmup(
+        paths,
+        currentDirPath,
+        priority,
+        indexToken
+      ),
+    });
+    warmupBatcherRef.current = batcher;
+    return () => {
+      batcher.clear();
+      if (warmupBatcherRef.current === batcher) warmupBatcherRef.current = null;
+    };
+  }, [indexToken]);
 
   useEffect(() => {
     thumbSizeRef.current = view.thumbSize;

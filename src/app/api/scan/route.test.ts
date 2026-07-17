@@ -40,6 +40,19 @@ afterEach(() => {
 });
 
 describe('GET /api/scan lifecycle', () => {
+  it('returns the stable viewer index token in the completion event', async () => {
+    mocks.scanDirectory.mockResolvedValue([]);
+    mocks.setIndex.mockReturnValue('idx_folder_set');
+
+    const response = await GET(scanRequest('C:/Pictures/A'));
+    expect(response.status).toBe(200);
+    const body = await response.text();
+
+    expect(mocks.setIndex).toHaveBeenCalledWith([], 'c:\\pictures\\a');
+    expect(body).toContain('"type":"complete"');
+    expect(body).toContain('"indexToken":"idx_folder_set"');
+  });
+
   it('rejects an overlapping canonical folder set and releases it after cancellation', async () => {
     mocks.scanDirectory.mockImplementation((_root: string, _progress: unknown, options: { signal?: AbortSignal }) => (
       new Promise((_resolve, reject) => {

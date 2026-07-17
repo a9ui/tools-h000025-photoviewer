@@ -55,22 +55,25 @@ async function removeDerivedImages(paths: string[]) {
  * Sends a local image to the Windows Recycle Bin, removes it from the in-memory
  * index and on-disk index cache, then cleans derived thumbnails/display images.
  */
-const deleteImage = createDeleteHandler({
-  platform: process.platform,
-  projectRoot: () => process.cwd(),
-  getIndexedPaths: () => getIndex().map((image) => image.absolutePath),
-  exists: (filePath) => fs.existsSync(filePath),
-  realPath: (filePath) => fs.realpathSync.native(filePath),
-  isSupportedImagePath,
-  getDerivedPaths: (filePath) => Promise.all([
-    getThumbnailPath(filePath),
-    getDisplayPath(filePath),
-  ]),
-  recycleFile: moveFileToRecycleBin,
-  removeFromIndex,
-  removeDerivedImages,
-});
+function createDeleteImageHandler(indexToken?: string) {
+  return createDeleteHandler({
+    platform: process.platform,
+    projectRoot: () => process.cwd(),
+    getIndexedPaths: () => getIndex(indexToken).map((image) => image.absolutePath),
+    exists: (filePath) => fs.existsSync(filePath),
+    realPath: (filePath) => fs.realpathSync.native(filePath),
+    isSupportedImagePath,
+    getDerivedPaths: (filePath) => Promise.all([
+      getThumbnailPath(filePath),
+      getDisplayPath(filePath),
+    ]),
+    recycleFile: moveFileToRecycleBin,
+    removeFromIndex: (filePath) => removeFromIndex(filePath, indexToken),
+    removeDerivedImages,
+  });
+}
 
 export async function DELETE(request: NextRequest) {
-  return deleteImage(request);
+  const indexToken = request.nextUrl.searchParams.get('indexToken') || undefined;
+  return createDeleteImageHandler(indexToken)(request);
 }

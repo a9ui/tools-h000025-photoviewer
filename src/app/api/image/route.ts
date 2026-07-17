@@ -83,12 +83,13 @@ function getFallbackCacheControl(
  */
 export interface ImageRouteDependencies {
   platform: NodeJS.Platform;
-  getIndexedPaths: () => string[];
+  getIndexedPaths: (indexToken?: string) => string[];
 }
 
 const defaultDependencies: ImageRouteDependencies = {
   platform: process.platform,
-  getIndexedPaths: () => getIndex().map((image) => image.absolutePath),
+  getIndexedPaths: (indexToken) =>
+    getIndex(indexToken).map((image) => image.absolutePath),
 };
 
 export function createImageHandler(
@@ -103,6 +104,8 @@ export function createImageHandler(
     const priority = parseThumbPriority(request, warmOnly);
     const cacheVersion = parseCacheVersion(request);
     const hasVersion = Boolean(cacheVersion);
+    const indexToken =
+      request.nextUrl.searchParams.get("indexToken") || undefined;
 
     if (!filePath) {
       return new Response("Missing path", { status: 400 });
@@ -110,10 +113,15 @@ export function createImageHandler(
 
     const indexedPath = findActiveIndexedImagePath(
       filePath,
-      dependencies.getIndexedPaths(),
+      dependencies.getIndexedPaths(indexToken),
       dependencies.platform,
     );
     if (!indexedPath) {
+      if (indexToken) {
+        return new Response("Image is not in this viewer session", {
+          status: 404,
+        });
+      }
       return new Response("Image is not in the active index", { status: 403 });
     }
 

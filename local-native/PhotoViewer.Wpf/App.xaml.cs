@@ -65,6 +65,13 @@ public partial class App : Application
             return;
         }
 
+        int previewTabHoverSmokeIdx = Array.IndexOf(e.Args, "--preview-tab-hover-smoke");
+        if (previewTabHoverSmokeIdx >= 0 && previewTabHoverSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePreviewTabHoverSmoke(e.Args[previewTabHoverSmokeIdx + 1]);
+            return;
+        }
+
         int previewDecodeSmokeIdx = Array.IndexOf(e.Args, "--preview-decode-smoke");
         if (previewDecodeSmokeIdx >= 0 && previewDecodeSmokeIdx + 1 < e.Args.Length)
         {
@@ -5417,6 +5424,141 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePreviewTabHoverSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-preview-tab-hover-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+
+        Directory.CreateDirectory(folder);
+        const string slowName = "a-slow-source.png";
+        const string newestName = "b-newest-target.png";
+        const string corruptName = "c-corrupt-preview.png";
+        WriteSmokePng(Path.Combine(folder, slowName), 1920, 1080, Color.FromRgb(80, 130, 210));
+        WriteSmokePng(Path.Combine(folder, newestName), 80, 60, Color.FromRgb(230, 100, 130));
+        File.WriteAllBytes(Path.Combine(folder, corruptName), [0x89, 0x50, 0x4e, 0x47, 0x00, 0x01, 0x02, 0x03]);
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PreviewTabHoverSmokeResult result;
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(15),
+            };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                bool selectedSlow = win.SelectFileNameForSmoke(slowName);
+                bool openedSlow = win.OpenSelectedPreviewTabForSmoke();
+                bool selectedNewest = win.SelectFileNameForSmoke(newestName);
+                bool openedNewest = win.OpenSelectedPreviewTabForSmoke();
+                bool selectedCorrupt = win.SelectFileNameForSmoke(corruptName);
+                bool openedCorrupt = win.OpenSelectedPreviewTabForSmoke();
+                string? selectedBeforeHover = win.SelectedFileNameForSmoke;
+                string? activeBeforeHover = win.ActivePreviewTabNameForSmoke;
+
+                win.SetPreviewTabHoverDecodeDelayForSmoke(slowName, 450);
+                heartbeat.Start();
+                bool slowShown = win.ShowPreviewTabHoverWithDecodeForSmoke(slowName);
+                Task<MainWindow.PreviewTabHoverDecodeCompletion> slowCompletion = win.WaitForPreviewTabHoverDecodeForSmokeAsync();
+                bool newestShown = win.ShowPreviewTabHoverWithDecodeForSmoke(newestName);
+                Task<MainWindow.PreviewTabHoverDecodeCompletion> newestCompletionTask = win.WaitForPreviewTabHoverDecodeForSmokeAsync();
+                Task completed = await Task.WhenAny(newestCompletionTask, Task.Delay(TimeSpan.FromSeconds(6)));
+                MainWindow.PreviewTabHoverDecodeCompletion newestCompletion = completed == newestCompletionTask
+                    ? await newestCompletionTask
+                    : new MainWindow.PreviewTabHoverDecodeCompletion(false, false, false, "timed out waiting for newest hover decode");
+                MainWindow.PreviewTabHoverDecodeCompletion slowCompletionResult = await slowCompletion;
+                await Task.Delay(500);
+                heartbeat.Stop();
+
+                bool newestStayedVisible = string.Equals(win.HoverPreviewTabNameForSmoke, newestName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(Path.GetFileName(win.HoverPreviewTabBitmapPathForSmoke), newestName, StringComparison.OrdinalIgnoreCase);
+                string? newestHoverName = win.HoverPreviewTabNameForSmoke;
+                string? newestBitmapName = Path.GetFileName(win.HoverPreviewTabBitmapPathForSmoke);
+                bool selectionAndActiveStable = string.Equals(win.SelectedFileNameForSmoke, selectedBeforeHover, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.ActivePreviewTabNameForSmoke, activeBeforeHover, StringComparison.OrdinalIgnoreCase);
+
+                bool corruptShown = win.ShowPreviewTabHoverWithDecodeForSmoke(corruptName);
+                Task<MainWindow.PreviewTabHoverDecodeCompletion> corruptCompletionTask = win.WaitForPreviewTabHoverDecodeForSmokeAsync();
+                completed = await Task.WhenAny(corruptCompletionTask, Task.Delay(TimeSpan.FromSeconds(6)));
+                MainWindow.PreviewTabHoverDecodeCompletion corruptCompletion = completed == corruptCompletionTask
+                    ? await corruptCompletionTask
+                    : new MainWindow.PreviewTabHoverDecodeCompletion(false, false, false, "timed out waiting for corrupt hover decode");
+                bool corruptInlineRecovery = corruptCompletion.Failed
+                    && win.DeleteStatusVisibleForSmoke
+                    && win.DeleteStatusForSmoke.Contains("Preview tab image could not be decoded", StringComparison.OrdinalIgnoreCase)
+                    && win.PreviewTabHoverVisibleForSmoke
+                    && string.Equals(win.HoverPreviewTabNameForSmoke, corruptName, StringComparison.OrdinalIgnoreCase)
+                    && string.IsNullOrWhiteSpace(win.HoverPreviewTabBitmapPathForSmoke)
+                    && !win.DeleteConfirmationVisibleForSmoke
+                    && !win.ModalVisibleForSmoke;
+
+                bool heartbeatAdvanced = heartbeatCount >= 4;
+                bool ok = selectedSlow && openedSlow && selectedNewest && openedNewest && selectedCorrupt && openedCorrupt
+                    && slowShown && newestShown && corruptShown
+                    && heartbeatAdvanced
+                    && newestCompletion.Applied
+                    && slowCompletionResult.Discarded
+                    && newestStayedVisible
+                    && selectionAndActiveStable
+                    && corruptInlineRecovery
+                    && win.PreviewTabHoverDecodeStartCountForSmoke >= 3
+                    && win.PreviewTabHoverDecodeFailureCountForSmoke >= 1;
+                result = new PreviewTabHoverSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "preview-tab hover decode stayed non-blocking, newest-only, and recoverable for corrupt input"
+                        : "preview-tab hover decode did not meet responsiveness or recovery expectations",
+                    HeartbeatCount = heartbeatCount,
+                    SlowCompletionDiscarded = slowCompletionResult.Discarded,
+                    NewestCompletionApplied = newestCompletion.Applied,
+                    NewestHoverName = newestHoverName,
+                    NewestBitmapName = newestBitmapName,
+                    SelectionAndActiveStable = selectionAndActiveStable,
+                    CorruptCompletionFailed = corruptCompletion.Failed,
+                    CorruptInlineRecovery = corruptInlineRecovery,
+                    DecodeStartCount = win.PreviewTabHoverDecodeStartCountForSmoke,
+                    DecodeFailureCount = win.PreviewTabHoverDecodeFailureCountForSmoke,
+                    Status = win.DeleteStatusForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                result = new PreviewTabHoverSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePreviewTabHoverSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureStateSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -6839,6 +6981,12 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WritePreviewTabHoverSmokeResult(string path, PreviewTabHoverSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WritePreviewDecodeSmokeResult(string path, PreviewDecodeSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -7233,6 +7381,23 @@ public partial class App : Application
         public bool OpenedFirstAfterReload { get; init; }
         public bool FirstPinnedAfterReload { get; init; }
         public int PinnedCountAfterReload { get; init; }
+    }
+
+    private sealed class PreviewTabHoverSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public int HeartbeatCount { get; init; }
+        public bool SlowCompletionDiscarded { get; init; }
+        public bool NewestCompletionApplied { get; init; }
+        public string? NewestHoverName { get; init; }
+        public string? NewestBitmapName { get; init; }
+        public bool SelectionAndActiveStable { get; init; }
+        public bool CorruptCompletionFailed { get; init; }
+        public bool CorruptInlineRecovery { get; init; }
+        public int DecodeStartCount { get; init; }
+        public int DecodeFailureCount { get; init; }
+        public string Status { get; init; } = "";
     }
 
     private sealed record FavoriteSmokeResult(

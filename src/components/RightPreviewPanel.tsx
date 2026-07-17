@@ -62,6 +62,7 @@ export default function RightPreviewPanel() {
     setView,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
+    indexToken,
   } = useImageStore();
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
@@ -170,7 +171,7 @@ export default function RightPreviewPanel() {
   const enhanceOne = async (id: string) => {
     try {
       setView({ enhanceQueueOpen: true });
-      const job = await createEnhancementJob(id, getEnhancementSettings());
+      const job = await createEnhancementJob(id, getEnhancementSettings(), indexToken);
       setEnhanceMessage(`Enhance queued: ${job.id.slice(0, 8)}`);
     } catch (err) {
       setEnhanceMessage(err instanceof Error ? err.message : String(err));
@@ -183,7 +184,7 @@ export default function RightPreviewPanel() {
     setView({ enhanceQueueOpen: true });
     for (const id of selectedIds) {
       try {
-        await createEnhancementJob(id, getEnhancementSettings());
+        await createEnhancementJob(id, getEnhancementSettings(), indexToken);
         queued += 1;
       } catch (err) {
         setEnhanceMessage(`Queued ${queued}/${selectedCount}. ${err instanceof Error ? err.message : String(err)}`);

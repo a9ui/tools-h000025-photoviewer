@@ -22,7 +22,7 @@ function chipToneClass(tag: string): string {
 }
 
 export default function SearchBar() {
-  const { searchQuery, setSearchQuery } = useImageStore();
+  const { searchQuery, setSearchQuery, indexToken } = useImageStore();
   const [committedTags, setCommittedTags] = useState<string[]>(() => parseQueryTags(searchQuery));
   const [inputToken, setInputToken] = useState('');
   const [tags, setTags] = useState<TagEntry[]>([]);
@@ -53,7 +53,8 @@ export default function SearchBar() {
 
   useEffect(() => {
     let isCurrent = true;
-    fetch('/api/tags')
+    const tokenParam = indexToken ? `?indexToken=${encodeURIComponent(indexToken)}` : '';
+    fetch(`/api/tags${tokenParam}`)
       .then((r) => r.json())
       .then((data) => {
         if (isCurrent && data.tags) setTags(data.tags);
@@ -65,7 +66,7 @@ export default function SearchBar() {
     return () => {
       isCurrent = false;
     };
-  }, []);
+  }, [indexToken]);
 
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);

@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
  */
 export interface OpenRouteDependencies {
   platform: NodeJS.Platform;
-  getIndexedPaths: () => string[];
+  getIndexedPaths: (indexToken?: string) => string[];
   exists: (filePath: string) => boolean;
   isSupportedImage: (filePath: string) => boolean;
   openFile: (filePath: string) => Promise<void>;
@@ -42,7 +42,8 @@ function openWithDefaultApplication(filePath: string): Promise<void> {
 
 const defaultDependencies: OpenRouteDependencies = {
   platform: process.platform,
-  getIndexedPaths: () => getIndex().map((image) => image.absolutePath),
+  getIndexedPaths: (indexToken) =>
+    getIndex(indexToken).map((image) => image.absolutePath),
   exists: fs.existsSync,
   isSupportedImage: isSupportedImagePath,
   openFile: openWithDefaultApplication,
@@ -53,6 +54,8 @@ export function createOpenHandler(
 ) {
   return async function openImage(request: NextRequest) {
     const filePath = request.nextUrl.searchParams.get("path");
+    const indexToken =
+      request.nextUrl.searchParams.get("indexToken") || undefined;
 
     if (!filePath) {
       return NextResponse.json({ error: "Missing path" }, { status: 400 });
@@ -60,10 +63,16 @@ export function createOpenHandler(
 
     const indexedPath = findActiveIndexedImagePath(
       filePath,
-      dependencies.getIndexedPaths(),
+      dependencies.getIndexedPaths(indexToken),
       dependencies.platform,
     );
     if (!indexedPath) {
+      if (indexToken) {
+        return NextResponse.json(
+          { error: "Image is not in this viewer session" },
+          { status: 404 },
+        );
+      }
       return NextResponse.json(
         { error: "Image is not in the active index" },
         { status: 403 },

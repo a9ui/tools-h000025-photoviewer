@@ -10,10 +10,11 @@ export const dynamic = 'force-dynamic';
  */
 export async function GET(request: NextRequest) {
   const dir = request.nextUrl.searchParams.get('dir');
+  const indexToken = request.nextUrl.searchParams.get('indexToken') || undefined;
   if (!dir) {
     return NextResponse.json({ folders: [] });
   }
 
-  const folders = getFolderBuckets(dir, 200);
+  const folders = getFolderBuckets(dir, 200, indexToken);
   return NextResponse.json({ folders });
 }

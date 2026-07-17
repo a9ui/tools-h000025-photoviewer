@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { searchIndex } from '@/lib/indexer';
+import { hasIndexSession, searchIndex } from '@/lib/indexer';
 
 type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
@@ -28,11 +28,19 @@ export async function GET(request: NextRequest) {
   const size = parsePageSize(request.nextUrl.searchParams.get('size'), 100);
   const sortByParam = request.nextUrl.searchParams.get('sortBy');
   const randomSeed = request.nextUrl.searchParams.get('randomSeed') || undefined;
+  const indexToken = request.nextUrl.searchParams.get('indexToken') || undefined;
   const dateFrom = request.nextUrl.searchParams.get('dateFrom') || undefined;
   const dateTo = request.nextUrl.searchParams.get('dateTo') || undefined;
   const dirPath = request.nextUrl.searchParams.get('dir') || undefined;
   const hiddenFoldersRaw = request.nextUrl.searchParams.get('hiddenFolders');
   let hiddenFolders: string[] | undefined;
+
+  if (indexToken && !hasIndexSession(indexToken)) {
+    return NextResponse.json(
+      { error: 'This viewer session expired. Scan the folder set again to refresh it.' },
+      { status: 410 }
+    );
+  }
 
   if (hiddenFoldersRaw) {
     try {
@@ -64,7 +72,8 @@ export async function GET(request: NextRequest) {
     undefined,
     dirPath,
     hiddenFolders,
-    randomSeed
+    randomSeed,
+    indexToken,
   );
 
   return NextResponse.json(result);

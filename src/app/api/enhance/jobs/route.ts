@@ -138,6 +138,7 @@ export async function POST(request: NextRequest) {
     colorSaturation?: unknown;
     outputFormat?: unknown;
     confirmLargeJob?: unknown;
+    indexToken?: unknown;
   } = {};
   try {
     body = await request.json();
@@ -150,6 +151,9 @@ export async function POST(request: NextRequest) {
   }
   if (typeof body.sourceId !== 'string') {
     return NextResponse.json({ error: 'sourceId must be a string' }, { status: 400 });
+  }
+  if (body.indexToken !== undefined && typeof body.indexToken !== 'string') {
+    return NextResponse.json({ error: 'indexToken must be a string' }, { status: 400 });
   }
   if (body.presetId !== undefined && typeof body.presetId !== 'string') {
     return NextResponse.json({ error: 'presetId must be a string' }, { status: 400 });
@@ -200,7 +204,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const source = getIndex().find((image) => image.id === body.sourceId);
+  const source = getIndex(body.indexToken).find((image) => image.id.toLowerCase() === body.sourceId?.toLowerCase());
   if (!source) {
     return NextResponse.json({ error: 'Source image is not in the active index' }, { status: 404 });
   }

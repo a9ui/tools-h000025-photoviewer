@@ -172,6 +172,7 @@ export default function ImageModal() {
     confirmBeforeDelete,
     setConfirmBeforeDelete,
     view,
+    indexToken,
   } = useImageStore();
 
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
@@ -403,7 +404,8 @@ export default function ImageModal() {
     };
     const loadJobs = async () => {
       try {
-        const res = await fetch(`/api/enhance/jobs?sourceId=${encodeURIComponent(img.id)}`, { cache: 'no-store' });
+        const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
+        const res = await fetch(`/api/enhance/jobs?sourceId=${encodeURIComponent(img.id)}${tokenParam}`, { cache: 'no-store' });
         const data = await res.json();
         if (!res.ok || cancelled) return;
         const jobs = Array.isArray(data.jobs) ? data.jobs as ModalEnhancementJob[] : [];
@@ -457,7 +459,7 @@ export default function ImageModal() {
       }
       window.removeEventListener('pvu-enhance-jobs-changed', onChanged);
     };
-  }, [img, pendingAutoShowJobId]);
+  }, [img, indexToken, pendingAutoShowJobId]);
 
   const showFavoriteFeedback = useCallback((level: number) => {
     setFavoriteFeedback({ level, token: Date.now() });
@@ -590,7 +592,7 @@ export default function ImageModal() {
     setIsEnhancing(true);
     setEnhanceError('');
     try {
-      const job = await createEnhancementJob(img.id, getEnhancementSettings());
+      const job = await createEnhancementJob(img.id, getEnhancementSettings(), indexToken);
       setSelectedEnhancedJobId(job.id);
       setPendingAutoShowJobId(job.id);
     } catch (error) {
@@ -598,7 +600,7 @@ export default function ImageModal() {
     } finally {
       setIsEnhancing(false);
     }
-  }, [activeEnhancementJob, img, isEnhancing]);
+  }, [activeEnhancementJob, img, indexToken, isEnhancing]);
 
   const handleDeleteEnhancedOutput = useCallback(async () => {
     if (!selectedEnhancedJob) return;
