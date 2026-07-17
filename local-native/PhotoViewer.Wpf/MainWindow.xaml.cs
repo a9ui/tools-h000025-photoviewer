@@ -94,6 +94,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _selectedFolderBucketKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _restoredPreviewTabPaths = [];
@@ -171,6 +172,8 @@ public partial class MainWindow : Window
     private readonly HashSet<int> _favoriteFilterLevels = [];
     private bool _showUnseenDots;
     private bool _foldersSectionExpanded = true;
+    private bool _syncingFolderBucketSelection;
+    private string? _primarySelectedFolderBucketKey;
     private bool _restoringGridZoomAnchor;
     private string? _lastGridZoomAnchorPath;
     private double _lastGridZoomAnchorDrift;
@@ -548,6 +551,7 @@ public partial class MainWindow : Window
                     Path = key,
                     Count = count,
                     Hidden = hidden,
+                    IsSelected = _selectedFolderBucketKeys.Contains(key),
                 };
             })
             .OrderByDescending(static bucket => bucket.Count)
@@ -555,9 +559,30 @@ public partial class MainWindow : Window
             .ThenBy(static bucket => bucket.Key, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        _folderBucketViews.Clear();
-        foreach (var bucket in buckets)
-            _folderBucketViews.Add(bucket);
+        bool wasSyncing = _syncingFolderBucketSelection;
+        _syncingFolderBucketSelection = true;
+        try
+        {
+            _folderBucketViews.Clear();
+            foreach (var bucket in buckets)
+                _folderBucketViews.Add(bucket);
+
+            var availableKeys = buckets.Select(static bucket => bucket.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+            bool hasCurrentCatalogBuckets = _currentFolderSet.Count > 0
+                && _allTiles.Any(tile => tile.IsRealFile && _currentFolderSet.Any(root => IsPathWithinRoot(tile.Path, root)));
+            if (hasCurrentCatalogBuckets)
+                _selectedFolderBucketKeys.IntersectWith(availableKeys);
+            if (string.IsNullOrWhiteSpace(_primarySelectedFolderBucketKey)
+                || !_selectedFolderBucketKeys.Contains(_primarySelectedFolderBucketKey))
+            {
+                _primarySelectedFolderBucketKey = _selectedFolderBucketKeys.FirstOrDefault();
+            }
+            SynchronizeFolderBucketSelectionControl();
+        }
+        finally
+        {
+            _syncingFolderBucketSelection = wasSyncing;
+        }
 
         if (FolderBucketStatusText is not null)
         {
@@ -574,6 +599,65 @@ public partial class MainWindow : Window
                     : $"{buckets.Count - hidden:N0} shown / {buckets.Count:N0} folder bucket(s)";
             }
         }
+    }
+
+    private void FolderBucketSelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingFolderBucketSelection || sender is not ListBox listBox)
+            return;
+
+        foreach (FolderBucketView bucket in e.RemovedItems.OfType<FolderBucketView>())
+            _selectedFolderBucketKeys.Remove(bucket.Key);
+        foreach (FolderBucketView bucket in e.AddedItems.OfType<FolderBucketView>())
+            _selectedFolderBucketKeys.Add(bucket.Key);
+
+        _primarySelectedFolderBucketKey = (listBox.SelectedItem as FolderBucketView)?.Key
+            ?? e.AddedItems.OfType<FolderBucketView>().LastOrDefault()?.Key
+            ?? _selectedFolderBucketKeys.FirstOrDefault();
+        foreach (FolderBucketView bucket in _folderBucketViews)
+            bucket.IsSelected = _selectedFolderBucketKeys.Contains(bucket.Key);
+        if (!_initializing)
+            SaveState();
+    }
+
+    private void SynchronizeFolderBucketSelectionControl()
+    {
+        if (SidebarFolderSetList is null)
+            return;
+
+        bool wasSyncing = _syncingFolderBucketSelection;
+        try
+        {
+            _syncingFolderBucketSelection = true;
+            SidebarFolderSetList.SelectedItems.Clear();
+            foreach (FolderBucketView bucket in _folderBucketViews.Where(bucket => _selectedFolderBucketKeys.Contains(bucket.Key)))
+                SidebarFolderSetList.SelectedItems.Add(bucket);
+            SidebarFolderSetList.SelectedItem = _folderBucketViews.FirstOrDefault(bucket => string.Equals(bucket.Key, _primarySelectedFolderBucketKey, StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            _syncingFolderBucketSelection = wasSyncing;
+        }
+    }
+
+    private void SetFolderBucketSelection(IEnumerable<string> keys, string? primaryKey, bool persist)
+    {
+        var available = _folderBucketViews.Select(static bucket => bucket.Key).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _selectedFolderBucketKeys.Clear();
+        foreach (string key in keys.Where(static key => !string.IsNullOrWhiteSpace(key)))
+        {
+            if (available.Contains(key))
+                _selectedFolderBucketKeys.Add(key);
+        }
+
+        _primarySelectedFolderBucketKey = !string.IsNullOrWhiteSpace(primaryKey) && _selectedFolderBucketKeys.Contains(primaryKey)
+            ? primaryKey
+            : _selectedFolderBucketKeys.FirstOrDefault();
+        foreach (FolderBucketView bucket in _folderBucketViews)
+            bucket.IsSelected = _selectedFolderBucketKeys.Contains(bucket.Key);
+        SynchronizeFolderBucketSelectionControl();
+        if (persist && !_initializing)
+            SaveState();
     }
 
     private void RefreshRecentFolderSetViews()
@@ -2967,6 +3051,8 @@ public partial class MainWindow : Window
     {
         _foldersSectionExpanded = !_foldersSectionExpanded;
         SyncFoldersSectionControls();
+        if (!_initializing)
+            SaveState();
     }
 
     private void SyncFoldersSectionControls()
@@ -3018,6 +3104,30 @@ public partial class MainWindow : Window
         ApplyFolderBucketFilterChange();
     }
 
+    private void ShowSelectedFolderBuckets_Click(object sender, RoutedEventArgs e)
+        => SetSelectedFolderBucketsHidden(hidden: false);
+
+    private void HideSelectedFolderBuckets_Click(object sender, RoutedEventArgs e)
+        => SetSelectedFolderBucketsHidden(hidden: true);
+
+    private bool SetSelectedFolderBucketsHidden(bool hidden)
+    {
+        var keys = _folderBucketViews
+            .Where(bucket => _selectedFolderBucketKeys.Contains(bucket.Key))
+            .Select(static bucket => bucket.Key)
+            .Where(static key => !string.IsNullOrWhiteSpace(key))
+            .ToList();
+        if (keys.Count == 0)
+            return false;
+
+        bool changed = false;
+        foreach (string key in keys)
+            changed |= hidden ? _hiddenFolderBuckets.Add(key) : _hiddenFolderBuckets.Remove(key);
+        if (changed)
+            ApplyFolderBucketFilterChange();
+        return changed;
+    }
+
     private bool SetFolderBucketHidden(string key, bool hidden)
     {
         if (string.IsNullOrWhiteSpace(key))
@@ -3032,8 +3142,11 @@ public partial class MainWindow : Window
 
     private void ApplyFolderBucketFilterChange()
     {
+        List<string> selectedKeys = _selectedFolderBucketKeys.ToList();
+        string? primaryKey = _primarySelectedFolderBucketKey;
         PruneHiddenFolderBucketsToCurrentSet();
         RefreshFolderBucketViews();
+        SetFolderBucketSelection(selectedKeys, primaryKey, persist: false);
         ApplyFilters();
         SaveState();
     }
@@ -5775,6 +5888,7 @@ public partial class MainWindow : Window
         if (state is null)
         {
             SyncFavoriteFilterControls();
+            SyncFoldersSectionControls();
             return;
         }
 
@@ -5801,12 +5915,18 @@ public partial class MainWindow : Window
             _favoriteFilterLevels.Add(state.FavoriteFilterLevel.Value); // additive migration from the scalar schema
         _showUnseenDots = state.ShowUnseenDots;
         _confirmBeforeDelete = state.ConfirmBeforeDelete;
+        _foldersSectionExpanded = state.FoldersSectionExpanded ?? true;
+        SyncFoldersSectionControls();
         if (ConfirmBeforeDeleteCheckBox is not null) ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         if (ShowUnseenDots is not null) ShowUnseenDots.IsChecked = _showUnseenDots;
         SetFavoriteFilterState(state.ShowFavoritesOnly, !state.ShowFavoritesOnly && state.ShowUnfavoriteOnly, apply: false, persist: false);
         _hiddenFolderBuckets.Clear();
         foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
             _hiddenFolderBuckets.Add(folder);
+        _selectedFolderBucketKeys.Clear();
+        foreach (string folder in NormalizeFolderSet(state.SelectedFolderBucketKeys ?? []))
+            _selectedFolderBucketKeys.Add(folder);
+        _primarySelectedFolderBucketKey = NormalizeFolderSet([state.PrimarySelectedFolderBucketKey ?? ""]).FirstOrDefault();
         _pinnedPreviewPaths.Clear();
         foreach (string? path in (state.PinnedPreviewPaths ?? []).Select(NormalizePinnedPreviewPath))
         {
@@ -5855,7 +5975,7 @@ public partial class MainWindow : Window
             if (document.RootElement.ValueKind != JsonValueKind.Object)
                 return false;
             state = JsonSerializer.Deserialize<ViewerState>(json);
-            return state is not null && state.Version <= 1;
+            return state is not null && state.Version <= 2;
         }
         catch
         {
@@ -5902,7 +6022,7 @@ public partial class MainWindow : Window
             }
             var state = new ViewerState
             {
-                Version = 1,
+                Version = 2,
                 LastFolder = _currentFolder,
                 LastFolderSet = _currentFolderSet.Count > 0 ? _currentFolderSet : null,
                 SearchQuery = SearchInput.Text,
@@ -5921,7 +6041,10 @@ public partial class MainWindow : Window
                 FavoriteFilterLevels = _favoriteFilterLevels.Count > 0 ? _favoriteFilterLevels.OrderBy(static level => level).ToList() : null,
                 ShowUnseenDots = _showUnseenDots,
                 ConfirmBeforeDelete = _confirmBeforeDelete,
+                FoldersSectionExpanded = _foldersSectionExpanded,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
+                SelectedFolderBucketKeys = _selectedFolderBucketKeys.Count > 0 ? _selectedFolderBucketKeys.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
+                PrimarySelectedFolderBucketKey = _primarySelectedFolderBucketKey,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PreviewTabPaths = previewTabPaths.Count > 0 ? previewTabPaths : null,
                 ActivePreviewTabPath = activePreviewTabPath,
@@ -6427,6 +6550,14 @@ public partial class MainWindow : Window
     public int HiddenFolderBucketCountForSmoke => _folderBucketViews.Count(static bucket => bucket.Hidden);
     public List<string> FolderBucketKeysForSmoke => _folderBucketViews.Select(static bucket => bucket.Key).ToList();
     public List<string> HiddenFolderBucketKeysForSmoke => _folderBucketViews.Where(static bucket => bucket.Hidden).Select(static bucket => bucket.Key).ToList();
+    public List<string> SelectedFolderBucketKeysForSmoke => _folderBucketViews.Where(bucket => _selectedFolderBucketKeys.Contains(bucket.Key)).Select(static bucket => bucket.Key).ToList();
+    public string? PrimarySelectedFolderBucketKeyForSmoke => _primarySelectedFolderBucketKey;
+    public bool FolderBucketSelectionAccessibleForSmoke
+        => SidebarFolderSetList.SelectionMode == SelectionMode.Extended
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(SidebarFolderSetList), "Folder buckets", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(FoldersSectionToggle))
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ShowSelectedFolderBucketsButton), "Show selected folder buckets", StringComparison.Ordinal)
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(HideSelectedFolderBucketsButton), "Hide selected folder buckets", StringComparison.Ordinal);
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
     public void CloseModalForSmoke() => CloseModal();
     public int FilteredCountForSmoke => _tiles.Count;
@@ -6735,6 +6866,31 @@ public partial class MainWindow : Window
         RefreshUnseenDots();
     }
     public void ToggleFoldersSectionForSmoke() => ToggleFoldersSection_Click(this, new RoutedEventArgs());
+    public bool FocusFolderBucketListForSmoke() => SidebarFolderSetList.Focus();
+    public bool SelectFolderBucketRangeForSmoke(int firstIndex, int lastIndex)
+    {
+        if (firstIndex < 0 || lastIndex < 0 || firstIndex >= _folderBucketViews.Count || lastIndex >= _folderBucketViews.Count)
+            return false;
+        int start = Math.Min(firstIndex, lastIndex);
+        int count = Math.Abs(lastIndex - firstIndex) + 1;
+        var selected = _folderBucketViews.Skip(start).Take(count).Select(static bucket => bucket.Key).ToList();
+        SetFolderBucketSelection(selected, _folderBucketViews[lastIndex].Key, persist: true);
+        return true;
+    }
+    public bool ToggleFolderBucketSelectionForSmoke(int index)
+    {
+        if (index < 0 || index >= _folderBucketViews.Count)
+            return false;
+        string key = _folderBucketViews[index].Key;
+        var selected = _selectedFolderBucketKeys.ToList();
+        if (!selected.Remove(key))
+            selected.Add(key);
+        string? primary = selected.Contains(key, StringComparer.OrdinalIgnoreCase) ? key : _primarySelectedFolderBucketKey;
+        SetFolderBucketSelection(selected, primary, persist: true);
+        return true;
+    }
+    public bool HideSelectedFolderBucketsForSmoke() => SetSelectedFolderBucketsHidden(hidden: true);
+    public bool ShowSelectedFolderBucketsForSmoke() => SetSelectedFolderBucketsHidden(hidden: false);
     public bool SetFolderBucketHiddenForSmoke(string key, bool hidden) => SetFolderBucketHidden(key, hidden);
     public void ShowAllFolderBucketsForSmoke()
     {
@@ -7109,7 +7265,7 @@ public partial class MainWindow : Window
 // Lightweight persisted shell state.
 public sealed class ViewerState
 {
-    public int Version { get; set; } = 1;
+    public int Version { get; set; } = 2;
     public string? LastFolder { get; set; }
     public List<string>? LastFolderSet { get; set; }
     public string? SearchQuery { get; set; }
@@ -7130,10 +7286,14 @@ public sealed class ViewerState
     public bool ShowUnseenDots { get; set; }
     // Defaults to true for both fresh and pre-P0C state files.
     public bool ConfirmBeforeDelete { get; set; } = true;
+    // Missing in v1 state means expanded, preserving the original sidebar behavior.
+    public bool? FoldersSectionExpanded { get; set; }
     // Kept only to read pre-P0A scalar state; new writes use FavoriteFilterLevels.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? FavoriteFilterLevel { get; set; }
     public List<string>? HiddenFolderBuckets { get; set; }
+    public List<string>? SelectedFolderBucketKeys { get; set; }
+    public string? PrimarySelectedFolderBucketKey { get; set; }
     public List<string>? PinnedPreviewPaths { get; set; }
     public List<string>? PreviewTabPaths { get; set; }
     public string? ActivePreviewTabPath { get; set; }
@@ -7189,16 +7349,28 @@ public sealed class RecentFolderSetView
     public string Detail { get; init; } = "";
 }
 
-public sealed class FolderBucketView
+public sealed class FolderBucketView : INotifyPropertyChanged
 {
+    private bool _isSelected;
     public string Key { get; init; } = "";
     public string Label { get; init; } = "";
     public string Path { get; init; } = "";
     public int Count { get; init; }
     public bool Hidden { get; init; }
+    public bool IsSelected
+    {
+        get => _isSelected;
+        set
+        {
+            if (_isSelected == value) return;
+            _isSelected = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsSelected)));
+        }
+    }
     public string CountText => Count.ToString("N0");
     public string VisibilityText => Hidden ? "Hidden" : "Shown";
     public double Opacity => Hidden ? 0.48 : 1.0;
+    public event PropertyChangedEventHandler? PropertyChanged;
 }
 
 public sealed class PreviewTabView : INotifyPropertyChanged

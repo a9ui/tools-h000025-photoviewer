@@ -150,18 +150,39 @@
             <!-- Folders -->
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
-                <Button x:Name="FoldersSectionToggle" Style="{StaticResource SidebarLink}" Click="ToggleFoldersSection_Click" HorizontalAlignment="Left" Margin="0,0,0,8"><StackPanel Orientation="Horizontal"><TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}"/><TextBlock x:Name="FoldersSectionToggleText" Text="−" Margin="8,0,0,0"/></StackPanel></Button>
+                <Button x:Name="FoldersSectionToggle" Style="{StaticResource SidebarLink}" Click="ToggleFoldersSection_Click" HorizontalAlignment="Left" Margin="0,0,0,8" AutomationProperties.Name="Toggle folders section"><StackPanel Orientation="Horizontal"><TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}"/><TextBlock x:Name="FoldersSectionToggleText" Text="−" Margin="8,0,0,0"/></StackPanel></Button>
                 <StackPanel x:Name="FoldersSectionContent">
                 <WrapPanel Margin="0,0,0,8">
-                  <Button Style="{StaticResource SidebarLink}" Content="Show all" Margin="0,0,12,0" Click="ShowAllFolderBuckets_Click"/>
-                  <Button Style="{StaticResource SidebarLink}" Content="Hide all" Margin="0,0,12,0" Click="HideAllFolderBuckets_Click"/>
-                  <Button Style="{StaticResource SidebarLink}" Content="Invert" Click="InvertFolderBuckets_Click"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Show all" Margin="0,0,12,0" Click="ShowAllFolderBuckets_Click" AutomationProperties.Name="Show all folder buckets"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Hide all" Margin="0,0,12,0" Click="HideAllFolderBuckets_Click" AutomationProperties.Name="Hide all folder buckets"/>
+                  <Button Style="{StaticResource SidebarLink}" Content="Invert" Margin="0,0,12,0" Click="InvertFolderBuckets_Click" AutomationProperties.Name="Invert folder bucket visibility"/>
+                  <Button x:Name="ShowSelectedFolderBucketsButton" Style="{StaticResource SidebarLink}" Content="Show selected" Margin="0,0,12,0" Click="ShowSelectedFolderBuckets_Click" AutomationProperties.Name="Show selected folder buckets"/>
+                  <Button x:Name="HideSelectedFolderBucketsButton" Style="{StaticResource SidebarLink}" Content="Hide selected" Click="HideSelectedFolderBuckets_Click" AutomationProperties.Name="Hide selected folder buckets"/>
                 </WrapPanel>
                 <TextBlock x:Name="FolderBucketStatusText" Text="No folder buckets loaded" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,6" TextWrapping="Wrap"/>
-                <ItemsControl x:Name="SidebarFolderSetList" MaxHeight="180">
-                  <ItemsControl.ItemTemplate>
+                <ListBox x:Name="SidebarFolderSetList" MaxHeight="180" SelectionMode="Extended" SelectionChanged="FolderBucketSelectionChanged" Background="Transparent" BorderThickness="0" Padding="0" AutomationProperties.Name="Folder buckets" AutomationProperties.HelpText="Use Ctrl to toggle buckets and Shift to select a range.">
+                  <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                      <Setter Property="Padding" Value="0"/>
+                      <Setter Property="Margin" Value="0"/>
+                      <Setter Property="Background" Value="Transparent"/>
+                      <Setter Property="BorderThickness" Value="0"/>
+                      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                    </Style>
+                  </ListBox.ItemContainerStyle>
+                  <ListBox.ItemTemplate>
                     <DataTemplate>
-                      <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="7,5" Margin="0,0,0,4" Opacity="{Binding Opacity}">
+                      <Border CornerRadius="8" Background="{StaticResource SoftFill}" BorderThickness="1" Padding="7,5" Margin="0,0,0,4" Opacity="{Binding Opacity}">
+                        <Border.Style>
+                          <Style TargetType="Border">
+                            <Setter Property="BorderBrush" Value="{StaticResource GlassBorder}"/>
+                            <Style.Triggers>
+                              <DataTrigger Binding="{Binding IsSelected}" Value="True">
+                                <Setter Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
+                              </DataTrigger>
+                            </Style.Triggers>
+                          </Style>
+                        </Border.Style>
                         <Grid>
                           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                           <StackPanel Grid.Column="0">
@@ -171,12 +192,12 @@
                             </DockPanel>
                             <TextBlock Text="{Binding Path}" Foreground="{StaticResource TextTertiary}" FontSize="10.5" TextTrimming="CharacterEllipsis"/>
                           </StackPanel>
-                          <Button Grid.Column="1" Style="{StaticResource SidebarLink}" Content="{Binding VisibilityText}" Tag="{Binding}" Click="ToggleFolderBucket_Click" Margin="8,0,0,0"/>
+                          <Button Grid.Column="1" Style="{StaticResource SidebarLink}" Content="{Binding VisibilityText}" Tag="{Binding}" Click="ToggleFolderBucket_Click" Margin="8,0,0,0" AutomationProperties.Name="Toggle folder bucket visibility"/>
                         </Grid>
                       </Border>
                     </DataTemplate>
-                  </ItemsControl.ItemTemplate>
-                </ItemsControl>
+                  </ListBox.ItemTemplate>
+                </ListBox>
                 </StackPanel>
               </StackPanel>
             </Border>

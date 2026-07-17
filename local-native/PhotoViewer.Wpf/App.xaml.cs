@@ -2431,6 +2431,8 @@ public partial class App : Application
 
         PrepareSharedSeenSmokeEnvironment(smokeRoot);
         FolderBucketSmokeFixture fixture = PrepareFolderBucketSmokeFixture(smokeRoot);
+        string seededStatePath = Path.Combine(smokeRoot, ".cache", "state.json");
+        File.WriteAllText(seededStatePath, "{\"Version\":1,\"futureFolderBucketFlag\":{\"preserve\":true}}");
 
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
@@ -2447,6 +2449,25 @@ public partial class App : Application
                 int allCount = first.FilteredCountForSmoke;
                 int bucketCount = first.FolderBucketCountForSmoke;
                 List<string> bucketKeys = first.FolderBucketKeysForSmoke;
+                bool defaultExpanded = first.FoldersSectionExpandedForSmoke;
+                bool folderAccessibility = first.FolderBucketSelectionAccessibleForSmoke && first.FocusFolderBucketListForSmoke();
+                int favoritesBeforeBucketSelection = first.FavoriteStoreCountForSmoke;
+                int seenBeforeBucketSelection = first.SeenStoreCountForSmoke;
+                bool selectedRange = first.SelectFolderBucketRangeForSmoke(0, 1);
+                bool toggledFirstBucket = first.ToggleFolderBucketSelectionForSmoke(0);
+                List<string> selectedAfterToggle = first.SelectedFolderBucketKeysForSmoke;
+                string? primaryAfterToggle = first.PrimarySelectedFolderBucketKeyForSmoke;
+                bool hideSelected = first.HideSelectedFolderBucketsForSmoke();
+                int afterHideSelected = first.FilteredCountForSmoke;
+                bool showSelected = first.ShowSelectedFolderBucketsForSmoke();
+                int afterShowSelected = first.FilteredCountForSmoke;
+                bool selectedActionsOk = selectedRange && toggledFirstBucket
+                    && selectedAfterToggle.SequenceEqual([fixture.FolderB], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(primaryAfterToggle, fixture.FolderB, StringComparison.OrdinalIgnoreCase)
+                    && hideSelected && afterHideSelected == fixture.FolderACount
+                    && showSelected && afterShowSelected == fixture.TotalCount
+                    && first.FavoriteStoreCountForSmoke == favoritesBeforeBucketSelection
+                    && first.SeenStoreCountForSmoke == seenBeforeBucketSelection;
 
                 bool selectedFolderA = first.SelectFileNameForSmoke(fixture.FolderASelectedName);
                 bool hideFolderA = first.SetFolderBucketHiddenForSmoke(fixture.FolderA, true);
@@ -2473,7 +2494,10 @@ public partial class App : Application
                 int afterHideAll = first.FilteredCountForSmoke;
 
                 first.ShowAllFolderBucketsForSmoke();
+                bool selectedFolderBBeforePersistence = first.SelectFolderBucketRangeForSmoke(1, 1);
+                List<string> selectedBeforePersistence = first.SelectedFolderBucketKeysForSmoke;
                 bool persistedHideFolderB = first.SetFolderBucketHiddenForSmoke(fixture.FolderB, true);
+                first.ToggleFoldersSectionForSmoke();
                 ViewerState? persisted = ReadPersistedState(statePath);
                 string favoritesPath = first.FavoritesPathForSmoke;
                 string seenPath = first.SeenPathForSmoke;
@@ -2490,7 +2514,23 @@ public partial class App : Application
                 List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
                 int favoriteCountAfterReload = second.FavoriteStoreCountForSmoke;
                 int seenAfterReload = second.SeenStoreCountForSmoke;
+                bool collapsedAfterReload = !second.FoldersSectionExpandedForSmoke;
+                List<string> selectedBucketsAfterReload = second.SelectedFolderBucketKeysForSmoke;
+                string? primaryBucketAfterReload = second.PrimarySelectedFolderBucketKeyForSmoke;
+                bool sortSelectionPreserved = second.SetSortByForSmoke("name")
+                    && second.SelectedFolderBucketKeysForSmoke.SequenceEqual([fixture.FolderB], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(second.PrimarySelectedFolderBucketKeyForSmoke, fixture.FolderB, StringComparison.OrdinalIgnoreCase);
+                bool rootsPreserved = second.CurrentFolderSetForSmoke.SequenceEqual([fixture.FolderA, fixture.FolderB], StringComparer.OrdinalIgnoreCase);
                 second.Close();
+
+                string invalidStatePath = Path.Combine(smokeRoot, ".cache", "invalid-legacy-state.json");
+                File.WriteAllText(invalidStatePath, "{\"Version\":99,\"FoldersSectionExpanded\":false}");
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", invalidStatePath);
+                var invalidLegacy = HiddenWindow();
+                invalidLegacy.Show();
+                bool invalidLegacyFallback = invalidLegacy.FoldersSectionExpandedForSmoke;
+                invalidLegacy.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
 
                 bool bucketKeysOk = bucketCount == 2
                     && bucketKeys.Contains(fixture.FolderA, StringComparer.OrdinalIgnoreCase)
@@ -2529,14 +2569,29 @@ public partial class App : Application
                     && hideFolderBOk
                     && invertOk
                     && bulkOk
+                    && defaultExpanded
+                    && folderAccessibility
+                    && selectedActionsOk
                     && persistenceOk
+                    && selectedFolderBBeforePersistence
+                    && persisted?.Version == 2
+                    && persisted?.FoldersSectionExpanded == false
+                    && persisted?.SelectedFolderBucketKeys?.SequenceEqual([fixture.FolderB], StringComparer.OrdinalIgnoreCase) == true
+                    && string.Equals(persisted?.PrimarySelectedFolderBucketKey, fixture.FolderB, StringComparison.OrdinalIgnoreCase)
+                    && File.ReadAllText(statePath).Contains("futureFolderBucketFlag", StringComparison.OrdinalIgnoreCase)
+                    && collapsedAfterReload
+                    && selectedBucketsAfterReload.SequenceEqual([fixture.FolderB], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(primaryBucketAfterReload, fixture.FolderB, StringComparison.OrdinalIgnoreCase)
+                    && sortSelectionPreserved
+                    && rootsPreserved
+                    && invalidLegacyFallback
                     && stateIsolated;
 
                 result = new FolderBucketSmokeResult
                 {
                     Ok = ok,
                     Message = ok
-                        ? "folder bucket show/hide, invert, selection behavior, persistence, and state isolation checks passed"
+                        ? "folder bucket sidebar expansion, multi-select actions, migration, persistence, and state isolation checks passed"
                         : "folder bucket smoke did not meet show/hide/selection/persistence expectations",
                     ProjectRoot = smokeRoot,
                     FolderA = fixture.FolderA,
@@ -2545,6 +2600,9 @@ public partial class App : Application
                     AllCount = allCount,
                     BucketCount = bucketCount,
                     BucketKeys = bucketKeys,
+                    DefaultExpanded = defaultExpanded,
+                    FolderAccessibility = folderAccessibility,
+                    SelectedActionsOk = selectedActionsOk,
                     SelectedFolderA = selectedFolderA,
                     AfterHideFolderA = afterHideFolderA,
                     AfterHideFolderAOrder = afterHideFolderAOrder,
@@ -2558,6 +2616,12 @@ public partial class App : Application
                     AfterShowAll = afterShowAll,
                     AfterHideAll = afterHideAll,
                     PersistedHiddenBuckets = persisted?.HiddenFolderBuckets ?? [],
+                    SelectedBeforePersistence = selectedBeforePersistence,
+                    PersistedSelectedBuckets = persisted?.SelectedFolderBucketKeys ?? [],
+                    CollapsedAfterReload = collapsedAfterReload,
+                    SelectedBucketsAfterReload = selectedBucketsAfterReload,
+                    SortSelectionPreserved = sortSelectionPreserved,
+                    InvalidLegacyFallback = invalidLegacyFallback,
                     RestoredCount = restoredCount,
                     RestoredHiddenCount = restoredHiddenCount,
                     RestoredHiddenKeys = restoredHiddenKeys,
@@ -7844,6 +7908,9 @@ public partial class App : Application
         public int AllCount { get; init; }
         public int BucketCount { get; init; }
         public List<string> BucketKeys { get; init; } = [];
+        public bool DefaultExpanded { get; init; }
+        public bool FolderAccessibility { get; init; }
+        public bool SelectedActionsOk { get; init; }
         public bool SelectedFolderA { get; init; }
         public int AfterHideFolderA { get; init; }
         public List<string> AfterHideFolderAOrder { get; init; } = [];
@@ -7857,6 +7924,12 @@ public partial class App : Application
         public int AfterShowAll { get; init; }
         public int AfterHideAll { get; init; }
         public List<string> PersistedHiddenBuckets { get; init; } = [];
+        public List<string> SelectedBeforePersistence { get; init; } = [];
+        public List<string> PersistedSelectedBuckets { get; init; } = [];
+        public bool CollapsedAfterReload { get; init; }
+        public List<string> SelectedBucketsAfterReload { get; init; } = [];
+        public bool SortSelectionPreserved { get; init; }
+        public bool InvalidLegacyFallback { get; init; }
         public int RestoredCount { get; init; }
         public int RestoredHiddenCount { get; init; }
         public List<string> RestoredHiddenKeys { get; init; } = [];
