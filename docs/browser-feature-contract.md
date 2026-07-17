@@ -1356,7 +1356,7 @@ Folder set自体はlast/recentとして保存し、pin IDだけは `pvu_pinned_t
 ### BR-PER-005 Concurrency limitation
 
 - favorites/settings/recent/indexは一般的なcross-process lockやrevisionを持たない。
-- favoritesはvalidated whole-mapをtemp fileからrenameするが、cross-process revision/lockはない。settingsはwhole-file direct write。
+- favoritesはvalidated whole-mapをtemp fileからrenameするが、cross-process revision/lockはない。settingsもvalidated partial mergeをtemp fileからrenameするが、revision/lockはない。
 - recentは意味上mergeするがtransactionはない。
 - thumb/displayはtemp+rename。
 - enhancement jobsはprocess内write serialization + temp rename。cross-process lockはない。
@@ -1487,10 +1487,11 @@ Query:
 
 ### BR-API-100 Settings
 
-- `GET /api/settings`: normalized settings。破損時default。
-- `PUT /api/settings`: partial settings。top-level shallow merge、keyBindingsのみnested merge。200 updated settings。
-- 現行routeは完全schema validationをしない。別実装はvalidationを追加してよい。
-- PUT invalid JSONはcatchされず500になり得る。
+- `GET /api/settings`: default補完済み`keyBindings`、`confirmBeforeDelete`、`malformed`、任意`error`。file不存在はdefault、parse/known-field schema破損は元fileを保持して`malformed: true`。
+- `PUT /api/settings`: `confirmBeforeDelete`または`keyBindings`を含むpartial object。invalid JSON/body/known valueは400で既存file不変。
+- 既存shared fileがmalformedなら409で上書きを拒否する。
+- top-levelはshallow merge、`keyBindings`はnested merge。未知future fieldは保持する。
+- valid documentはtemp fileからrenameし、200 `{ ok: true, ...settings, malformed: false }`。
 
 ### BR-API-110 Recent/legacy
 
@@ -1857,7 +1858,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 10. Modal sparse orderで未fetchの直隣をDelete candidateから飛ばす可能性がある。
 11. Favorite filter中のfavorite変更後、nonmatching modal itemが一時残る場合がある。
 12. Settingsにbinding conflict検出、Save/Cancel、reset defaultがない。
-13. View/settingsの全field schema/range validationがない。
+13. View localStorageの全field schema/range validationは部分的で、完全ではない。
 14. Favorite primary key不在でbackupだけある場合のrestoreに穴がある。
 15. Delete後にFavorite/Seen/pin/enhance history orphanが残る。
 16. scan cancel/global mutexがない。
@@ -1916,6 +1917,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Runtime provenance | `src/app/api/runtime/route.test.ts`, `scripts/verify-browser-runtime.ps1` |
 | Favorite levels/Unseen | `src/lib/browserUiPreferences.test.ts`, `src/components/Sidebar.test.tsx`, `src/components/SettingsModal.test.tsx` |
 | Favorite shared write safety | `src/app/api/favorites/route.test.ts` |
+| Settings shared write safety | `src/app/api/settings/route.test.ts` |
 | Favorite merge/view migration | `src/store/ImageContext.test.tsx` |
 | Modal order/swipe | `src/lib/modalNavigation.test.ts` |
 | Modal zoom | `src/lib/modalZoom.test.ts` |
