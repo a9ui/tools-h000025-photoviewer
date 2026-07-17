@@ -7245,7 +7245,12 @@ public partial class App : Application
                 PreviewDecodeSmokeSnapshot stalePreview = await stalePreviewTask;
                 await Task.Delay(500);
                 ViewerState? stateAfterAsyncDelete = ReadPersistedState(statePath);
-                bool asyncModalFocus = win.ModalCloseFocusedForSmoke;
+                // Reopening the modal after its source is recycled deliberately
+                // moves focus to the dialog root. The accessibility contract is
+                // that focus stays inside the cycling modal, not that a specific
+                // child button remains focused across a source replacement.
+                bool asyncModalFocus = win.IsModalDialogFocusedForSmoke
+                    && win.ModalFocusTrapConfiguredForSmoke;
                 string? asyncPreviewPath = win.PreviewDecodedPathForSmoke;
                 string? asyncMetadataPath = win.PreviewMetadataPathForSmoke;
                 bool asyncDeleteReconciled = charliePrepared && modalFocused && charlieDeleted
