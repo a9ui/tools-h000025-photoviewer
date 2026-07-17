@@ -925,7 +925,9 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
 
     expect(localStorage.getItem('pvu_favorites')).toBe(malformedPrimary);
     expect(localStorage.getItem('pvu_favorites_backup')).toBe(validBackup);
@@ -941,7 +943,9 @@ describe('ImageProvider browser UI preferences', () => {
       </ImageProvider>
     );
 
-    await new Promise((resolve) => setTimeout(resolve, 350));
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 350));
+    });
 
     expect(localStorage.getItem('pvu_favorites')).toBeNull();
     expect(localStorage.getItem('pvu_favorites_backup')).toBe(malformedBackup);
