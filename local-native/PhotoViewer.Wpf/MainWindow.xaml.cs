@@ -41,6 +41,9 @@ public partial class MainWindow : Window
     private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
     private const double DefaultCardWidth = 200;
     private const double CardWidthStep = 20;
+    private const double DefaultRightPanelWidth = 340;
+    private const double MinRightPanelWidth = 240;
+    private const double MaxRightPanelWidth = 900;
     private const double ModalZoomMin = 0.25;
     private const double ModalZoomMax = 10;
     private const double ModalZoomKeyboardStep = 1.15;
@@ -102,6 +105,7 @@ public partial class MainWindow : Window
     private bool _favoritesWriteBlocked;
     private bool _seenWriteBlocked;
     private bool _stateWriteBlocked;
+    private double _rightPanelWidth = DefaultRightPanelWidth;
     private Dictionary<string, JsonElement>? _stateExtensionData;
     private bool _syncingSelection;
     private bool _syncingFavoriteFilterControls;
@@ -4129,9 +4133,58 @@ public partial class MainWindow : Window
     private void ToggleRight_Click(object sender, RoutedEventArgs e)
     {
         bool show = RightPanel.Visibility != Visibility.Visible;
-        RightPanel.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
-        RightCol.Width = show ? new GridLength(340) : new GridLength(0);
-        ToggleRight.Style = (Style)FindResource(show ? "IconButtonActive" : "IconButton");
+        ApplyRightPanelState(show);
+        SaveState();
+    }
+
+    private void ApplyRightPanelState(bool open)
+    {
+        if (open)
+        {
+            _rightPanelWidth = NormalizeRightPanelWidth(_rightPanelWidth);
+            RightPanel.Visibility = Visibility.Visible;
+            RightPanelSplitter.Visibility = Visibility.Visible;
+            RightSplitterCol.Width = new GridLength(6);
+            RightCol.MinWidth = MinRightPanelWidth;
+            RightCol.MaxWidth = MaxRightPanelWidth;
+            RightCol.Width = new GridLength(_rightPanelWidth);
+            ToggleRight.Style = (Style)FindResource("IconButtonActive");
+            ToggleRight.ToolTip = "Hide right panel";
+        }
+        else
+        {
+            if (RightCol.ActualWidth >= MinRightPanelWidth)
+                _rightPanelWidth = NormalizeRightPanelWidth(RightCol.ActualWidth);
+            RightPanel.Visibility = Visibility.Collapsed;
+            RightPanelSplitter.Visibility = Visibility.Collapsed;
+            RightSplitterCol.Width = new GridLength(0);
+            RightCol.MinWidth = 0;
+            RightCol.Width = new GridLength(0);
+            ToggleRight.Style = (Style)FindResource("IconButton");
+            ToggleRight.ToolTip = "Show right panel";
+        }
+    }
+
+    private static double NormalizeRightPanelWidth(double width)
+        => double.IsFinite(width) ? Math.Clamp(width, MinRightPanelWidth, MaxRightPanelWidth) : DefaultRightPanelWidth;
+
+    private bool SetRightPanelWidth(double width)
+    {
+        double normalized = NormalizeRightPanelWidth(width);
+        bool changed = Math.Abs(normalized - _rightPanelWidth) >= 0.5;
+        _rightPanelWidth = normalized;
+        if (RightPanel.Visibility == Visibility.Visible)
+            RightCol.Width = new GridLength(_rightPanelWidth);
+        return changed;
+    }
+
+    private void RightPanelSplitter_DragCompleted(object sender, DragCompletedEventArgs e)
+    {
+        if (RightPanel.Visibility != Visibility.Visible)
+            return;
+
+        SetRightPanelWidth(RightCol.ActualWidth);
+        SaveState();
     }
 
     // ─────────── Display mode (Grid / List) ───────────
@@ -5059,6 +5112,9 @@ public partial class MainWindow : Window
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
 
+        _rightPanelWidth = NormalizeRightPanelWidth(state.RightPanelWidth);
+        ApplyRightPanelState(state.RightPanelOpen ?? true);
+
         _displayStyle = NormalizeDisplayStyle(state.DisplayStyle);
         SyncDisplayStyleButtons();
         _aspectMode = NormalizeAspectMode(state.AspectMode);
@@ -5159,6 +5215,8 @@ public partial class MainWindow : Window
                 LastFolderSet = _currentFolderSet.Count > 0 ? _currentFolderSet : null,
                 SearchQuery = SearchInput.Text,
                 CardWidth = SizeSlider.Value,
+                RightPanelOpen = RightPanel.Visibility == Visibility.Visible,
+                RightPanelWidth = _rightPanelWidth,
                 DisplayStyle = _displayStyle,
                 AspectMode = _aspectMode,
                 SortBy = _sortBy,
@@ -5828,6 +5886,15 @@ public partial class MainWindow : Window
     }
     public double SidebarWidthForSmoke => Sidebar.ActualWidth;
     public double RightPanelWidthForSmoke => RightPanel.ActualWidth;
+    public double RightPanelStoredWidthForSmoke => _rightPanelWidth;
+    public bool RightPanelOpenForSmoke => RightPanel.Visibility == Visibility.Visible;
+    public bool SetRightPanelWidthForSmoke(double width)
+    {
+        bool changed = SetRightPanelWidth(width);
+        SaveState();
+        return changed;
+    }
+    public void ToggleRightPanelForSmoke() => ToggleRight_Click(this, new RoutedEventArgs());
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
     public double LastGridZoomAnchorDriftForSmoke => _lastGridZoomAnchorDrift;
     public string? GridViewportAnchorForSmoke => _gridTiles.Count == 0 ? null : _gridTiles[_gridTiles.Count / 2].FileName;
@@ -6320,6 +6387,8 @@ public sealed class ViewerState
     public string? SearchQuery { get; set; }
     public string? SelectedPath { get; set; }
     public double CardWidth { get; set; } = 190;
+    public bool? RightPanelOpen { get; set; }
+    public double RightPanelWidth { get; set; } = 340;
     public string? DisplayStyle { get; set; }
     public string? AspectMode { get; set; }
     public string? SortBy { get; set; }

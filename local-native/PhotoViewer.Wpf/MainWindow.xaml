@@ -84,8 +84,9 @@
     <Grid Grid.Row="1">
       <Grid.ColumnDefinitions>
         <ColumnDefinition x:Name="SidebarCol" Width="240"/>
-        <ColumnDefinition Width="*"/>
-        <ColumnDefinition x:Name="RightCol" Width="340"/>
+        <ColumnDefinition Width="*" MinWidth="320"/>
+        <ColumnDefinition x:Name="RightSplitterCol" Width="6"/>
+        <ColumnDefinition x:Name="RightCol" Width="340" MinWidth="240" MaxWidth="900"/>
       </Grid.ColumnDefinitions>
 
       <!-- ─────── Sidebar ─────── -->
@@ -309,8 +310,13 @@
        </Grid>
       </Border>
 
+      <GridSplitter Grid.Column="2" x:Name="RightPanelSplitter" Width="6" HorizontalAlignment="Stretch"
+                    Background="Transparent" Focusable="True" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
+                    KeyboardIncrement="20" ShowsPreview="True" DragCompleted="RightPanelSplitter_DragCompleted"
+                    ToolTip="Resize right preview panel" AutomationProperties.Name="Resize right preview panel"/>
+
       <!-- ─────── Right preview ─────── -->
-      <Border Grid.Column="2" x:Name="RightPanel" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1,0,0,0">
+      <Border Grid.Column="3" x:Name="RightPanel" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1,0,0,0">
         <Grid>
           <Grid.RowDefinitions>
             <RowDefinition Height="38"/>

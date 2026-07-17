@@ -254,6 +254,13 @@ public partial class App : Application
             return;
         }
 
+        int rightPanelSmokeIdx = Array.IndexOf(e.Args, "--right-panel-smoke");
+        if (rightPanelSmokeIdx >= 0 && rightPanelSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureRightPanelSmoke(e.Args[rightPanelSmokeIdx + 1]);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -3580,6 +3587,122 @@ public partial class App : Application
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
+
+    private void CaptureRightPanelSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
+        string smokeRoot = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-" + Guid.NewGuid().ToString("N"));
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+
+        PrepareSharedSeenSmokeEnvironment(smokeRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var first = HiddenWindow();
+        first.Show();
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            RightPanelSmokeResult result;
+            try
+            {
+                await first.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                bool defaultOpen = first.RightPanelOpenForSmoke;
+                double defaultWidth = first.RightPanelWidthForSmoke;
+                bool resized = first.SetRightPanelWidthForSmoke(520);
+                await first.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                double resizedWidth = first.RightPanelWidthForSmoke;
+                first.FlushStateForSmoke();
+                first.Close();
+
+                var second = HiddenWindow();
+                second.Show();
+                await second.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                bool restoredOpen = second.RightPanelOpenForSmoke;
+                double restoredWidth = second.RightPanelWidthForSmoke;
+                second.ToggleRightPanelForSmoke();
+                bool closed = !second.RightPanelOpenForSmoke;
+                double storedWhileClosed = second.RightPanelStoredWidthForSmoke;
+                second.FlushStateForSmoke();
+                second.Close();
+
+                var third = HiddenWindow();
+                third.Show();
+                await third.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                bool restoredClosed = !third.RightPanelOpenForSmoke;
+                double restoredStoredWidth = third.RightPanelStoredWidthForSmoke;
+                third.ToggleRightPanelForSmoke();
+                await third.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                bool reopened = third.RightPanelOpenForSmoke;
+                double reopenedWidth = third.RightPanelWidthForSmoke;
+                bool minClamped = third.SetRightPanelWidthForSmoke(100);
+                await third.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                double minWidth = third.RightPanelWidthForSmoke;
+                bool maxClamped = third.SetRightPanelWidthForSmoke(1200);
+                await third.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                double maxWidth = third.RightPanelWidthForSmoke;
+                third.Close();
+
+                bool ok = defaultOpen
+                    && Nearly(defaultWidth, 340)
+                    && resized
+                    && Nearly(resizedWidth, 520)
+                    && restoredOpen
+                    && Nearly(restoredWidth, 520)
+                    && closed
+                    && Nearly(storedWhileClosed, 520)
+                    && restoredClosed
+                    && Nearly(restoredStoredWidth, 520)
+                    && reopened
+                    && Nearly(reopenedWidth, 520)
+                    && minClamped
+                    && Nearly(minWidth, 240)
+                    && maxClamped
+                    && Nearly(maxWidth, 900);
+                result = new RightPanelSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "right preview resize, clamp, hide/show, and reload persistence passed"
+                        : "right preview panel state did not match resize/persistence expectations",
+                    DefaultOpen = defaultOpen,
+                    DefaultWidth = defaultWidth,
+                    ResizedWidth = resizedWidth,
+                    RestoredOpen = restoredOpen,
+                    RestoredWidth = restoredWidth,
+                    Closed = closed,
+                    StoredWhileClosed = storedWhileClosed,
+                    RestoredClosed = restoredClosed,
+                    RestoredStoredWidth = restoredStoredWidth,
+                    Reopened = reopened,
+                    ReopenedWidth = reopenedWidth,
+                    MinWidth = minWidth,
+                    MaxWidth = maxWidth,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new RightPanelSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                if (first.IsVisible) first.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static bool Nearly(double left, double right)
+        => Math.Abs(left - right) < 1;
 
     private void CaptureFormatSmoke(string resultPath, string[] args)
     {
@@ -7291,6 +7414,25 @@ public partial class App : Application
         public bool DeleteFocusRestored { get; init; }
         public bool LogoAccessible { get; init; }
         public bool LogoActivated { get; init; }
+    }
+
+    private sealed class RightPanelSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool DefaultOpen { get; init; }
+        public double DefaultWidth { get; init; }
+        public double ResizedWidth { get; init; }
+        public bool RestoredOpen { get; init; }
+        public double RestoredWidth { get; init; }
+        public bool Closed { get; init; }
+        public double StoredWhileClosed { get; init; }
+        public bool RestoredClosed { get; init; }
+        public double RestoredStoredWidth { get; init; }
+        public bool Reopened { get; init; }
+        public double ReopenedWidth { get; init; }
+        public double MinWidth { get; init; }
+        public double MaxWidth { get; init; }
     }
 
     private sealed class FormatSmokeResult
