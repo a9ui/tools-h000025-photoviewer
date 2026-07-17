@@ -13,6 +13,7 @@ const {
   DEFAULT_START_PORT,
   dispatchLauncher,
 } = require('./prod_launcher_cli');
+const { selectManagedProcessRoots } = require('./prod_launcher_processes');
 
 const ROOT = path.join(__dirname, '..');
 const BUILD_ID_FILE = path.join(ROOT, '.next', 'BUILD_ID');
@@ -26,10 +27,6 @@ let serverChild = null;
 let comfyChild = null;
 let ownsComfy = false;
 let cleanedUp = false;
-
-function escapeForPowerShellSingleQuoted(value) {
-  return value.replace(/'/g, "''");
-}
 
 function killProcessTree(pid) {
   if (!pid) return;
@@ -69,29 +66,39 @@ function cleanupComfy() {
 function cleanupStaleServers() {
   if (process.platform !== 'win32') return;
 
-  const root = escapeForPowerShellSingleQuoted(ROOT);
   const script = [
-    `$root = '${root}'`,
-    `$self = ${process.pid}`,
     'Get-CimInstance Win32_Process |',
-    '  Where-Object {',
-    '    $_.ProcessId -ne $self -and',
-    "    $_.Name -match '^(node|cmd)\\.exe$' -and",
-    '    $_.CommandLine -and',
-    '    $_.CommandLine.Contains($root) -and',
-    "    ($_.CommandLine -match 'next.*start|pnpm.*start|prod_launcher|serve_with_parent_watch')",
-    '  } |',
-    '  ForEach-Object {',
-    "    Write-Host ('[Photoviewer] Stopping leftover server process ' + $_.ProcessId)",
-    '    Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue',
-    '  }',
+    "  Where-Object { $_.Name -eq 'node.exe' } |",
+    '  Select-Object ProcessId, ParentProcessId, Name, CommandLine |',
+    '  ConvertTo-Json -Compress',
   ].join('\n');
 
-  spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
+  const result = spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
     cwd: ROOT,
-    stdio: 'inherit',
+    encoding: 'utf8',
     windowsHide: true,
   });
+  if (result.status !== 0 || !result.stdout.trim()) return;
+
+  let processes;
+  try {
+    const parsed = JSON.parse(result.stdout.trim());
+    processes = Array.isArray(parsed) ? parsed : [parsed];
+  } catch {
+    console.log('[Photoviewer] Could not inspect leftover server processes safely; skipping cleanup.');
+    return;
+  }
+
+  const nextBin = require.resolve('next/dist/bin/next', { paths: [ROOT] });
+  const staleRoots = selectManagedProcessRoots(processes, {
+    root: ROOT,
+    nextBin,
+    selfPid: process.pid,
+  });
+  for (const processInfo of staleRoots) {
+    console.log(`[Photoviewer] Stopping leftover server process ${processInfo.ProcessId}`);
+    killProcessTree(Number(processInfo.ProcessId));
+  }
 }
 
 function isPortAvailable(port) {

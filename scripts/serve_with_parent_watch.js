@@ -90,7 +90,6 @@ const watchdog = spawn(process.execPath, [
   WATCHDOG_SCRIPT,
   String(parentPid),
   String(serverChild.pid),
-  String(port),
 ], {
   cwd: ROOT,
   detached: true,

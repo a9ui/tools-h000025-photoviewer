@@ -137,6 +137,7 @@ describe('production launcher CLI', () => {
 
   it('statically wires the real launcher through dispatch before cleanup or main', () => {
     const source = readFileSync(resolve(process.cwd(), 'scripts', 'prod_launcher.js'), 'utf8');
+    const watchdogSource = readFileSync(resolve(process.cwd(), 'scripts', 'kill_when_parent_exits.js'), 'utf8');
 
     expect(source).toContain('runCli(process.argv.slice(2))');
     expect(source).not.toMatch(/\nmain\(\)\.catch/);
@@ -145,5 +146,8 @@ describe('production launcher CLI', () => {
     expect(source).toContain("const SERVER_HOST = '127.0.0.1';");
     expect(source).toContain('const provenance = readRuntimeProvenance(port);');
     expect(source).toContain('PVU_SERVER_PORT: String(provenance.serverPort)');
+    expect(source).toContain('selectManagedProcessRoots(processes');
+    expect(watchdogSource).not.toContain('Get-NetTCPConnection');
+    expect(watchdogSource).not.toContain('killPortOwner');
   });
 });

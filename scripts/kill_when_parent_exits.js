@@ -8,7 +8,6 @@ const { spawnSync } = require('child_process');
 
 const parentPid = Number(process.argv[2]);
 const targetPid = Number(process.argv[3]);
-const port = Number(process.argv[4]);
 
 function isProcessAlive(pid) {
   if (!pid || !Number.isFinite(pid)) return false;
@@ -37,31 +36,14 @@ function killProcessTree(pid) {
   }
 }
 
-function killPortOwner(portNumber) {
-  if (!portNumber || !Number.isFinite(portNumber) || process.platform !== 'win32') return;
-  const script = [
-    `$port = ${portNumber}`,
-    'Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue |',
-    '  Select-Object -ExpandProperty OwningProcess -Unique |',
-    '  Where-Object { $_ -gt 0 } |',
-    '  ForEach-Object { Stop-Process -Id $_ -Force -ErrorAction SilentlyContinue }',
-  ].join('\n');
-  spawnSync('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-Command', script], {
-    stdio: 'ignore',
-    windowsHide: true,
-  });
-}
-
 if (!isProcessAlive(parentPid)) {
   killProcessTree(targetPid);
-  killPortOwner(port);
   process.exit(0);
 }
 
 const timer = setInterval(() => {
   if (!isProcessAlive(parentPid)) {
     killProcessTree(targetPid);
-    killPortOwner(port);
     clearInterval(timer);
     process.exit(0);
   }
