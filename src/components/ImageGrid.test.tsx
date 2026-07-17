@@ -296,4 +296,31 @@ describe("ImageGrid keyboard primary controls", () => {
     fireEvent.click(screen.getByRole('button', { name: /select first\.png/i }));
     expect(clearSelection).toHaveBeenCalledTimes(1);
   });
+
+  it("keeps Alt+wheel as native scroll and reserves gallery zoom for Ctrl/Cmd+wheel", () => {
+    const store = createStore();
+    vi.mocked(useImageStore).mockReturnValue(store);
+    renderGrid();
+    const canvas = screen.getByTestId("image-grid-background");
+
+    const altWheel = new WheelEvent("wheel", {
+      altKey: true,
+      bubbles: true,
+      cancelable: true,
+      deltaY: -100,
+    });
+    fireEvent(canvas, altWheel);
+    expect(altWheel.defaultPrevented).toBe(false);
+    expect(store.setView).not.toHaveBeenCalled();
+
+    const ctrlWheel = new WheelEvent("wheel", {
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+      deltaY: -100,
+    });
+    fireEvent(canvas, ctrlWheel);
+    expect(ctrlWheel.defaultPrevented).toBe(true);
+    expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
+  });
 });
