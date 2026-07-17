@@ -1934,6 +1934,7 @@ public partial class MainWindow : Window
 
         string key = NormalizeFavoritePath(tile.Path);
         bool wasUnseen = tile.Unseen;
+        bool showedUnseenDot = tile.ShowUnseenDot;
         bool hadSeen = _seenPaths.Contains(key);
         bool wasDirty = _seenDirtyPaths.Contains(key);
 
@@ -1952,6 +1953,7 @@ public partial class MainWindow : Window
             if (!wasDirty)
                 _seenDirtyPaths.Remove(key);
             tile.Unseen = wasUnseen;
+            tile.ShowUnseenDot = showedUnseenDot;
             return false;
         }
 
@@ -8729,6 +8731,7 @@ public partial class MainWindow : Window
     public int PreviewTabHoverDecodeFailureCountForSmoke => _previewTabHoverDecodeFailureCount;
     public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
     public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
+    public bool SelectedUnseenDotForSmoke => SelectedTile()?.ShowUnseenDot == true;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
     public int VisibleUnseenDotCountForSmoke => _allTiles.Count(static tile => tile.ShowUnseenDot);
     public bool FoldersSectionExpandedForSmoke => _foldersSectionExpanded && FoldersSectionContent.Visibility == Visibility.Visible;

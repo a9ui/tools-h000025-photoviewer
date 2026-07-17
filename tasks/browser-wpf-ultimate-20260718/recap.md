@@ -119,16 +119,16 @@ user root checkoutは`main` / `626b7dd...`、既存の`M next-env.d.ts`だけを
 | データ非破壊 | 5 | actual crash、複数writer、Recycle/Refresh/decode race、malformed/future/lock、hash/residue 0 |
 | 操作正確性 | 4 | Browser 421 tests、WPF 44 gates、rapid/filter/bulk/modal/zoom/neighbor exact |
 | 退行耐性 | 4 | focused verifier、aggregate、UI guard、runtime provenance、仕様/test map |
-| 大規模性能 | 4 | 5,000/20,000 exact catalog、bounded Grid/List/decode、24/40-cycle soak |
+| 大規模性能 | 2 | 5,000/20,000 catalog/decodeはgreen。一方、100,000件/2.9-3.2MB shared Favorite/Seenで3/3再現し、操作p95 186-251ms、dispatcher停止442-460msのP1 RED |
 | 失敗回復 | 5 | scan TOCTOU、decode mutation、Delete/Refresh、crash lock、external-open fault injection |
 | Accessibility | 4 | dialog focus trap/return、keyboard、Automation、live status。実screen reader/high contrast反復は未実施 |
 | 起動終了品質 | 4 | Browser loopback/exact child、WPF exact provenance、close flush、success no-pause。installerはprivate-local scope外 |
 | Browser意味一致 | 4 | authoritative contract、parity ledger、cross-runtime、同一state visual。継続differential運用は次段 |
 
-加重総合は**4.35 / 5.00**。hard no-go 0、既知P0/P1 0、全軸4以上のため、公開/配布を含まない**Private-local commercial-ready core**に該当する。これは一般販売package、installer/signing、public securityを完成扱いする判定ではない。
+最新の加重総合は**4.15 / 5.00**。hard no-goとデータ破壊は0だが、実利用規模に近いshared stateでP1 responsiveness REDが確定したため、現時点の判定は**Private-local high-quality viewer core / commercial-ready blocked**へ更新する。同期実装は正確性を保つが、Favorite/Seenのgeneration-aware single-flight writerとfault/close gateがgreenになるまで「金を取れる完成」とは扱わない。一般販売package、installer/signing、public securityは別境界のままである。
 
 ## Next bounded milestones
 
 1. user rootへintegrated branchを安全採用し、明示承認の上でport 3000をrestartしてloopback/current revisionを確認する。
-2. 最優先の未証明P1候補として、2.8MiB超のFavorite/Seen shared JSONをUI threadで全量read/sort/writeする操作stallをtemp-onlyで測定し、RED後だけsingle-flight background merge + close drainを設計する。
+2. 最優先P1として、100,000件/2.9-3.2MBのFavorite/Seen shared JSON操作stallはtemp-only 3/3 REDまで確定した。次は`tasks/wpf-next-upgrade-20260718/baseline-results.md`の閾値とfault/close契約を満たすgeneration-aware single-flight background merge + close drainを実装する。
 3. 次点はBulk Recycleの同期Shell callをheartbeat/cancel/partial-result付きで測定し、その後にscan enumeration/metadata中のpolite progressを改善する。P3 Enhancement ownership、cache quota、packagingは別境界のままにする。

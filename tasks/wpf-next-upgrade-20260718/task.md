@@ -17,6 +17,19 @@ derive a meaningful threshold.
 
 ## Current Evidence
 
+### Live baseline decision
+
+The measurement-only gate is now implemented and RED in three deterministic
+repetitions. See `baseline-results.md`. With exact 100,000-entry stores, modal
+next p95 was 186-204 ms, Favorite p95 was 233-251 ms, and the 15 ms dispatcher
+heartbeat stalled for 442-460 ms. Paired small controls remained at 5-6 ms,
+29-31 ms, and 38-53 ms respectively. All exactness/isolation checks were green.
+
+This is now a confirmed P1, not an unverified candidate. Production persistence
+remains synchronous and correctness-first until the generation-aware writer,
+external-writer/lock/refusal tests, close drain, reopen proof, and derived
+50/65/110 ms thresholds are green.
+
 - `MainWindow.SaveFavorites` reads, merges, orders, serializes, and atomically
   replaces the complete Favorite map on the UI thread for each Favorite action.
 - `MainWindow.SaveSeenState` performs the same full-store operation for Seen.

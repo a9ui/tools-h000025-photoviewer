@@ -651,6 +651,7 @@ Accessibility:
 | Delete decode/Refresh race / tombstone lifetime | `powershell -File scripts/verify-wpf-delete-race.ps1` |
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
 | Sidebar/App Settings Unseen dots synchronization | `powershell -File scripts/verify-wpf-settings-unseen-dots.ps1` |
+| Large shared Favorite/Seen latency and exactness baseline | `powershell -File scripts/verify-wpf-shared-state-latency.ps1` |
 | Exact visual viewports / Browser comparison states | `powershell -File scripts/verify-wpf-visual-layout.ps1 -EvidenceDir <path>` |
 | Direct launcher exact provenance / fail-closed rebuild / success no-pause | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 
@@ -672,9 +673,9 @@ Reload soakのmemory correctness gateは、warm-up直後と終了時のforced-GC
 
 ## 18. 現在の完成境界とCURRENT LIMITATION
 
-Browser基準のWPF P0〜P2は実装・専用smoke済み。Bulk Favorite、Bulk Recycle、right panel resize、preview tab reload/hover/reorder/middle-close、modal end wrap/chrome/edge/swipe/feedback、Prompt tag→search、Folder bucket range selection/selected actions/collapse persistence、native Explorer FileDrop drag-outとfolder drag-inまでfocused verifier付きで実装済み。Modalはnamed focusable root、Tab/Control+Tab cycle、focused child上のEscape、close後focus return、metadata/copy/edge-zone Automationを`verify-wpf-p1b.ps1`で実動作固定している。
+Browser基準のWPF viewer workflowは実装・専用smoke済み。Bulk Favorite、Bulk Recycle、right panel resize、preview tab reload/hover/reorder/middle-close、modal end wrap/chrome/edge/swipe/feedback、Prompt tag→search、Folder bucket range selection/selected actions/collapse persistence、native Explorer FileDrop drag-outとfolder drag-inまでfocused verifier付きで実装済み。Modalはnamed focusable root、Tab/Control+Tab cycle、focused child上のEscape、close後focus return、metadata/copy/edge-zone Automationを`verify-wpf-p1b.ps1`で実動作固定している。
 
-現行ledger上のP0〜P2実装残はない。以後は統合回帰、実操作visual、性能/競合stressで欠陥が再現した時だけ同じ契約内を修正する。
+現行ledgerにはP0残はない。一方、100,000件/2.9〜3.2MBのshared Favorite/Seenで、modal next p95 186〜204ms、Favorite p95 233〜251ms、dispatcher最大停止442〜460msがtemp-only 3/3で再現した。これは実利用規模へ影響するP1 responsiveness欠陥であり、`tasks/wpf-next-upgrade-20260718/baseline-results.md`のgeneration-aware single-flight writer、fault/close契約、50/65/110ms閾値がgreenになるまで有償品質の未完了項目とする。同期実装のexact merge/atomic replaceを性能のために弱めてはならない。
 
 CURRENT LIMITATION / P3として明示的に遅延:
 

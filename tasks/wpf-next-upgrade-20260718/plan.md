@@ -14,6 +14,11 @@ Only one product-risk lane is active in this milestone. Bulk Recycle and scan
 progress stay queued until this lane is either fixed and verified or closed as
 NOT-RED.
 
+Live state: Phases 0-1 and the three-run RED decision in Phase 3 are complete.
+The deterministic baseline is recorded in `baseline-results.md`. Phase 2 fault
+extensions and Phase 4 production remediation are the next bounded milestone;
+they are not replaced by the measurement-only gate.
+
 ## Phase 0: Preflight and Safety Envelope
 
 1. Confirm the integrated branch HEAD, local dirty files, active WPF processes,
@@ -116,19 +121,19 @@ and every broader gate whose evidence depends on that revision.
 
 ## Acceptance Checklist
 
-- [ ] All smoke stores and images are under one unique temp root.
-- [ ] The large profile records approximately 2.8 MiB and 100,000 entries with
+- [x] All smoke stores and images are under one unique temp root.
+- [x] The large profile records approximately 2.8 MiB and 100,000 entries with
       actual values included in the result.
-- [ ] Twenty modal-next/Favorite cycles use normal WPF action paths.
-- [ ] Small and large raw samples include p50, p95, max, heartbeat count, and
+- [x] Twenty modal-next/Favorite cycles use normal WPF action paths.
+- [x] Small and large raw samples include p50, p95, max, heartbeat count, and
       maximum heartbeat gap.
-- [ ] Three repetitions support an explicit RED or NOT-RED decision.
+- [x] Three repetitions support an explicit RED or NOT-RED decision.
 - [ ] External writer keys survive exact latest-disk merge.
 - [ ] Fresh-lock refusal, retry, close, and reopen are deterministic.
-- [ ] Favorite exact levels/removal and additive Seen semantics are preserved.
-- [ ] JSON remains valid and `.lock`/`.tmp` residue is zero.
-- [ ] Source and Enhancement job fingerprints are byte-identical.
-- [ ] No port, Browser runtime, user cache/state, or real Recycle backend is
+- [x] Favorite exact levels/removal and additive Seen semantics are preserved.
+- [x] JSON remains valid and `.lock`/`.tmp` residue is zero.
+- [x] Source and Enhancement job fingerprints are byte-identical.
+- [x] No port, Browser runtime, user cache/state, or real Recycle backend is
       touched.
 - [ ] If RED, the production fix passes the derived p95/max-gap threshold and
       the full verification ladder.

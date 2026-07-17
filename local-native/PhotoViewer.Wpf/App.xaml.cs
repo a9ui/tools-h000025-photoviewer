@@ -542,6 +542,13 @@ public partial class App : Application
             return;
         }
 
+        int sharedStateLatencySmokeIdx = Array.IndexOf(e.Args, "--shared-state-latency-smoke");
+        if (sharedStateLatencySmokeIdx >= 0 && sharedStateLatencySmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSharedStateLatencySmoke(e.Args[sharedStateLatencySmokeIdx + 1]);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -8782,9 +8789,15 @@ public partial class App : Application
                     && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
 
                 File.WriteAllText(seenPath, "{\"broken\":[]}");
+                win.SetShowUnseenDotsForSmoke(true);
+                int unseenDotsBeforeRefusal = win.VisibleUnseenDotCountForSmoke;
                 bool seenRefused = win.SelectFileNameForSmoke("good-two.png")
                     && win.DeleteStatusForSmoke.Contains("Seen state", StringComparison.OrdinalIgnoreCase)
                     && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+                bool seenVisualRollback = unseenDotsBeforeRefusal > 0
+                    && win.SelectedUnseenForSmoke
+                    && win.SelectedUnseenDotForSmoke
+                    && win.VisibleUnseenDotCountForSmoke == unseenDotsBeforeRefusal;
 
                 File.WriteAllText(statePath, "{\"Version\":1,\"CardWidth\":{}}");
                 win.FlushStateForSmoke();
@@ -8814,7 +8827,7 @@ public partial class App : Application
                     && deleteFocus && deleteFocusRestored
                     && modalInitialFocus && modalFocusRestored
                     && lockBusyStatus && lockRetryCleared
-                    && favoriteRefused && seenRefused && stateRefused && recentRefused
+                    && favoriteRefused && seenRefused && seenVisualRollback && stateRefused && recentRefused
                     && logoAccessible && logoActivated;
                 result = new P1BSmokeResult
                 {
@@ -8837,6 +8850,7 @@ public partial class App : Application
                     LockRetryCleared = lockRetryCleared,
                     FavoritesRefused = favoriteRefused,
                     SeenRefused = seenRefused,
+                    SeenVisualRollback = seenVisualRollback,
                     StateRefused = stateRefused,
                     RecentRefused = recentRefused,
                     SearchShortcutSuppressed = searchShortcutSuppressed,
@@ -10762,6 +10776,279 @@ public partial class App : Application
             WritePreviewTabHoverSmokeResult(resultFullPath, result);
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureSharedStateLatencySmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!resultFullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("shared-state latency result must be under the temp directory");
+
+        string automationStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH")
+            ?? throw new InvalidOperationException("automation state path was not configured");
+        string smokeRoot = Path.GetDirectoryName(Path.GetFullPath(automationStatePath))
+            ?? throw new InvalidOperationException("automation root was unavailable");
+        string smokeRootPrefix = Path.GetFullPath(smokeRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!smokeRootPrefix.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("automation root escaped the temp directory");
+
+        string sourceRoot = Path.Combine(smokeRoot, "sources");
+        Directory.CreateDirectory(sourceRoot);
+        DateTime fixtureTime = new(2026, 7, 18, 0, 0, 0, DateTimeKind.Utc);
+        for (int index = 0; index <= 20; index++)
+        {
+            string imagePath = Path.Combine(sourceRoot, $"image-{index:00}.png");
+            WriteSmokePng(imagePath, 48, 36, Color.FromRgb((byte)(40 + index * 4), (byte)(90 + index * 3), (byte)(140 + index * 2)));
+            File.SetLastWriteTimeUtc(imagePath, fixtureTime.AddMinutes(-index));
+        }
+        string warmupPath = Path.Combine(sourceRoot, "zz-warmup.png");
+        WriteSmokePng(warmupPath, 48, 36, Color.FromRgb(180, 120, 80));
+        File.SetLastWriteTimeUtc(warmupPath, fixtureTime.AddMinutes(-30));
+        string sourceBefore = FolderFingerprint(sourceRoot);
+
+        static void WriteSharedStore(string path, int syntheticCount, string? realPath, bool seen)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            using var stream = new FileStream(path, FileMode.Create, FileAccess.Write, FileShare.None);
+            using var writer = new Utf8JsonWriter(stream);
+            writer.WriteStartObject();
+            for (int index = 0; index < syntheticCount; index++)
+            {
+                string key = $@"C:\latencyx\{index:000000}.png";
+                if (seen) writer.WriteBoolean(key, true); else writer.WriteNumber(key, (index % 5) + 1);
+            }
+            if (!string.IsNullOrWhiteSpace(realPath))
+            {
+                if (seen) writer.WriteBoolean(realPath, true); else writer.WriteNumber(realPath, 1);
+            }
+            writer.WriteEndObject();
+        }
+
+        static (int Count, bool Valid) ReadObjectCount(string path)
+        {
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+                return document.RootElement.ValueKind == JsonValueKind.Object
+                    ? (document.RootElement.EnumerateObject().Count(), true)
+                    : (0, false);
+            }
+            catch { return (0, false); }
+        }
+
+        static object Stats(IReadOnlyList<double> samples)
+        {
+            List<double> ordered = samples.OrderBy(static value => value).ToList();
+            double Percentile(double percentile)
+            {
+                if (ordered.Count == 0) return 0;
+                int index = (int)Math.Ceiling(percentile * ordered.Count) - 1;
+                return ordered[Math.Clamp(index, 0, ordered.Count - 1)];
+            }
+            return new
+            {
+                rawMs = samples.Select(static value => Math.Round(value, 3)).ToList(),
+                p50Ms = Math.Round(Percentile(0.50), 3),
+                p95Ms = Math.Round(Percentile(0.95), 3),
+                maxMs = Math.Round(ordered.Count == 0 ? 0 : ordered[^1], 3),
+            };
+        }
+
+        static List<double> Gaps(IReadOnlyList<double> ticks)
+        {
+            var gaps = new List<double>();
+            for (int index = 1; index < ticks.Count; index++)
+                gaps.Add(ticks[index] - ticks[index - 1]);
+            return gaps;
+        }
+
+        async Task<(bool Ok, object Result)> RunProfileAsync(string name, int entryCount)
+        {
+            string profileRoot = Path.Combine(smokeRoot, name);
+            string statePath = Path.Combine(profileRoot, "state.json");
+            string favoritesPath = Path.Combine(profileRoot, "favorites.json");
+            string seenPath = Path.Combine(profileRoot, "seen.json");
+            string recentPath = Path.Combine(profileRoot, "recent-folders.json");
+            string jobsPath = Path.Combine(profileRoot, "enhance", "jobs.json");
+            foreach (string path in new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath })
+            {
+                string fullPath = Path.GetFullPath(path);
+                if (!fullPath.StartsWith(smokeRootPrefix, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException($"profile path escaped temp isolation: {fullPath}");
+            }
+
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+            File.WriteAllText(statePath, "{\"Version\":2}");
+            File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\"}");
+            File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+            string removalPath = Path.Combine(sourceRoot, "image-10.png");
+            string firstPath = Path.Combine(sourceRoot, "image-00.png");
+            int syntheticCount = Math.Max(0, entryCount - 1);
+            WriteSharedStore(favoritesPath, syntheticCount, removalPath, seen: false);
+            WriteSharedStore(seenPath, syntheticCount, firstPath, seen: true);
+            long favoriteSeedBytes = new FileInfo(favoritesPath).Length;
+            long seenSeedBytes = new FileInfo(seenPath).Length;
+            var favoriteSeed = ReadObjectCount(favoritesPath);
+            var seenSeed = ReadObjectCount(seenPath);
+            string jobsBefore = FileFingerprint(jobsPath);
+
+            var window = HiddenWindow();
+            window.Show();
+            window.SuppressStatePersistence();
+            await window.LoadFolderAsync(sourceRoot);
+            window.SetSortByForSmoke("name");
+
+            // Warm JIT/decode and both synchronous persistence paths outside the samples.
+            window.SelectFileNameForSmoke("zz-warmup.png");
+            window.SetSelectedFavoriteLevelForSmoke(1);
+            window.SelectFileNameForSmoke("image-00.png");
+            bool modalOpened = window.OpenModalForSmoke();
+            long favoriteActionStartBytes = new FileInfo(favoritesPath).Length;
+            long seenActionStartBytes = new FileInfo(seenPath).Length;
+            int seenActionStartEntries = window.SeenStoreCountForSmoke;
+
+            var watch = Stopwatch.StartNew();
+            var idleTicks = new List<double>();
+            var workloadTicks = new List<double>();
+            bool workload = false;
+            var timer = new DispatcherTimer(DispatcherPriority.Send, window.Dispatcher) { Interval = TimeSpan.FromMilliseconds(15) };
+            timer.Tick += (_, _) => (workload ? workloadTicks : idleTicks).Add(watch.Elapsed.TotalMilliseconds);
+            timer.Start();
+            await Task.Delay(180);
+            workloadTicks.Add(idleTicks.Count > 0 ? idleTicks[^1] : watch.Elapsed.TotalMilliseconds);
+            workload = true;
+
+            var modalSamples = new List<double>();
+            var favoriteSamples = new List<double>();
+            var selectedNames = new List<string?>();
+            bool actionsAccepted = modalOpened;
+            for (int cycle = 1; cycle <= 20; cycle++)
+            {
+                var operation = Stopwatch.StartNew();
+                bool moved = window.NavigateModalForSmoke(1);
+                operation.Stop();
+                modalSamples.Add(operation.Elapsed.TotalMilliseconds);
+                string expectedName = $"image-{cycle:00}.png";
+                selectedNames.Add(window.SelectedFileNameForSmoke);
+                actionsAccepted &= moved && string.Equals(window.SelectedFileNameForSmoke, expectedName, StringComparison.OrdinalIgnoreCase);
+                actionsAccepted &= window.SeenStoreCountForSmoke == seenActionStartEntries + cycle;
+
+                operation.Restart();
+                bool changed = window.AdjustModalFavoriteForSmoke(cycle == 10 ? -1 : 1);
+                operation.Stop();
+                favoriteSamples.Add(operation.Elapsed.TotalMilliseconds);
+                actionsAccepted &= changed;
+                await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
+            }
+
+            string seenBeforeNoOp = FileFingerprint(seenPath);
+            var noOpWatch = Stopwatch.StartNew();
+            bool repeatedSeenAccepted = window.MarkSelectedSeenForSmoke();
+            noOpWatch.Stop();
+            bool repeatedSeenNoWrite = string.Equals(seenBeforeNoOp, FileFingerprint(seenPath), StringComparison.Ordinal);
+            await Task.Delay(45);
+            timer.Stop();
+            window.Close();
+
+            var favoriteFinal = ReadObjectCount(favoritesPath);
+            var seenFinal = ReadObjectCount(seenPath);
+            bool favoriteExact = !FavoriteFileContainsPath(favoritesPath, removalPath);
+            for (int cycle = 1; cycle <= 20; cycle++)
+            {
+                string path = Path.Combine(sourceRoot, $"image-{cycle:00}.png");
+                if (cycle != 10) favoriteExact &= ReadFavoriteLevel(favoritesPath, path) == 1;
+                favoriteExact &= cycle == 10 || FavoriteFileContainsPath(favoritesPath, path);
+            }
+            bool seenAdditive = Enumerable.Range(0, 21).All(index => ReadSeenFlag(seenPath, Path.Combine(sourceRoot, $"image-{index:00}.png")));
+            bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(sourceRoot), StringComparison.Ordinal);
+            bool jobsUntouched = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+            bool residueFree = NoPersistenceResidue(profileRoot);
+            bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                .All(path => Path.GetFullPath(path).StartsWith(smokeRootPrefix, StringComparison.OrdinalIgnoreCase));
+            bool enhancementPassive = window.EnhancementJobsReadForSmoke == 0 && window.EnhancedStoreCountForSmoke == 0;
+            bool validCounts = favoriteSeed.Valid && seenSeed.Valid && favoriteSeed.Count == entryCount && seenSeed.Count == entryCount
+                && favoriteFinal.Valid && seenFinal.Valid;
+            bool ok = actionsAccepted && repeatedSeenAccepted && repeatedSeenNoWrite && favoriteExact && seenAdditive
+                && sourceUntouched && jobsUntouched && residueFree && isolated && enhancementPassive && validCounts;
+            List<double> idleGaps = Gaps(idleTicks);
+            List<double> workloadGaps = Gaps(workloadTicks);
+            return (ok, new
+            {
+                name,
+                ok,
+                configuredEntries = entryCount,
+                favoriteSeedEntries = favoriteSeed.Count,
+                seenSeedEntries = seenSeed.Count,
+                favoriteSeedBytes,
+                seenSeedBytes,
+                favoriteActionStartBytes,
+                seenActionStartBytes,
+                seenActionStartEntries,
+                favoriteFinalEntries = favoriteFinal.Count,
+                seenFinalEntries = seenFinal.Count,
+                favoriteFinalBytes = new FileInfo(favoritesPath).Length,
+                seenFinalBytes = new FileInfo(seenPath).Length,
+                modalNext = Stats(modalSamples),
+                favoriteAction = Stats(favoriteSamples),
+                repeatedSeenNoOpMs = Math.Round(noOpWatch.Elapsed.TotalMilliseconds, 3),
+                idleHeartbeat = new { intervalMs = 15, count = idleTicks.Count, gaps = Stats(idleGaps) },
+                workloadHeartbeat = new { intervalMs = 15, count = Math.Max(0, workloadTicks.Count - 1), gaps = Stats(workloadGaps) },
+                selectedNames,
+                actionsAccepted,
+                repeatedSeenAccepted,
+                repeatedSeenNoWrite,
+                favoriteExact,
+                seenAdditive,
+                sourceUntouched,
+                jobsUntouched,
+                residueFree,
+                isolated,
+                enhancementPassive,
+                pendingAtClose = false,
+            });
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                var small = await RunProfileAsync("small", 1);
+                var large = await RunProfileAsync("large-100000", 100_000);
+                ok = small.Ok && large.Ok && string.Equals(sourceBefore, FolderFingerprint(sourceRoot), StringComparison.Ordinal);
+                result = new
+                {
+                    ok,
+                    decision = "measurement-only; performance thresholds are intentionally not gating",
+                    smokeRoot,
+                    runtime = new
+                    {
+                        framework = System.Runtime.InteropServices.RuntimeInformation.FrameworkDescription,
+                        os = System.Runtime.InteropServices.RuntimeInformation.OSDescription,
+                        architecture = System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture.ToString(),
+                        processorCount = Environment.ProcessorCount,
+                    },
+                    profiles = new[] { small.Result, large.Result },
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot };
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { ok = false; }
+            Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -14419,6 +14706,7 @@ public partial class App : Application
         public bool LockRetryCleared { get; init; }
         public bool FavoritesRefused { get; init; }
         public bool SeenRefused { get; init; }
+        public bool SeenVisualRollback { get; init; }
         public bool StateRefused { get; init; }
         public bool RecentRefused { get; init; }
         public bool SearchShortcutSuppressed { get; init; }
