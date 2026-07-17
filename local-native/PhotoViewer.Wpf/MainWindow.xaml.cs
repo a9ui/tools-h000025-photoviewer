@@ -74,6 +74,7 @@ public partial class MainWindow : Window
     private const string ModalMetadataSettingsTab = "settings";
     private const int MinFavoriteFilterLevel = 1;
     private const int MaxFavoriteFilterLevel = 5;
+    private const int MaxPersistedPreviewTabs = 30;
     private static readonly JsonSerializerOptions SharedRecentJsonOptions = new()
     {
         WriteIndented = true,
@@ -94,6 +95,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly List<string> _restoredPreviewTabPaths = [];
     private int _gridStartIndex;
     private int _lastInitialUnseenCount;
     private int _enhancementJobsRead;
@@ -120,6 +122,8 @@ public partial class MainWindow : Window
     private string? _restoredSelectedPath;
     private string? _primarySelectedPath;
     private string? _activePreviewTabPath;
+    private string? _restoredActivePreviewTabPath;
+    private bool _previewTabsPersistenceReady = true;
     private string? _hoverPreviewTabPath;
     private string? _modalTransformPath;
     private string? _modalSourceTilePath;
@@ -357,6 +361,7 @@ public partial class MainWindow : Window
         }
 
         var materializeWatch = Stopwatch.StartNew();
+        Tile? restoredActivePreviewTile = null;
         bool previousSuppress = _suppressStateSave;
         _suppressStateSave = true;
         try
@@ -378,6 +383,7 @@ public partial class MainWindow : Window
 
             FolderPathText.Text = resolvedFolderSummary;
             ApplyFilters(selectFirst: false);
+            restoredActivePreviewTile = ReconcilePreviewTabsWithCurrentCatalog();
             UpdateFolderStats();
         }
         finally
@@ -416,6 +422,8 @@ public partial class MainWindow : Window
         }
 
         SetPhase(landing: false);
+        if (restoredActivePreviewTile is not null)
+            _restoredSelectedPath = restoredActivePreviewTile.Path;
         SelectRestoredOrFirst();
         SaveState();
 
@@ -990,6 +998,28 @@ public partial class MainWindow : Window
         {
             return null;
         }
+    }
+
+    private static List<string> NormalizePreviewTabPaths(IEnumerable<string?> paths, int maxCount = int.MaxValue)
+    {
+        var normalized = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string? candidate in paths)
+        {
+            string? path = NormalizePinnedPreviewPath(candidate);
+            if (path is null
+                || !SupportedImageExtensions.Contains(Path.GetExtension(path))
+                || !seen.Add(path))
+            {
+                continue;
+            }
+
+            normalized.Add(path);
+            if (normalized.Count >= maxCount)
+                break;
+        }
+
+        return normalized;
     }
 
     private int FavoriteLevelForPath(string path)
@@ -3308,6 +3338,47 @@ public partial class MainWindow : Window
 
     private void CloseAllPreviewTabs_Click(object sender, RoutedEventArgs e) => CloseAllPreviewTabs();
 
+    private Tile? ReconcilePreviewTabsWithCurrentCatalog()
+    {
+        IReadOnlyList<string> requestedPaths = _previewTabsPersistenceReady
+            ? _previewTabs.Select(static tab => tab.Path).ToList()
+            : _restoredPreviewTabPaths;
+        string? requestedActivePath = _previewTabsPersistenceReady
+            ? _activePreviewTabPath
+            : _restoredActivePreviewTabPath;
+
+        var currentByPath = _tiles
+            .Where(static tile => tile.IsRealFile)
+            .ToDictionary(tile => NormalizeFavoritePath(tile.Path), StringComparer.OrdinalIgnoreCase);
+        var restoredTiles = new List<Tile>();
+        foreach (string path in NormalizePreviewTabPaths(requestedPaths))
+        {
+            if (currentByPath.TryGetValue(path, out Tile? tile))
+                restoredTiles.Add(tile);
+        }
+
+        _previewTabs.Clear();
+        foreach (Tile tile in restoredTiles)
+        {
+            bool isPinned = NormalizePinnedPreviewPath(tile.Path) is string normalizedPath
+                && _pinnedPreviewPaths.Contains(normalizedPath);
+            _previewTabs.Add(new PreviewTabView(tile.Path, tile.FileName, isPinned));
+        }
+
+        string? normalizedActivePath = NormalizePinnedPreviewPath(requestedActivePath);
+        Tile? active = normalizedActivePath is null
+            ? null
+            : restoredTiles.FirstOrDefault(tile => string.Equals(tile.Path, normalizedActivePath, StringComparison.OrdinalIgnoreCase));
+        active ??= restoredTiles.FirstOrDefault();
+        _activePreviewTabPath = active?.Path;
+        _restoredPreviewTabPaths.Clear();
+        _restoredActivePreviewTabPath = null;
+        _previewTabsPersistenceReady = true;
+        _closedPreviewTabs.RemoveAll(tile => !_allTiles.Contains(tile));
+        RefreshPreviewTabs();
+        return active;
+    }
+
     private bool OpenPreviewTab(Tile tile, bool makeActive)
     {
         if (!tile.IsRealFile)
@@ -3390,6 +3461,7 @@ public partial class MainWindow : Window
             RefreshPreviewTabs();
         }
 
+        SaveState();
         return true;
     }
 
@@ -3425,6 +3497,7 @@ public partial class MainWindow : Window
         _previewTabs.Clear();
         _activePreviewTabPath = null;
         RefreshPreviewTabs();
+        SaveState();
     }
 
     private void RefreshPreviewTabs()
@@ -5459,6 +5532,16 @@ public partial class MainWindow : Window
                 _pinnedPreviewPaths.Add(path);
         }
 
+        _restoredPreviewTabPaths.Clear();
+        _restoredPreviewTabPaths.AddRange(NormalizePreviewTabPaths(state.PreviewTabPaths ?? [], MaxPersistedPreviewTabs));
+        _restoredActivePreviewTabPath = NormalizePinnedPreviewPath(state.ActivePreviewTabPath);
+        if (_restoredActivePreviewTabPath is null
+            || !_restoredPreviewTabPaths.Contains(_restoredActivePreviewTabPath, StringComparer.OrdinalIgnoreCase))
+        {
+            _restoredActivePreviewTabPath = _restoredPreviewTabPaths.FirstOrDefault();
+        }
+        _previewTabsPersistenceReady = _restoredPreviewTabPaths.Count == 0;
+
         if (!string.IsNullOrWhiteSpace(state.SearchQuery))
             SearchInput.Text = state.SearchQuery;
 
@@ -5524,6 +5607,17 @@ public partial class MainWindow : Window
             string path = ResolvedStatePath;
             var selectedPath = SelectedTile() is { IsRealFile: true } selected ? selected.Path : null;
             _restoredSelectedPath = selectedPath;
+            List<string> previewTabPaths = _previewTabsPersistenceReady
+                ? NormalizePreviewTabPaths(_previewTabs.Select(static tab => tab.Path), MaxPersistedPreviewTabs)
+                : _restoredPreviewTabPaths.ToList();
+            string? activePreviewTabPath = _previewTabsPersistenceReady
+                ? NormalizePinnedPreviewPath(_activePreviewTabPath)
+                : _restoredActivePreviewTabPath;
+            if (activePreviewTabPath is null
+                || !previewTabPaths.Contains(activePreviewTabPath, StringComparer.OrdinalIgnoreCase))
+            {
+                activePreviewTabPath = previewTabPaths.FirstOrDefault();
+            }
             var state = new ViewerState
             {
                 Version = 1,
@@ -5547,6 +5641,8 @@ public partial class MainWindow : Window
                 ConfirmBeforeDelete = _confirmBeforeDelete,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
+                PreviewTabPaths = previewTabPaths.Count > 0 ? previewTabPaths : null,
+                ActivePreviewTabPath = activePreviewTabPath,
                 SelectedPath = selectedPath,
                 ExtensionData = CloneExtensionData(_stateExtensionData),
             };
@@ -6730,6 +6826,8 @@ public sealed class ViewerState
     public int? FavoriteFilterLevel { get; set; }
     public List<string>? HiddenFolderBuckets { get; set; }
     public List<string>? PinnedPreviewPaths { get; set; }
+    public List<string>? PreviewTabPaths { get; set; }
+    public string? ActivePreviewTabPath { get; set; }
     [System.Text.Json.Serialization.JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }

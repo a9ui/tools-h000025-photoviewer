@@ -5276,6 +5276,11 @@ public partial class App : Application
                 reloaded.Show();
                 reloaded.SuppressStatePersistence();
                 await reloaded.LoadFolderAsync(fullFolder);
+                int tabCountAfterReload = reloaded.PreviewTabCountForSmoke;
+                List<string> tabsAfterReload = reloaded.PreviewTabNamesForSmoke;
+                string? activeAfterReload = reloaded.ActivePreviewTabNameForSmoke;
+                string? selectedAfterReload = reloaded.SelectedFileNameForSmoke;
+                bool modalClosedAfterReload = !reloaded.ModalVisibleForSmoke;
                 bool selectedFirstAfterReload = reloaded.SelectFileNameForSmoke(firstName);
                 bool openedFirstAfterReload = reloaded.OpenSelectedPreviewTabForSmoke();
                 bool firstPinnedAfterReload = reloaded.IsPreviewTabPinnedForSmoke(firstName);
@@ -5327,6 +5332,11 @@ public partial class App : Application
                     && countAfterRestoreAll == 1
                     && !string.IsNullOrWhiteSpace(activeAfterRestoreAll)
                     && string.Equals(selectedAfterRestoreAll, activeAfterRestoreAll, StringComparison.OrdinalIgnoreCase)
+                    && tabCountAfterReload == 1
+                    && tabsAfterReload.SequenceEqual([firstName], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(activeAfterReload, firstName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(selectedAfterReload, firstName, StringComparison.OrdinalIgnoreCase)
+                    && modalClosedAfterReload
                     && selectedFirstAfterReload
                     && openedFirstAfterReload
                     && firstPinnedAfterReload
@@ -5335,7 +5345,7 @@ public partial class App : Application
                 result = new PreviewTabsSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "preview tabs open, pin, hover, activate, close, restore, close-all, reload, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
+                    Message = ok ? "preview tabs open, pin, hover, activate, close, restore, close-all, automatic reload, and selection sync passed" : "preview tab behavior did not match expected browser parity subset",
                     Folder = fullFolder,
                     StatePath = statePath,
                     SeenPath = seenPath,
@@ -5379,6 +5389,11 @@ public partial class App : Application
                     CountAfterRestoreAll = countAfterRestoreAll,
                     ActiveAfterRestoreAll = activeAfterRestoreAll,
                     SelectedAfterRestoreAll = selectedAfterRestoreAll,
+                    TabCountAfterReload = tabCountAfterReload,
+                    TabsAfterReload = tabsAfterReload,
+                    ActiveAfterReload = activeAfterReload,
+                    SelectedAfterReload = selectedAfterReload,
+                    ModalClosedAfterReload = modalClosedAfterReload,
                     SelectedFirstAfterReload = selectedFirstAfterReload,
                     OpenedFirstAfterReload = openedFirstAfterReload,
                     FirstPinnedAfterReload = firstPinnedAfterReload,
@@ -7209,6 +7224,11 @@ public partial class App : Application
         public int CountAfterRestoreAll { get; init; }
         public string? ActiveAfterRestoreAll { get; init; }
         public string? SelectedAfterRestoreAll { get; init; }
+        public int TabCountAfterReload { get; init; }
+        public List<string> TabsAfterReload { get; init; } = [];
+        public string? ActiveAfterReload { get; init; }
+        public string? SelectedAfterReload { get; init; }
+        public bool ModalClosedAfterReload { get; init; }
         public bool SelectedFirstAfterReload { get; init; }
         public bool OpenedFirstAfterReload { get; init; }
         public bool FirstPinnedAfterReload { get; init; }
