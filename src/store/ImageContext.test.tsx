@@ -889,11 +889,12 @@ describe('ImageProvider browser UI preferences', () => {
     );
 
     await waitFor(() => {
-      const favorites = screen.getByRole('status', { name: 'favorites state' });
-      expect(favorites).toHaveTextContent('"backup-favorite":4');
-      expect(favorites).toHaveTextContent('"legacy-boolean":1');
-      expect(favorites).toHaveTextContent('"future-string-level":1');
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"backup-favorite":4');
     });
+    const favorites = screen.getByRole('status', { name: 'favorites state' });
+    expect(favorites).toHaveTextContent('"legacy-boolean":1');
+    expect(favorites).toHaveTextContent('"future-string-level":1');
 
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('pvu_favorites') || '{}')).toEqual({
