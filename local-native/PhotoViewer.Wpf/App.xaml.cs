@@ -65,6 +65,13 @@ public partial class App : Application
             return;
         }
 
+        int previewTabReorderSmokeIdx = Array.IndexOf(e.Args, "--preview-tab-reorder-smoke");
+        if (previewTabReorderSmokeIdx >= 0 && previewTabReorderSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePreviewTabReorderSmoke(e.Args[previewTabReorderSmokeIdx + 1]);
+            return;
+        }
+
         int previewTabHoverSmokeIdx = Array.IndexOf(e.Args, "--preview-tab-hover-smoke");
         if (previewTabHoverSmokeIdx >= 0 && previewTabHoverSmokeIdx + 1 < e.Args.Length)
         {
@@ -5392,6 +5399,132 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CapturePreviewTabReorderSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-preview-tab-reorder-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        Directory.CreateDirectory(folder);
+        const string firstName = "a-first.png";
+        const string secondName = "b-pinned.png";
+        const string thirdName = "c-active.png";
+        WriteSmokePng(Path.Combine(folder, firstName), 48, 36, Color.FromRgb(80, 130, 210));
+        WriteSmokePng(Path.Combine(folder, secondName), 48, 36, Color.FromRgb(230, 100, 130));
+        WriteSmokePng(Path.Combine(folder, thirdName), 48, 36, Color.FromRgb(100, 200, 130));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            PreviewTabReorderSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                bool openedFirst = win.SelectFileNameForSmoke(firstName) && win.OpenSelectedPreviewTabForSmoke();
+                bool openedSecond = win.SelectFileNameForSmoke(secondName) && win.OpenSelectedPreviewTabForSmoke();
+                bool openedThird = win.SelectFileNameForSmoke(thirdName) && win.OpenSelectedPreviewTabForSmoke();
+                bool pinnedSecond = win.TogglePreviewTabPinForSmoke(secondName) && win.IsPreviewTabPinnedForSmoke(secondName);
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                bool accessible = win.PreviewTabAccessibilityForSmoke;
+
+                bool focusedSecond = win.FocusPreviewTabForSmoke(secondName);
+                bool keyboardRight = win.ReorderFocusedPreviewTabForSmoke(1);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                bool rightOrder = win.PreviewTabNamesForSmoke.SequenceEqual([firstName, thirdName, secondName], StringComparer.OrdinalIgnoreCase);
+                bool rightFocus = win.FocusedPreviewTabForSmoke(secondName);
+
+                bool keyboardLeft = win.ReorderFocusedPreviewTabForSmoke(-1);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                bool leftOrder = win.PreviewTabNamesForSmoke.SequenceEqual([firstName, secondName, thirdName], StringComparer.OrdinalIgnoreCase);
+                bool leftFocus = win.FocusedPreviewTabForSmoke(secondName);
+
+                bool dragReordered = win.DragMovePreviewTabForSmoke(firstName, 2);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                List<string> orderBeforeReload = win.PreviewTabNamesForSmoke;
+                string? activeBeforeReload = win.ActivePreviewTabNameForSmoke;
+                ViewerState? persisted = ReadPersistedState(statePath);
+                string? firstPath = win.PathForFileNameForSmoke(firstName);
+                string? secondPath = win.PathForFileNameForSmoke(secondName);
+                string? thirdPath = win.PathForFileNameForSmoke(thirdName);
+                bool persistedOrderActivePin = secondPath is not null && thirdPath is not null && firstPath is not null
+                    && persisted?.PreviewTabPaths?.SequenceEqual([secondPath, thirdPath, firstPath], StringComparer.OrdinalIgnoreCase) == true
+                    && string.Equals(persisted.ActivePreviewTabPath, thirdPath, StringComparison.OrdinalIgnoreCase)
+                    && persisted.PinnedPreviewPaths?.Contains(secondPath, StringComparer.OrdinalIgnoreCase) == true;
+                win.Close();
+
+                var reloaded = HiddenWindow();
+                reloaded.Show();
+                await reloaded.LoadFolderAsync(folder);
+                await reloaded.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                bool reloadPreserved = reloaded.PreviewTabNamesForSmoke.SequenceEqual([secondName, thirdName, firstName], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(reloaded.ActivePreviewTabNameForSmoke, thirdName, StringComparison.OrdinalIgnoreCase)
+                    && reloaded.IsPreviewTabPinnedForSmoke(secondName);
+                bool invalidRecovery = reloaded.InvalidPreviewTabMovePreservesStateForSmoke();
+                bool middleClosedFirst = reloaded.MiddleClosePreviewTabForSmoke(firstName)
+                    && !reloaded.PreviewTabNamesForSmoke.Contains(firstName, StringComparer.OrdinalIgnoreCase);
+                bool middleClosedSecond = reloaded.MiddleClosePreviewTabForSmoke(secondName)
+                    && !reloaded.PreviewTabNamesForSmoke.Contains(secondName, StringComparer.OrdinalIgnoreCase);
+                bool middleClosedLast = reloaded.MiddleClosePreviewTabForSmoke(thirdName) && reloaded.PreviewTabCountForSmoke == 0;
+                await reloaded.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                bool restoreFocus = reloaded.RestorePreviewTabFocusForSmoke;
+                bool restored = reloaded.RestoreLastClosedPreviewTabForSmoke();
+                await reloaded.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
+                bool restoredFocus = reloaded.FocusedPreviewTabForSmoke(thirdName);
+                reloaded.Close();
+
+                bool activeAndPinStable = string.Equals(activeBeforeReload, thirdName, StringComparison.OrdinalIgnoreCase)
+                    && orderBeforeReload.SequenceEqual([secondName, thirdName, firstName], StringComparer.OrdinalIgnoreCase);
+                bool ok = openedFirst && openedSecond && openedThird && pinnedSecond && accessible
+                    && focusedSecond && keyboardRight && rightOrder && rightFocus
+                    && keyboardLeft && leftOrder && leftFocus && dragReordered
+                    && activeAndPinStable && persistedOrderActivePin && reloadPreserved && invalidRecovery
+                    && middleClosedFirst && middleClosedSecond && middleClosedLast && restoreFocus && restored && restoredFocus;
+                result = new PreviewTabReorderSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "preview tab drag/keyboard reorder, middle close, reload persistence, focus, accessibility, and failure recovery passed" : "preview tab reorder parity did not meet the expected contract",
+                    Accessibility = accessible,
+                    KeyboardRight = keyboardRight && rightOrder && rightFocus,
+                    KeyboardLeft = keyboardLeft && leftOrder && leftFocus,
+                    DragReordered = dragReordered,
+                    PersistedOrderActivePin = persistedOrderActivePin,
+                    ReloadPreserved = reloadPreserved,
+                    InvalidRecovery = invalidRecovery,
+                    MiddleClose = middleClosedFirst && middleClosedSecond && middleClosedLast,
+                    RestoreFocus = restoreFocus && restored && restoredFocus,
+                    OrderBeforeReload = orderBeforeReload,
+                    ActiveBeforeReload = activeBeforeReload,
+                };
+            }
+            catch (Exception ex)
+            {
+                win.Close();
+                result = new PreviewTabReorderSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WritePreviewTabReorderSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewTabsSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -7198,6 +7331,12 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WritePreviewTabReorderSmokeResult(string path, PreviewTabReorderSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WritePreviewTabHoverSmokeResult(string path, PreviewTabHoverSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -7598,6 +7737,23 @@ public partial class App : Application
         public bool OpenedFirstAfterReload { get; init; }
         public bool FirstPinnedAfterReload { get; init; }
         public int PinnedCountAfterReload { get; init; }
+    }
+
+    private sealed class PreviewTabReorderSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool Accessibility { get; init; }
+        public bool KeyboardRight { get; init; }
+        public bool KeyboardLeft { get; init; }
+        public bool DragReordered { get; init; }
+        public bool PersistedOrderActivePin { get; init; }
+        public bool ReloadPreserved { get; init; }
+        public bool InvalidRecovery { get; init; }
+        public bool MiddleClose { get; init; }
+        public bool RestoreFocus { get; init; }
+        public List<string> OrderBeforeReload { get; init; } = [];
+        public string? ActiveBeforeReload { get; init; }
     }
 
     private sealed class PreviewTabHoverSmokeResult

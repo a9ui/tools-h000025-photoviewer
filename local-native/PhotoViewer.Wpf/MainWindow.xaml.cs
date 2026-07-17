@@ -135,6 +135,8 @@ public partial class MainWindow : Window
     private long _previewTabHoverGeneration;
     private int _previewTabHoverDecodeStartCount;
     private int _previewTabHoverDecodeFailureCount;
+    private Point? _previewTabDragStartPoint;
+    private PreviewTabView? _previewTabDragSource;
     private string? _modalTransformPath;
     private string? _modalSourceTilePath;
     private string? _modalDisplayPath;
@@ -3458,13 +3460,126 @@ public partial class MainWindow : Window
     private void PreviewTab_MouseMove(object sender, MouseEventArgs e)
     {
         if (sender is FrameworkElement { Tag: PreviewTabView tab } target)
+        {
             ShowPreviewTabHover(tab, target);
+            if (_previewTabDragSource == tab
+                && _previewTabDragStartPoint is Point start
+                && e.LeftButton == MouseButtonState.Pressed)
+            {
+                Point current = e.GetPosition(target);
+                if (Math.Abs(current.X - start.X) >= SystemParameters.MinimumHorizontalDragDistance
+                    || Math.Abs(current.Y - start.Y) >= SystemParameters.MinimumVerticalDragDistance)
+                {
+                    _previewTabDragStartPoint = null;
+                    try
+                    {
+                        DragDrop.DoDragDrop(target, new DataObject(typeof(PreviewTabView), tab), DragDropEffects.Move);
+                    }
+                    finally
+                    {
+                        _previewTabDragSource = null;
+                        SetPreviewTabDragOver(null);
+                    }
+                }
+            }
+        }
     }
 
     private void PreviewTab_MouseLeave(object sender, MouseEventArgs e)
     {
         if (sender is FrameworkElement { Tag: PreviewTabView tab })
             HidePreviewTabHover(tab.Path);
+    }
+
+    private void PreviewTab_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab } target)
+        {
+            _previewTabDragSource = tab;
+            _previewTabDragStartPoint = e.GetPosition(target);
+        }
+    }
+
+    private void PreviewTab_PreviewMouseLeftButtonUp(object sender, MouseButtonEventArgs e)
+    {
+        _previewTabDragStartPoint = null;
+        _previewTabDragSource = null;
+    }
+
+    private void PreviewTab_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Middle
+            && sender is FrameworkElement { Tag: PreviewTabView tab })
+        {
+            ClosePreviewTab(tab.Path);
+            e.Handled = true;
+        }
+    }
+
+    private void PreviewTab_DragEnter(object sender, DragEventArgs e) => PreviewTab_DragOver(sender, e);
+
+    private void PreviewTab_DragOver(object sender, DragEventArgs e)
+    {
+        if (sender is not FrameworkElement { Tag: PreviewTabView tab }
+            || !TryGetDraggedPreviewTab(e.Data, out PreviewTabView? source)
+            || ReferenceEquals(source, tab))
+        {
+            e.Effects = DragDropEffects.None;
+            SetPreviewTabDragOver(null);
+            e.Handled = true;
+            return;
+        }
+
+        e.Effects = DragDropEffects.Move;
+        SetPreviewTabDragOver(tab);
+        e.Handled = true;
+    }
+
+    private void PreviewTab_DragLeave(object sender, DragEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: PreviewTabView tab } && tab.IsDragOver)
+            SetPreviewTabDragOver(null);
+    }
+
+    private void PreviewTab_Drop(object sender, DragEventArgs e)
+    {
+        try
+        {
+            PreviewTabView? source = null;
+            if (sender is not FrameworkElement { Tag: PreviewTabView target })
+            {
+                ReportPreviewTabReorderFailure(source);
+                return;
+            }
+
+            if (!TryGetDraggedPreviewTab(e.Data, out source) || source is null)
+            {
+                ReportPreviewTabReorderFailure(source);
+                return;
+            }
+
+            if (ReferenceEquals(source, target))
+                return;
+
+            int sourceIndex = _previewTabs.IndexOf(source);
+            int targetIndex = _previewTabs.IndexOf(target);
+            if (sourceIndex < 0 || targetIndex < 0)
+            {
+                ReportPreviewTabReorderFailure(source);
+                return;
+            }
+
+            bool placeAfter = e.GetPosition((IInputElement)sender).X >= ((FrameworkElement)sender).ActualWidth / 2;
+            int destination = targetIndex + (placeAfter ? 1 : 0);
+            if (sourceIndex < destination)
+                destination--;
+            MovePreviewTab(source, destination, reportFailure: true);
+        }
+        finally
+        {
+            SetPreviewTabDragOver(null);
+            e.Handled = true;
+        }
     }
 
     private void ClosePreviewTab_Click(object sender, RoutedEventArgs e)
@@ -3599,7 +3714,10 @@ public partial class MainWindow : Window
             if (_previewTabs.LastOrDefault() is { } next)
                 ActivatePreviewTab(next.Path);
             else
+            {
                 RefreshPreviewTabs();
+                FocusRestorePreviewTabButton();
+            }
         }
         else
         {
@@ -3617,7 +3735,12 @@ public partial class MainWindow : Window
             var tile = _closedPreviewTabs[0];
             _closedPreviewTabs.RemoveAt(0);
             if (_tiles.Contains(tile))
-                return OpenPreviewTab(tile, makeActive: true);
+            {
+                bool restored = OpenPreviewTab(tile, makeActive: true);
+                if (restored)
+                    FocusPreviewTab(tile.Path);
+                return restored;
+            }
         }
 
         RefreshPreviewTabs();
@@ -3644,6 +3767,98 @@ public partial class MainWindow : Window
         RefreshPreviewTabs();
         SaveState();
     }
+
+    private static bool TryGetDraggedPreviewTab(IDataObject data, out PreviewTabView? tab)
+    {
+        tab = data.GetDataPresent(typeof(PreviewTabView)) ? data.GetData(typeof(PreviewTabView)) as PreviewTabView : null;
+        return tab is not null;
+    }
+
+    private void SetPreviewTabDragOver(PreviewTabView? target)
+    {
+        foreach (PreviewTabView tab in _previewTabs)
+            tab.IsDragOver = ReferenceEquals(tab, target);
+    }
+
+    private bool MovePreviewTab(PreviewTabView? tab, int destinationIndex, bool reportFailure)
+    {
+        int sourceIndex = tab is null ? -1 : _previewTabs.IndexOf(tab);
+        if (sourceIndex < 0 || destinationIndex < 0 || destinationIndex >= _previewTabs.Count)
+        {
+            if (reportFailure)
+                ReportPreviewTabReorderFailure(tab);
+            return false;
+        }
+
+        if (sourceIndex == destinationIndex)
+            return false;
+
+        _previewTabs.Move(sourceIndex, destinationIndex);
+        RefreshPreviewTabs();
+        SaveState();
+        FocusPreviewTab(tab!.Path);
+        return true;
+    }
+
+    private void ReportPreviewTabReorderFailure(PreviewTabView? tab)
+    {
+        SetStatusToast("Preview tab reorder was not applied. The existing tab order was preserved.");
+        if (tab is not null)
+            FocusPreviewTab(tab.Path);
+    }
+
+    private bool TryReorderFocusedPreviewTab(int delta)
+    {
+        if (delta == 0 || !TryGetFocusedPreviewTab(out PreviewTabView? tab) || tab is null)
+            return false;
+
+        int sourceIndex = _previewTabs.IndexOf(tab);
+        return sourceIndex >= 0 && MovePreviewTab(tab, sourceIndex + delta, reportFailure: false);
+    }
+
+    private static bool TryGetFocusedPreviewTab(out PreviewTabView? tab)
+    {
+        DependencyObject? current = Keyboard.FocusedElement as DependencyObject;
+        while (current is not null)
+        {
+            if (current is FrameworkElement { Tag: PreviewTabView previewTab })
+            {
+                tab = previewTab;
+                return true;
+            }
+
+            current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(current)
+                : LogicalTreeHelper.GetParent(current);
+        }
+
+        tab = null;
+        return false;
+    }
+
+    private void FocusPreviewTab(string path)
+        => Dispatcher.BeginInvoke(() =>
+        {
+            PreviewTabView? tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+            if (tab is null)
+                return;
+
+            FindPreviewTabButton(tab)?.Focus();
+        }, DispatcherPriority.Input);
+
+    private Button? FindPreviewTabButton(PreviewTabView tab)
+    {
+        UpdateLayout();
+        return FindVisualDescendants<Button>(PreviewTabList)
+            .FirstOrDefault(candidate => candidate.Tag == tab && candidate.Content is StackPanel);
+    }
+
+    private void FocusRestorePreviewTabButton()
+        => Dispatcher.BeginInvoke(() =>
+        {
+            if (RestorePreviewTabButton.IsVisible && RestorePreviewTabButton.IsEnabled)
+                RestorePreviewTabButton.Focus();
+        }, DispatcherPriority.Input);
 
     private void RefreshPreviewTabs()
     {
@@ -6352,6 +6567,14 @@ public partial class MainWindow : Window
             return;
         }
 
+        bool tabReorderChord = (Keyboard.Modifiers & (ModifierKeys.Alt | ModifierKeys.Shift)) == (ModifierKeys.Alt | ModifierKeys.Shift)
+            && (Keyboard.Modifiers & ~(ModifierKeys.Alt | ModifierKeys.Shift)) == ModifierKeys.None;
+        if (tabReorderChord && (key is Key.Left or Key.Right) && TryReorderFocusedPreviewTab(key == Key.Left ? -1 : 1))
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (TryHandleModalTransformKey(e))
         {
             e.Handled = true;
@@ -6597,6 +6820,48 @@ public partial class MainWindow : Window
     public int ClosedPreviewTabCountForSmoke => _closedPreviewTabs.Count;
     public string? ActivePreviewTabNameForSmoke => _previewTabs.FirstOrDefault(tab => tab.IsActive)?.FileName;
     public List<string> PreviewTabNamesForSmoke => _previewTabs.Select(static tab => tab.FileName).ToList();
+    public bool PreviewTabAccessibilityForSmoke
+        => string.Equals(System.Windows.Automation.AutomationProperties.GetName(PreviewTabList), "Preview tabs", StringComparison.Ordinal)
+            && _previewTabs.All(tab => FindPreviewTabButton(tab) is Button button
+                && string.Equals(System.Windows.Automation.AutomationProperties.GetName(button), tab.AutomationName, StringComparison.Ordinal));
+    public bool FocusPreviewTabForSmoke(string fileName)
+    {
+        PreviewTabView? tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (tab is null)
+            return false;
+
+        Button? button = FindPreviewTabButton(tab);
+        return button?.Focus() == true;
+    }
+    public bool ReorderFocusedPreviewTabForSmoke(int delta) => TryReorderFocusedPreviewTab(delta);
+    public bool DragMovePreviewTabForSmoke(string fileName, int destinationIndex)
+    {
+        PreviewTabView? tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return MovePreviewTab(tab, destinationIndex, reportFailure: true);
+    }
+    public bool MiddleClosePreviewTabForSmoke(string fileName)
+    {
+        PreviewTabView? tab = _previewTabs.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        return tab is not null && ClosePreviewTab(tab.Path);
+    }
+    public bool InvalidPreviewTabMovePreservesStateForSmoke()
+    {
+        List<string> beforeOrder = PreviewTabNamesForSmoke;
+        string? beforeActive = ActivePreviewTabNameForSmoke;
+        List<string> beforePinned = _previewTabs.Where(static tab => tab.IsPinned).Select(static tab => tab.FileName).ToList();
+        PreviewTabView? tab = _previewTabs.FirstOrDefault();
+        bool moved = MovePreviewTab(tab, _previewTabs.Count + 1, reportFailure: true);
+        return !moved
+            && PreviewTabNamesForSmoke.SequenceEqual(beforeOrder, StringComparer.OrdinalIgnoreCase)
+            && string.Equals(ActivePreviewTabNameForSmoke, beforeActive, StringComparison.OrdinalIgnoreCase)
+            && _previewTabs.Where(static candidate => candidate.IsPinned).Select(static candidate => candidate.FileName).SequenceEqual(beforePinned, StringComparer.OrdinalIgnoreCase)
+            && DeleteStatusVisibleForSmoke
+            && DeleteStatusForSmoke.Contains("order was preserved", StringComparison.OrdinalIgnoreCase);
+    }
+    public bool RestorePreviewTabFocusForSmoke => Keyboard.FocusedElement == RestorePreviewTabButton;
+    public bool FocusedPreviewTabForSmoke(string fileName)
+        => Keyboard.FocusedElement is FrameworkElement { Tag: PreviewTabView tab }
+            && string.Equals(tab.FileName, fileName, StringComparison.OrdinalIgnoreCase);
     public bool PreviewTabHoverVisibleForSmoke => PreviewTabHoverPopup?.IsOpen == true;
     public string? HoverPreviewTabNameForSmoke => string.IsNullOrWhiteSpace(_hoverPreviewTabPath)
         ? null
@@ -7377,6 +7642,7 @@ public sealed class PreviewTabView : INotifyPropertyChanged
 {
     private bool _isActive;
     private bool _isPinned;
+    private bool _isDragOver;
 
     public PreviewTabView(string path, string fileName, bool isPinned = false)
     {
@@ -7390,6 +7656,9 @@ public sealed class PreviewTabView : INotifyPropertyChanged
     public string ActiveMarker => IsActive ? "*" : "";
     public string PinMarker => IsPinned ? "P" : "p";
     public string PinToolTip => IsPinned ? "Unpin tab" : "Pin tab";
+    public string AutomationName => $"Preview tab {FileName}";
+    public string PinAutomationName => $"{(IsPinned ? "Unpin" : "Pin")} preview tab {FileName}";
+    public string CloseAutomationName => $"Close preview tab {FileName}";
     public Brush Foreground => IsActive ? Brushes.White : Brushes.LightGray;
 
     public bool IsActive
@@ -7415,6 +7684,18 @@ public sealed class PreviewTabView : INotifyPropertyChanged
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsPinned)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PinMarker)));
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PinToolTip)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(PinAutomationName)));
+        }
+    }
+
+    public bool IsDragOver
+    {
+        get => _isDragOver;
+        set
+        {
+            if (_isDragOver == value) return;
+            _isDragOver = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(IsDragOver)));
         }
     }
 

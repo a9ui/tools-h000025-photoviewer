@@ -477,13 +477,13 @@
     <Border Grid.Row="2" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="0,1,0,0">
       <DockPanel LastChildFill="True">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0">
-          <Button x:Name="RestorePreviewTabButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)" Click="RestorePreviewTab_Click"/>
-          <Button x:Name="CloseAllPreviewTabsButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all" Click="CloseAllPreviewTabs_Click"/>
+          <Button x:Name="RestorePreviewTabButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)" Click="RestorePreviewTab_Click" AutomationProperties.Name="Reopen last closed preview tab"/>
+          <Button x:Name="CloseAllPreviewTabsButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all" Click="CloseAllPreviewTabs_Click" AutomationProperties.Name="Close all preview tabs"/>
         </StackPanel>
         <Grid>
           <TextBlock x:Name="PreviewTabsEmptyText" Text="No preview tabs" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center" Margin="8,0"/>
           <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
-            <ItemsControl x:Name="PreviewTabList">
+            <ItemsControl x:Name="PreviewTabList" AutomationProperties.Name="Preview tabs" AutomationProperties.HelpText="Drag a tab to reorder it. Alt+Shift+Left or Right moves the focused tab.">
               <ItemsControl.ItemsPanel>
                 <ItemsPanelTemplate>
                   <StackPanel Orientation="Horizontal"/>
@@ -491,16 +491,26 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate>
-                  <Border Padding="6,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0">
+                  <Border Padding="6,0" BorderBrush="#0AFFFFFF" BorderThickness="0,0,1,0" Tag="{Binding}" AllowDrop="True" DragEnter="PreviewTab_DragEnter" DragOver="PreviewTab_DragOver" DragLeave="PreviewTab_DragLeave" Drop="PreviewTab_Drop">
+                    <Border.Style>
+                      <Style TargetType="Border">
+                        <Setter Property="Background" Value="Transparent"/>
+                        <Style.Triggers>
+                          <DataTrigger Binding="{Binding IsDragOver}" Value="True">
+                            <Setter Property="Background" Value="{StaticResource AccentGlass}"/>
+                          </DataTrigger>
+                        </Style.Triggers>
+                      </Style>
+                    </Border.Style>
                     <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                       <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" MouseEnter="PreviewTab_MouseEnter" MouseMove="PreviewTab_MouseMove" MouseLeave="PreviewTab_MouseLeave" ToolTip="{Binding Path}">
+                       <Button Style="{StaticResource GhostButton}" Height="26" FontSize="11" Padding="8,0" Tag="{Binding}" Click="ActivatePreviewTab_Click" MouseEnter="PreviewTab_MouseEnter" MouseMove="PreviewTab_MouseMove" MouseLeave="PreviewTab_MouseLeave" PreviewMouseLeftButtonDown="PreviewTab_PreviewMouseLeftButtonDown" PreviewMouseLeftButtonUp="PreviewTab_PreviewMouseLeftButtonUp" PreviewMouseDown="PreviewTab_PreviewMouseDown" ToolTip="{Binding Path}" AutomationProperties.Name="{Binding AutomationName}" AutomationProperties.HelpText="Drag to reorder. Alt+Shift+Left or Right moves this tab.">
                         <StackPanel Orientation="Horizontal">
                           <TextBlock Text="{Binding ActiveMarker}" Foreground="{StaticResource FavoriteText}" FontSize="11" VerticalAlignment="Center" Margin="0,0,5,0"/>
                           <TextBlock Text="{Binding FileName}" Foreground="{Binding Foreground}" FontSize="12" TextTrimming="CharacterEllipsis" MaxWidth="160" VerticalAlignment="Center"/>
                         </StackPanel>
                        </Button>
-                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="11" Content="{Binding PinMarker}" Tag="{Binding}" Click="TogglePreviewTabPin_Click" ToolTip="{Binding PinToolTip}"/>
-                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="12" Content="x" Tag="{Binding}" Click="ClosePreviewTab_Click" ToolTip="Close tab"/>
+                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="11" Content="{Binding PinMarker}" Tag="{Binding}" Click="TogglePreviewTabPin_Click" ToolTip="{Binding PinToolTip}" AutomationProperties.Name="{Binding PinAutomationName}"/>
+                       <Button Style="{StaticResource GhostButton}" Width="26" Height="26" FontSize="12" Content="x" Tag="{Binding}" Click="ClosePreviewTab_Click" ToolTip="Close tab" AutomationProperties.Name="{Binding CloseAutomationName}"/>
                     </StackPanel>
                   </Border>
                 </DataTemplate>
