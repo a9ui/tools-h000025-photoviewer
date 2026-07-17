@@ -240,6 +240,13 @@ public partial class App : Application
             return;
         }
 
+        int p1bSmokeIdx = Array.IndexOf(e.Args, "--p1b-smoke");
+        if (p1bSmokeIdx >= 0 && p1bSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP1BSmoke(e.Args[p1bSmokeIdx + 1]);
+            return;
+        }
+
         int enhancedFilterSmokeIdx = Array.IndexOf(e.Args, "--enhanced-filter-smoke");
         if (enhancedFilterSmokeIdx >= 0 && enhancedFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -3400,6 +3407,169 @@ public partial class App : Application
             Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
             File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureP1BSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p1b-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+
+        Directory.CreateDirectory(folder);
+        WriteSmokePng(Path.Combine(folder, "good-one.png"), 32, 24, Color.FromRgb(60, 140, 210));
+        WriteSmokePng(Path.Combine(folder, "good-two.png"), 32, 24, Color.FromRgb(100, 190, 120));
+        File.WriteAllText(Path.Combine(folder, "broken.png"), "not an image");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            P1BSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool decoderStatus = win.DeleteStatusVisibleForSmoke
+                    && win.DeleteStatusForSmoke.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
+                win.ReportScanAccessFailureForSmoke();
+                bool scanStatus = win.DeleteStatusForSmoke.Contains("access was denied", StringComparison.OrdinalIgnoreCase);
+
+                bool selected = win.SelectFileNameForSmoke("good-one.png");
+                bool searchFocused = win.FocusSearchInputForSmoke();
+                bool searchShortcutSuppressed = win.IsGlobalShortcutInputFocusedForSmoke && !win.InvokePreviewKeyForSmoke(Key.F);
+                bool dateFocused = win.FocusDateFromInputForSmoke();
+                bool dateShortcutSuppressed = win.IsGlobalShortcutInputFocusedForSmoke && !win.InvokePreviewKeyForSmoke(Key.F);
+                bool settingsButtonFocused = win.FocusAppSettingsButtonForSmoke();
+                bool buttonShortcutSuppressed = win.IsGlobalShortcutInputFocusedForSmoke && !win.InvokePreviewKeyForSmoke(Key.F);
+                bool comboBoxShortcutSuppressed = win.IsGlobalShortcutSuppressedForSmoke(new System.Windows.Controls.ComboBox());
+                bool cardsFocused = win.FocusCardsListForSmoke();
+                bool globalShortcutHandled = win.InvokePreviewKeyForSmoke(Key.F) && win.SelectedFavoriteLevelForSmoke == 1;
+                win.InvokePreviewKeyForSmoke(Key.U);
+
+                win.OpenAppSettingsForSmoke();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool settingsFocus = win.AppSettingsVisibleForSmoke && win.IsSettingsDialogFocusedForSmoke && win.SettingsFocusTrapConfiguredForSmoke;
+                bool settingsEscCloses = win.InvokePreviewKeyForSmoke(Key.Escape);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+                bool settingsFocusRestored = settingsEscCloses && !win.AppSettingsVisibleForSmoke && (win.IsAppSettingsButtonFocusedForSmoke || win.IsCardsListFocusedForSmoke);
+
+                win.FocusCardsListForSmoke();
+                win.SetConfirmBeforeDeleteForSmoke(true);
+                bool deleteRequested = win.RequestDeleteSelectedForSmoke();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool deleteFocus = deleteRequested && win.DeleteConfirmationVisibleForSmoke && win.IsDeleteDialogFocusedForSmoke && win.DeleteFocusTrapConfiguredForSmoke;
+                win.CancelDeleteForSmoke();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool deleteFocusRestored = win.IsCardsListFocusedForSmoke;
+
+                File.WriteAllText(statePath + ".lock", "{\"pid\":1}");
+                win.FlushStateForSmoke();
+                bool lockBusyStatus = win.DeleteStatusForSmoke.Contains("busy", StringComparison.OrdinalIgnoreCase) && win.DeleteStatusRetryVisibleForSmoke;
+                File.Delete(statePath + ".lock");
+                win.RetryStatusForSmoke();
+                bool lockRetryCleared = !win.DeleteStatusRetryVisibleForSmoke;
+
+                File.WriteAllText(favoritesPath, "{\"broken\":{}}");
+                bool favoriteRefused = !win.SetSelectedFavoriteLevelForSmoke(2)
+                    && win.DeleteStatusForSmoke.Contains("Favorites", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+                File.WriteAllText(seenPath, "{\"broken\":[]}");
+                bool seenRefused = win.SelectFileNameForSmoke("good-two.png")
+                    && win.DeleteStatusForSmoke.Contains("Seen state", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+                File.WriteAllText(statePath, "{\"Version\":1,\"CardWidth\":{}}");
+                win.FlushStateForSmoke();
+                bool stateRefused = win.DeleteStatusForSmoke.Contains("Viewer settings", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+                bool logoAccessible = win.LogoHasAutomationNameForSmoke && win.DialogsHaveAutomationNamesForSmoke;
+                bool logoActivated = win.ActivateLogoForSmoke();
+                win.Close();
+
+                File.WriteAllText(statePath, "{\"Version\":1}");
+                File.WriteAllText(recentPath, "{\"version\":2}");
+                var recentWindow = HiddenWindow();
+                recentWindow.Show();
+                await recentWindow.LoadFolderAsync(folder);
+                recentWindow.FlushStateForSmoke();
+                bool recentRefused = recentWindow.DeleteStatusForSmoke.Contains("Recent folder history", StringComparison.OrdinalIgnoreCase)
+                    && recentWindow.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+                recentWindow.Close();
+
+                bool ok = decoderStatus && scanStatus && selected
+                    && searchFocused && searchShortcutSuppressed
+                    && dateFocused && dateShortcutSuppressed
+                    && settingsButtonFocused && buttonShortcutSuppressed && comboBoxShortcutSuppressed
+                    && cardsFocused && globalShortcutHandled
+                    && settingsFocus && settingsFocusRestored
+                    && deleteFocus && deleteFocusRestored
+                    && lockBusyStatus && lockRetryCleared
+                    && favoriteRefused && seenRefused && stateRefused && recentRefused
+                    && logoAccessible && logoActivated;
+                result = new P1BSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "non-blocking recoverable status, persistence refusal, scan/decode warning, accessibility naming, dialog focus, and shortcut guards passed"
+                        : "P1B error-surface or accessibility expectations did not match",
+                    DecoderStatus = decoderStatus,
+                    ScanStatus = scanStatus,
+                    Selected = selected,
+                    SearchFocused = searchFocused,
+                    DateFocused = dateFocused,
+                    SettingsButtonFocused = settingsButtonFocused,
+                    CardsFocused = cardsFocused,
+                    LockBusyStatus = lockBusyStatus,
+                    LockRetryCleared = lockRetryCleared,
+                    FavoritesRefused = favoriteRefused,
+                    SeenRefused = seenRefused,
+                    StateRefused = stateRefused,
+                    RecentRefused = recentRefused,
+                    SearchShortcutSuppressed = searchShortcutSuppressed,
+                    DateShortcutSuppressed = dateShortcutSuppressed,
+                    ButtonShortcutSuppressed = buttonShortcutSuppressed,
+                    ComboBoxShortcutSuppressed = comboBoxShortcutSuppressed,
+                    GlobalShortcutHandled = globalShortcutHandled,
+                    SettingsFocus = settingsFocus,
+                    SettingsFocusRestored = settingsFocusRestored,
+                    DeleteFocus = deleteFocus,
+                    DeleteFocusRestored = deleteFocusRestored,
+                    LogoAccessible = logoAccessible,
+                    LogoActivated = logoActivated,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new P1BSmokeResult { Message = ex.ToString() };
+            }
+            finally
+            {
+                if (win.IsVisible)
+                    win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
@@ -6992,6 +7162,36 @@ public partial class App : Application
         public List<string> LandingFolderSet { get; init; } = [];
         public int CatalogAfterAdd { get; init; }
         public bool LandingVisible { get; init; }
+    }
+
+    private sealed class P1BSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool DecoderStatus { get; init; }
+        public bool ScanStatus { get; init; }
+        public bool Selected { get; init; }
+        public bool SearchFocused { get; init; }
+        public bool DateFocused { get; init; }
+        public bool SettingsButtonFocused { get; init; }
+        public bool CardsFocused { get; init; }
+        public bool LockBusyStatus { get; init; }
+        public bool LockRetryCleared { get; init; }
+        public bool FavoritesRefused { get; init; }
+        public bool SeenRefused { get; init; }
+        public bool StateRefused { get; init; }
+        public bool RecentRefused { get; init; }
+        public bool SearchShortcutSuppressed { get; init; }
+        public bool DateShortcutSuppressed { get; init; }
+        public bool ButtonShortcutSuppressed { get; init; }
+        public bool ComboBoxShortcutSuppressed { get; init; }
+        public bool GlobalShortcutHandled { get; init; }
+        public bool SettingsFocus { get; init; }
+        public bool SettingsFocusRestored { get; init; }
+        public bool DeleteFocus { get; init; }
+        public bool DeleteFocusRestored { get; init; }
+        public bool LogoAccessible { get; init; }
+        public bool LogoActivated { get; init; }
     }
 
     private sealed class EnhancedFilterSmokeResult

@@ -158,7 +158,7 @@ public partial class MainWindow : Window
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
     private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
     private string _deleteStatus = "";
-    private Tile? _retryDeleteTile;
+    private Action? _statusRetryAction;
     private IInputElement? _deleteFocusBeforeDialog;
     private IInputElement? _settingsFocusBeforeDialog;
     public LoadMetrics? LastLoadMetrics { get; private set; }
@@ -263,12 +263,13 @@ public partial class MainWindow : Window
         ScanMessage.Text = resolvedFolderSummary;
 
         IReadOnlyList<FileInfo> files;
+        var scanAccessFailures = new ConcurrentQueue<string>();
         var scanWatch = Stopwatch.StartNew();
         try
         {
             files = await Task.Run(
                 () => existingFolderSet
-                    .SelectMany(EnumerateImageFiles)
+                    .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures))
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Select(path => new FileInfo(path))
                     .OrderByDescending(file => file.LastWriteTimeUtc)
@@ -283,6 +284,8 @@ public partial class MainWindow : Window
 
         if (cts.IsCancellationRequested)
             return;
+        if (!scanAccessFailures.IsEmpty)
+            ReportScanAccessFailures(scanAccessFailures.Count);
 
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
         if (files.Count > 0)
@@ -296,6 +299,8 @@ public partial class MainWindow : Window
             {
                 return;
             }
+            if (metadata.DecodeFailures > 0)
+                SetStatusToast($"{metadata.DecodeFailures:N0} image file(s) could not be decoded. They remain listed; refresh after fixing the files.");
         }
 
         var materializeWatch = Stopwatch.StartNew();
@@ -381,6 +386,9 @@ public partial class MainWindow : Window
             totalWatch.ElapsedMilliseconds);
         UpdateGridMetrics(LastLoadMetrics);
     }
+
+    private void ReportScanAccessFailures(int skippedCount)
+        => SetStatusToast($"Some folders could not be scanned because access was denied. {skippedCount:N0} location(s) were skipped; fix access and refresh the folder.");
 
     private int AppendLandingFolders(IEnumerable<string> folders)
     {
@@ -495,6 +503,8 @@ public partial class MainWindow : Window
             return;
 
         var read = ReadSharedRecentFolders();
+        if (!read.Ok)
+            ReportPersistenceRefusal("Recent folder history", ResolvedSharedRecentPath, protectedFile: true);
         _lastFolderSet = read.Recent.LastFolderSet;
         if (LastFolderSetText is not null)
             LastFolderSetText.Text = _lastFolderSet.Count == 0
@@ -659,44 +669,40 @@ public partial class MainWindow : Window
         ScanLabel.Text = $"{done:N0} / {total:N0} thumbnails";
     }
 
-    private static IEnumerable<string> EnumerateImageFiles(string root)
+    private static IEnumerable<string> EnumerateImageFiles(string root, ConcurrentQueue<string>? accessFailures = null)
     {
         var pending = new Stack<string>();
+        var images = new List<string>();
         pending.Push(root);
 
         while (pending.Count > 0)
         {
             var folder = pending.Pop();
 
-            IEnumerable<string> files;
             try
             {
-                files = Directory.EnumerateFiles(folder);
+                foreach (var file in Directory.EnumerateFiles(folder))
+                {
+                    if (SupportedImageExtensions.Contains(Path.GetExtension(file)))
+                        images.Add(file);
+                }
             }
-            catch
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
-                files = [];
+                accessFailures?.Enqueue(folder);
             }
-
-            foreach (var file in files)
-            {
-                if (SupportedImageExtensions.Contains(Path.GetExtension(file)))
-                    yield return file;
-            }
-
-            IEnumerable<string> children;
             try
             {
-                children = Directory.EnumerateDirectories(folder);
+                foreach (var child in Directory.EnumerateDirectories(folder))
+                    pending.Push(child);
             }
-            catch
+            catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
-                children = [];
+                accessFailures?.Enqueue(folder);
             }
-
-            foreach (var child in children)
-                pending.Push(child);
         }
+
+        return images;
     }
 
     private Tile MakeFileTile(
@@ -858,6 +864,7 @@ public partial class MainWindow : Window
         {
             _favorites.Clear();
             _favoritesWriteBlocked = true;
+            ReportPersistenceRefusal("Favorites", path, protectedFile: true);
         }
     }
 
@@ -1125,10 +1132,23 @@ public partial class MainWindow : Window
         }
     }
 
+    private void ReportPersistenceRefusal(string subject, string path, bool protectedFile = false, Action? retryAction = null)
+    {
+        string message = protectedFile
+            ? $"{subject} could not be saved because its local file is invalid or newer. Fix it, then reload the folder."
+            : File.Exists(path + ".lock")
+                ? $"{subject} is busy in another PhotoViewer window. Retry after that update finishes."
+                : $"{subject} could not be saved. Check local file access, then retry the action.";
+        SetStatusToast(message, retryAction);
+    }
+
     private bool SaveFavorites()
     {
         if (_favoritesWriteBlocked)
+        {
+            ReportPersistenceRefusal("Favorites", ResolvedFavoritesPath, protectedFile: true);
             return false;
+        }
 
         string path = ResolvedFavoritesPath;
         Dictionary<string, int>? mergedResult = null;
@@ -1161,6 +1181,7 @@ public partial class MainWindow : Window
         {
             if (malformed)
                 _favoritesWriteBlocked = true;
+            ReportPersistenceRefusal("Favorites", path, malformed);
             return false;
         }
 
@@ -1204,12 +1225,16 @@ public partial class MainWindow : Window
         {
             string overridePath = ResolvedSeenPath;
             _seenWriteBlocked = !TryLoadSeenFile(overridePath, _seenPaths);
+            if (_seenWriteBlocked)
+                ReportPersistenceRefusal("Seen state", overridePath, protectedFile: true);
             return;
         }
 
         bool sharedOk = TryLoadSeenFile(ResolvedSeenPath, _seenPaths);
         bool legacyOk = TryLoadSeenFile(LegacySeenPath, _seenPaths);
         _seenWriteBlocked = !sharedOk || !legacyOk;
+        if (_seenWriteBlocked)
+            ReportPersistenceRefusal("Seen state", !sharedOk ? ResolvedSeenPath : LegacySeenPath, protectedFile: true);
     }
 
     private static bool TryLoadSeenFile(string path, HashSet<string> destination)
@@ -1258,7 +1283,10 @@ public partial class MainWindow : Window
     private bool SaveSeenState()
     {
         if (_seenWriteBlocked)
+        {
+            ReportPersistenceRefusal("Seen state", ResolvedSeenPath, protectedFile: true);
             return false;
+        }
 
         string path = ResolvedSeenPath;
         HashSet<string>? mergedResult = null;
@@ -1285,6 +1313,7 @@ public partial class MainWindow : Window
         {
             if (malformed)
                 _seenWriteBlocked = true;
+            ReportPersistenceRefusal("Seen state", path, malformed);
             return false;
         }
         _seenPaths.UnionWith(mergedResult);
@@ -1973,13 +2002,15 @@ public partial class MainWindow : Window
         var prompts = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         int workers = Math.Max(1, Math.Min(Math.Min(MaxMetadataReadWorkers, Environment.ProcessorCount), files.Count));
         int completed = 0;
+        int decodeFailures = 0;
         Parallel.ForEach(
             files,
             new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = workers },
             file =>
             {
                 token.ThrowIfCancellationRequested();
-                TryReadBitmapSize(file.FullName, out int width, out int height);
+                if (!TryReadBitmapSize(file.FullName, out int width, out int height))
+                    Interlocked.Increment(ref decodeFailures);
                 dimensions[file.FullName] = new ImageDimensions(width, height);
                 PngParametersMetadata? metadata = ReadPngParametersMetadata(file.FullName, token);
                 if (!string.IsNullOrWhiteSpace(metadata?.Prompt))
@@ -1987,7 +2018,7 @@ public partial class MainWindow : Window
                 Interlocked.Increment(ref completed);
             });
         watch.Stop();
-        return new ImageMetadataLoadMetrics(dimensions, prompts, workers, completed, watch.ElapsedMilliseconds);
+        return new ImageMetadataLoadMetrics(dimensions, prompts, workers, completed, watch.ElapsedMilliseconds, decodeFailures);
     }
 
     // ─────────── Sample data (shell only — no real files, procedural art) ───────────
@@ -4175,7 +4206,7 @@ public partial class MainWindow : Window
         SetManualDateRange(DateFromInput.SelectedDate, DateToInput.SelectedDate);
     }
 
-    private void Logo_Click(object sender, MouseButtonEventArgs e) => SetPhase(landing: true);
+    private void Logo_Click(object sender, RoutedEventArgs e) => SetPhase(landing: true);
 
     private async void AddFolderToViewer_Click(object sender, RoutedEventArgs e)
     {
@@ -4712,6 +4743,7 @@ public partial class MainWindow : Window
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         AppSettingsDialog.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(ConfirmBeforeDeleteCheckBox.Focus, DispatcherPriority.Input);
     }
 
     private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
@@ -4927,32 +4959,51 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SetDeleteStatus(string status, bool isFailure = false, Tile? retryTile = null)
+    private void SetStatusToast(string status, Action? retryAction = null)
     {
         _deleteStatus = status;
-        _retryDeleteTile = isFailure ? retryTile : null;
+        _statusRetryAction = retryAction;
         if (ScanMessage is not null)
             ScanMessage.Text = status;
         if (DeleteStatusText is not null)
         {
             DeleteStatusText.Text = status;
-            DeleteStatusRetryButton.Visibility = isFailure && retryTile is not null ? Visibility.Visible : Visibility.Collapsed;
+            DeleteStatusRetryButton.Visibility = retryAction is null ? Visibility.Collapsed : Visibility.Visible;
             DeleteStatusToast.Visibility = Visibility.Visible;
         }
     }
+
+    private void SetDeleteStatus(string status, bool isFailure = false, Tile? retryTile = null)
+        => SetStatusToast(status, isFailure && retryTile is not null
+            ? () => RetryDelete(retryTile)
+            : null);
 
     private void DismissDeleteStatus_Click(object sender, RoutedEventArgs e)
         => DeleteStatusToast.Visibility = Visibility.Collapsed;
 
     private void RetryDelete_Click(object sender, RoutedEventArgs e)
     {
-        if (_retryDeleteTile is null || !_tiles.Contains(_retryDeleteTile))
+        Action? retryAction = _statusRetryAction;
+        _statusRetryAction = null;
+        DeleteStatusRetryButton.Visibility = Visibility.Collapsed;
+        if (retryAction is null)
         {
             SetDeleteStatus("Retry is no longer available.");
             return;
         }
 
-        SelectTile(_retryDeleteTile);
+        retryAction();
+    }
+
+    private void RetryDelete(Tile tile)
+    {
+        if (!_tiles.Contains(tile))
+        {
+            SetDeleteStatus("Retry is no longer available.");
+            return;
+        }
+
+        SelectTile(tile);
         RequestDeleteSelected();
     }
 
@@ -5047,6 +5098,7 @@ public partial class MainWindow : Window
         if (!TryReadViewerStateFile(ResolvedStatePath, out var state))
         {
             _stateWriteBlocked = true;
+            ReportPersistenceRefusal("Viewer settings", ResolvedStatePath, protectedFile: true);
             return null;
         }
 
@@ -5088,7 +5140,12 @@ public partial class MainWindow : Window
 
     private void SaveState()
     {
-        if (_initializing || _suppressStateSave || _stateWriteBlocked) return;
+        if (_initializing || _suppressStateSave) return;
+        if (_stateWriteBlocked)
+        {
+            ReportPersistenceRefusal("Viewer settings", ResolvedStatePath, protectedFile: true);
+            return;
+        }
 
         try
         {
@@ -5135,6 +5192,7 @@ public partial class MainWindow : Window
             {
                 if (malformed)
                     _stateWriteBlocked = true;
+                ReportPersistenceRefusal("Viewer settings", path, malformed, malformed ? null : SaveState);
                 return;
             }
             _stateExtensionData = CloneExtensionData(state.ExtensionData);
@@ -5143,7 +5201,7 @@ public partial class MainWindow : Window
         }
         catch
         {
-            // State persistence should never block passive browsing.
+            ReportPersistenceRefusal("Viewer settings", ResolvedStatePath, retryAction: SaveState);
         }
     }
 
@@ -5323,10 +5381,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private static bool SaveSharedRecentFolder(string folder)
-        => SaveSharedRecentFolderSet([folder]);
-
-    private static bool SaveSharedRecentFolderSet(IEnumerable<string> folders)
+    private bool SaveSharedRecentFolderSet(IEnumerable<string> folders)
     {
         var folderSet = NormalizeFolderSet(folders);
         if (folderSet.Count == 0)
@@ -5335,11 +5390,15 @@ public partial class MainWindow : Window
         try
         {
             string path = ResolvedSharedRecentPath;
-            return TryWithPersistenceLock(path, () =>
+            bool malformed = false;
+            bool saved = TryWithPersistenceLock(path, () =>
             {
                 var current = ReadSharedRecentFolders();
                 if (!current.Ok)
+                {
+                    malformed = true;
                     return false;
+                }
                 var recentFolderSets = NormalizeRecentFolderSets(
                     new[] { folderSet }.Concat(current.Recent.RecentFolderSets));
                 var next = new SharedRecentFoldersState
@@ -5352,9 +5411,13 @@ public partial class MainWindow : Window
                 var json = JsonSerializer.Serialize(next, SharedRecentJsonOptions);
                 return TryWriteAtomicText(path, json);
             });
+            if (!saved)
+                ReportPersistenceRefusal("Recent folder history", path, malformed, malformed ? null : () => SaveSharedRecentFolderSet(folderSet));
+            return saved;
         }
         catch
         {
+            ReportPersistenceRefusal("Recent folder history", ResolvedSharedRecentPath, retryAction: () => SaveSharedRecentFolderSet(folderSet));
             return false;
         }
     }
@@ -5383,12 +5446,6 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
-        if (Keyboard.FocusedElement is TextBoxBase or ComboBox)
-        {
-            base.OnPreviewKeyDown(e);
-            return;
-        }
-
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         if (DeleteConfirmationDialog.Visibility == Visibility.Visible || AppSettingsDialog.Visibility == Visibility.Visible)
         {
@@ -5401,6 +5458,12 @@ public partial class MainWindow : Window
 
             // Let dialog controls retain normal Tab/Shift+Tab/Space/Enter behavior;
             // only gallery-global shortcuts are suppressed while an overlay is active.
+            base.OnPreviewKeyDown(e);
+            return;
+        }
+
+        if (IsGlobalShortcutInputFocused(Keyboard.FocusedElement))
+        {
             base.OnPreviewKeyDown(e);
             return;
         }
@@ -5468,6 +5531,9 @@ public partial class MainWindow : Window
         base.OnPreviewKeyDown(e);
     }
 
+    private static bool IsGlobalShortcutInputFocused(IInputElement? focused)
+        => focused is TextBoxBase or ComboBox or DatePicker or ButtonBase;
+
     protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
     {
         if (Modal.Visibility == Visibility.Visible)
@@ -5530,6 +5596,19 @@ public partial class MainWindow : Window
     public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
     public bool DeleteStatusRetryVisibleForSmoke => DeleteStatusRetryButton.Visibility == Visibility.Visible;
     public bool AppSettingsVisibleForSmoke => AppSettingsDialog.Visibility == Visibility.Visible;
+    public bool SettingsFocusTrapConfiguredForSmoke
+        => KeyboardNavigation.GetTabNavigation(AppSettingsDialogSurface) == KeyboardNavigationMode.Cycle;
+    public bool DeleteFocusTrapConfiguredForSmoke
+        => KeyboardNavigation.GetTabNavigation(DeleteConfirmationDialogSurface) == KeyboardNavigationMode.Cycle;
+    public bool IsSettingsDialogFocusedForSmoke => AppSettingsDialog.IsKeyboardFocusWithin;
+    public bool IsDeleteDialogFocusedForSmoke => DeleteConfirmationDialog.IsKeyboardFocusWithin;
+    public bool IsAppSettingsButtonFocusedForSmoke => OpenAppSettingsButton.IsKeyboardFocused;
+    public bool IsCardsListFocusedForSmoke => CardsList.IsKeyboardFocused;
+    public bool LogoHasAutomationNameForSmoke
+        => string.Equals(System.Windows.Automation.AutomationProperties.GetName(LogoHomeButton), "Back to folder selection", StringComparison.Ordinal);
+    public bool DialogsHaveAutomationNamesForSmoke
+        => !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(AppSettingsDialog))
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetName(DeleteConfirmationDialog));
     public int ModalZIndexForSmoke => Panel.GetZIndex(Modal);
     public int DeleteConfirmationZIndexForSmoke => Panel.GetZIndex(DeleteConfirmationDialog);
     public int DeleteStatusZIndexForSmoke => Panel.GetZIndex(DeleteStatusToast);
@@ -5556,6 +5635,13 @@ public partial class MainWindow : Window
         DeleteConfirm_Click(this, new RoutedEventArgs());
     }
     public void OpenAppSettingsForSmoke() => OpenAppSettings_Click(this, new RoutedEventArgs());
+    public bool ActivateLogoForSmoke()
+    {
+        LogoHomeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+        return Landing.Visibility == Visibility.Visible;
+    }
+    public void RetryStatusForSmoke() => RetryDelete_Click(this, new RoutedEventArgs());
+    public void ReportScanAccessFailureForSmoke() => ReportScanAccessFailures(1);
 
     public bool ValidateDeletePathForSmoke(string path, bool includeInCatalog = true, bool includeInFiltered = true)
     {
@@ -5635,6 +5721,15 @@ public partial class MainWindow : Window
     public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
     public bool FocusSearchInputForSmoke() => SearchInput.Focus();
     public bool FocusCardsListForSmoke() => CardsList.Focus();
+    public bool FocusDateFromInputForSmoke()
+    {
+        if (DateFromInput.Focus())
+            return true;
+        return FindVisualDescendant<DatePickerTextBox>(DateFromInput)?.Focus() == true;
+    }
+    public bool FocusAppSettingsButtonForSmoke() => OpenAppSettingsButton.Focus();
+    public bool IsGlobalShortcutInputFocusedForSmoke => IsGlobalShortcutInputFocused(Keyboard.FocusedElement);
+    public bool IsGlobalShortcutSuppressedForSmoke(IInputElement focused) => IsGlobalShortcutInputFocused(focused);
 
     public bool InvokePreviewKeyForSmoke(Key key)
     {
@@ -6526,11 +6621,13 @@ public readonly record struct ImageMetadataLoadMetrics(
     IReadOnlyDictionary<string, string> Prompts,
     int Workers,
     int Completed,
-    long ElapsedMs)
+    long ElapsedMs,
+    int DecodeFailures)
 {
     public static ImageMetadataLoadMetrics Empty => new(
         new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase),
         new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
+        0,
         0,
         0,
         0);

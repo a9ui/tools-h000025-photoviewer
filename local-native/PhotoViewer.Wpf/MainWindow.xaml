@@ -30,13 +30,14 @@
         <!-- left cluster -->
         <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center">
           <Button x:Name="ToggleSidebar" Style="{StaticResource IconButtonActive}" Click="ToggleSidebar_Click"
-                  ToolTip="Hide sidebar" WindowChrome.IsHitTestVisibleInChrome="True">
+                  ToolTip="Hide sidebar" AutomationProperties.Name="Toggle sidebar" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M3,4 h18 v16 h-18 z M9,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Button>
-          <TextBlock Text="PhotoViewer" FontSize="18.5" FontWeight="Bold" Margin="8,0,4,0" VerticalAlignment="Center" Cursor="Hand"
-                     Foreground="{StaticResource LogoBrush}" WindowChrome.IsHitTestVisibleInChrome="True"
-                     MouseLeftButtonUp="Logo_Click" ToolTip="Back to folder selection"/>
-          <Button Style="{StaticResource IconButton}" ToolTip="Refresh active folder" Click="RefreshActiveFolder_Click" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="LogoHomeButton" Background="Transparent" BorderThickness="0" Padding="8,4" Margin="0,0,0,0"
+                  Click="Logo_Click" ToolTip="Back to folder selection" AutomationProperties.Name="Back to folder selection" WindowChrome.IsHitTestVisibleInChrome="True">
+            <TextBlock Text="PhotoViewer" FontSize="18.5" FontWeight="Bold" Foreground="{StaticResource LogoBrush}"/>
+          </Button>
+          <Button Style="{StaticResource IconButton}" ToolTip="Refresh active folder" AutomationProperties.Name="Refresh active folder" Click="RefreshActiveFolder_Click" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M22,11 a10,10 0 1 1 -3,-7 M22,4 v5 h-5" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
         </StackPanel>
@@ -47,7 +48,7 @@
                 WindowChrome.IsHitTestVisibleInChrome="True">
           <DockPanel Margin="12,0,10,0" LastChildFill="True">
             <Path DockPanel.Dock="Left" Data="M11,11 m-8,0 a8,8 0 1 0 16,0 a8,8 0 1 0 -16,0 M21,21 l-4.3,-4.3" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.8" Stretch="Uniform" Width="15" Height="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
-            <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center" TextChanged="SearchInput_TextChanged"/>
+            <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center" TextChanged="SearchInput_TextChanged" AutomationProperties.Name="Search images"/>
           </DockPanel>
         </Border>
 
@@ -57,22 +58,22 @@
             <Path Data="M12,5 v14 M5,12 h14" Stroke="#6EE7B7" StrokeThickness="2" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
           <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>
-          <Button Style="{StaticResource IconButton}" Click="OpenAppSettings_Click" ToolTip="App Settings" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="OpenAppSettingsButton" Style="{StaticResource IconButton}" Click="OpenAppSettings_Click" ToolTip="App Settings" AutomationProperties.Name="App settings" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M12,8 a4,4 0 1 0 0,8 a4,4 0 1 0 0,-8 M12,2 v3 M12,19 v3 M2,12 h3 M19,12 h3 M4.9,4.9 l2.1,2.1 M17,17 l2.1,2.1 M19.1,4.9 l-2.1,2.1 M7,17 l-2.1,2.1" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.5" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
-          <Button x:Name="ToggleRight" Style="{StaticResource IconButtonActive}" Click="ToggleRight_Click" ToolTip="Hide right panel" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="ToggleRight" Style="{StaticResource IconButtonActive}" Click="ToggleRight_Click" ToolTip="Hide right panel" AutomationProperties.Name="Toggle right panel" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M3,4 h18 v16 h-18 z M15,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Button>
           <Rectangle Width="1" Height="22" Fill="{StaticResource GlassBorder}" Margin="8,0"/>
 
           <!-- window caption buttons -->
-          <Button Style="{StaticResource CaptionButton}" Click="Minimize_Click" ToolTip="Minimize" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button Style="{StaticResource CaptionButton}" Click="Minimize_Click" ToolTip="Minimize" AutomationProperties.Name="Minimize window" WindowChrome.IsHitTestVisibleInChrome="True">
             <Rectangle Width="11" Height="1.4" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"/>
           </Button>
-          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="Maximize_Click" ToolTip="Maximize" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="MaxButton" Style="{StaticResource CaptionButton}" Click="Maximize_Click" ToolTip="Maximize" AutomationProperties.Name="Maximize window" WindowChrome.IsHitTestVisibleInChrome="True">
             <Rectangle Width="11" Height="11" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Fill="Transparent"/>
           </Button>
-          <Button Style="{StaticResource CloseButton}" Click="Close_Click" ToolTip="Close" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button Style="{StaticResource CloseButton}" Click="Close_Click" ToolTip="Close" AutomationProperties.Name="Close window" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M2,2 L12,12 M12,2 L2,12" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.4" Width="12" Height="12" Stretch="Uniform"/>
           </Button>
         </StackPanel>
@@ -595,38 +596,38 @@
 
     <!-- ═══════════════ Modal ═══════════════ -->
     <!-- App settings are separate from the modal generation-metadata Settings tab. -->
-    <Grid x:Name="AppSettingsDialog" Grid.RowSpan="3" Panel.ZIndex="500" Visibility="Collapsed" Background="#B8040407">
-      <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <Grid x:Name="AppSettingsDialog" Grid.RowSpan="3" Panel.ZIndex="500" Visibility="Collapsed" Background="#B8040407" AutomationProperties.Name="App settings dialog" AutomationProperties.HelpText="Change local safety settings. Escape closes this dialog.">
+      <Border x:Name="AppSettingsDialogSurface" Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
         <StackPanel>
-          <DockPanel Margin="0,0,0,14"><TextBlock Text="App Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAppSettings_Click" ToolTip="Close"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="14" Height="14"/></Button></DockPanel>
+          <DockPanel Margin="0,0,0,14"><TextBlock Text="App Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/><Button x:Name="AppSettingsCloseButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAppSettings_Click" ToolTip="Close" AutomationProperties.Name="Close app settings"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="14" Height="14"/></Button></DockPanel>
           <TextBlock Text="SAFETY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
-          <CheckBox x:Name="ConfirmBeforeDeleteCheckBox" Content="Confirm before delete" Foreground="{StaticResource TextSecondary}" Checked="ConfirmBeforeDelete_Changed" Unchecked="ConfirmBeforeDelete_Changed"/>
+          <CheckBox x:Name="ConfirmBeforeDeleteCheckBox" Content="Confirm before delete" Foreground="{StaticResource TextSecondary}" Checked="ConfirmBeforeDelete_Changed" Unchecked="ConfirmBeforeDelete_Changed" AutomationProperties.Name="Confirm before delete"/>
           <TextBlock Text="Moves source images to the Windows Recycle Bin; it never uses a hard-delete fallback." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
-          <Button Style="{StaticResource GhostButton}" Content="Done" Click="CloseAppSettings_Click" HorizontalAlignment="Right" MinWidth="82"/>
+          <Button x:Name="AppSettingsDoneButton" Style="{StaticResource GhostButton}" Content="Done" Click="CloseAppSettings_Click" HorizontalAlignment="Right" MinWidth="82" AutomationProperties.Name="Done with app settings"/>
         </StackPanel>
       </Border>
     </Grid>
 
     <!-- Delete confirmation: Cancel is deliberately the initial focus. -->
-    <Grid x:Name="DeleteConfirmationDialog" Grid.RowSpan="3" Panel.ZIndex="600" Visibility="Collapsed" Background="#B8040407">
-      <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+    <Grid x:Name="DeleteConfirmationDialog" Grid.RowSpan="3" Panel.ZIndex="600" Visibility="Collapsed" Background="#B8040407" AutomationProperties.Name="Move to Recycle Bin confirmation" AutomationProperties.HelpText="Confirm or cancel moving the selected source image to the Windows Recycle Bin.">
+      <Border x:Name="DeleteConfirmationDialogSurface" Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle">
         <StackPanel>
           <TextBlock Text="Move source to Recycle Bin?" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/>
           <TextBlock x:Name="DeleteConfirmationText" Text="" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,10,0,12"/>
-          <CheckBox x:Name="DoNotAskAgainCheckBox" Content="Do not ask again" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,16"/>
+          <CheckBox x:Name="DoNotAskAgainCheckBox" Content="Do not ask again" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,16" AutomationProperties.Name="Do not ask again before deleting"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-            <Button x:Name="DeleteCancelButton" Style="{StaticResource GhostButton}" Content="Cancel" Click="DeleteCancel_Click" MinWidth="82" Margin="0,0,8,0" IsDefault="True"/>
-            <Button Style="{StaticResource DangerButton}" Content="Move to Recycle Bin" Click="DeleteConfirm_Click" MinWidth="142" IsCancel="False"/>
+            <Button x:Name="DeleteCancelButton" Style="{StaticResource GhostButton}" Content="Cancel" Click="DeleteCancel_Click" MinWidth="82" Margin="0,0,8,0" IsDefault="True" AutomationProperties.Name="Cancel move to Recycle Bin"/>
+            <Button x:Name="DeleteConfirmButton" Style="{StaticResource DangerButton}" Content="Move to Recycle Bin" Click="DeleteConfirm_Click" MinWidth="142" IsCancel="False" AutomationProperties.Name="Move selected image to Recycle Bin"/>
           </StackPanel>
         </StackPanel>
       </Border>
     </Grid>
 
-    <Grid x:Name="DeleteStatusToast" Grid.RowSpan="3" Panel.ZIndex="400" Visibility="Collapsed" IsHitTestVisible="True" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,66,0,0">
+    <Grid x:Name="DeleteStatusToast" Grid.RowSpan="3" Panel.ZIndex="400" Visibility="Collapsed" IsHitTestVisible="True" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,66,0,0" AutomationProperties.Name="PhotoViewer status notification">
       <Border Width="560" Padding="12,9" CornerRadius="9" Background="#EE1A1A24" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
         <DockPanel LastChildFill="True">
-          <Button x:Name="DeleteStatusDismissButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="DismissDeleteStatus_Click" ToolTip="Dismiss" Width="28" Height="28"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="13" Height="13"/></Button>
-          <Button x:Name="DeleteStatusRetryButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Content="Retry" Click="RetryDelete_Click" Visibility="Collapsed" MinWidth="58" Height="28" Margin="0,0,8,0"/>
+          <Button x:Name="DeleteStatusDismissButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="DismissDeleteStatus_Click" ToolTip="Dismiss" AutomationProperties.Name="Dismiss status notification" Width="28" Height="28"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="13" Height="13"/></Button>
+          <Button x:Name="DeleteStatusRetryButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Content="Retry" Click="RetryDelete_Click" Visibility="Collapsed" MinWidth="58" Height="28" Margin="0,0,8,0" AutomationProperties.Name="Retry the last recoverable action"/>
           <TextBlock x:Name="DeleteStatusText" AutomationProperties.LiveSetting="Assertive" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
         </DockPanel>
       </Border>
@@ -644,34 +645,34 @@
           <TextBlock x:Name="ModalTitle" Text="00427-portrait.png · 832 × 1216 · animagineXL_v31" Foreground="{StaticResource TextSecondary}" FontSize="13" VerticalAlignment="Center"/>
           <TextBlock x:Name="ModalSourceLabel" Text="Original" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center"/>
         </StackPanel>
-        <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" Width="38" Height="38">
+        <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" AutomationProperties.Name="Close image preview" Width="38" Height="38">
           <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" ToolTip="Move source to Recycle Bin (Delete)" Width="38" Height="38" Margin="0,0,4,0">
+        <Button DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" ToolTip="Move source to Recycle Bin (Delete)" AutomationProperties.Name="Move selected image to Recycle Bin" Width="38" Height="38" Margin="0,0,4,0">
           <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
         </Button>
-        <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" Width="38" Height="38">
+        <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" AutomationProperties.Name="Toggle metadata sidebar" Width="38" Height="38">
           <TextBlock x:Name="ModalMetadataSidebarToggleLabel" Text="&lt;" Foreground="{StaticResource TextSecondary}" FontSize="15" FontWeight="SemiBold"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" Width="38" Height="38" Click="OpenSelectedExternally_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" AutomationProperties.Name="Open selected image externally" Width="38" Height="38" Click="OpenSelectedExternally_Click">
           <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="15" Height="15"/>
         </Button>
-        <Button x:Name="ModalEnhancedToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="No enhanced output available" Width="42" Height="38" Click="ToggleModalEnhanced_Click" IsEnabled="False">
+        <Button x:Name="ModalEnhancedToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="No enhanced output available" AutomationProperties.Name="Toggle enhanced image output" Width="42" Height="38" Click="ToggleModalEnhanced_Click" IsEnabled="False">
           <TextBlock x:Name="ModalEnhancedToggleLabel" Text="OR" Foreground="{StaticResource TextSecondary}" FontSize="10.5" FontWeight="SemiBold"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38" Click="ToggleModalFlip_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" AutomationProperties.Name="Flip image horizontally" Width="38" Height="38" Click="ToggleModalFlip_Click">
           <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (U)" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (U)" AutomationProperties.Name="Decrease favorite level" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
           <TextBlock Text="−" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" AutomationProperties.Name="Increase favorite level" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="F" Foreground="{StaticResource FavoriteText}" FontWeight="Bold"/>
             <TextBlock x:Name="ModalFavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontSize="11" FontWeight="Bold" Margin="4,0,0,0"/>
           </StackPanel>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset zoom (0)" Width="42" Height="38" Click="ResetModalTransform_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset zoom (0)" AutomationProperties.Name="Reset image zoom" Width="42" Height="38" Click="ResetModalTransform_Click">
           <TextBlock Text="1:1" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
         </Button>
       </DockPanel>
