@@ -55,6 +55,7 @@ public partial class MainWindow : Window
     private const string SortCreatedOldestValue = "created-oldest";
     private const string SortNameValue = "name";
     private const string SortRandomValue = "random";
+    // Legacy state tokens are read only; the sidebar exposes manual From/To only.
     private const string DatePresetNoneValue = "none";
     private const string DatePresetTodayValue = "today";
     private const string DatePreset7DaysValue = "7d";
@@ -136,7 +137,9 @@ public partial class MainWindow : Window
     private string _datePreset = DatePresetNoneValue;
     private DateTime? _dateFromLocal;
     private DateTime? _dateToLocal;
-    private int _favoriteFilterLevel = MinFavoriteFilterLevel;
+    private readonly HashSet<int> _favoriteFilterLevels = [];
+    private bool _showUnseenDots;
+    private bool _foldersSectionExpanded = true;
     private double _modalZoom = 1;
     private bool _modalFlipped;
     private double _modalPanX;
@@ -694,6 +697,7 @@ public partial class MainWindow : Window
             FileName = file.Name,
             Fav = FavoriteLevelForPath(file.FullName),
             Unseen = !SeenStateContains(file.FullName),
+            ShowUnseenDot = _showUnseenDots && !SeenStateContains(file.FullName),
             Group = FormatGroup(modified),
             CardWidth = width,
             ModifiedUtc = file.LastWriteTimeUtc,
@@ -1116,6 +1120,7 @@ public partial class MainWindow : Window
 
         _seenPaths.Add(key);
         tile.Unseen = false;
+        tile.ShowUnseenDot = false;
 
         if (!SaveSeenState())
         {
@@ -1137,6 +1142,12 @@ public partial class MainWindow : Window
         }
 
         return true;
+    }
+
+    private void RefreshUnseenDots()
+    {
+        foreach (var tile in _allTiles)
+            tile.ShowUnseenDot = _showUnseenDots && tile.Unseen;
     }
 
     public FavoriteImportSummary ImportPvuFavoriteLevelsForSmoke(string browserStatePath)
@@ -1849,6 +1860,7 @@ public partial class MainWindow : Window
             FileName = name,
             Fav = fav,
             Unseen = unseen,
+            ShowUnseenDot = _showUnseenDots && unseen,
             Group = group,
             CardWidth = width,
             Prompt = Prompts[idx % Prompts.Length],
@@ -2536,6 +2548,35 @@ public partial class MainWindow : Window
         SetFavoriteFilterState(favoritesOnly, unfavoriteOnly, apply: true, persist: true);
     }
 
+    private void FavoriteLevelFilter_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing || _syncingFavoriteFilterControls) return;
+        SyncFavoriteFilterLevelsFromControls();
+        ApplyFilters();
+        SaveState();
+    }
+
+    private void ShowUnseenDots_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing) return;
+        _showUnseenDots = ShowUnseenDots?.IsChecked == true;
+        RefreshUnseenDots();
+        SaveState();
+    }
+
+    private void ToggleFoldersSection_Click(object sender, RoutedEventArgs e)
+    {
+        _foldersSectionExpanded = !_foldersSectionExpanded;
+        SyncFoldersSectionControls();
+    }
+
+    private void SyncFoldersSectionControls()
+    {
+        if (FoldersSectionContent is null || FoldersSectionToggleText is null) return;
+        FoldersSectionContent.Visibility = _foldersSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
+        FoldersSectionToggleText.Text = _foldersSectionExpanded ? "−" : "+";
+    }
+
     private void ToggleFolderBucket_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { Tag: FolderBucketView bucket })
@@ -2598,23 +2639,15 @@ public partial class MainWindow : Window
         SaveState();
     }
 
-    private static int NormalizeFavoriteFilterLevel(int level)
-        => Math.Clamp(level, MinFavoriteFilterLevel, MaxFavoriteFilterLevel);
-
-    private bool SetFavoriteFilterLevel(int level)
+    private bool SetFavoriteFilterLevels(IEnumerable<int> levels)
     {
-        int normalized = NormalizeFavoriteFilterLevel(level);
-        bool changed = _favoriteFilterLevel != normalized;
-        _favoriteFilterLevel = normalized;
+        var normalized = levels.Where(level => level is >= MinFavoriteFilterLevel and <= MaxFavoriteFilterLevel).ToHashSet();
+        if (_favoriteFilterLevels.SetEquals(normalized)) return false;
+        _favoriteFilterLevels.Clear();
+        _favoriteFilterLevels.UnionWith(normalized);
         SyncFavoriteFilterControls();
-
-        if (changed && !_initializing)
-        {
-            ApplyFilters();
-            SaveState();
-        }
-
-        return changed;
+        if (!_initializing) { ApplyFilters(); SaveState(); }
+        return true;
     }
 
     private void SetFavoriteFilterState(bool favoritesOnly, bool unfavoriteOnly, bool apply, bool persist)
@@ -2661,11 +2694,11 @@ public partial class MainWindow : Window
         _syncingFavoriteFilterControls = true;
         try
         {
-            FavoriteLevel1Filter.IsChecked = _favoriteFilterLevel == 1;
-            FavoriteLevel2Filter.IsChecked = _favoriteFilterLevel == 2;
-            FavoriteLevel3Filter.IsChecked = _favoriteFilterLevel == 3;
-            FavoriteLevel4Filter.IsChecked = _favoriteFilterLevel == 4;
-            FavoriteLevel5Filter.IsChecked = _favoriteFilterLevel == 5;
+            FavoriteLevel1Filter.IsChecked = _favoriteFilterLevels.Contains(1);
+            FavoriteLevel2Filter.IsChecked = _favoriteFilterLevels.Contains(2);
+            FavoriteLevel3Filter.IsChecked = _favoriteFilterLevels.Contains(3);
+            FavoriteLevel4Filter.IsChecked = _favoriteFilterLevels.Contains(4);
+            FavoriteLevel5Filter.IsChecked = _favoriteFilterLevels.Contains(5);
         }
         finally
         {
@@ -2679,22 +2712,21 @@ public partial class MainWindow : Window
             return;
 
         FavoriteFilterSummary.Text = favoritesOnly
-            ? $"Favorites Lv {_favoriteFilterLevel}+"
+            ? (_favoriteFilterLevels.Count == 0 ? "All ratings" : string.Join(" + ", _favoriteFilterLevels.OrderBy(static level => level).Select(static level => $"Lv {level}")))
             : unfavoriteOnly
                 ? "Unrated only"
                 : "All ratings";
     }
 
-    private void FavoriteLevel1_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(1);
-    private void FavoriteLevel2_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(2);
-    private void FavoriteLevel3_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(3);
-    private void FavoriteLevel4_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(4);
-    private void FavoriteLevel5_Checked(object sender, RoutedEventArgs e) => FavoriteLevel_Checked(5);
-
-    private void FavoriteLevel_Checked(int level)
+    private void SyncFavoriteFilterLevelsFromControls()
     {
-        if (_initializing || _syncingFavoriteFilterControls) return;
-        SetFavoriteFilterLevel(level);
+        _favoriteFilterLevels.Clear();
+        if (FavoriteLevel1Filter?.IsChecked == true) _favoriteFilterLevels.Add(1);
+        if (FavoriteLevel2Filter?.IsChecked == true) _favoriteFilterLevels.Add(2);
+        if (FavoriteLevel3Filter?.IsChecked == true) _favoriteFilterLevels.Add(3);
+        if (FavoriteLevel4Filter?.IsChecked == true) _favoriteFilterLevels.Add(4);
+        if (FavoriteLevel5Filter?.IsChecked == true) _favoriteFilterLevels.Add(5);
+        SyncFavoriteFilterControls();
     }
 
     private void PruneHiddenFolderBucketsToCurrentSet()
@@ -3023,16 +3055,6 @@ public partial class MainWindow : Window
         return wasVisible;
     }
 
-    private void QuickSearch_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not ToggleButton button) return;
-
-        var token = button.Tag?.ToString() ?? button.Content?.ToString() ?? "";
-        SearchInput.Text = string.Equals(token, "clear", StringComparison.OrdinalIgnoreCase) ? "" : token;
-        SearchInput.Focus();
-        SearchInput.CaretIndex = SearchInput.Text.Length;
-    }
-
     public void SetSearchQuery(string query, bool persist = true)
     {
         bool previous = _suppressStateSave;
@@ -3241,7 +3263,7 @@ public partial class MainWindow : Window
     private bool MatchesFavoriteFilter(Tile tile, bool favoritesOnly, bool unfavoriteOnly)
     {
         if (favoritesOnly)
-            return tile.Fav >= _favoriteFilterLevel;
+            return tile.Fav > 0 && (_favoriteFilterLevels.Count == 0 || _favoriteFilterLevels.Contains(tile.Fav));
         if (unfavoriteOnly)
             return tile.Fav <= 0;
         return true;
@@ -3260,11 +3282,11 @@ public partial class MainWindow : Window
             return true;
         }
 
-        DateTime modifiedDate = tile.ModifiedUtc.ToLocalTime().Date;
-        if (_dateFromLocal.HasValue && modifiedDate < _dateFromLocal.Value.Date)
+        DateTime createdDate = tile.CreatedUtc.ToLocalTime().Date;
+        if (_dateFromLocal.HasValue && createdDate < _dateFromLocal.Value.Date)
             return false;
 
-        if (_dateToLocal.HasValue && modifiedDate > _dateToLocal.Value.Date)
+        if (_dateToLocal.HasValue && createdDate > _dateToLocal.Value.Date)
             return false;
 
         return true;
@@ -3721,13 +3743,7 @@ public partial class MainWindow : Window
 
     private void SyncDateControls()
     {
-        if (DatePresetTodayButton is null
-            || DatePreset7DaysButton is null
-            || DatePreset30DaysButton is null
-            || DatePresetThisYearButton is null
-            || DatePresetClearButton is null
-            || DateFromInput is null
-            || DateToInput is null)
+        if (DateFromInput is null || DateToInput is null)
         {
             return;
         }
@@ -3735,11 +3751,6 @@ public partial class MainWindow : Window
         _syncingDateControls = true;
         try
         {
-            DatePresetTodayButton.IsChecked = _datePreset == DatePresetTodayValue;
-            DatePreset7DaysButton.IsChecked = _datePreset == DatePreset7DaysValue;
-            DatePreset30DaysButton.IsChecked = _datePreset == DatePreset30DaysValue;
-            DatePresetThisYearButton.IsChecked = _datePreset == DatePresetThisYearValue;
-            DatePresetClearButton.IsChecked = _datePreset == DatePresetNoneValue;
             DateFromInput.SelectedDate = _dateFromLocal;
             DateToInput.SelectedDate = _dateToLocal;
         }
@@ -3860,36 +3871,6 @@ public partial class MainWindow : Window
     }
 
     private void ReshuffleSort_Click(object sender, RoutedEventArgs e) => ReshuffleRandomSort();
-
-    private void DatePresetToday_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_initializing && !_syncingDateControls)
-            SetDatePreset(DatePresetTodayValue);
-    }
-
-    private void DatePreset7Days_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_initializing && !_syncingDateControls)
-            SetDatePreset(DatePreset7DaysValue);
-    }
-
-    private void DatePreset30Days_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_initializing && !_syncingDateControls)
-            SetDatePreset(DatePreset30DaysValue);
-    }
-
-    private void DatePresetThisYear_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_initializing && !_syncingDateControls)
-            SetDatePreset(DatePresetThisYearValue);
-    }
-
-    private void DatePresetClear_Checked(object sender, RoutedEventArgs e)
-    {
-        if (!_initializing && !_syncingDateControls)
-            SetDatePreset(DatePresetNoneValue);
-    }
 
     private void ManualDateRange_Changed(object sender, SelectionChangedEventArgs e)
     {
@@ -4434,9 +4415,13 @@ public partial class MainWindow : Window
         _randomSortSeed = string.IsNullOrWhiteSpace(state.RandomSortSeed) ? "default" : state.RandomSortSeed;
         SyncSortButtons();
         RestoreDateFilter(state);
-        _favoriteFilterLevel = NormalizeFavoriteFilterLevel(state.FavoriteFilterLevel <= 0
-            ? MinFavoriteFilterLevel
-            : state.FavoriteFilterLevel);
+        _favoriteFilterLevels.Clear();
+        if (state.FavoriteFilterLevels is { Count: > 0 })
+            _favoriteFilterLevels.UnionWith(state.FavoriteFilterLevels.Where(level => level is >= MinFavoriteFilterLevel and <= MaxFavoriteFilterLevel));
+        else if (state.FavoriteFilterLevel is >= MinFavoriteFilterLevel and <= MaxFavoriteFilterLevel)
+            _favoriteFilterLevels.Add(state.FavoriteFilterLevel.Value); // additive migration from the scalar schema
+        _showUnseenDots = state.ShowUnseenDots;
+        if (ShowUnseenDots is not null) ShowUnseenDots.IsChecked = _showUnseenDots;
         SetFavoriteFilterState(state.ShowFavoritesOnly, !state.ShowFavoritesOnly && state.ShowUnfavoriteOnly, apply: false, persist: false);
         _hiddenFolderBuckets.Clear();
         foreach (string folder in NormalizeFolderSet(state.HiddenFolderBuckets ?? []))
@@ -4491,7 +4476,8 @@ public partial class MainWindow : Window
                 DateTo = FormatStateDate(_dateToLocal),
                 ShowFavoritesOnly = FavoriteOnlyFilter?.IsChecked == true,
                 ShowUnfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true,
-                FavoriteFilterLevel = _favoriteFilterLevel,
+                FavoriteFilterLevels = _favoriteFilterLevels.Count > 0 ? _favoriteFilterLevels.OrderBy(static level => level).ToList() : null,
+                ShowUnseenDots = _showUnseenDots,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
@@ -4681,7 +4667,7 @@ public partial class MainWindow : Window
 
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
-        if (Keyboard.FocusedElement is TextBoxBase)
+        if (Keyboard.FocusedElement is TextBoxBase or ComboBox)
         {
             base.OnPreviewKeyDown(e);
             return;
@@ -4728,12 +4714,12 @@ public partial class MainWindow : Window
 
         if (e.Key == Key.F)
         {
-            ToggleSelectedFavorite();
+            AdjustSelectedFavorite(1);
             e.Handled = true;
             return;
         }
 
-        if (e.Key == Key.X)
+        if (e.Key == Key.U)
         {
             AdjustSelectedFavorite(-1);
             e.Handled = true;
@@ -4852,6 +4838,8 @@ public partial class MainWindow : Window
     public bool SelectedEnhancedForSmoke => SelectedTile()?.Enhanced == true;
     public string? SelectedEnhancedOutputPathForSmoke => SelectedTile()?.EnhancedOutputPath;
     public int UnseenCountForSmoke => _allTiles.Count(static tile => tile.Unseen);
+    public int VisibleUnseenDotCountForSmoke => _allTiles.Count(static tile => tile.ShowUnseenDot);
+    public bool FoldersSectionExpandedForSmoke => _foldersSectionExpanded && FoldersSectionContent.Visibility == Visibility.Visible;
     public int LastInitialUnseenCountForSmoke => _lastInitialUnseenCount;
     public int GridRealizedCountForSmoke => _gridTiles.Count;
     public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
@@ -4883,7 +4871,7 @@ public partial class MainWindow : Window
     public string? DateToForSmoke => FormatStateDate(_dateToLocal);
     public bool ShowFavoritesOnlyForSmoke => FavoriteOnlyFilter?.IsChecked == true;
     public bool ShowUnfavoriteOnlyForSmoke => UnfavoriteOnlyFilter?.IsChecked == true;
-    public int FavoriteFilterLevelForSmoke => _favoriteFilterLevel;
+    public List<int> FavoriteFilterLevelsForSmoke => _favoriteFilterLevels.OrderBy(static level => level).ToList();
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool OpenSelectedPreviewTabForSmoke() => SelectedTile() is { IsRealFile: true } tile && OpenPreviewTab(tile, makeActive: true);
@@ -4959,7 +4947,14 @@ public partial class MainWindow : Window
     public string RandomSortSeedForSmoke => _randomSortSeed;
     public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
     public bool SetManualDateRangeForSmoke(string? from, string? to) => SetManualDateRange(ParseStateDate(from), ParseStateDate(to));
-    public bool SetFavoriteFilterLevelForSmoke(int level) => SetFavoriteFilterLevel(level);
+    public bool SetFavoriteFilterLevelsForSmoke(params int[] levels) => SetFavoriteFilterLevels(levels);
+    public void SetShowUnseenDotsForSmoke(bool enabled)
+    {
+        _showUnseenDots = enabled;
+        ShowUnseenDots.IsChecked = enabled;
+        RefreshUnseenDots();
+    }
+    public void ToggleFoldersSectionForSmoke() => ToggleFoldersSection_Click(this, new RoutedEventArgs());
     public bool SetFolderBucketHiddenForSmoke(string key, bool hidden) => SetFolderBucketHidden(key, hidden);
     public void ShowAllFolderBucketsForSmoke()
     {
@@ -5332,7 +5327,11 @@ public sealed class ViewerState
     public string? DateTo { get; set; }
     public bool ShowFavoritesOnly { get; set; }
     public bool ShowUnfavoriteOnly { get; set; }
-    public int FavoriteFilterLevel { get; set; } = 1;
+    public List<int>? FavoriteFilterLevels { get; set; }
+    public bool ShowUnseenDots { get; set; }
+    // Kept only to read pre-P0A scalar state; new writes use FavoriteFilterLevels.
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public int? FavoriteFilterLevel { get; set; }
     public List<string>? HiddenFolderBuckets { get; set; }
     public List<string>? PinnedPreviewPaths { get; set; }
 }
@@ -5634,6 +5633,18 @@ public sealed class Tile : INotifyPropertyChanged
             if (_unseen == value) return;
             _unseen = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Unseen)));
+        }
+    }
+
+    private bool _showUnseenDot;
+    public bool ShowUnseenDot
+    {
+        get => _showUnseenDot;
+        set
+        {
+            if (_showUnseenDot == value) return;
+            _showUnseenDot = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUnseenDot)));
         }
     }
 

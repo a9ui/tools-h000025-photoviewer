@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.IO;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -117,6 +118,13 @@ public partial class App : Application
         if (favoriteFilterSmokeIdx >= 0 && favoriteFilterSmokeIdx + 1 < e.Args.Length)
         {
             CaptureFavoriteFilterSmoke(e.Args[favoriteFilterSmokeIdx + 1]);
+            return;
+        }
+
+        int p0aSmokeIdx = Array.IndexOf(e.Args, "--p0a-smoke");
+        if (p0aSmokeIdx >= 0 && p0aSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP0ASmoke(e.Args[p0aSmokeIdx + 1]);
             return;
         }
 
@@ -661,16 +669,16 @@ public partial class App : Application
                 first.ClearFavoriteFiltersForSmoke();
                 bool selectedLevel1 = first.SelectFileNameForSmoke(fixture.Level1Name);
                 first.SetFavoriteOnlyFilterForSmoke(true);
-                first.SetFavoriteFilterLevelForSmoke(1);
+                first.SetFavoriteFilterLevelsForSmoke(1);
                 int favoritesLv1Count = first.FilteredCountForSmoke;
                 List<string> favoritesLv1Order = first.FilteredFileNamesForSmoke(10);
 
-                first.SetFavoriteFilterLevelForSmoke(3);
+                first.SetFavoriteFilterLevelsForSmoke(3);
                 int favoritesLv3Count = first.FilteredCountForSmoke;
                 List<string> favoritesLv3Order = first.FilteredFileNamesForSmoke(10);
                 string? selectedAfterLv3 = first.SelectedFileNameForSmoke;
 
-                first.SetFavoriteFilterLevelForSmoke(5);
+                first.SetFavoriteFilterLevelsForSmoke(5);
                 int favoritesLv5Count = first.FilteredCountForSmoke;
                 List<string> favoritesLv5Order = first.FilteredFileNamesForSmoke(10);
 
@@ -684,7 +692,7 @@ public partial class App : Application
                 List<string> clearOrder = first.FilteredFileNamesForSmoke(10);
 
                 first.SetFavoriteOnlyFilterForSmoke(true);
-                first.SetFavoriteFilterLevelForSmoke(3);
+                first.SetFavoriteFilterLevelsForSmoke(3);
                 bool selectedLevel3 = first.SelectFileNameForSmoke(fixture.Level3Name);
                 ViewerState? persisted = ReadPersistedState(statePath);
                 first.Close();
@@ -701,7 +709,7 @@ public partial class App : Application
                 List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
                 bool restoredFavoriteOnly = second.ShowFavoritesOnlyForSmoke;
                 bool restoredUnfavoriteOnly = second.ShowUnfavoriteOnlyForSmoke;
-                int restoredFavoriteLevel = second.FavoriteFilterLevelForSmoke;
+                int restoredFavoriteLevel = second.FavoriteFilterLevelsForSmoke.FirstOrDefault();
                 string? restoredSelected = second.SelectedFileNameForSmoke;
                 second.SetUnfavoriteOnlyFilterForSmoke(true);
                 int reloadUnratedCount = second.FilteredCountForSmoke;
@@ -715,10 +723,10 @@ public partial class App : Application
                     && assignedLevel5
                     && storeCountAfterAssign == 3
                     && selectedLevel1
-                    && favoritesLv1Count == 3
-                    && favoritesLv1Order.SequenceEqual(fixture.FavoritesLv1Expected, StringComparer.OrdinalIgnoreCase)
-                    && favoritesLv3Count == 2
-                    && favoritesLv3Order.SequenceEqual(fixture.FavoritesLv3Expected, StringComparer.OrdinalIgnoreCase)
+                    && favoritesLv1Count == 1
+                    && favoritesLv1Order.SequenceEqual([fixture.Level1Name], StringComparer.OrdinalIgnoreCase)
+                    && favoritesLv3Count == 1
+                    && favoritesLv3Order.SequenceEqual([fixture.Level3Name], StringComparer.OrdinalIgnoreCase)
                     && string.Equals(selectedAfterLv3, fixture.Level3Name, StringComparison.OrdinalIgnoreCase)
                     && favoritesLv5Count == 1
                     && favoritesLv5Order.SequenceEqual(fixture.FavoritesLv5Expected, StringComparer.OrdinalIgnoreCase)
@@ -730,7 +738,7 @@ public partial class App : Application
                     && selectedLevel3
                     && persisted?.ShowFavoritesOnly == true
                     && persisted.ShowUnfavoriteOnly == false
-                    && persisted.FavoriteFilterLevel == 3
+                    && persisted.FavoriteFilterLevels is not null && persisted.FavoriteFilterLevels.SequenceEqual([3])
                     && persistedLevel1 == 1
                     && persistedLevel3 == 3
                     && persistedLevel5 == 5
@@ -738,8 +746,8 @@ public partial class App : Application
                     && restoredFavoriteOnly
                     && !restoredUnfavoriteOnly
                     && restoredFavoriteLevel == 3
-                    && restoredCount == 2
-                    && restoredOrder.SequenceEqual(fixture.FavoritesLv3Expected, StringComparer.OrdinalIgnoreCase)
+                    && restoredCount == 1
+                    && restoredOrder.SequenceEqual([fixture.Level3Name], StringComparer.OrdinalIgnoreCase)
                     && string.Equals(restoredSelected, fixture.Level3Name, StringComparison.OrdinalIgnoreCase)
                     && reloadUnratedCount == 1
                     && reloadUnratedOrder.SequenceEqual(fixture.UnratedExpected, StringComparer.OrdinalIgnoreCase);
@@ -747,7 +755,7 @@ public partial class App : Application
                 result = new FavoriteFilterSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "favorite level filters, unrated filter, exclusivity, and reload persistence passed" : "favorite filter behavior did not match expected browser parity subset",
+                    Message = ok ? "exact favorite filters, unrated exclusivity, and level-set reload persistence passed" : "favorite filter behavior did not match the exact-level contract",
                     Folder = fixture.Folder,
                     FavoritesPath = favoritesPath,
                     StatePath = statePath,
@@ -806,6 +814,92 @@ public partial class App : Application
 
             WriteFavoriteFilterSmokeResult(resultPath, result);
             Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureP0ASmoke(string resultPath)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p0a-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(root, "fixture");
+        Directory.CreateDirectory(folder);
+        for (int level = 0; level <= 5; level++)
+            WriteSmokePng(Path.Combine(folder, $"level-{level}.png"), 80, 60, Color.FromRgb((byte)(40 + level * 25), 90, 160));
+        string favorites = Path.Combine(root, "favorites.json");
+        string seen = Path.Combine(root, "seen.json");
+        string state = Path.Combine(root, "state.json");
+        string? oldFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? oldSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? oldState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var first = HiddenWindow();
+        first.Show();
+        first.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                await first.LoadFolderAsync(folder);
+                first.SetSortByForSmoke("name");
+                int dotsDefault = first.VisibleUnseenDotCountForSmoke;
+                int unseen = first.UnseenCountForSmoke;
+                first.SetShowUnseenDotsForSmoke(true);
+                int dotsOn = first.VisibleUnseenDotCountForSmoke;
+                first.SetShowUnseenDotsForSmoke(false);
+                int dotsOff = first.VisibleUnseenDotCountForSmoke;
+                for (int level = 1; level <= 5; level++)
+                {
+                    first.SelectFileNameForSmoke($"level-{level}.png");
+                    first.SetSelectedFavoriteLevelForSmoke(level);
+                }
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                int all = first.FilteredCountForSmoke;
+                first.SetFavoriteFilterLevelsForSmoke(1);
+                int lv1 = first.FilteredCountForSmoke;
+                first.SetFavoriteFilterLevelsForSmoke(1, 4);
+                int lv14 = first.FilteredCountForSmoke;
+                first.SetFavoriteFilterLevelsForSmoke();
+                int allAfterClear = first.FilteredCountForSmoke;
+                first.SetUnfavoriteOnlyFilterForSmoke(true);
+                int unrated = first.FilteredCountForSmoke;
+                bool foldersDefault = first.FoldersSectionExpandedForSmoke;
+                first.ToggleFoldersSectionForSmoke();
+                bool foldersCollapsed = !first.FoldersSectionExpandedForSmoke;
+                first.ToggleFoldersSectionForSmoke();
+                first.SetFavoriteOnlyFilterForSmoke(true);
+                first.SetFavoriteFilterLevelsForSmoke(1, 4);
+                first.Close();
+                var second = HiddenWindow();
+                second.Show();
+                await second.LoadFolderAsync(folder);
+                bool reloaded = second.ShowFavoritesOnlyForSmoke && second.FavoriteFilterLevelsForSmoke.SequenceEqual([1, 4]);
+                second.Close();
+                File.WriteAllText(state, "{\"FavoriteFilterLevel\":2}");
+                var migration = HiddenWindow();
+                migration.Show();
+                bool scalarMigration = migration.FavoriteFilterLevelsForSmoke.SequenceEqual([2]);
+                migration.Close();
+                ok = all == 5 && lv1 == 1 && lv14 == 2 && allAfterClear == 5 && unrated == 1
+                    && foldersDefault && foldersCollapsed && dotsDefault == 0 && dotsOn == unseen && dotsOff == 0 && reloaded && scalarMigration;
+                result = new { ok, message = ok ? "P0A sidebar contract passed" : "P0A sidebar contract failed", all, lv1, lv14, allAfterClear, unrated, foldersDefault, foldersCollapsed, dotsDefault, dotsOn, dotsOff, unseen, reloaded, scalarMigration, folder, favorites, seen, state };
+            }
+            catch (Exception ex)
+            {
+                first.Close();
+                result = new { ok = false, message = ex.Message, folder, favorites, seen, state };
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", oldFavorites);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", oldState);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
+            File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -4137,7 +4231,7 @@ public partial class App : Application
                 bool searchFocused = win.FocusSearchInputForSmoke();
                 bool editableFocus = win.IsEditableTextInputFocusedForSmoke;
                 bool fHandledWhileTyping = win.InvokePreviewKeyForSmoke(Key.F);
-                bool xHandledWhileTyping = win.InvokePreviewKeyForSmoke(Key.X);
+                bool uHandledWhileTyping = win.InvokePreviewKeyForSmoke(Key.U);
                 int favoriteAfterTyping = win.SelectedFavoriteLevelForSmoke;
 
                 win.SetSearchQuery("fox", persist: false);
@@ -4148,29 +4242,29 @@ public partial class App : Application
                 bool nonEditableFocus = !win.IsEditableTextInputFocusedForSmoke;
                 bool fHandledOutsideTyping = win.InvokePreviewKeyForSmoke(Key.F);
                 int favoriteAfterF = win.SelectedFavoriteLevelForSmoke;
-                bool xHandledOutsideTyping = win.InvokePreviewKeyForSmoke(Key.X);
-                int favoriteAfterX = win.SelectedFavoriteLevelForSmoke;
+                bool uHandledOutsideTyping = win.InvokePreviewKeyForSmoke(Key.U);
+                int favoriteAfterU = win.SelectedFavoriteLevelForSmoke;
 
                 bool ok = selected
                     && searchFocused
                     && editableFocus
                     && !fHandledWhileTyping
-                    && !xHandledWhileTyping
+                    && !uHandledWhileTyping
                     && favoriteAfterTyping == favoriteBefore
                     && queryRecorded
                     && reselected
                     && cardsFocused
                     && nonEditableFocus
                     && fHandledOutsideTyping
-                    && favoriteAfterF == 5
-                    && xHandledOutsideTyping
-                    && favoriteAfterX == 4;
+                    && favoriteAfterF == 1
+                    && uHandledOutsideTyping
+                    && favoriteAfterU == 0;
 
                 result = new ShortcutTypingSmokeResult
                 {
                     Ok = ok,
                     Message = ok
-                        ? "editable text input kept F/X as text keys while global favorites shortcuts still worked outside the input"
+                        ? "editable text input kept F/U as text keys while global favorites shortcuts still worked outside the input"
                         : "shortcut typing guard did not preserve the expected text-input and global-shortcut behavior",
                     Folder = fullFolder,
                     StatePath = statePath,
@@ -4179,16 +4273,16 @@ public partial class App : Application
                     SearchFocused = searchFocused,
                     EditableFocus = editableFocus,
                     FHandledWhileTyping = fHandledWhileTyping,
-                    XHandledWhileTyping = xHandledWhileTyping,
+                    UHandledWhileTyping = uHandledWhileTyping,
                     FavoriteBefore = favoriteBefore,
                     FavoriteAfterTyping = favoriteAfterTyping,
                     QueryRecorded = queryRecorded,
                     CardsFocused = cardsFocused,
                     NonEditableFocus = nonEditableFocus,
                     FHandledOutsideTyping = fHandledOutsideTyping,
-                    XHandledOutsideTyping = xHandledOutsideTyping,
+                    UHandledOutsideTyping = uHandledOutsideTyping,
                     FavoriteAfterF = favoriteAfterF,
-                    FavoriteAfterX = favoriteAfterX,
+                    FavoriteAfterU = favoriteAfterU,
                 };
             }
             catch (Exception ex)
@@ -5591,16 +5685,16 @@ public partial class App : Application
         public bool SearchFocused { get; init; }
         public bool EditableFocus { get; init; }
         public bool FHandledWhileTyping { get; init; }
-        public bool XHandledWhileTyping { get; init; }
+        public bool UHandledWhileTyping { get; init; }
         public int FavoriteBefore { get; init; }
         public int FavoriteAfterTyping { get; init; }
         public bool QueryRecorded { get; init; }
         public bool CardsFocused { get; init; }
         public bool NonEditableFocus { get; init; }
         public bool FHandledOutsideTyping { get; init; }
-        public bool XHandledOutsideTyping { get; init; }
+        public bool UHandledOutsideTyping { get; init; }
         public int FavoriteAfterF { get; init; }
-        public int FavoriteAfterX { get; init; }
+        public int FavoriteAfterU { get; init; }
     }
 
     private sealed class PreviewDecodeSmokeResult

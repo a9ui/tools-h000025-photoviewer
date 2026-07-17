@@ -165,6 +165,12 @@ level up/down, clear, final persistence, reload, and favorites-only filtering:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-level-smoke "$env:TEMP\photoviewer-wpf-favorite-level-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorite-levels.json"
 ```
 
+P0A sidebar contract smoke uses only temporary state/favorites/seen files. It verifies exact independent favorite levels (including All and Unrated), expanded/collapsible Folders, and default-off unseen dots without altering seen state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0a-smoke "$env:TEMP\photoviewer-wpf-p0a-smoke.json"
+```
+
 Favorite import smoke writes a temporary explicit browser-state export and
 imports only bounded favorite fields into the accepted WPF favorites JSON:
 `browserLocalStorage.pvu_fav_levels` object-map entries and
