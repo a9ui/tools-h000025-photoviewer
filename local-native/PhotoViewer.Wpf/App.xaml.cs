@@ -101,6 +101,27 @@ public partial class App : Application
             return;
         }
 
+        int persistenceCrashIdx = Array.IndexOf(e.Args, "--persistence-crash-smoke");
+        if (persistenceCrashIdx >= 0 && persistenceCrashIdx + 1 < e.Args.Length)
+        {
+            CapturePersistenceCrashSmoke(e.Args[persistenceCrashIdx + 1], e.Args);
+            return;
+        }
+
+        int persistenceHoldIdx = Array.IndexOf(e.Args, "--persistence-hold-smoke");
+        if (persistenceHoldIdx >= 0 && persistenceHoldIdx + 1 < e.Args.Length)
+        {
+            CapturePersistenceHoldSmoke(e.Args[persistenceHoldIdx + 1], e.Args);
+            return;
+        }
+
+        int persistenceRecoveryIdx = Array.IndexOf(e.Args, "--persistence-recovery-smoke");
+        if (persistenceRecoveryIdx >= 0 && persistenceRecoveryIdx + 1 < e.Args.Length)
+        {
+            CapturePersistenceRecoverySmoke(e.Args[persistenceRecoveryIdx + 1], e.Args);
+            return;
+        }
+
         int crossRuntimeRecentIdx = Array.IndexOf(e.Args, "--cross-runtime-recent-smoke");
         if (crossRuntimeRecentIdx >= 0 && crossRuntimeRecentIdx + 1 < e.Args.Length)
         {
@@ -896,6 +917,7 @@ public partial class App : Application
             "--recent-path",
             "--enhancement-jobs-path",
             "--key-root",
+            "--target-path",
         ];
 
         foreach (string option in protectedOptions)
@@ -1616,6 +1638,50 @@ public partial class App : Application
         string fullPath = Path.GetFullPath(resultPath);
         Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
         File.WriteAllText(fullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private void CapturePersistenceCrashSmoke(string readyPath, string[] args)
+    {
+        string? targetPath = ArgValue(args, "--target-path");
+        if (string.IsNullOrWhiteSpace(targetPath))
+        {
+            WriteCrossRuntimeSharedStateResult(readyPath, new { ok = false, message = "missing required --target-path" });
+            Shutdown(1);
+            return;
+        }
+
+        PhotoViewer.Wpf.MainWindow.CreateCrashedPersistenceWriterForSmoke(targetPath, readyPath);
+    }
+
+    private void CapturePersistenceHoldSmoke(string readyPath, string[] args)
+    {
+        string? targetPath = ArgValue(args, "--target-path");
+        int holdMilliseconds = ArgInt(args, "--hold-ms", 1_500);
+        bool ok = !string.IsNullOrWhiteSpace(targetPath)
+            && PhotoViewer.Wpf.MainWindow.HoldPersistenceLockForSmoke(targetPath, readyPath, holdMilliseconds);
+        if (!ok)
+            WriteCrossRuntimeSharedStateResult(readyPath, new { ok = false, targetPath, holdMilliseconds });
+        Shutdown(ok ? 0 : 1);
+    }
+
+    private void CapturePersistenceRecoverySmoke(string resultPath, string[] args)
+    {
+        string? targetPath = ArgValue(args, "--target-path");
+        string? kind = ArgValue(args, "--kind");
+        string? key = ArgValue(args, "--key");
+        bool ok = !string.IsNullOrWhiteSpace(targetPath)
+            && !string.IsNullOrWhiteSpace(kind)
+            && !string.IsNullOrWhiteSpace(key)
+            && PhotoViewer.Wpf.MainWindow.TryRecoverPersistenceForSmoke(kind, targetPath, key);
+        WriteCrossRuntimeSharedStateResult(resultPath, new
+        {
+            ok,
+            targetPath,
+            kind,
+            key,
+            lockPresent = !string.IsNullOrWhiteSpace(targetPath) && File.Exists(Path.GetFullPath(targetPath) + ".lock"),
+        });
+        Shutdown(ok ? 0 : 1);
     }
 
     private void CaptureCrossRuntimeRecentSmoke(string resultPath, string[] args)

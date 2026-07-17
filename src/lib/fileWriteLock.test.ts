@@ -71,4 +71,23 @@ describe('withFileWriteLock', () => {
     })).rejects.toThrow(/timed out waiting for shared state lock/i);
     expect(await fs.readFile(lockPath, 'utf8')).toBe('active');
   });
+
+  it('cleans only target-specific Browser and WPF atomic temp residue after acquiring the lock', async () => {
+    const wpfResidue = path.join(root, '.shared.json.crashed-wpf.tmp');
+    const browserResidue = path.join(root, 'shared-crashed-browser.tmp');
+    const unrelated = path.join(root, 'other-crashed-browser.tmp');
+    await Promise.all([
+      fs.writeFile(wpfResidue, 'wpf orphan', 'utf8'),
+      fs.writeFile(browserResidue, 'browser orphan', 'utf8'),
+      fs.writeFile(unrelated, 'keep', 'utf8'),
+    ]);
+
+    await withFileWriteLock(target, async () => {
+      await expect(fs.stat(wpfResidue)).rejects.toMatchObject({ code: 'ENOENT' });
+      await expect(fs.stat(browserResidue)).rejects.toMatchObject({ code: 'ENOENT' });
+      expect(await fs.readFile(unrelated, 'utf8')).toBe('keep');
+    });
+
+    expect(await fs.readFile(unrelated, 'utf8')).toBe('keep');
+  });
 });

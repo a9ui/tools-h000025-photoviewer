@@ -79,6 +79,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
+- `scripts/verify-wpf-crash-lock-recovery.ps1` actual-process fresh/live lock protection, abrupt-exit stale recovery, atomic-temp cleanup, schema protection, and Browser/WPF concurrency verifier
 - `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
 - `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
 - `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
@@ -271,7 +272,11 @@ the real Recycle Bin, or user cache:
 The shared persistence lock is `<target>.lock`: create-new JSON ownership, a
 2-second/25-ms bounded background retry, and a conservative 30-second stale-file
 recovery. Interactive WPF actions make one attempt and yield on contention so the
-UI does not wait behind another writer. Delete still has an unavoidable filesystem
+UI does not wait behind another writer. If that attempt removes a lock older than
+30 seconds, it performs one immediate create-new retry so the first user action
+recovers the crash. A successfully acquired lock removes only target-specific WPF
+and Browser atomic-temp orphans; fresh/live locks and unrelated temp files remain
+authoritative and untouched. Delete still has an unavoidable filesystem
 TOCTOU window between canonical-path validation and the Windows Recycle Bin API;
 the command revalidates immediately before that call, but adversarial reparse-point
 swaps remain a documented post-P1S hardening item.

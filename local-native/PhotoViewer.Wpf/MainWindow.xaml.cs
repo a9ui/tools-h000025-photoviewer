@@ -1574,6 +1574,7 @@ public partial class MainWindow : Window
                     byte[] bytes = Encoding.UTF8.GetBytes(payload);
                     stream.Write(bytes, 0, bytes.Length);
                     stream.Flush(flushToDisk: true);
+                    TryCleanupPersistenceTempResidue(targetPath);
                     return new PersistenceLockLease(lockPath, stream);
                 }
                 catch
@@ -1585,7 +1586,12 @@ public partial class MainWindow : Window
             }
             catch (IOException)
             {
-                TryRemoveStalePersistenceLock(lockPath);
+                // A zero-timeout UI write still gets one immediate create-new
+                // retry when it successfully removes a >30 s crash orphan.
+                // Without this, the first user action only deleted the stale
+                // lock and then reported a false busy failure.
+                if (TryRemoveStalePersistenceLock(lockPath))
+                    continue;
                 if (wait.ElapsedMilliseconds >= timeoutMilliseconds)
                     return null;
                 Thread.Sleep(PersistenceLockRetryMilliseconds);
@@ -1598,18 +1604,46 @@ public partial class MainWindow : Window
 
     }
 
-    private static void TryRemoveStalePersistenceLock(string lockPath)
+    private static bool TryRemoveStalePersistenceLock(string lockPath)
     {
         try
         {
             if (DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) <= PersistenceLockStaleAfter)
-                return;
+                return false;
 
             File.Delete(lockPath);
+            return !File.Exists(lockPath);
         }
         catch
         {
             // A fresh or unreadable lock is authoritative until the shared stale limit.
+            return false;
+        }
+    }
+
+    private static void TryCleanupPersistenceTempResidue(string targetPath)
+    {
+        try
+        {
+            string? directory = Path.GetDirectoryName(targetPath);
+            if (string.IsNullOrWhiteSpace(directory) || !Directory.Exists(directory))
+                return;
+
+            string fileName = Path.GetFileName(targetPath);
+            string browserPrefix = Path.GetFileNameWithoutExtension(targetPath) + "-";
+            foreach (string candidate in Directory.EnumerateFiles(directory, "*.tmp", SearchOption.TopDirectoryOnly))
+            {
+                string candidateName = Path.GetFileName(candidate);
+                bool wpfResidue = candidateName.StartsWith($".{fileName}.", StringComparison.OrdinalIgnoreCase);
+                bool browserResidue = candidateName.StartsWith(browserPrefix, StringComparison.OrdinalIgnoreCase);
+                if (!wpfResidue && !browserResidue)
+                    continue;
+                try { File.Delete(candidate); } catch { }
+            }
+        }
+        catch
+        {
+            // Residue cleanup is best effort; the guarded atomic write remains authoritative.
         }
     }
 
@@ -8409,6 +8443,87 @@ public partial class MainWindow : Window
         string seenKey)
         => TryMergeFavoriteForSmoke(favoritesPath, favoriteKey, favoriteLevel)
             && TryMergeSeenForSmoke(seenPath, seenKey);
+
+    internal static void CreateCrashedPersistenceWriterForSmoke(string targetPath, string readyPath)
+    {
+        targetPath = Path.GetFullPath(targetPath);
+        readyPath = Path.GetFullPath(readyPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(readyPath)!);
+
+        // Intentionally do not dispose this lease. Environment.Exit models an
+        // abrupt process loss: Windows closes the handle, while the protocol
+        // lock and pre-replace temp file remain for the next writer to recover.
+        PersistenceLockLease? lease = TryAcquirePersistenceLock(targetPath, PersistenceLockTimeoutMilliseconds);
+        if (lease is null)
+        {
+            File.WriteAllText(readyPath, JsonSerializer.Serialize(new { ok = false, targetPath }));
+            Environment.Exit(72);
+        }
+
+        string tempPath = Path.Combine(
+            Path.GetDirectoryName(targetPath)!,
+            $".{Path.GetFileName(targetPath)}.crash-{Environment.ProcessId}-{Guid.NewGuid():N}.tmp");
+        using (var stream = new FileStream(tempPath, FileMode.CreateNew, FileAccess.Write, FileShare.Read, 4096, FileOptions.WriteThrough))
+        using (var writer = new StreamWriter(stream, new UTF8Encoding(encoderShouldEmitUTF8Identifier: false)))
+        {
+            writer.Write("{\"crashedWriter\":true}");
+            writer.Flush();
+            stream.Flush(flushToDisk: true);
+        }
+        File.WriteAllText(readyPath, JsonSerializer.Serialize(new
+        {
+            ok = true,
+            targetPath,
+            lockPath = targetPath + ".lock",
+            tempPath,
+            pid = Environment.ProcessId,
+        }));
+        Environment.Exit(71);
+    }
+
+    internal static bool HoldPersistenceLockForSmoke(string targetPath, string readyPath, int holdMilliseconds)
+    {
+        targetPath = Path.GetFullPath(targetPath);
+        readyPath = Path.GetFullPath(readyPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(targetPath)!);
+        Directory.CreateDirectory(Path.GetDirectoryName(readyPath)!);
+        using PersistenceLockLease? lease = TryAcquirePersistenceLock(targetPath, PersistenceLockTimeoutMilliseconds);
+        if (lease is null)
+            return false;
+
+        File.WriteAllText(readyPath, JsonSerializer.Serialize(new
+        {
+            ok = true,
+            targetPath,
+            lockPath = targetPath + ".lock",
+            pid = Environment.ProcessId,
+        }));
+        Thread.Sleep(Math.Clamp(holdMilliseconds, 100, 10_000));
+        return true;
+    }
+
+    internal static bool TryRecoverPersistenceForSmoke(string kind, string targetPath, string key)
+    {
+        targetPath = Path.GetFullPath(targetPath);
+        string normalizedKind = kind.Trim().ToLowerInvariant();
+        return normalizedKind switch
+        {
+            "favorites" => TryMergeFavoriteForSmoke(targetPath, key, 3),
+            "seen" => TryMergeSeenForSmoke(targetPath, key),
+            "recent" => TryMergeSharedRecentForSmoke(targetPath, key),
+            "state" => TryWithPersistenceLock(targetPath, () =>
+            {
+                if (!TryReadViewerStateFile(targetPath, out ViewerState? state))
+                    return false;
+                state ??= new ViewerState();
+                state.Version = 2;
+                state.SearchQuery = key;
+                return TryWriteAtomicText(targetPath, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+            }),
+            _ => false,
+        };
+    }
 
     /// <summary>
     /// Cross-runtime verifier writer.  It intentionally uses the same create-new

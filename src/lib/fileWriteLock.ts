@@ -27,6 +27,23 @@ async function removeStaleLock(lockPath: string, staleMs: number) {
   }
 }
 
+async function removeOrphanedAtomicTemps(target: string) {
+  const dir = path.dirname(target);
+  const fileName = path.basename(target);
+  const browserPrefix = `${path.basename(target, path.extname(target))}-`;
+  let names: string[];
+  try {
+    names = await fs.readdir(dir);
+  } catch {
+    return;
+  }
+
+  await Promise.all(names
+    .filter((name) => name.endsWith('.tmp')
+      && (name.startsWith(`.${fileName}.`) || name.startsWith(browserPrefix)))
+    .map((name) => fs.unlink(path.join(dir, name)).catch(() => {})));
+}
+
 /**
  * Serializes read/merge/replace operations across Browser and WPF processes.
  * The shared protocol is a create-new `<target>.lock` file. A crashed writer's
@@ -50,6 +67,10 @@ export async function withFileWriteLock<T>(
     try {
       handle = await fs.open(lockPath, 'wx');
       await handle.writeFile(`${JSON.stringify({ pid: process.pid, createdAtUtc: new Date().toISOString() })}\n`, 'utf8');
+      // Owning the shared lock proves no compliant writer can still own a
+      // target-specific temp. Remove crash residue from either runtime before
+      // beginning the next read/merge/replace transaction.
+      await removeOrphanedAtomicTemps(target);
     } catch (error) {
       if (handle) {
         await handle.close().catch(() => {});
