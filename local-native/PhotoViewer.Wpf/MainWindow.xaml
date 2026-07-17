@@ -283,7 +283,7 @@
         <ListBox x:Name="RowsList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="8,8,4,24"
                  ItemContainerStyle="{StaticResource ListRowItem}" SelectionMode="Extended" SelectionChanged="CardsList_SelectionChanged"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
-                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.IsVirtualizingWhenGrouping="True" VirtualizingPanel.VirtualizationMode="Recycling">
           <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
           <ListBox.GroupStyle>
             <GroupStyle>
@@ -341,7 +341,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
                   <StackPanel Orientation="Horizontal">
-                    <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (X)" Click="FavoriteDecrease_Click"/>
+                    <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (U)" Click="FavoriteDecrease_Click"/>
                     <Border Width="38" Background="#1AF43F5E">
                       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock x:Name="FavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontWeight="Bold" FontSize="13"/>
@@ -662,7 +662,7 @@
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" Width="38" Height="38" Click="ToggleModalFlip_Click">
           <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (X)" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (U)" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
           <TextBlock Text="−" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
         </Button>
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">

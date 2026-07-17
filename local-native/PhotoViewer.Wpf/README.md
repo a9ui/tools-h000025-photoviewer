@@ -42,6 +42,7 @@ browse and practical viewer slice:
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
+- `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
 
@@ -182,6 +183,16 @@ fake recycle folder; it does not exercise the user's actual Windows Recycle Bin:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0c-smoke "$env:TEMP\photoviewer-wpf-p0c-smoke.json"
+```
+
+P0D is the integrated local-native gate. It builds a temporary 5,000-image
+fixture and verifies catalog completeness, bounded Grid/List realization,
+favorites/dots/folder controls, anchored zoom, fake Recycle Bin continuation,
+reload state, atomic temp-store merges, and a byte-identical enhancement-jobs
+sentinel. It never uses browser, port 3000, the real Recycle Bin, or user cache:
+
+```powershell
+.\scripts\verify-wpf-p0.ps1
 ```
 
 Favorite import smoke writes a temporary explicit browser-state export and

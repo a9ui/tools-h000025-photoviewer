@@ -198,6 +198,13 @@ public partial class App : Application
             return;
         }
 
+        int p0dSmokeIdx = Array.IndexOf(e.Args, "--p0d-smoke");
+        if (p0dSmokeIdx >= 0 && p0dSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP0DSmoke(e.Args[p0dSmokeIdx + 1]);
+            return;
+        }
+
         int displayStyleSmokeIdx = Array.IndexOf(e.Args, "--display-style-smoke");
         if (displayStyleSmokeIdx >= 0 && displayStyleSmokeIdx + 1 < e.Args.Length)
         {
@@ -840,6 +847,7 @@ public partial class App : Application
             WriteSmokePng(Path.Combine(folder, $"level-{level}.png"), 80, 60, Color.FromRgb((byte)(40 + level * 25), 90, 160));
         string favorites = Path.Combine(root, "favorites.json");
         string seen = Path.Combine(root, "seen.json");
+        string recent = Path.Combine(root, "recent.json");
         string state = Path.Combine(root, "state.json");
         string? oldFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
         string? oldSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
@@ -917,6 +925,108 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureP0DSmoke(string resultPath)
+    {
+        const int fixtureCount = 5000;
+        string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p0d-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(root, "fixture");
+        string recycle = Path.Combine(root, "fake-recycle");
+        string state = Path.Combine(root, "state.json");
+        string favorites = Path.Combine(root, "favorites.json");
+        string seen = Path.Combine(root, "seen.json");
+        string recent = Path.Combine(root, "recent.json");
+        string jobs = Path.Combine(root, "jobs.json");
+        Directory.CreateDirectory(folder);
+        for (int index = 0; index < fixtureCount; index++)
+            WriteSmokePng(Path.Combine(folder, $"item-{index:0000}.png"), 4, 3, Color.FromRgb((byte)(30 + index % 180), 100, 160));
+        File.WriteAllText(jobs, "{\"version\":1,\"jobs\":[]}");
+        File.WriteAllText(state, "{\"favoriteFilterLevel\":2,\"futureFlag\":true}");
+        string jobsHashBefore = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(jobs)));
+        string? oldState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? oldFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? oldSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? oldJobs = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+        string? oldRecent = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobs);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recent);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                var watch = Stopwatch.StartNew();
+                await win.LoadFolderAsync(folder);
+                int catalog = win.CatalogCountForSmoke;
+                int grid = win.GridRealizedCountForSmoke;
+                bool listMode = win.SetListModeForSmoke();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                int listRealized = win.ListRealizedContainerCountForSmoke;
+                string externalFavorite = Path.Combine(root, "external-favorite.png");
+                string externalSeen = Path.Combine(root, "external-seen.png");
+                File.WriteAllText(favorites, JsonSerializer.Serialize(new Dictionary<string, int> { [externalFavorite] = 4 }));
+                File.WriteAllText(seen, JsonSerializer.Serialize(new Dictionary<string, bool> { [externalSeen] = true }));
+                bool favoriteLevels = win.SelectFileNameForSmoke("item-0100.png") && win.SetSelectedFavoriteLevelForSmoke(1)
+                    && win.SelectFileNameForSmoke("item-0200.png") && win.SetSelectedFavoriteLevelForSmoke(5);
+                bool seenMerged = win.MarkSelectedSeenForSmoke() && File.ReadAllText(seen).Contains(Path.GetFileName(externalSeen), StringComparison.OrdinalIgnoreCase);
+                bool favoriteMerged = File.ReadAllText(favorites).Contains(Path.GetFileName(externalFavorite), StringComparison.OrdinalIgnoreCase);
+                win.SetShowUnseenDotsForSmoke(false);
+                bool dotsDisplayOnly = win.VisibleUnseenDotCountForSmoke == 0 && win.UnseenCountForSmoke > 0;
+                win.ToggleFoldersSectionForSmoke();
+                bool foldersCollapsed = !win.FoldersSectionExpandedForSmoke;
+                win.SetGridModeForSmoke();
+                await win.ScrollGridToMiddleForSmokeAsync();
+                string? anchor = win.CaptureGridViewportAnchorForSmoke();
+                bool zoom300 = win.SetGridZoomForSmoke(300); await win.WaitForGridZoomAnchorForSmokeAsync(); double drift300 = win.LastGridZoomAnchorDriftForSmoke;
+                bool zoom80 = win.SetGridZoomForSmoke(80); await win.WaitForGridZoomAnchorForSmokeAsync(); double drift80 = win.LastGridZoomAnchorDriftForSmoke;
+                bool zoom200 = win.ZoomResetForSmoke(); await win.WaitForGridZoomAnchorForSmokeAsync(); double drift200 = win.LastGridZoomAnchorDriftForSmoke;
+                bool anchorStable = !string.IsNullOrWhiteSpace(anchor) && zoom300 && zoom80 && zoom200 && drift300 <= 8 && drift80 <= 8 && drift200 <= 8;
+                win.SetRecycleBinDeleteBackendForSmoke(path => { Directory.CreateDirectory(recycle); File.Move(path, Path.Combine(recycle, Path.GetFileName(path))); return RecycleBinDeleteResult.Success; });
+                win.SetConfirmBeforeDeleteForSmoke(false);
+                var order = win.FilteredFileNamesForSmoke(fixtureCount);
+                int middleIndex = order.Count / 2;
+                string middle = order[middleIndex];
+                string expectedNext = order[middleIndex + 1];
+                win.SelectFileNameForSmoke(middle);
+                bool deleted = win.RequestDeleteSelectedForSmoke() && string.Equals(win.SelectedFileNameForSmoke, expectedNext, StringComparison.OrdinalIgnoreCase);
+                win.FlushStateForSmoke();
+                bool stateUnknownPreserved = File.ReadAllText(state).Contains("futureFlag", StringComparison.OrdinalIgnoreCase);
+                long workingSet = Process.GetCurrentProcess().WorkingSet64;
+                LoadMetrics? metrics = win.LastLoadMetrics;
+                string jobsHashAfter = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(jobs)));
+                bool enhancementPassive = jobsHashBefore == jobsHashAfter && win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                win.Close();
+                var reload = HiddenWindow(); reload.Show();
+                await reload.LoadFolderAsync(folder);
+                bool stateReloaded = reload.ConfirmBeforeDeleteForSmoke == false && reload.FavoriteStoreCountForSmoke >= 2 && File.Exists(state);
+                reload.Close();
+                watch.Stop();
+                ok = catalog == fixtureCount && grid <= win.GridMaxRealizationCountForSmoke && listMode && listRealized <= 384 && favoriteLevels
+                    && favoriteMerged && seenMerged && stateUnknownPreserved && dotsDisplayOnly && foldersCollapsed && anchorStable && deleted && stateReloaded && enhancementPassive;
+                result = new { ok, message = ok ? "P0D integrated 5000-image gate passed" : "P0D gate failed", folder, fixtureCount, catalog, grid, maxGrid = win.GridMaxRealizationCountForSmoke, listRealized, favoriteLevels, favoriteMerged, seenMerged, stateUnknownPreserved, dotsDisplayOnly, foldersCollapsed, anchor, drift300, drift80, drift200, deleted, stateReloaded, enhancementPassive, jobs, jobsHashBefore, jobsHashAfter, workingSet, elapsedMs = watch.ElapsedMilliseconds, metrics };
+            }
+            catch (Exception ex) { result = new { ok = false, message = ex.ToString(), folder, fixtureCount }; }
+            finally
+            {
+                if (win.IsVisible) win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", oldState);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", oldFavorites);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", oldJobs);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", oldRecent);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
+            File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureP0CSmoke(string resultPath)
     {
         string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p0c-" + Guid.NewGuid().ToString("N"));
@@ -977,13 +1087,15 @@ public partial class App : Application
                 using (var screenshotStream = File.Create(screenshot)) screenshotEncoder.Save(screenshotStream);
                 bool confirmationAboveModal = modalOpenedMiddle && win.ModalVisibleForSmoke && win.DeleteConfirmationZIndexForSmoke > win.ModalZIndexForSmoke && File.Exists(screenshot);
                 int favoriteBeforeOverlay = win.SelectedFavoriteLevelForSmoke;
-                bool confirmationShortcutsGuarded = win.InvokePreviewKeyForSmoke(Key.F) && win.InvokePreviewKeyForSmoke(Key.U) && win.InvokePreviewKeyForSmoke(Key.Delete)
+                bool confirmationShortcutsGuarded = !win.InvokePreviewKeyForSmoke(Key.F) && !win.InvokePreviewKeyForSmoke(Key.U) && !win.InvokePreviewKeyForSmoke(Key.Delete)
                     && win.SelectedFavoriteLevelForSmoke == favoriteBeforeOverlay && win.DeleteConfirmationVisibleForSmoke;
+                bool dialogKeyboardPassThrough = !win.InvokePreviewKeyForSmoke(Key.Tab) && !win.InvokePreviewKeyForSmoke(Key.Space) && !win.InvokePreviewKeyForSmoke(Key.Enter)
+                    && win.DeleteConfirmationVisibleForSmoke;
                 bool escapeClosedConfirmation = win.InvokePreviewKeyForSmoke(Key.Escape) && !win.DeleteConfirmationVisibleForSmoke && win.ModalVisibleForSmoke;
                 bool cancelledUnchanged = win.CatalogCountForSmoke == 3 && File.Exists(Path.Combine(folder, middle));
 
                 win.OpenAppSettingsForSmoke();
-                bool settingsShortcutsGuarded = win.AppSettingsVisibleForSmoke && win.InvokePreviewKeyForSmoke(Key.F) && win.InvokePreviewKeyForSmoke(Key.Escape) && !win.AppSettingsVisibleForSmoke;
+                bool settingsShortcutsGuarded = win.AppSettingsVisibleForSmoke && !win.InvokePreviewKeyForSmoke(Key.F) && win.InvokePreviewKeyForSmoke(Key.Escape) && !win.AppSettingsVisibleForSmoke;
 
                 bool promptedAgain = win.RequestDeleteSelectedForSmoke();
                 win.ConfirmDeleteForSmoke(doNotAskAgain: true);
@@ -1045,10 +1157,10 @@ public partial class App : Application
                 bool persistedDoNotAskAgain = File.Exists(state) && File.ReadAllText(state).Contains("\"ConfirmBeforeDelete\": false", StringComparison.OrdinalIgnoreCase);
                 bool fakeRecycleOnly = Directory.Exists(recycle) && Directory.EnumerateFiles(recycle).Any() && !Directory.EnumerateFiles(folder).Any(path => Path.GetFileName(path) == middle);
 
-                ok = selectedMiddle && prompted && confirmationAboveModal && confirmationShortcutsGuarded && escapeClosedConfirmation && cancelledUnchanged && settingsShortcutsGuarded && promptedAgain && middleToNext && lastToPrevious && onlyToEmpty
+                ok = selectedMiddle && prompted && confirmationAboveModal && confirmationShortcutsGuarded && dialogKeyboardPassThrough && escapeClosedConfirmation && cancelledUnchanged && settingsShortcutsGuarded && promptedAgain && middleToNext && lastToPrevious && onlyToEmpty
                     && filteredSubset && outsideBlocked && siblingPrefixBlocked && indexBlocked && unsupportedBlocked && realpathBlocked && parentLinkEscapeBlocked && favoriteOther && seenOther
                     && recycleFailure && persistedDoNotAskAgain && fakeRecycleOnly;
-                result = new { ok, message = ok ? "P0C guarded Recycle Bin workflow passed (fake injected backend; no real Recycle Bin integration run)" : "P0C smoke failed", folder, recycle, screenshot, selectedMiddle, prompted, confirmationAboveModal, confirmationShortcutsGuarded, escapeClosedConfirmation, cancelledUnchanged, settingsShortcutsGuarded, promptedAgain, middleToNext, lastToPrevious, onlyToEmpty, filteredSubset, outsideBlocked, siblingPrefixBlocked, indexBlocked, unsupportedBlocked, realpathBlocked, parentLinkEscapeBlocked, favoriteOther, seenOther, recycleFailure, persistedDoNotAskAgain, fakeRecycleOnly, deleteStatus = win.DeleteStatusForSmoke };
+                result = new { ok, message = ok ? "P0C guarded Recycle Bin workflow passed (fake injected backend; no real Recycle Bin integration run)" : "P0C smoke failed", folder, recycle, screenshot, selectedMiddle, prompted, confirmationAboveModal, confirmationShortcutsGuarded, dialogKeyboardPassThrough, escapeClosedConfirmation, cancelledUnchanged, settingsShortcutsGuarded, promptedAgain, middleToNext, lastToPrevious, onlyToEmpty, filteredSubset, outsideBlocked, siblingPrefixBlocked, indexBlocked, unsupportedBlocked, realpathBlocked, parentLinkEscapeBlocked, favoriteOther, seenOther, recycleFailure, persistedDoNotAskAgain, fakeRecycleOnly, deleteStatus = win.DeleteStatusForSmoke };
             }
             catch (Exception ex)
             {

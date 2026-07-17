@@ -81,6 +81,7 @@ public partial class MainWindow : Window
     private readonly List<Tile> _closedPreviewTabs = new();
     private readonly HashSet<string> _pinnedPreviewPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _favoriteDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -97,6 +98,8 @@ public partial class MainWindow : Window
     private bool _suppressStateSave;
     private bool _favoritesWriteBlocked;
     private bool _seenWriteBlocked;
+    private bool _stateWriteBlocked;
+    private Dictionary<string, JsonElement>? _stateExtensionData;
     private bool _syncingSelection;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
@@ -907,7 +910,14 @@ public partial class MainWindow : Window
     private int FavoriteLevelForPath(string path)
         => _favorites.TryGetValue(NormalizeFavoritePath(path), out int level) ? Math.Clamp(level, 0, 5) : 0;
 
-    private static string ResolvedEnhancementJobsPath => ProjectCachePath(Path.Combine("enhance", "jobs.json"));
+    private static string ResolvedEnhancementJobsPath
+    {
+        get
+        {
+            string? overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+            return string.IsNullOrWhiteSpace(overridePath) ? ProjectCachePath(Path.Combine("enhance", "jobs.json")) : Path.GetFullPath(overridePath);
+        }
+    }
 
     private void LoadEnhancedState()
     {
@@ -992,6 +1002,31 @@ public partial class MainWindow : Window
         return _enhancedOutputs.TryGetValue(NormalizeFavoritePath(path), out outputPath);
     }
 
+    private static bool TryWriteAtomicText(string path, string text)
+    {
+        string? tempPath = null;
+        try
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+            tempPath = Path.Combine(Path.GetDirectoryName(path)!, $".{Path.GetFileName(path)}.{Guid.NewGuid():N}.tmp");
+            File.WriteAllText(tempPath, text);
+            File.Move(tempPath, path, overwrite: true);
+            tempPath = null;
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+        finally
+        {
+            if (tempPath is not null)
+            {
+                try { File.Delete(tempPath); } catch { }
+            }
+        }
+    }
+
     private bool SaveFavorites()
     {
         if (_favoritesWriteBlocked)
@@ -1000,16 +1035,31 @@ public partial class MainWindow : Window
         try
         {
             string path = ResolvedFavoritesPath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var ordered = _favorites
-                .Where(static item => item.Value > 0)
-                .OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    static item => item.Key,
-                    static item => Math.Clamp(item.Value, 1, 5),
-                    StringComparer.OrdinalIgnoreCase);
+            var merged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+            if (File.Exists(path))
+            {
+                using var document = JsonDocument.Parse(File.ReadAllText(path));
+                if (document.RootElement.ValueKind != JsonValueKind.Object)
+                    return false;
+                foreach (var property in document.RootElement.EnumerateObject())
+                    if (TryReadFavoriteLevel(property.Value, out int level))
+                        merged[NormalizeFavoritePath(property.Name)] = level;
+            }
+            IEnumerable<string> dirtyKeys = _favoriteDirtyPaths.Count > 0 ? _favoriteDirtyPaths : _favorites.Keys.ToList();
+            foreach (string key in dirtyKeys)
+            {
+                if (_favorites.TryGetValue(key, out int level) && level > 0)
+                    merged[key] = Math.Clamp(level, 1, 5);
+                else
+                    merged.Remove(key);
+            }
+            var ordered = merged.OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase).ToDictionary(static item => item.Key, static item => item.Value, StringComparer.OrdinalIgnoreCase);
             var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, json);
+            if (!TryWriteAtomicText(path, json))
+                return false;
+            _favorites.Clear();
+            foreach (var item in merged) _favorites[item.Key] = item.Value;
+            _favoriteDirtyPaths.Clear();
             return true;
         }
         catch
@@ -1102,12 +1152,17 @@ public partial class MainWindow : Window
         try
         {
             string path = ResolvedSeenPath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-            var ordered = _seenPaths
+            var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!TryLoadSeenFile(path, merged))
+                return false;
+            merged.UnionWith(_seenPaths);
+            var ordered = merged
                 .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase);
             var json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(path, json);
+            if (!TryWriteAtomicText(path, json))
+                return false;
+            _seenPaths.UnionWith(merged);
             return true;
         }
         catch
@@ -2818,6 +2873,7 @@ public partial class MainWindow : Window
             _favorites[key] = clamped;
         else
             _favorites.Remove(key);
+        _favoriteDirtyPaths.Add(key);
 
         if (!SaveFavorites())
         {
@@ -2825,6 +2881,7 @@ public partial class MainWindow : Window
                 _favorites[key] = previousStoredLevel;
             else
                 _favorites.Remove(key);
+            _favoriteDirtyPaths.Remove(key);
             return false;
         }
 
@@ -4773,6 +4830,8 @@ public partial class MainWindow : Window
             return;
         }
 
+        _stateExtensionData = state.ExtensionData is null ? null : new Dictionary<string, JsonElement>(state.ExtensionData);
+
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
 
@@ -4810,7 +4869,7 @@ public partial class MainWindow : Window
         _restoredSelectedPath = state.SelectedPath;
     }
 
-    private static ViewerState? ReadState()
+    private ViewerState? ReadState()
     {
         try
         {
@@ -4819,13 +4878,14 @@ public partial class MainWindow : Window
         }
         catch
         {
+            _stateWriteBlocked = true;
             return null;
         }
     }
 
     private void SaveState()
     {
-        if (_initializing || _suppressStateSave) return;
+        if (_initializing || _suppressStateSave || _stateWriteBlocked) return;
 
         try
         {
@@ -4834,6 +4894,7 @@ public partial class MainWindow : Window
             _restoredSelectedPath = selectedPath;
             var state = new ViewerState
             {
+                Version = 1,
                 LastFolder = _currentFolder,
                 LastFolderSet = _currentFolderSet.Count > 0 ? _currentFolderSet : null,
                 SearchQuery = SearchInput.Text,
@@ -4853,9 +4914,11 @@ public partial class MainWindow : Window
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
+                ExtensionData = _stateExtensionData,
             };
             var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
-            File.WriteAllText(ResolvedStatePath, json);
+            if (!TryWriteAtomicText(ResolvedStatePath, json))
+                return;
             if (_currentFolderSet.Count > 0)
                 SaveSharedRecentFolderSet(_currentFolderSet);
         }
@@ -4865,7 +4928,14 @@ public partial class MainWindow : Window
         }
     }
 
-    private static string ResolvedSharedRecentPath => ProjectCachePath("recent-folders.json");
+    private static string ResolvedSharedRecentPath
+    {
+        get
+        {
+            string? overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+            return string.IsNullOrWhiteSpace(overridePath) ? ProjectCachePath("recent-folders.json") : Path.GetFullPath(overridePath);
+        }
+    }
 
     private static SharedRecentReadResult ReadSharedRecentFolders()
     {
@@ -5017,10 +5087,8 @@ public partial class MainWindow : Window
         try
         {
             string path = ResolvedSharedRecentPath;
-            Directory.CreateDirectory(Path.GetDirectoryName(path)!);
             var json = JsonSerializer.Serialize(next, SharedRecentJsonOptions);
-            File.WriteAllText(path, json);
-            return true;
+            return TryWriteAtomicText(path, json);
         }
         catch
         {
@@ -5062,8 +5130,15 @@ public partial class MainWindow : Window
         if (DeleteConfirmationDialog.Visibility == Visibility.Visible || AppSettingsDialog.Visibility == Visibility.Visible)
         {
             if (key == Key.Escape)
+            {
                 CloseTopmostOverlay();
-            e.Handled = true;
+                e.Handled = true;
+                return;
+            }
+
+            // Let dialog controls retain normal Tab/Shift+Tab/Space/Enter behavior;
+            // only gallery-global shortcuts are suppressed while an overlay is active.
+            base.OnPreviewKeyDown(e);
             return;
         }
 
@@ -5205,6 +5280,11 @@ public partial class MainWindow : Window
     public void ResetCanonicalPathResolverForSmoke() => _resolveFinalPath = ResolveFinalPathCore;
 
     public void SetConfirmBeforeDeleteForSmoke(bool value) => _confirmBeforeDelete = value;
+    public void FlushStateForSmoke()
+    {
+        _searchStateSaveTimer.Stop();
+        SaveState();
+    }
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
     public void CancelDeleteForSmoke() => DeleteCancel_Click(this, new RoutedEventArgs());
     public void ConfirmDeleteForSmoke(bool doNotAskAgain)
@@ -5310,6 +5390,8 @@ public partial class MainWindow : Window
     public double ListThumbnailSizeForSmoke => _allTiles.FirstOrDefault()?.ListThumbnailSize ?? 0;
     public bool ListUsesRecyclingVirtualizationForSmoke
         => VirtualizingPanel.GetIsVirtualizing(RowsList) && VirtualizingPanel.GetVirtualizationMode(RowsList) == VirtualizationMode.Recycling;
+    public int ListRealizedContainerCountForSmoke
+        => Enumerable.Range(0, RowsList.Items.Count).Count(index => RowsList.ItemContainerGenerator.ContainerFromIndex(index) is not null);
     public double SidebarWidthForSmoke => Sidebar.ActualWidth;
     public double RightPanelWidthForSmoke => RightPanel.ActualWidth;
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
@@ -5789,6 +5871,7 @@ public partial class MainWindow : Window
 // Lightweight persisted shell state.
 public sealed class ViewerState
 {
+    public int Version { get; set; } = 1;
     public string? LastFolder { get; set; }
     public List<string>? LastFolderSet { get; set; }
     public string? SearchQuery { get; set; }
@@ -5812,6 +5895,8 @@ public sealed class ViewerState
     public int? FavoriteFilterLevel { get; set; }
     public List<string>? HiddenFolderBuckets { get; set; }
     public List<string>? PinnedPreviewPaths { get; set; }
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
 
 public readonly record struct RecycleBinDeleteResult(bool Succeeded, string Reason)
