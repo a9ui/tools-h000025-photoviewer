@@ -65,6 +65,7 @@ implementation. The normative current behavior is documented in
 - `--delete-correctness-smoke <path>` temp-only protected project/app-root, single/bulk ownership reconciliation, retained Favorite/Seen/Enhancement history, reload, and partial-failure smoke
 - `--delete-race-smoke <path>` temp-only preview/modal decode, sparse rapid Delete, bulk partial failure, concurrent Refresh tombstone, and same-name regeneration smoke
 - `--external-stale-source-smoke <path>` temp-only external delete/rename/corrupt-source Refresh, tab/pin/modal/focus/state recovery, and shared-history isolation smoke
+- `--decode-mutation-smoke <path>` temp-only active Preview/Modal truncate, lock, same-path replace/recreate, Refresh generation, bitmap release, and shared-state isolation smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
 - `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image tail-search/modal/heartbeat observation gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
@@ -86,6 +87,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
 - `scripts/verify-wpf-monitor-work-area.ps1` current-monitor maximize, exact unchanged restore, disconnected/downsized/DPI-equivalent bounded restore, and fallback verifier
 - `scripts/verify-wpf-external-stale-source.ps1` temp-only external source lifecycle, recoverable decode, focus, state, and history-isolation verifier
+- `scripts/verify-wpf-decode-mutation.ps1` temp-only in-place source mutation, stale-immediate clearing, latest-generation recovery, and bitmap-retention verifier
 - `scripts/verify-wpf-delete-race.ps1` temp-only destructive-workflow race, stale-publish rejection, failed/cancel non-tombstone, and fresh same-name regeneration verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier

@@ -2899,6 +2899,19 @@ public partial class MainWindow : Window
                         PreviewArtBase.Visibility = Visibility.Collapsed;
                         PreviewArtGlow.Visibility = Visibility.Collapsed;
                     }
+                    else
+                    {
+                        // The immediate source may be a thumbnail decoded before
+                        // an external truncate, lock, or replacement. A failed
+                        // full decode must not leave that stale bitmap presented
+                        // as the current file.
+                        PreviewBitmap.Source = null;
+                        PreviewBitmap.Visibility = Visibility.Collapsed;
+                        PreviewArtBase.Visibility = Visibility.Visible;
+                        PreviewArtGlow.Visibility = Visibility.Visible;
+                        PreviewSizeText.Text = "Could not decode";
+                        ReportCurrentImageDecodeFailure();
+                    }
 
                     if (decoded.Width > 0 && decoded.Height > 0)
                         PreviewSizeText.Text = $"{decoded.Width} x {decoded.Height}";
@@ -6214,7 +6227,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (token.IsCancellationRequested || bitmap is null)
+        if (token.IsCancellationRequested)
         {
             completion.TrySetCanceled(token);
             return;
@@ -6226,11 +6239,35 @@ public partial class MainWindow : Window
                 () =>
                 {
                     if (token.IsCancellationRequested || Modal.Visibility != Visibility.Visible)
+                    {
+                        completion.TrySetResult(false);
                         return;
+                    }
                     if (SelectedTile()?.Path != selectedPath)
+                    {
+                        completion.TrySetResult(false);
                         return;
+                    }
                     if (!string.Equals(_modalDisplayPath, displayPath, StringComparison.OrdinalIgnoreCase))
+                    {
+                        completion.TrySetResult(false);
                         return;
+                    }
+
+                    if (bitmap is null)
+                    {
+                        // OpenModal intentionally shows an immediate preview or
+                        // thumbnail while the full decode runs. If the source
+                        // changed underneath that decode, clear the immediate
+                        // bitmap so a stale image is never mistaken for success.
+                        ModalBitmap.Source = null;
+                        ModalBitmap.Visibility = Visibility.Collapsed;
+                        ModalArtBase.Visibility = Visibility.Visible;
+                        ModalArtGlow.Visibility = Visibility.Visible;
+                        ReportCurrentImageDecodeFailure();
+                        completion.TrySetResult(false);
+                        return;
+                    }
 
                     ModalBitmap.Source = bitmap;
                     ModalBitmap.Visibility = Visibility.Visible;
@@ -7248,6 +7285,26 @@ public partial class MainWindow : Window
             DeleteStatusRetryButton.Visibility = retryAction is null ? Visibility.Collapsed : Visibility.Visible;
             DeleteStatusToast.Visibility = Visibility.Visible;
         }
+    }
+
+    private void ReportCurrentImageDecodeFailure()
+    {
+        const string currentFailure = "Image could not be decoded. It may be locked, changing, or unavailable. Refresh after fixing the file.";
+        bool previousIsScanWarning = _deleteStatus.Contains("selected root(s) were unavailable", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("folders could not be scanned", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("junction or symbolic-link", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("image file(s) could not be decoded", StringComparison.OrdinalIgnoreCase);
+        if (!previousIsScanWarning)
+        {
+            SetStatusToast(currentFailure);
+            return;
+        }
+
+        // Scan warnings explain how to recover missing roots and boundary
+        // skips. A later preview failure must not erase those instructions.
+        SetStatusToast(_deleteStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase)
+            ? _deleteStatus
+            : $"{_deleteStatus} {currentFailure}");
     }
 
     private void SetDeleteStatus(string status, bool isFailure = false, Tile? retryTile = null)
@@ -8274,6 +8331,31 @@ public partial class MainWindow : Window
     public string? PreviewDecodedPathForSmoke => _previewDecodedPath;
     public string? PreviewMetadataPathForSmoke => _currentPreviewMetadataPath;
     public string? ModalSourcePathForSmoke => _modalSourceTilePath;
+    public int PreviewBitmapPixelWidthForSmoke => (PreviewBitmap.Source as BitmapSource)?.PixelWidth ?? 0;
+    public int ModalBitmapPixelWidthForSmoke => (ModalBitmap.Source as BitmapSource)?.PixelWidth ?? 0;
+    public string? PreviewBitmapCenterColorForSmoke => BitmapCenterColorForSmoke(PreviewBitmap.Source as BitmapSource);
+    public string? ModalBitmapCenterColorForSmoke => BitmapCenterColorForSmoke(ModalBitmap.Source as BitmapSource);
+    public string PreviewSizeTextForSmoke => PreviewSizeText.Text;
+    public WeakReference? CapturePreviewBitmapWeakReferenceForSmoke()
+        => PreviewBitmap.Source is BitmapSource source ? new WeakReference(source) : null;
+    public WeakReference? CaptureModalBitmapWeakReferenceForSmoke()
+        => ModalBitmap.Source is BitmapSource source ? new WeakReference(source) : null;
+    private static string? BitmapCenterColorForSmoke(BitmapSource? source)
+    {
+        if (source is null || source.PixelWidth <= 0 || source.PixelHeight <= 0)
+            return null;
+
+        BitmapSource readable = source.Format == PixelFormats.Bgra32
+            ? source
+            : new FormatConvertedBitmap(source, PixelFormats.Bgra32, null, 0);
+        byte[] pixel = new byte[4];
+        readable.CopyPixels(
+            new Int32Rect(readable.PixelWidth / 2, readable.PixelHeight / 2, 1, 1),
+            pixel,
+            stride: 4,
+            offset: 0);
+        return $"#{pixel[3]:X2}{pixel[2]:X2}{pixel[1]:X2}{pixel[0]:X2}";
+    }
     public bool FocusModalCloseForSmoke() => ModalCloseBtn.Focus();
     public bool ModalCloseFocusedForSmoke => ModalCloseBtn.IsKeyboardFocused;
     public bool PreviewPlaceholderVisibleForSmoke

@@ -304,6 +304,13 @@ public partial class App : Application
             return;
         }
 
+        int decodeMutationSmokeIdx = Array.IndexOf(e.Args, "--decode-mutation-smoke");
+        if (decodeMutationSmokeIdx >= 0 && decodeMutationSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDecodeMutationSmoke(e.Args[decodeMutationSmokeIdx + 1]);
+            return;
+        }
+
         int pathRobustnessSmokeIdx = Array.IndexOf(e.Args, "--path-robustness-smoke");
         if (pathRobustnessSmokeIdx >= 0 && pathRobustnessSmokeIdx + 1 < e.Args.Length)
         {
@@ -7677,6 +7684,316 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureDecodeMutationSmoke(string resultPath)
+    {
+        static async Task<bool> WaitForPhaseAsync(MainWindow window, string phase, int timeoutMilliseconds = 4_000)
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                if (string.Equals(window.LoadPhaseForSmoke, phase, StringComparison.Ordinal))
+                    return true;
+                await Task.Delay(10);
+            }
+            return false;
+        }
+
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        if (!resultFullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-decode-mutation-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string anchorPath = Path.Combine(folder, "anchor.png");
+        string mutablePath = Path.Combine(folder, "mutable.png");
+        Directory.CreateDirectory(folder);
+        WriteSmokePng(anchorPath, 96, 72, Color.FromRgb(40, 150, 220));
+        WriteSmokePng(mutablePath, 160, 100, Color.FromRgb(220, 110, 70));
+
+        string statePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH")!;
+        string favoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH")!;
+        string seenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH")!;
+        string recentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH")!;
+        string jobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH")!;
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+        File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            FileStream? exclusiveLock = null;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                PreviewDecodeSmokeSnapshot baselinePreview = await win.SelectPreviewForSmokeAsync("mutable.png");
+                bool baselineModalOpened = win.OpenModalForSmoke();
+                bool baselineModalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                bool baselineReady = baselinePreview.StableLatestSelection
+                    && baselineModalOpened && baselineModalDecoded
+                    && string.Equals(win.PreviewSizeTextForSmoke, "160 x 100", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FFDC6E46", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FFDC6E46", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+
+                // Both files are intentionally selected before the isolation
+                // snapshot so later bitmap eviction does not add new Seen
+                // ownership to the mutation/recovery phases under test.
+                await win.SelectPreviewForSmokeAsync("anchor.png");
+                await win.SelectPreviewForSmokeAsync("mutable.png");
+
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+                string anchorBefore = FileFingerprint(anchorPath);
+
+                win.ConfigureImageDecodeDelaysForSmoke(400, 400);
+                bool corruptSelected = win.SelectFileNameForSmoke("mutable.png");
+                Task<PreviewDecodeSmokeSnapshot> corruptPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool corruptModalOpened = win.OpenModalForSmoke();
+                Task<bool> corruptModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                await Task.Delay(80);
+                File.WriteAllText(mutablePath, "truncated while preview and modal decode were pending");
+                PreviewDecodeSmokeSnapshot corruptPreview = await corruptPreviewTask;
+                bool corruptModalDecoded = await corruptModalTask;
+                bool corruptFailureClearedStaleBitmap = corruptSelected && corruptModalOpened
+                    && corruptPreview.DeferredDecodeApplied
+                    && !corruptPreview.PreviewSourcePresent
+                    && !corruptPreview.StableLatestSelection
+                    && !corruptModalDecoded
+                    && win.PreviewPlaceholderVisibleForSmoke
+                    && win.ModalPlaceholderVisibleForSmoke
+                    && win.PreviewBitmapPixelWidthForSmoke == 0
+                    && win.ModalBitmapPixelWidthForSmoke == 0
+                    && win.DeleteStatusForSmoke.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
+
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+                WriteSmokePng(mutablePath, 220, 140, Color.FromRgb(90, 190, 120));
+                await win.RefreshActiveFolderForSmokeAsync();
+                PreviewDecodeSmokeSnapshot corruptRecoveryPreview = await win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool corruptRecoveryModal = await win.WaitForModalFullDecodeForSmokeAsync();
+                bool corruptRecovery = corruptRecoveryPreview.StableLatestSelection
+                    && corruptRecoveryModal
+                    && string.Equals(win.PreviewSizeTextForSmoke, "220 x 140", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FF5ABE78", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FF5ABE78", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+
+                win.ConfigureImageDecodeDelaysForSmoke(400, 400);
+                bool lockedSelected = win.SelectFileNameForSmoke("mutable.png");
+                Task<PreviewDecodeSmokeSnapshot> lockedPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool lockedModalOpened = win.OpenModalForSmoke();
+                Task<bool> lockedModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                await Task.Delay(80);
+                exclusiveLock = new FileStream(mutablePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                PreviewDecodeSmokeSnapshot lockedPreview = await lockedPreviewTask;
+                bool lockedModalDecoded = await lockedModalTask;
+                bool lockedFailureClearedStaleBitmap = lockedSelected && lockedModalOpened
+                    && lockedPreview.DeferredDecodeApplied
+                    && !lockedPreview.PreviewSourcePresent
+                    && !lockedPreview.StableLatestSelection
+                    && !lockedModalDecoded
+                    && win.PreviewPlaceholderVisibleForSmoke
+                    && win.ModalPlaceholderVisibleForSmoke
+                    && win.PreviewBitmapPixelWidthForSmoke == 0
+                    && win.ModalBitmapPixelWidthForSmoke == 0;
+                exclusiveLock.Dispose();
+                exclusiveLock = null;
+
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+                await win.RefreshActiveFolderForSmokeAsync();
+                PreviewDecodeSmokeSnapshot lockRecoveryPreview = await win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool lockRecoveryModal = await win.WaitForModalFullDecodeForSmokeAsync();
+                bool lockRecovery = lockRecoveryPreview.StableLatestSelection
+                    && lockRecoveryModal
+                    && string.Equals(win.PreviewSizeTextForSmoke, "220 x 140", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FF5ABE78", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FF5ABE78", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+
+                win.ConfigureImageDecodeDelaysForSmoke(400, 400);
+                bool replacementSelected = win.SelectFileNameForSmoke("mutable.png");
+                Task<PreviewDecodeSmokeSnapshot> replacementPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool replacementModalOpened = win.OpenModalForSmoke();
+                Task<bool> replacementModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                await Task.Delay(80);
+                WriteSmokePng(mutablePath, 360, 210, Color.FromRgb(170, 90, 210));
+                PreviewDecodeSmokeSnapshot replacementPreview = await replacementPreviewTask;
+                bool replacementModalDecoded = await replacementModalTask;
+                bool replacementLatestWon = replacementSelected && replacementModalOpened
+                    && replacementPreview.StableLatestSelection && replacementModalDecoded
+                    && string.Equals(win.PreviewSizeTextForSmoke, "360 x 210", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FFAA5AD2", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FFAA5AD2", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+
+                bool recreateSelected = win.SelectFileNameForSmoke("mutable.png");
+                Task<PreviewDecodeSmokeSnapshot> recreatePreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool recreateModalOpened = win.OpenModalForSmoke();
+                Task<bool> recreateModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                await Task.Delay(80);
+                File.Delete(mutablePath);
+                WriteSmokePng(mutablePath, 420, 260, Color.FromRgb(230, 180, 60));
+                PreviewDecodeSmokeSnapshot recreatePreview = await recreatePreviewTask;
+                bool recreateModalDecoded = await recreateModalTask;
+                bool recreateLatestWon = recreateSelected && recreateModalOpened
+                    && recreatePreview.StableLatestSelection && recreateModalDecoded
+                    && string.Equals(win.PreviewSizeTextForSmoke, "420 x 260", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FFE6B43C", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FFE6B43C", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+
+                win.ConfigureImageDecodeDelaysForSmoke(450, 450);
+                bool refreshRaceSelected = win.SelectFileNameForSmoke("mutable.png");
+                Task<PreviewDecodeSmokeSnapshot> stalePreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool refreshRaceModalOpened = win.OpenModalForSmoke();
+                Task<bool> staleModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                win.ConfigureScanPhaseDelaysForSmoke(0, 300);
+                Task refreshTask = win.RefreshActiveFolderForSmokeAsync();
+                bool metadataReached = await WaitForPhaseAsync(win, "metadata");
+                WriteSmokePng(mutablePath, 500, 300, Color.FromRgb(70, 180, 200));
+                await refreshTask;
+                PreviewDecodeSmokeSnapshot stalePreview = await stalePreviewTask;
+                bool staleModalDecoded = await staleModalTask;
+                PreviewDecodeSmokeSnapshot refreshPreview = await win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                bool refreshModalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                bool refreshGenerationWon = refreshRaceSelected && refreshRaceModalOpened && metadataReached
+                    && !stalePreview.DeferredDecodeApplied && !stalePreview.StableLatestSelection && !staleModalDecoded
+                    && refreshPreview.StableLatestSelection && refreshModalDecoded
+                    && string.Equals(win.PreviewSizeTextForSmoke, "500 x 300", StringComparison.Ordinal)
+                    && string.Equals(win.PreviewBitmapCenterColorForSmoke, "#FF46B4C8", StringComparison.Ordinal)
+                    && string.Equals(win.ModalBitmapCenterColorForSmoke, "#FF46B4C8", StringComparison.Ordinal);
+                win.CloseModalForSmoke();
+                win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+
+                var retiredBitmaps = new List<WeakReference>();
+                long managedBefore = GC.GetTotalMemory(forceFullCollection: true);
+                long workingSetBefore = Process.GetCurrentProcess().WorkingSet64;
+                const int memoryCycles = 8;
+                for (int cycle = 0; cycle < memoryCycles; cycle++)
+                {
+                    int width = 1_050 + cycle * 17;
+                    int height = 700 + cycle * 11;
+                    WriteSmokePng(mutablePath, width, height, Color.FromRgb((byte)(60 + cycle * 15), (byte)(180 - cycle * 8), (byte)(100 + cycle * 10)));
+                    await win.RefreshActiveFolderForSmokeAsync();
+                    PreviewDecodeSmokeSnapshot cyclePreview = await win.WaitForCurrentPreviewDecodeForSmokeAsync("mutable.png");
+                    if (!cyclePreview.StableLatestSelection || !win.OpenModalForSmoke() || !await win.WaitForModalFullDecodeForSmokeAsync())
+                        throw new InvalidOperationException($"mutation memory cycle {cycle} did not decode the current source");
+                    if (win.CapturePreviewBitmapWeakReferenceForSmoke() is { } previewReference)
+                        retiredBitmaps.Add(previewReference);
+                    if (win.CaptureModalBitmapWeakReferenceForSmoke() is { } modalReference)
+                        retiredBitmaps.Add(modalReference);
+                    win.CloseModalForSmoke();
+                }
+
+                PreviewDecodeSmokeSnapshot anchorPreview = await win.SelectPreviewForSmokeAsync("anchor.png");
+                bool anchorModalOpened = win.OpenModalForSmoke();
+                bool anchorModalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                win.CloseModalForSmoke();
+                await Task.Delay(250);
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+                int retainedBitmapCount = retiredBitmaps.Count(reference => reference.IsAlive);
+                long managedAfter = GC.GetTotalMemory(forceFullCollection: true);
+                long workingSetAfter = Process.GetCurrentProcess().WorkingSet64;
+                bool bitmapRetentionBounded = anchorPreview.StableLatestSelection && anchorModalOpened && anchorModalDecoded
+                    && retiredBitmaps.Count == memoryCycles * 2
+                    && retainedBitmapCount <= 2;
+
+                bool sharedStoresUntouched = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && win.EnhancementJobsReadForSmoke == 0
+                    && win.EnhancedCandidateCountForSmoke == 0;
+                bool fixtureBoundaryHeld = string.Equals(anchorBefore, FileFingerprint(anchorPath), StringComparison.Ordinal)
+                    && Directory.EnumerateFiles(folder).Select(Path.GetFileName).OrderBy(static name => name, StringComparer.OrdinalIgnoreCase)
+                        .SequenceEqual(["anchor.png", "mutable.png"], StringComparer.OrdinalIgnoreCase);
+                ok = baselineReady
+                    && corruptFailureClearedStaleBitmap && corruptRecovery
+                    && lockedFailureClearedStaleBitmap && lockRecovery
+                    && replacementLatestWon && recreateLatestWon && refreshGenerationWon
+                    && bitmapRetentionBounded && sharedStoresUntouched && fixtureBoundaryHeld;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "rapid source corruption, lock, same-path replacement, recreate, and Refresh generation stayed recoverable and current"
+                        : "decode mutation contract failed",
+                    smokeRoot,
+                    baselineReady,
+                    corruptFailureClearedStaleBitmap,
+                    corruptRecovery,
+                    lockedFailureClearedStaleBitmap,
+                    lockRecovery,
+                    replacementLatestWon,
+                    recreateLatestWon,
+                    refreshGenerationWon,
+                    bitmapRetentionBounded,
+                    retainedBitmapCount,
+                    weakReferences = retiredBitmaps.Count,
+                    memoryCycles,
+                    managedBefore,
+                    managedAfter,
+                    managedDelta = managedAfter - managedBefore,
+                    workingSetBefore,
+                    workingSetAfter,
+                    workingSetDelta = workingSetAfter - workingSetBefore,
+                    sharedStoresUntouched,
+                    favoritesBefore,
+                    favoritesAfter = FileFingerprint(favoritesPath),
+                    seenBefore,
+                    seenAfter = FileFingerprint(seenPath),
+                    recentBefore,
+                    recentAfter = FileFingerprint(recentPath),
+                    jobsBefore,
+                    jobsAfter = FileFingerprint(jobsPath),
+                    fixtureBoundaryHeld,
+                    corruptPreview,
+                    lockedPreview,
+                    replacementPreview,
+                    recreatePreview,
+                    stalePreview,
+                    refreshPreview,
+                    finalSelected = win.SelectedFileNameForSmoke,
+                    finalPreviewWidth = win.PreviewBitmapPixelWidthForSmoke,
+                    finalPreviewSize = win.PreviewSizeTextForSmoke,
+                    finalPreviewColor = win.PreviewBitmapCenterColorForSmoke,
+                    finalCatalog = win.AllFileNamesForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot };
+            }
+            finally
+            {
+                try { exclusiveLock?.Dispose(); } catch { }
+                win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+                if (win.IsVisible)
+                    win.Close();
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePathRobustnessSmoke(string resultPath)
     {
         string resultFullPath = Path.GetFullPath(resultPath);
@@ -7781,7 +8098,8 @@ public partial class App : Application
                 bool caseDeduped = window.CurrentFolderSetForSmoke.Count == 3
                     && window.CurrentFolderSetForSmoke.SequenceEqual([root, secondRoot, missingRoot], StringComparer.OrdinalIgnoreCase);
                 string initialStatus = window.DeleteStatusForSmoke;
-                bool mixedWarningsVisible = initialStatus.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                bool mixedWarningsVisible = initialStatus.Contains("selected root(s) were unavailable", StringComparison.OrdinalIgnoreCase)
+                    && initialStatus.Contains("folder set was kept", StringComparison.OrdinalIgnoreCase)
                     && initialStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
                 string warningProbe = PhotoViewer.Wpf.MainWindow.BuildScanWarningForSmoke(
                     accessFailureCount: 2,
@@ -7848,7 +8166,8 @@ public partial class App : Application
                 PreviewDecodeSmokeSnapshot unlockedPreview = await window.SelectPreviewForSmokeAsync(lockedName);
                 bool lockRecovery = unlockedPreview.StableLatestSelection;
                 string refreshedStatus = window.DeleteStatusForSmoke;
-                bool refreshedMixedWarningsVisible = refreshedStatus.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                bool refreshedMixedWarningsVisible = refreshedStatus.Contains("selected root(s) were unavailable", StringComparison.OrdinalIgnoreCase)
+                    && refreshedStatus.Contains("folder set was kept", StringComparison.OrdinalIgnoreCase)
                     && refreshedStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
 
                 window.SetProtectedDeleteRootsForSmoke(secondRoot);
