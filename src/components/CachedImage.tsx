@@ -1,5 +1,7 @@
 'use client';
 
+/* eslint-disable @next/next/no-img-element -- This component owns cancellable blob/object-URL caching and fallback recovery for local files; next/image cannot preserve that lifecycle. */
+
 import React, { useEffect, useState } from 'react';
 import { evictCachedImageUrl, getCachedImageUrl, loadCancellableCachedImageUrl } from '../lib/clientImageCache';
 
