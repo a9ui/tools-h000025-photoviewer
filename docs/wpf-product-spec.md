@@ -590,7 +590,7 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
-全WPF verifierは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。日常の短い回帰では`-SkipStress`を使い、closeoutでは20,000件stressを省略しない。新しい`verify-wpf-*.ps1`は自動検出されるため、focused verifierだけを一括gateから漏らさない。
+通常の全WPF verifierは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。日常の短い回帰では`-SkipStress`を使い、closeoutでは20,000件stressを省略しない。40-cycle reload soakは重いため明示的な`-IncludeReloadSoak`で追加する。新しい`verify-wpf-*.ps1`は原則自動検出され、長時間soakだけを明示opt-inにする。
 
 | Area | Command |
 | --- | --- |
@@ -609,6 +609,7 @@ Accessibility:
 | External delete/rename/decode recovery | `powershell -File scripts/verify-wpf-external-stale-source.ps1` |
 | Rapid UI/final-state stress | `powershell -File scripts/verify-wpf-rapid-ui-state.ps1` |
 | Filter/focus/selection dispatcher race | `powershell -File scripts/verify-wpf-focus-filter-race.ps1` |
+| Folder switch/Refresh same-process soak | `powershell -File scripts/verify-wpf-reload-soak.ps1 -Count 1000 -Cycles 40` |
 | Shutdown final-state lifecycle | `powershell -File scripts/verify-wpf-shutdown-state.ps1` |
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
 | Process crash/live lock/stale recovery | `powershell -File scripts/verify-wpf-crash-lock-recovery.ps1 -Iterations 3` |

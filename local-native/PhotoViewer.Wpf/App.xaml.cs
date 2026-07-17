@@ -458,6 +458,13 @@ public partial class App : Application
             return;
         }
 
+        int reloadSoakSmokeIdx = Array.IndexOf(e.Args, "--reload-soak-smoke");
+        if (reloadSoakSmokeIdx >= 0 && reloadSoakSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureReloadSoakSmoke(e.Args[reloadSoakSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int shutdownStateSmokeIdx = Array.IndexOf(e.Args, "--shutdown-state-smoke");
         if (shutdownStateSmokeIdx >= 0 && shutdownStateSmokeIdx + 1 < e.Args.Length)
         {
@@ -5876,6 +5883,430 @@ public partial class App : Application
         {
             return false;
         }
+    }
+
+    private void CaptureReloadSoakSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        int count = ArgInt(args, "--count", 1_000);
+        int cycles = ArgInt(args, "--cycles", 24);
+        if (count is < 1_000 or > 5_000 || cycles is < 20 or > 50)
+        {
+            WriteReloadSoakSmokeResult(resultFullPath, new ReloadSoakSmokeResult
+            {
+                RequestedCountPerFolder = count,
+                RequestedCycles = cycles,
+                Message = "--count must be 1000..5000 and --cycles must be 20..50",
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-reload-soak-" + Guid.NewGuid().ToString("N"));
+        string folderA = Path.Combine(smokeRoot, "folder A");
+        string folderB = Path.Combine(smokeRoot, "folder B");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhance", "jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+        var fixtureWatch = Stopwatch.StartNew();
+
+        try
+        {
+            Directory.CreateDirectory(folderA);
+            Directory.CreateDirectory(folderB);
+            Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+            string seedA = Path.Combine(folderA, "a-image-000000.png");
+            string seedB = Path.Combine(folderB, "b-image-000000.png");
+            WriteSmokePng(seedA, 12, 9, Color.FromRgb(72, 128, 214));
+            WriteSmokePng(seedB, 12, 9, Color.FromRgb(218, 104, 142));
+            for (int index = 1; index < count; index++)
+            {
+                File.Copy(seedA, Path.Combine(folderA, $"a-image-{index:D6}.png"));
+                File.Copy(seedB, Path.Combine(folderB, $"b-image-{index:D6}.png"));
+            }
+
+            var allSourcePaths = Directory.EnumerateFiles(folderA, "*.png", SearchOption.TopDirectoryOnly)
+                .Concat(Directory.EnumerateFiles(folderB, "*.png", SearchOption.TopDirectoryOnly))
+                .ToDictionary(static path => path, static _ => true, StringComparer.OrdinalIgnoreCase);
+            File.WriteAllText(favoritesPath, "{}");
+            File.WriteAllText(seenPath, JsonSerializer.Serialize(allSourcePaths));
+            File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"2026-07-18T00:00:00Z\",\"soakSentinel\":true}");
+            File.WriteAllText(jobsPath, "{\"jobs\":[],\"soakSentinel\":true}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+            fixtureWatch.Stop();
+        }
+        catch (Exception ex)
+        {
+            WriteReloadSoakSmokeResult(resultFullPath, new ReloadSoakSmokeResult
+            {
+                RequestedCountPerFolder = count,
+                RequestedCycles = cycles,
+                SmokeRoot = smokeRoot,
+                Message = ex.ToString(),
+            });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ReloadSoakSmokeResult result;
+            var process = Process.GetCurrentProcess();
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            var watch = Stopwatch.StartNew();
+            var workingSetSamples = new List<long>();
+            var staleDetails = new List<string>();
+            int staleCompletionCount = 0;
+            int explicitCancelCount = 0;
+            int supersededLoadCount = 0;
+            int stablePreviewCount = 0;
+            int stableModalCount = 0;
+            int boundedListProbeCount = 0;
+            long warmWorkingSet = 0;
+            long warmManagedBytes = 0;
+            long finalWorkingSet = 0;
+            long finalManagedBytes = 0;
+            long maxWorkingSet = 0;
+            string finalFolder = "";
+            string finalPrefix = "";
+            string finalTargetName = "";
+            bool storesByteIdentical = false;
+            bool sourceUntouched = false;
+            bool residueFree = false;
+            string sourceBeforeA = FolderFingerprint(folderA);
+            string sourceBeforeB = FolderFingerprint(folderB);
+            string favoritesBefore = FileFingerprint(favoritesPath);
+            string seenBefore = FileFingerprint(seenPath);
+            string recentBefore = FileFingerprint(recentPath);
+            string jobsBefore = FileFingerprint(jobsPath);
+
+            void RecordStale(int cycle, string reason)
+            {
+                staleCompletionCount++;
+                if (staleDetails.Count < 20)
+                    staleDetails.Add($"cycle {cycle}: {reason}");
+            }
+
+            static double LinearSlopeBytesPerCycle(IReadOnlyList<long> samples)
+            {
+                if (samples.Count < 2)
+                    return 0;
+                double x = 0;
+                double y = 0;
+                double xy = 0;
+                double xx = 0;
+                for (int index = 0; index < samples.Count; index++)
+                {
+                    x += index;
+                    y += samples[index];
+                    xy += index * samples[index];
+                    xx += index * index;
+                }
+                double denominator = samples.Count * xx - x * x;
+                return denominator == 0 ? 0 : (samples.Count * xy - x * y) / denominator;
+            }
+
+            async Task<bool> WaitForLoadPhaseAsync(string expected, int timeoutMilliseconds = 4_000)
+            {
+                var phaseWatch = Stopwatch.StartNew();
+                while (phaseWatch.ElapsedMilliseconds < timeoutMilliseconds)
+                {
+                    if (string.Equals(win.LoadPhaseForSmoke, expected, StringComparison.Ordinal))
+                        return true;
+                    await Task.Delay(5);
+                }
+                return false;
+            }
+
+            try
+            {
+                win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                win.ConfigureImageDecodeDelaysForSmoke(35, 45);
+                await win.LoadFolderSetAsync([folderA], commitRecent: false);
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                process.Refresh();
+                warmWorkingSet = process.WorkingSet64;
+                warmManagedBytes = GC.GetTotalMemory(forceFullCollection: false);
+                maxWorkingSet = warmWorkingSet;
+                heartbeat.Start();
+
+                for (int cycle = 0; cycle < cycles; cycle++)
+                {
+                    bool targetIsA = cycle % 2 != 0;
+                    string targetFolder = targetIsA ? folderA : folderB;
+                    string staleFolder = targetIsA ? folderB : folderA;
+                    string prefix = targetIsA ? "a-" : "b-";
+                    string targetName = $"{prefix}image-{(cycle * 37) % count:D6}.png";
+                    string decoyName = $"{prefix}image-{(cycle * 37 + 1) % count:D6}.png";
+
+                    if (cycle % 3 == 0)
+                    {
+                        win.ConfigureScanPhaseDelaysForSmoke(55, 0);
+                        Task canceledLoad = win.LoadFolderSetAsync([staleFolder], commitRecent: false);
+                        bool phaseReached = await WaitForLoadPhaseAsync("enumeration");
+                        bool canceled = phaseReached && win.CancelActiveScanForSmoke();
+                        if (canceled)
+                            explicitCancelCount++;
+                        else
+                            RecordStale(cycle, "explicit enumeration cancel was not accepted");
+                        await canceledLoad;
+                    }
+                    else
+                    {
+                        win.ConfigureScanPhaseDelaysForSmoke(0, 65);
+                        Task staleLoad = win.LoadFolderSetAsync([staleFolder], commitRecent: false);
+                        bool metadataReached = await WaitForLoadPhaseAsync("metadata");
+                        if (!metadataReached)
+                            RecordStale(cycle, "stale load did not reach delayed metadata phase");
+                        win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                        Task targetLoad = win.LoadFolderSetAsync([targetFolder], commitRecent: false);
+                        supersededLoadCount++;
+                        await Task.WhenAll(staleLoad, targetLoad);
+                    }
+
+                    win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                    if (cycle % 3 == 0)
+                        await win.LoadFolderSetAsync([targetFolder], commitRecent: false);
+
+                    bool catalogCurrent = win.CatalogCountForSmoke == count
+                        && win.CurrentFolderSetForSmoke.SequenceEqual([targetFolder], StringComparer.OrdinalIgnoreCase)
+                        && win.AllFileNamesForSmoke.All(name => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase));
+                    if (!catalogCurrent)
+                        RecordStale(cycle, "catalog or folder set retained the superseded folder");
+
+                    bool selectedDecoy = win.SelectFileNameForSmoke(decoyName);
+                    bool selectedTarget = win.SelectFileNameForSmoke(targetName);
+                    PreviewDecodeSmokeSnapshot preview = await win.WaitForCurrentPreviewDecodeForSmokeAsync(targetName);
+                    if (selectedDecoy && selectedTarget && preview.StableLatestSelection)
+                        stablePreviewCount++;
+                    else
+                        RecordStale(cycle, "delayed preview decode did not settle on the latest selection");
+
+                    string[] queries = [prefix, $"{prefix}image", targetName];
+                    var searchTasks = queries.Select(win.SetSearchInputForSmokeAsync).ToList();
+                    MainWindow.SearchFilterCompletion[] searchResults = await Task.WhenAll(searchTasks);
+                    bool finalSearchOnly = searchResults.Take(searchResults.Length - 1).All(static completion => completion.Discarded)
+                        && searchResults[^1].Applied
+                        && string.Equals(win.SearchQueryForSmoke, targetName, StringComparison.Ordinal)
+                        && win.FilteredFileNamesForSmoke(4).SequenceEqual([targetName], StringComparer.OrdinalIgnoreCase)
+                        && string.Equals(win.SelectedFileNameForSmoke, targetName, StringComparison.OrdinalIgnoreCase);
+                    if (!finalSearchOnly)
+                        RecordStale(cycle, "stale search result or selection survived the final exact query");
+
+                    MainWindow.SearchFilterCompletion clearSearch = await win.SetSearchInputForSmokeAsync("");
+                    if (!clearSearch.Applied || win.FilteredCountForSmoke != count)
+                        RecordStale(cycle, "clearing search did not restore the complete current catalog");
+                    win.SelectFileNameForSmoke(targetName);
+
+                    bool tabOpened = win.OpenSelectedPreviewTabForSmoke();
+                    bool modalOpened = win.OpenModalForSmoke();
+                    win.ConfigureScanPhaseDelaysForSmoke(0, 8);
+                    await win.RefreshActiveFolderForSmokeAsync();
+                    bool modalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                    bool modalCurrent = modalOpened && modalDecoded
+                        && win.ModalVisibleForSmoke
+                        && string.Equals(win.SelectedFileNameForSmoke, targetName, StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(win.ModalSourcePathForSmoke, Path.Combine(targetFolder, targetName), StringComparison.OrdinalIgnoreCase);
+                    if (modalCurrent)
+                        stableModalCount++;
+                    else
+                        RecordStale(cycle, "modal decode or refresh reconciliation retained a stale source");
+
+                    bool tabsCurrent = tabOpened
+                        && win.PreviewTabNamesForSmoke.Count == 1
+                        && win.PreviewTabNamesForSmoke.All(name => name.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                        && string.Equals(win.ActivePreviewTabNameForSmoke, targetName, StringComparison.OrdinalIgnoreCase);
+                    if (!tabsCurrent)
+                        RecordStale(cycle, "preview tab reconciliation retained another folder");
+
+                    if (cycle % 4 == 0)
+                    {
+                        ListVirtualizationProbe listProbe = await win.ProbeListVirtualizationForSmokeAsync();
+                        if (listProbe.ListMode && listProbe.Recycling && listProbe.Bounded)
+                            boundedListProbeCount++;
+                        else
+                            RecordStale(cycle, "List virtualization became unbounded during reload churn");
+                    }
+                    else if (!win.SetListModeForSmoke() || !win.ListModeVisibleForSmoke)
+                    {
+                        RecordStale(cycle, "List mode did not activate");
+                    }
+                    if (!win.SetGridModeForSmoke() || !win.GridModeVisibleForSmoke)
+                        RecordStale(cycle, "Grid mode did not reactivate");
+
+                    if (cycle + 1 < cycles)
+                        win.CloseModalForSmoke();
+                    process.Refresh();
+                    workingSetSamples.Add(process.WorkingSet64);
+                    maxWorkingSet = Math.Max(maxWorkingSet, process.WorkingSet64);
+                    finalFolder = targetFolder;
+                    finalPrefix = prefix;
+                    finalTargetName = targetName;
+                }
+
+                heartbeat.Stop();
+                await Task.Delay(150);
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                GC.WaitForPendingFinalizers();
+                GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+                process.Refresh();
+                finalWorkingSet = process.WorkingSet64;
+                finalManagedBytes = GC.GetTotalMemory(forceFullCollection: false);
+                maxWorkingSet = Math.Max(maxWorkingSet, finalWorkingSet);
+
+                bool finalCatalogCurrent = win.CatalogCountForSmoke == count
+                    && win.CurrentFolderSetForSmoke.SequenceEqual([finalFolder], StringComparer.OrdinalIgnoreCase)
+                    && win.AllFileNamesForSmoke.All(name => name.StartsWith(finalPrefix, StringComparison.OrdinalIgnoreCase));
+                bool finalSelectionCurrent = string.Equals(win.SelectedPathForSmoke, Path.Combine(finalFolder, finalTargetName), StringComparison.OrdinalIgnoreCase);
+                bool finalModalCurrent = win.ModalVisibleForSmoke
+                    && string.Equals(win.ModalSourcePathForSmoke, Path.Combine(finalFolder, finalTargetName), StringComparison.OrdinalIgnoreCase);
+                bool finalTabsCurrent = win.PreviewTabNamesForSmoke.Count == 1
+                    && win.PreviewTabNamesForSmoke.All(name => name.StartsWith(finalPrefix, StringComparison.OrdinalIgnoreCase))
+                    && string.Equals(win.ActivePreviewTabNameForSmoke, finalTargetName, StringComparison.OrdinalIgnoreCase);
+                bool ctsBalanced = win.LoadCtsCreatedCountForSmoke == win.LoadCtsRetiredCountForSmoke;
+                List<long> tailEightSamples = workingSetSamples.TakeLast(Math.Min(8, workingSetSamples.Count)).ToList();
+                List<long> postWarmSamples = workingSetSamples.Skip(Math.Min(8, workingSetSamples.Count)).ToList();
+                double tailEightSlope = LinearSlopeBytesPerCycle(tailEightSamples);
+                double postWarmSlope = LinearSlopeBytesPerCycle(postWarmSamples);
+                int tailEightDecreaseCount = Enumerable.Range(1, Math.Max(0, tailEightSamples.Count - 1))
+                    .Count(index => tailEightSamples[index] < tailEightSamples[index - 1]);
+                bool workingSetPlateauObserved = postWarmSamples.Count >= 8
+                    && Math.Abs(postWarmSlope) <= 4L * 1024 * 1024
+                    && tailEightDecreaseCount > 0;
+                bool memoryBounded = finalManagedBytes <= warmManagedBytes + 128L * 1024 * 1024
+                    && finalWorkingSet <= warmWorkingSet + 512L * 1024 * 1024
+                    && maxWorkingSet <= warmWorkingSet + 768L * 1024 * 1024;
+                sourceUntouched = string.Equals(sourceBeforeA, FolderFingerprint(folderA), StringComparison.Ordinal)
+                    && string.Equals(sourceBeforeB, FolderFingerprint(folderB), StringComparison.Ordinal);
+                storesByteIdentical = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath, folderA, folderB }
+                    .All(path => Path.GetFullPath(path).StartsWith(Path.GetFullPath(smokeRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+                residueFree = NoPersistenceResidue(smokeRoot);
+                bool ok = staleCompletionCount == 0
+                    && explicitCancelCount == (cycles + 2) / 3
+                    && supersededLoadCount == cycles - explicitCancelCount
+                    && stablePreviewCount == cycles
+                    && stableModalCount == cycles
+                    && boundedListProbeCount == (cycles + 3) / 4
+                    && finalCatalogCurrent && finalSelectionCurrent && finalModalCurrent && finalTabsCurrent
+                    && ctsBalanced && memoryBounded && workingSetPlateauObserved && heartbeatCount >= cycles
+                    && sourceUntouched && storesByteIdentical && isolated && residueFree
+                    && win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                watch.Stop();
+                result = new ReloadSoakSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? $"{cycles} reload cycles kept only the final folder, selection, modal, and tab while cancellation, CTS, memory, and storage isolation stayed bounded"
+                        : "reload soak did not satisfy the final-state, cancellation, memory, or isolation contract",
+                    SmokeRoot = smokeRoot,
+                    RequestedCountPerFolder = count,
+                    RequestedCycles = cycles,
+                    CompletedCycles = cycles,
+                    ExplicitCancelCount = explicitCancelCount,
+                    SupersededLoadCount = supersededLoadCount,
+                    StaleCompletionCount = staleCompletionCount,
+                    StaleDetails = staleDetails,
+                    StablePreviewCount = stablePreviewCount,
+                    StableModalCount = stableModalCount,
+                    BoundedListProbeCount = boundedListProbeCount,
+                    FinalFolder = finalFolder,
+                    FinalCatalogCount = win.CatalogCountForSmoke,
+                    FinalSelected = win.SelectedFileNameForSmoke,
+                    FinalModal = Path.GetFileName(win.ModalSourcePathForSmoke),
+                    FinalTabs = win.PreviewTabNamesForSmoke,
+                    FinalCatalogCurrent = finalCatalogCurrent,
+                    FinalSelectionCurrent = finalSelectionCurrent,
+                    FinalModalCurrent = finalModalCurrent,
+                    FinalTabsCurrent = finalTabsCurrent,
+                    LoadCtsCreated = win.LoadCtsCreatedCountForSmoke,
+                    LoadCtsRetired = win.LoadCtsRetiredCountForSmoke,
+                    CtsBalanced = ctsBalanced,
+                    HeartbeatCount = heartbeatCount,
+                    WarmWorkingSetBytes = warmWorkingSet,
+                    FinalWorkingSetBytes = finalWorkingSet,
+                    MaxWorkingSetBytes = maxWorkingSet,
+                    WorkingSetGrowthBytes = finalWorkingSet - warmWorkingSet,
+                    WarmManagedBytes = warmManagedBytes,
+                    FinalManagedBytes = finalManagedBytes,
+                    ManagedGrowthBytes = finalManagedBytes - warmManagedBytes,
+                    MemoryBounded = memoryBounded,
+                    TailEightWorkingSetMinBytes = tailEightSamples.Count == 0 ? 0 : tailEightSamples.Min(),
+                    TailEightWorkingSetMaxBytes = tailEightSamples.Count == 0 ? 0 : tailEightSamples.Max(),
+                    TailEightWorkingSetAverageBytes = tailEightSamples.Count == 0 ? 0 : (long)tailEightSamples.Average(),
+                    TailEightSlopeBytesPerCycle = tailEightSlope,
+                    TailEightDecreaseCount = tailEightDecreaseCount,
+                    PostWarmSlopeBytesPerCycle = postWarmSlope,
+                    WorkingSetPlateauObserved = workingSetPlateauObserved,
+                    WarmWorkingSetMinusManagedBytes = warmWorkingSet - warmManagedBytes,
+                    FinalWorkingSetMinusManagedBytes = finalWorkingSet - finalManagedBytes,
+                    WorkingSetMinusManagedGrowthBytes = (finalWorkingSet - finalManagedBytes) - (warmWorkingSet - warmManagedBytes),
+                    WorkingSetSamples = workingSetSamples,
+                    EnhancementJobsRead = win.EnhancementJobsReadForSmoke,
+                    EnhancementCandidates = win.EnhancedCandidateCountForSmoke,
+                    StoresByteIdentical = storesByteIdentical,
+                    SourceUntouched = sourceUntouched,
+                    Isolated = isolated,
+                    ResidueFree = residueFree,
+                    FixtureElapsedMs = fixtureWatch.ElapsedMilliseconds,
+                    ElapsedMs = watch.ElapsedMilliseconds,
+                };
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                result = new ReloadSoakSmokeResult
+                {
+                    RequestedCountPerFolder = count,
+                    RequestedCycles = cycles,
+                    CompletedCycles = Math.Min(stablePreviewCount, stableModalCount),
+                    SmokeRoot = smokeRoot,
+                    StaleCompletionCount = staleCompletionCount,
+                    StaleDetails = staleDetails,
+                    LoadCtsCreated = win.LoadCtsCreatedCountForSmoke,
+                    LoadCtsRetired = win.LoadCtsRetiredCountForSmoke,
+                    HeartbeatCount = heartbeatCount,
+                    Message = ex.ToString(),
+                };
+            }
+            finally
+            {
+                if (win.IsVisible)
+                    win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteReloadSoakSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void CaptureShutdownStateSmoke(string resultPath)
@@ -11658,6 +12089,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteReloadSoakSmokeResult(string path, ReloadSoakSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteShutdownStateSmokeResult(string path, ShutdownStateSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -12866,6 +13303,63 @@ public partial class App : Application
         public bool SourceUntouched { get; init; }
         public bool EnhancementPassive { get; init; }
         public bool Isolated { get; init; }
+    }
+
+    private sealed class ReloadSoakSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public int RequestedCountPerFolder { get; init; }
+        public int RequestedCycles { get; init; }
+        public int CompletedCycles { get; init; }
+        public int ExplicitCancelCount { get; init; }
+        public int SupersededLoadCount { get; init; }
+        public int StaleCompletionCount { get; init; }
+        public List<string> StaleDetails { get; init; } = [];
+        public int StablePreviewCount { get; init; }
+        public int StableModalCount { get; init; }
+        public int BoundedListProbeCount { get; init; }
+        public string? FinalFolder { get; init; }
+        public int FinalCatalogCount { get; init; }
+        public string? FinalSelected { get; init; }
+        public string? FinalModal { get; init; }
+        public List<string> FinalTabs { get; init; } = [];
+        public bool FinalCatalogCurrent { get; init; }
+        public bool FinalSelectionCurrent { get; init; }
+        public bool FinalModalCurrent { get; init; }
+        public bool FinalTabsCurrent { get; init; }
+        public int LoadCtsCreated { get; init; }
+        public int LoadCtsRetired { get; init; }
+        public bool CtsBalanced { get; init; }
+        public int HeartbeatCount { get; init; }
+        public long WarmWorkingSetBytes { get; init; }
+        public long FinalWorkingSetBytes { get; init; }
+        public long MaxWorkingSetBytes { get; init; }
+        public long WorkingSetGrowthBytes { get; init; }
+        public long WarmManagedBytes { get; init; }
+        public long FinalManagedBytes { get; init; }
+        public long ManagedGrowthBytes { get; init; }
+        public bool MemoryBounded { get; init; }
+        public long TailEightWorkingSetMinBytes { get; init; }
+        public long TailEightWorkingSetMaxBytes { get; init; }
+        public long TailEightWorkingSetAverageBytes { get; init; }
+        public double TailEightSlopeBytesPerCycle { get; init; }
+        public int TailEightDecreaseCount { get; init; }
+        public double PostWarmSlopeBytesPerCycle { get; init; }
+        public bool WorkingSetPlateauObserved { get; init; }
+        public long WarmWorkingSetMinusManagedBytes { get; init; }
+        public long FinalWorkingSetMinusManagedBytes { get; init; }
+        public long WorkingSetMinusManagedGrowthBytes { get; init; }
+        public List<long> WorkingSetSamples { get; init; } = [];
+        public int EnhancementJobsRead { get; init; }
+        public int EnhancementCandidates { get; init; }
+        public bool StoresByteIdentical { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool Isolated { get; init; }
+        public bool ResidueFree { get; init; }
+        public long FixtureElapsedMs { get; init; }
+        public long ElapsedMs { get; init; }
     }
 
     private sealed class ShutdownStateSmokeResult

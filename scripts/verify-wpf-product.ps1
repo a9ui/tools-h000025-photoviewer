@@ -1,5 +1,6 @@
 param(
-    [switch]$SkipStress
+    [switch]$SkipStress,
+    [switch]$IncludeReloadSoak
 )
 
 $ErrorActionPreference = 'Stop'
@@ -28,6 +29,7 @@ $orderedNames = @(
 
 $known = [Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
 foreach ($name in $orderedNames) { [void]$known.Add($name) }
+[void]$known.Add('verify-wpf-reload-soak.ps1')
 
 $discovered = Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'verify-wpf-*.ps1' -File |
     Where-Object { $_.Name -ne $self -and -not $known.Contains($_.Name) } |
@@ -36,6 +38,9 @@ $discovered = Get-ChildItem -LiteralPath $PSScriptRoot -Filter 'verify-wpf-*.ps1
 $checks = @($orderedNames + $discovered)
 if ($SkipStress) {
     $checks = @($checks | Where-Object { $_ -ne 'verify-wpf-catalog-stress.ps1' })
+}
+if ($IncludeReloadSoak) {
+    $checks += 'verify-wpf-reload-soak.ps1'
 }
 
 $results = @()
@@ -73,6 +78,7 @@ finally {
     ok = $true
     checks = $results.Count
     skipStress = [bool]$SkipStress
+    includeReloadSoak = [bool]$IncludeReloadSoak
     elapsedMs = $suiteWatch.ElapsedMilliseconds
     results = $results
 } | ConvertTo-Json -Depth 5
