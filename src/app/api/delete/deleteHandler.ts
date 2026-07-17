@@ -101,6 +101,29 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
       // lookups are read-only and must succeed before the irreversible action.
       const derivedPaths = await dependencies.getDerivedPaths(targetPath);
 
+      // A junction/symlink can be replaced while the cache paths are being
+      // prepared. Re-resolve immediately before invoking the Recycle Bin and
+      // require the same canonical target that passed the first guard. This
+      // does not make a pathname operation fully race-free, but it prevents a
+      // detected reparse-point swap from deleting a different source.
+      const finalRealProjectRoot = dependencies.realPath(projectRoot);
+      const finalRealTargetPath = dependencies.realPath(targetPath);
+      if (isPathInsideDirectory(finalRealProjectRoot, finalRealTargetPath, platform)) {
+        return NextResponse.json(
+          { error: 'Cannot delete files inside the project directory' },
+          { status: 403 }
+        );
+      }
+      if (
+        canonicalPathKey(finalRealTargetPath, platform) !==
+        canonicalPathKey(realTargetPath, platform)
+      ) {
+        return NextResponse.json(
+          { error: 'Delete target changed before recycle operation' },
+          { status: 409 }
+        );
+      }
+
       // There is deliberately no hard-delete fallback. Catalog/cache mutation
       // begins only after the Recycle Bin operation reports success.
       await dependencies.recycleFile(targetPath);

@@ -116,6 +116,63 @@ describe('delete route safety', () => {
     expect(dependencies.recycleFile).not.toHaveBeenCalled();
   });
 
+  it('blocks a reparse-point swap into the project root after cache preparation', async () => {
+    let derivedPathsPrepared = false;
+    let targetResolutionCount = 0;
+    const dependencies = createDependencies({
+      realPath: vi.fn((filePath) => {
+        if (canonicalPathKey(filePath, 'win32') !== canonicalPathKey(INDEXED_PATH, 'win32')) {
+          return filePath;
+        }
+
+        targetResolutionCount += 1;
+        if (targetResolutionCount === 1) return 'D:\\resolved-images\\target.png';
+        expect(derivedPathsPrepared).toBe(true);
+        return `${PROJECT_ROOT}\\src\\swapped-target.png`;
+      }),
+      getDerivedPaths: vi.fn(async () => {
+        derivedPathsPrepared = true;
+        return [THUMB_PATH, DISPLAY_PATH];
+      }),
+    });
+
+    const response = await createDeleteHandler(dependencies)(deleteRequest(INDEXED_PATH));
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({
+      error: 'Cannot delete files inside the project directory',
+    });
+    expect(dependencies.recycleFile).not.toHaveBeenCalled();
+    expect(dependencies.removeFromIndex).not.toHaveBeenCalled();
+    expect(dependencies.removeDerivedImages).not.toHaveBeenCalled();
+  });
+
+  it('blocks a reparse-point swap to a different external source before recycle', async () => {
+    let targetResolutionCount = 0;
+    const dependencies = createDependencies({
+      realPath: vi.fn((filePath) => {
+        if (canonicalPathKey(filePath, 'win32') !== canonicalPathKey(INDEXED_PATH, 'win32')) {
+          return filePath;
+        }
+
+        targetResolutionCount += 1;
+        return targetResolutionCount === 1
+          ? 'D:\\resolved-images\\target.png'
+          : 'E:\\other-images\\replacement.png';
+      }),
+    });
+
+    const response = await createDeleteHandler(dependencies)(deleteRequest(INDEXED_PATH));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({
+      error: 'Delete target changed before recycle operation',
+    });
+    expect(dependencies.recycleFile).not.toHaveBeenCalled();
+    expect(dependencies.removeFromIndex).not.toHaveBeenCalled();
+    expect(dependencies.removeDerivedImages).not.toHaveBeenCalled();
+  });
+
   it('recycles first, then removes the exact indexed spelling and derived cache', async () => {
     const order: string[] = [];
     const dependencies = createDependencies({
