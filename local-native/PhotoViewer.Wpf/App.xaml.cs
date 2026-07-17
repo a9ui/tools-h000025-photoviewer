@@ -30,6 +30,13 @@ public partial class App : Application
             return;
         }
 
+        int crossRuntimeSharedStateIdx = Array.IndexOf(e.Args, "--cross-runtime-shared-state-smoke");
+        if (crossRuntimeSharedStateIdx >= 0 && crossRuntimeSharedStateIdx + 1 < e.Args.Length)
+        {
+            CaptureCrossRuntimeSharedStateSmoke(e.Args[crossRuntimeSharedStateIdx + 1], e.Args);
+            return;
+        }
+
         int modalNavSmokeIdx = Array.IndexOf(e.Args, "--modal-nav-smoke");
         if (modalNavSmokeIdx >= 0 && modalNavSmokeIdx + 1 < e.Args.Length)
         {
@@ -451,6 +458,81 @@ public partial class App : Application
             win.Close();
             Shutdown();
         }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureCrossRuntimeSharedStateSmoke(string resultPath, string[] args)
+    {
+        string? favoritesPath = ArgValue(args, "--favorites-path");
+        string? seenPath = ArgValue(args, "--seen-path");
+        string? keyRoot = ArgValue(args, "--key-root");
+        int iterations = ArgInt(args, "--iterations", 20);
+        if (string.IsNullOrWhiteSpace(favoritesPath)
+            || string.IsNullOrWhiteSpace(seenPath)
+            || string.IsNullOrWhiteSpace(keyRoot)
+            || iterations < 1)
+        {
+            WriteCrossRuntimeSharedStateResult(resultPath, new
+            {
+                ok = false,
+                message = "missing required --favorites-path, --seen-path, --key-root, or valid --iterations",
+                iterations,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        favoritesPath = Path.GetFullPath(favoritesPath);
+        seenPath = Path.GetFullPath(seenPath);
+        keyRoot = Path.GetFullPath(keyRoot);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = true;
+            string? error = null;
+            try
+            {
+                Directory.CreateDirectory(keyRoot);
+                for (int index = 0; index < iterations; index++)
+                {
+                    string favoriteKey = Path.Combine(keyRoot, $"wpf-favorite-{index:D2}.png");
+                    string seenKey = Path.Combine(keyRoot, $"wpf-seen-{index:D2}.png");
+                    int level = (index % 5) + 1;
+                    bool wrote = await Task.Run(() => PhotoViewer.Wpf.MainWindow.TryMergeSharedStateForSmoke(
+                        favoritesPath,
+                        favoriteKey,
+                        level,
+                        seenPath,
+                        seenKey));
+                    if (!wrote)
+                        throw new InvalidOperationException($"WPF shared-state merge failed at iteration {index}.");
+                }
+            }
+            catch (Exception ex)
+            {
+                ok = false;
+                error = ex.Message;
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, new
+            {
+                ok,
+                message = ok ? "WPF shared favorites and seen writer completed" : error,
+                iterations,
+                favoriteWrites = ok ? iterations : 0,
+                seenWrites = ok ? iterations : 0,
+                favoritesPath,
+                seenPath,
+                keyRoot,
+            });
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private static void WriteCrossRuntimeSharedStateResult(string resultPath, object result)
+    {
+        string fullPath = Path.GetFullPath(resultPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(fullPath)!);
+        File.WriteAllText(fullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
     private void CaptureFavoriteSmoke(string resultPath, string[] args)

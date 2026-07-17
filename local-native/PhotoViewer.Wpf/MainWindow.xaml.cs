@@ -7323,6 +7323,15 @@ public partial class MainWindow : Window
         return new PersistenceLockProbe(concurrentMerged, staleRecovered, malformedLockProtected);
     }
 
+    internal static bool TryMergeSharedStateForSmoke(
+        string favoritesPath,
+        string favoriteKey,
+        int favoriteLevel,
+        string seenPath,
+        string seenKey)
+        => TryMergeFavoriteForSmoke(favoritesPath, favoriteKey, favoriteLevel)
+            && TryMergeSeenForSmoke(seenPath, seenKey);
+
     private static bool TryMergeFavoriteForSmoke(string path, string key, int level)
         => TryWithPersistenceLock(path, () =>
         {
@@ -7334,6 +7343,19 @@ public partial class MainWindow : Window
                 .ToDictionary(static item => item.Key, static item => item.Value, StringComparer.OrdinalIgnoreCase), new JsonSerializerOptions { WriteIndented = true });
             return TryWriteAtomicText(path, json);
         });
+
+    private static bool TryMergeSeenForSmoke(string path, string key)
+        => TryWithPersistenceLock(path, () =>
+        {
+            var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (!TryLoadSeenFile(path, merged))
+                return false;
+            merged.Add(NormalizeFavoritePath(key));
+            string json = JsonSerializer.Serialize(merged.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase), new JsonSerializerOptions { WriteIndented = true });
+            return TryWriteAtomicText(path, json);
+        });
+
     public async Task<ListVirtualizationProbe> ProbeListVirtualizationForSmokeAsync()
     {
         bool listMode = SetListModeForSmoke();
