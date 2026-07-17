@@ -11,6 +11,7 @@ import RightPreviewPanel from '../components/RightPreviewPanel';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
 import { ScanProgressStatus } from '../components/ScanProgressStatus';
+import { ScanErrorNotice } from '../components/ScanErrorNotice';
 import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
@@ -20,7 +21,7 @@ import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
 
 function ViewerApp() {
   const {
-    phase, dirPath, setDirPath, startScan, scanProgress,
+    phase, dirPath, setDirPath, startScan, scanProgress, scanError, dismissScanError,
     searchTotal, totalIndexed, searchQuery,
     setPhase, view, setView,
     selectedIds, clearSelection, deleteImage,
@@ -412,6 +413,14 @@ function ViewerApp() {
           </div>
         )}
         {browseError && <p className="landing-error" role="alert">{browseError}</p>}
+        {scanError && (
+          <ScanErrorNotice
+            message={scanError}
+            canRetry={phase !== 'scanning' && selectedFolders.length > 0}
+            onRetry={() => handleStartScan()}
+            onDismiss={dismissScanError}
+          />
+        )}
 
         {phase === 'scanning' && scanProgress && (
           <ScanProgressStatus progress={scanProgress} />

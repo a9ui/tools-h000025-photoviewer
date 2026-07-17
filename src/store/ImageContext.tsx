@@ -157,6 +157,8 @@ interface Ctx {
 
   // Scan progress
   scanProgress: { processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null;
+  scanError: string | null;
+  dismissScanError: () => void;
 
   // Search
   searchQuery: string;
@@ -248,6 +250,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [phase, setPhase] = useState<'landing' | 'scanning' | 'viewer'>('landing');
   const [dirPath, setDirPath] = useState('');
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null>(null);
+  const [scanError, setScanError] = useState<string | null>(null);
 
   const [searchQuery, setSearchQueryRaw] = useState('');
   const [searchResults, setSearchResults] = useState<Array<ImageFile | null>>([]);
@@ -932,8 +935,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   // ── Scan ──
   const startScan = useCallback((options: { full?: boolean; dir?: string; onComplete?: (dir: string) => void } = {}) => {
     const scanDir = formatDirSet(parseDirSet(options.dir ?? dirPath));
-    if (!scanDir) return;
+    if (!scanDir || phase === 'scanning') return;
     if (scanDir !== dirPath) setDirPath(scanDir);
+    setScanError(null);
     warmedThumbDirRef.current = '';
     setViewState((prev) => {
       if (prev.hiddenFolders.length === 0 && !prev.dateFrom && !prev.dateTo) return prev;
@@ -947,8 +951,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const params = new URLSearchParams({ dir: scanDir });
     if (options.full) params.set('full', '1');
     const es = new EventSource(`/api/scan?${params.toString()}`);
+    let settled = false;
+    const failScan = (message: string) => {
+      if (settled) return;
+      settled = true;
+      console.error('Scan error', message);
+      setScanError(message);
+      setScanProgress(null);
+      es.close();
+      setPhase('landing');
+    };
     es.onmessage = (event) => {
       const data = JSON.parse(event.data);
+      if (settled) return;
       if (data.type === 'progress') {
         setScanProgress({
           processed: data.processed,
@@ -958,6 +973,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           message: data.message,
         });
       } else if (data.type === 'complete') {
+        settled = true;
         setScanProgress({
           processed: data.processed,
           total: data.total,
@@ -970,19 +986,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         options.onComplete?.(scanDir);
         setPhase('viewer');
       } else if (data.type === 'error') {
-        console.error('Scan error', data.message);
-        alert('Scan error: ' + data.message);
-        es.close();
-        setPhase('landing');
+        failScan(typeof data.message === 'string' && data.message.trim()
+          ? data.message
+          : 'The scan could not be completed.');
       }
     };
     es.onerror = () => {
-      console.error('Scan event stream failed');
-      es.close();
-      alert('Scan error: connection lost before the scan completed.');
-      setPhase('landing');
+      failScan('Connection lost before the scan completed.');
     };
-  }, [dirPath, scheduleViewSettingsPersist]);
+  }, [dirPath, phase, scheduleViewSettingsPersist]);
+
+  const dismissScanError = useCallback(() => {
+    setScanError(null);
+  }, []);
 
   // ── Delete ──
   const deleteImage = useCallback(async (id: string): Promise<boolean> => {
@@ -1270,7 +1286,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
   return (
     <ImageContext.Provider value={{
-      phase, setPhase, dirPath, setDirPath, scanProgress,
+      phase, setPhase, dirPath, setDirPath, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
       isSearching, ensureSearchRange,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,

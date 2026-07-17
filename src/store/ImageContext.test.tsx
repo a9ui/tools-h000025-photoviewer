@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImageProvider, useImageStore } from './ImageContext';
@@ -37,6 +37,32 @@ function FavoritesProbe() {
       <button type="button" onClick={() => toggleFavorite('same-key')}>
         Toggle same key before hydration
       </button>
+    </div>
+  );
+}
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
+  close = vi.fn();
+
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+}
+
+function ScanProbe() {
+  const { phase, dirPath, scanProgress, scanError, startScan, dismissScanError } = useImageStore();
+  return (
+    <div>
+      <output aria-label="scan phase">{phase}</output>
+      <output aria-label="scan directory">{dirPath}</output>
+      <output aria-label="scan error">{scanError ?? ''}</output>
+      <output aria-label="scan progress">{scanProgress ? 'active' : 'none'}</output>
+      <button type="button" onClick={() => startScan({ dir: 'C:/images' })}>Start test scan</button>
+      <button type="button" onClick={() => startScan({ dir: '' })}>Start empty scan</button>
+      <button type="button" onClick={dismissScanError}>Dismiss scan error</button>
     </div>
   );
 }
@@ -287,5 +313,107 @@ describe('ImageProvider browser UI preferences', () => {
         baseFavorites: { external: 4 },
       });
     });
+  });
+});
+
+describe('ImageProvider scan failures', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ favorites: {}, jobs: [] }),
+    }) as Response));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(window, 'alert').mockImplementation(() => {});
+  });
+
+  it('stores a server scan failure without calling window.alert', async () => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const source = MockEventSource.instances[0];
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    expect(MockEventSource.instances).toHaveLength(1);
+    act(() => {
+      source.onmessage?.({ data: JSON.stringify({ type: 'error', message: 'Folder is unavailable.' }) } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('landing');
+      expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('Folder is unavailable.');
+    });
+    expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
+    expect(window.alert).not.toHaveBeenCalled();
+    expect(source.close).toHaveBeenCalledTimes(1);
+  });
+
+  it('stores connection loss, clears it for a retry, and remains clear after completion', async () => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const failedSource = MockEventSource.instances[0];
+    act(() => {
+      failedSource.onerror?.(new Event('error'));
+    });
+    await screen.findByText('Connection lost before the scan completed.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const retrySource = MockEventSource.instances[1];
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('scanning');
+    expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+
+    act(() => {
+      retrySource.onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 2, total: 2, newFiles: 1, stage: 'complete', message: 'Scan complete.' }),
+      } as MessageEvent);
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('viewer');
+      expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+    });
+    expect(window.alert).not.toHaveBeenCalled();
+  });
+
+  it('dismisses a stored scan failure without changing the current folder set', async () => {
+    const user = userEvent.setup();
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.onmessage?.({ data: JSON.stringify({ type: 'error', message: 'Server refused the scan.' }) } as MessageEvent);
+    });
+    await screen.findByText('Server refused the scan.');
+
+    await user.click(screen.getByRole('button', { name: 'Dismiss scan error' }));
+    expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+    expect(screen.getByRole('status', { name: 'scan directory' })).toHaveTextContent('C:/images');
+  });
+
+  it('does not start a scan for an empty directory', () => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start empty scan' }));
+    expect(MockEventSource.instances).toHaveLength(0);
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('landing');
   });
 });
