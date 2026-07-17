@@ -259,7 +259,7 @@ export default function ImageGrid() {
     };
 
     const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
+      if (!event.ctrlKey && !event.metaKey) return;
       const container = containerRef.current;
       if (!container) return;
       const browserZoomModifier = event.ctrlKey || event.metaKey;
