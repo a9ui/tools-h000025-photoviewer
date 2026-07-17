@@ -64,7 +64,7 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 - `pnpm typecheck`: PASS、diagnostics 0。
 - `pnpm lint`: PASS、warning/error 0。
 - `pnpm build`: PASS、Next.js 16.2.10 production routes生成。
-- isolated production port 3012: `127.0.0.1`だけでlisten、revision `af2bc716...`、`sourceDirty=false`、build id `ftP2x7LKyFkBbYT1s-LfQ`。
+- isolated production port 3012: `127.0.0.1`だけでlisten、pre-recap closeout head `60a3d74d887b7c4882cb525678e3ba38a090bb55`、`sourceDirty=false`、build id `_od6VA53fUIzj39R7E7QI`、HTTP 200。
 - in-app Browser 1280x820: Landing complete、horizontal overflowなし、Quick Search/date presets不在、console warning/error event 0。
 - isolated launcher PID/treeだけを停止し、終了後port 3012 listener 0。
 
@@ -80,6 +80,7 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 - Delete raceの初回false negativeは、正しいModal root focusに対して旧testがClose button固定を要求したoracle不整合。正本へ合わせ、focused 3/3、関連4 gates、最終aggregateでPASS。
 - cross-runtime Favorite/Seen writer 20 iterations: 40 favorite + 40 seen entries、valid JSON、residue 0、HTTP/port不使用。
 - cross-runtime recent writer 20 iterations: Browser/WPF/third writerのhistory merge、unknown field保持、residue 0、HTTP/port不使用。
+- final `start_wpf.bat`はrevision/source mismatchを検出して1回だけRelease rebuildし、2回目はexact provenance一致で495 msのdirect automation launch。ProductVersion `1.0.0+60a3d74...`、exe SHA256 `BAEFDE1D6AB99BC4752533B35783059314701BFA31627EADC3C6CF3E818E2187`。
 
 ## Visual evidence
 
