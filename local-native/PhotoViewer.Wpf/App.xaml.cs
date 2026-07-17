@@ -114,6 +114,13 @@ public partial class App : Application
             return;
         }
 
+        int bulkFavoriteSmokeIdx = Array.IndexOf(e.Args, "--bulk-favorite-smoke");
+        if (bulkFavoriteSmokeIdx >= 0 && bulkFavoriteSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureBulkFavoriteSmoke(e.Args[bulkFavoriteSmokeIdx + 1]);
+            return;
+        }
+
         int favoriteFilterSmokeIdx = Array.IndexOf(e.Args, "--favorite-filter-smoke");
         if (favoriteFilterSmokeIdx >= 0 && favoriteFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -3425,6 +3432,197 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureBulkFavoriteSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-bulk-favorite-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+
+        Directory.CreateDirectory(folder);
+        string alphaPath = Path.Combine(folder, "alpha.png");
+        string bravoPath = Path.Combine(folder, "bravo.png");
+        string charliePath = Path.Combine(folder, "charlie.png");
+        string deltaPath = Path.Combine(folder, "delta.png");
+        WriteSmokePng(alphaPath, 32, 24, Color.FromRgb(55, 135, 210));
+        WriteSmokePng(bravoPath, 32, 24, Color.FromRgb(100, 185, 115));
+        WriteSmokePng(charliePath, 32, 24, Color.FromRgb(195, 125, 75));
+        WriteSmokePng(deltaPath, 32, 24, Color.FromRgb(145, 95, 195));
+        DateTime commonTimestamp = DateTime.UtcNow.AddMinutes(-5);
+        foreach (string path in new[] { alphaPath, bravoPath, charliePath, deltaPath })
+        {
+            File.SetCreationTimeUtc(path, commonTimestamp);
+            File.SetLastWriteTimeUtc(path, commonTimestamp);
+        }
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            BulkFavoriteSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+
+                bool selectedAlpha = win.SelectFileNameForSmoke("alpha.png");
+                bool singlePanelHidden = !win.BulkFavoritePanelVisibleForSmoke;
+                bool alphaSet = win.SetSelectedFavoriteLevelForSmoke(1);
+                bool selectedBravo = win.SelectFileNameForSmoke("bravo.png");
+                bool bravoSet = win.SetSelectedFavoriteLevelForSmoke(3);
+                bool selectedRange = win.SelectRangeForSmoke(0, 2);
+                List<string> initialNames = win.SelectedFileNamesForSmoke;
+                List<int> initialLevels = win.SelectedFavoriteLevelsForSmoke;
+                string mixedSummary = win.BulkSelectionSummaryForSmoke;
+                bool mixedPanel = win.BulkFavoritePanelVisibleForSmoke
+                    && mixedSummary.Contains("3 images selected", StringComparison.OrdinalIgnoreCase)
+                    && mixedSummary.Contains("mixed", StringComparison.OrdinalIgnoreCase);
+
+                var externalMap = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(favoritesPath))
+                    ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                externalMap[NormalizeFavoritePath(deltaPath)] = 2;
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(externalMap, new JsonSerializerOptions { WriteIndented = true }));
+
+                int beforeExactSet = win.FavoriteSaveAttemptCountForSmoke;
+                bool exactSet = win.SetSelectedFavoriteLevelForSmoke(4);
+                int exactSetAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeExactSet;
+                List<int> exactSetLevels = win.SelectedFavoriteLevelsForSmoke;
+                bool exactSetPersisted = new[] { alphaPath, bravoPath, charliePath }.All(path => ReadFavoriteLevel(favoritesPath, path) == 4);
+                bool externalPreservedAfterSet = ReadFavoriteLevel(favoritesPath, deltaPath) == 2;
+
+                int beforeAdjust = win.FavoriteSaveAttemptCountForSmoke;
+                bool adjusted = win.AdjustSelectedFavoriteForSmoke(1);
+                int adjustAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeAdjust;
+                List<int> adjustedLevels = win.SelectedFavoriteLevelsForSmoke;
+                bool adjustedPersisted = new[] { alphaPath, bravoPath, charliePath }.All(path => ReadFavoriteLevel(favoritesPath, path) == 5);
+                bool externalPreservedAfterAdjust = ReadFavoriteLevel(favoritesPath, deltaPath) == 2;
+
+                int beforeClear = win.FavoriteSaveAttemptCountForSmoke;
+                bool cleared = win.SetSelectedFavoriteLevelForSmoke(0);
+                int clearAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeClear;
+                List<int> clearedLevels = win.SelectedFavoriteLevelsForSmoke;
+                bool clearedFromStore = new[] { alphaPath, bravoPath, charliePath }.All(path => !FavoriteFileContainsPath(favoritesPath, path));
+                bool externalPreservedAfterClear = ReadFavoriteLevel(favoritesPath, deltaPath) == 2;
+
+                int beforeRestore = win.FavoriteSaveAttemptCountForSmoke;
+                bool restored = win.SetSelectedFavoriteLevelForSmoke(2);
+                int restoreAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeRestore;
+                List<int> restoredLevels = win.SelectedFavoriteLevelsForSmoke;
+
+                var driftedMap = JsonSerializer.Deserialize<Dictionary<string, int>>(File.ReadAllText(favoritesPath))
+                    ?? new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+                driftedMap[NormalizeFavoritePath(alphaPath)] = 1;
+                driftedMap[NormalizeFavoritePath(bravoPath)] = 1;
+                driftedMap[NormalizeFavoritePath(charliePath)] = 1;
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(driftedMap, new JsonSerializerOptions { WriteIndented = true }));
+                int beforeReassert = win.FavoriteSaveAttemptCountForSmoke;
+                bool reasserted = win.SetSelectedFavoriteLevelForSmoke(2);
+                int reassertAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeReassert;
+                bool reassertedPersisted = new[] { alphaPath, bravoPath, charliePath }.All(path => ReadFavoriteLevel(favoritesPath, path) == 2);
+                bool externalPreservedAfterReassert = ReadFavoriteLevel(favoritesPath, deltaPath) == 2;
+
+                const string malformedFavorites = "{\"broken\":{}}";
+                File.WriteAllText(favoritesPath, malformedFavorites);
+                int beforeMalformed = win.FavoriteSaveAttemptCountForSmoke;
+                bool malformedRefused = !win.SetSelectedFavoriteLevelForSmoke(3);
+                int malformedAttempts = win.FavoriteSaveAttemptCountForSmoke - beforeMalformed;
+                List<int> afterRefusalLevels = win.SelectedFavoriteLevelsForSmoke;
+                bool malformedPreserved = string.Equals(File.ReadAllText(favoritesPath), malformedFavorites, StringComparison.Ordinal);
+                bool refusalStatus = win.DeleteStatusForSmoke.Contains("Favorites", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusForSmoke.Contains("invalid", StringComparison.OrdinalIgnoreCase);
+
+                bool ok = selectedAlpha && singlePanelHidden && alphaSet
+                    && selectedBravo && bravoSet && selectedRange
+                    && initialNames.SequenceEqual(new[] { "alpha.png", "bravo.png", "charlie.png" }, StringComparer.OrdinalIgnoreCase)
+                    && initialLevels.SequenceEqual(new[] { 1, 3, 0 })
+                    && mixedPanel
+                    && exactSet && exactSetAttempts == 1 && exactSetLevels.All(level => level == 4)
+                    && exactSetPersisted && externalPreservedAfterSet
+                    && adjusted && adjustAttempts == 1 && adjustedLevels.All(level => level == 5)
+                    && adjustedPersisted && externalPreservedAfterAdjust
+                    && cleared && clearAttempts == 1 && clearedLevels.All(level => level == 0)
+                    && clearedFromStore && externalPreservedAfterClear
+                    && restored && restoreAttempts == 1 && restoredLevels.All(level => level == 2)
+                    && reasserted && reassertAttempts == 1 && reassertedPersisted && externalPreservedAfterReassert
+                    && malformedRefused && malformedAttempts == 1
+                    && afterRefusalLevels.All(level => level == 2)
+                    && malformedPreserved && refusalStatus;
+
+                result = new BulkFavoriteSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "bulk favorite exact set, adjust, single atomic save, external merge, clear, and malformed rollback passed"
+                        : "bulk favorite transaction or selection-surface expectations did not match",
+                    SelectedNames = initialNames,
+                    InitialLevels = initialLevels,
+                    SinglePanelHidden = singlePanelHidden,
+                    MixedPanel = mixedPanel,
+                    MixedSummary = mixedSummary,
+                    ExactSetAttempts = exactSetAttempts,
+                    ExactSetLevels = exactSetLevels,
+                    ExactSetPersisted = exactSetPersisted,
+                    ExternalPreservedAfterSet = externalPreservedAfterSet,
+                    AdjustAttempts = adjustAttempts,
+                    AdjustedLevels = adjustedLevels,
+                    AdjustedPersisted = adjustedPersisted,
+                    ExternalPreservedAfterAdjust = externalPreservedAfterAdjust,
+                    ClearAttempts = clearAttempts,
+                    ClearedLevels = clearedLevels,
+                    ClearedFromStore = clearedFromStore,
+                    ExternalPreservedAfterClear = externalPreservedAfterClear,
+                    RestoreAttempts = restoreAttempts,
+                    RestoredLevels = restoredLevels,
+                    ReassertAttempts = reassertAttempts,
+                    ReassertedPersisted = reassertedPersisted,
+                    ExternalPreservedAfterReassert = externalPreservedAfterReassert,
+                    MalformedAttempts = malformedAttempts,
+                    AfterRefusalLevels = afterRefusalLevels,
+                    MalformedPreserved = malformedPreserved,
+                    RefusalStatus = refusalStatus,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new BulkFavoriteSmokeResult { Message = ex.ToString() };
+            }
+            finally
+            {
+                if (win.IsVisible)
+                    win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                try
+                {
+                    string tempRoot = Path.GetFullPath(Path.GetTempPath());
+                    string resolvedSmokeRoot = Path.GetFullPath(smokeRoot);
+                    if (resolvedSmokeRoot.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase) && Directory.Exists(resolvedSmokeRoot))
+                        Directory.Delete(resolvedSmokeRoot, recursive: true);
+                }
+                catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureP1BSmoke(string resultPath)
     {
         string resultFullPath = Path.GetFullPath(resultPath);
@@ -5884,6 +6082,27 @@ public partial class App : Application
         return 0;
     }
 
+    private static bool FavoriteFileContainsPath(string favoritesPath, string selectedPath)
+    {
+        try
+        {
+            if (!File.Exists(favoritesPath))
+                return false;
+
+            string normalizedSelected = NormalizeFavoritePath(selectedPath);
+            using var document = JsonDocument.Parse(File.ReadAllText(favoritesPath));
+            return document.RootElement.ValueKind == JsonValueKind.Object
+                && document.RootElement.EnumerateObject().Any(property => string.Equals(
+                    NormalizeFavoritePath(property.Name),
+                    normalizedSelected,
+                    StringComparison.OrdinalIgnoreCase));
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static bool ReadSeenFlag(string seenPath, string selectedPath)
     {
         try
@@ -7384,6 +7603,38 @@ public partial class App : Application
         public List<string> LandingFolderSet { get; init; } = [];
         public int CatalogAfterAdd { get; init; }
         public bool LandingVisible { get; init; }
+    }
+
+    private sealed class BulkFavoriteSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public List<string> SelectedNames { get; init; } = [];
+        public List<int> InitialLevels { get; init; } = [];
+        public bool SinglePanelHidden { get; init; }
+        public bool MixedPanel { get; init; }
+        public string MixedSummary { get; init; } = "";
+        public int ExactSetAttempts { get; init; }
+        public List<int> ExactSetLevels { get; init; } = [];
+        public bool ExactSetPersisted { get; init; }
+        public bool ExternalPreservedAfterSet { get; init; }
+        public int AdjustAttempts { get; init; }
+        public List<int> AdjustedLevels { get; init; } = [];
+        public bool AdjustedPersisted { get; init; }
+        public bool ExternalPreservedAfterAdjust { get; init; }
+        public int ClearAttempts { get; init; }
+        public List<int> ClearedLevels { get; init; } = [];
+        public bool ClearedFromStore { get; init; }
+        public bool ExternalPreservedAfterClear { get; init; }
+        public int RestoreAttempts { get; init; }
+        public List<int> RestoredLevels { get; init; } = [];
+        public int ReassertAttempts { get; init; }
+        public bool ReassertedPersisted { get; init; }
+        public bool ExternalPreservedAfterReassert { get; init; }
+        public int MalformedAttempts { get; init; }
+        public List<int> AfterRefusalLevels { get; init; } = [];
+        public bool MalformedPreserved { get; init; }
+        public bool RefusalStatus { get; init; }
     }
 
     private sealed class P1BSmokeResult

@@ -96,6 +96,7 @@ public partial class MainWindow : Window
     private int _lastInitialUnseenCount;
     private int _enhancementJobsRead;
     private int _enhancedCandidateCount;
+    private int _favoriteSaveAttemptCount;
     private bool _enhancementReadOk = true;
     private string? _enhancementReadError;
     private Rect _restoreBounds;
@@ -1148,6 +1149,7 @@ public partial class MainWindow : Window
 
     private bool SaveFavorites()
     {
+        _favoriteSaveAttemptCount++;
         if (_favoritesWriteBlocked)
         {
             ReportPersistenceRefusal("Favorites", ResolvedFavoritesPath, protectedFile: true);
@@ -2268,6 +2270,7 @@ public partial class MainWindow : Window
         PreviewPromptText.Text = hasRealFile ? t.Path : (string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt);
         FavoriteLevelText.Text = t.Fav.ToString();
         ModalFavoriteLevelText.Text = t.Fav.ToString();
+        SyncSelectionActionSurface();
         UpdateHeaderStats();
         ModalTitle.Text = $"{t.FileName} - {PreviewSizeText.Text}";
         watch.Stop();
@@ -2990,6 +2993,15 @@ public partial class MainWindow : Window
         AdjustSelectedFavorite(1);
     }
 
+    private void BulkFavoriteLevel_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { Tag: string rawLevel }
+            && int.TryParse(rawLevel, NumberStyles.Integer, CultureInfo.InvariantCulture, out int level))
+        {
+            SetFavoriteLevelForSelection(level);
+        }
+    }
+
     private void ToggleSelectedFavorite_Click(object sender, RoutedEventArgs e)
     {
         ToggleSelectedFavorite();
@@ -3011,11 +3023,89 @@ public partial class MainWindow : Window
 
     private bool AdjustSelectedFavorite(int delta)
     {
+        if (SelectedTiles().Count > 1)
+            return MutateSelectedFavorites(tile => Math.Clamp(tile.Fav + delta, 0, 5), $"Adjusted favorite for {{0:N0}} selected images.");
+
         if (SelectedTile() is not { IsRealFile: true } tile)
             return false;
 
         int next = Math.Clamp(tile.Fav + delta, 0, 5);
         return SetFavoriteLevel(tile, next);
+    }
+
+    private bool SetFavoriteLevelForSelection(int level)
+    {
+        int clamped = Math.Clamp(level, 0, 5);
+        return MutateSelectedFavorites(_ => clamped, $"Set favorite level {clamped} for {{0:N0}} selected images.");
+    }
+
+    private bool MutateSelectedFavorites(Func<Tile, int> levelSelector, string successMessageFormat)
+    {
+        var selected = SelectedTiles().Where(static tile => tile.IsRealFile).ToList();
+        if (selected.Count == 0)
+            return false;
+        if (selected.Count == 1)
+            return SetFavoriteLevel(selected[0], levelSelector(selected[0]));
+
+        var previousFavorites = new Dictionary<string, int>(_favorites, StringComparer.OrdinalIgnoreCase);
+        var previousDirtyPaths = new HashSet<string>(_favoriteDirtyPaths, StringComparer.OrdinalIgnoreCase);
+        var nextLevels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (Tile tile in selected)
+        {
+            string key = NormalizeFavoritePath(tile.Path);
+            int next = Math.Clamp(levelSelector(tile), 0, 5);
+            nextLevels[key] = next;
+            if (next > 0)
+                _favorites[key] = next;
+            else
+                _favorites.Remove(key);
+            _favoriteDirtyPaths.Add(key);
+        }
+
+        if (!SaveFavorites())
+        {
+            _favorites.Clear();
+            foreach (var item in previousFavorites) _favorites[item.Key] = item.Value;
+            _favoriteDirtyPaths.Clear();
+            _favoriteDirtyPaths.UnionWith(previousDirtyPaths);
+            return false;
+        }
+
+        foreach (Tile tile in selected)
+        {
+            string key = NormalizeFavoritePath(tile.Path);
+            tile.Fav = nextLevels[key];
+        }
+
+        ApplyFilters();
+        SyncSelectionActionSurface();
+        if (Modal.Visibility == Visibility.Visible)
+        {
+            if (SelectedTile() is null)
+                Modal.Visibility = Visibility.Collapsed;
+            else
+                OpenModal();
+        }
+        SaveState();
+        SetStatusToast(string.Format(CultureInfo.InvariantCulture, successMessageFormat, selected.Count));
+        return true;
+    }
+
+    private void SyncSelectionActionSurface()
+    {
+        if (BulkFavoritePanel is null || SingleSelectionActions is null || BulkSelectionText is null)
+            return;
+
+        var selected = SelectedTiles().Where(static tile => tile.IsRealFile).ToList();
+        bool bulk = selected.Count > 1;
+        BulkFavoritePanel.Visibility = bulk ? Visibility.Visible : Visibility.Collapsed;
+        SingleSelectionActions.Visibility = bulk ? Visibility.Collapsed : Visibility.Visible;
+        if (!bulk)
+            return;
+
+        int distinctLevels = selected.Select(static tile => tile.Fav).Distinct().Count();
+        string levelSummary = distinctLevels == 1 ? $"Lv {selected[0].Fav}" : "mixed levels";
+        BulkSelectionText.Text = $"{selected.Count:N0} images selected · {levelSummary}";
     }
 
     private bool SetFavoriteLevel(Tile tile, int level)
@@ -3333,9 +3423,18 @@ public partial class MainWindow : Window
         var availablePaths = new HashSet<string>(filtered.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
         _selectedPaths.IntersectWith(availablePaths);
 
-        _tiles.Clear();
-        foreach (var tile in filtered)
-            _tiles.Add(tile);
+        bool wasSyncingSelection = _syncingSelection;
+        _syncingSelection = true;
+        try
+        {
+            _tiles.Clear();
+            foreach (var tile in filtered)
+                _tiles.Add(tile);
+        }
+        finally
+        {
+            _syncingSelection = wasSyncingSelection;
+        }
 
         Tile? preferred = !string.IsNullOrWhiteSpace(_primarySelectedPath)
             ? _tiles.FirstOrDefault(tile => string.Equals(tile.Path, _primarySelectedPath, StringComparison.OrdinalIgnoreCase))
@@ -3594,6 +3693,7 @@ public partial class MainWindow : Window
         PreviewPromptText.Text = "";
         FavoriteLevelText.Text = "0";
         ModalFavoriteLevelText.Text = "0";
+        SyncSelectionActionSurface();
         ModalTitle.Text = "No selection";
         UpdateHeaderStats();
     }
@@ -6119,8 +6219,15 @@ public partial class MainWindow : Window
 
     public bool SetSelectedFavoriteLevelForSmoke(int level)
     {
-        return SelectedTile() is { IsRealFile: true } tile && SetFavoriteLevel(tile, level);
+        return SelectedTiles().Count > 1
+            ? SetFavoriteLevelForSelection(level)
+            : SelectedTile() is { IsRealFile: true } tile && SetFavoriteLevel(tile, level);
     }
+
+    public List<int> SelectedFavoriteLevelsForSmoke => SelectedTiles().Select(static tile => tile.Fav).ToList();
+    public bool BulkFavoritePanelVisibleForSmoke => BulkFavoritePanel.Visibility == Visibility.Visible;
+    public string BulkSelectionSummaryForSmoke => BulkSelectionText.Text;
+    public int FavoriteSaveAttemptCountForSmoke => _favoriteSaveAttemptCount;
 
     public void SetFavoriteOnlyFilterForSmoke(bool enabled)
     {

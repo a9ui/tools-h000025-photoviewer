@@ -343,8 +343,35 @@
                 </Grid>
               </Border>
 
+              <Border x:Name="BulkFavoritePanel" Visibility="Collapsed" CornerRadius="10"
+                      AutomationProperties.Name="Bulk favorite actions"
+                      Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1"
+                      Padding="12,10" Margin="0,0,0,14">
+                <StackPanel>
+                  <TextBlock x:Name="BulkSelectionText" Text="2 images selected" Foreground="{StaticResource TextPrimary}"
+                             AutomationProperties.LiveSetting="Polite"
+                             FontSize="13" FontWeight="SemiBold" Margin="0,0,0,8"/>
+                  <TextBlock Text="Set favorite level for every selected image" Foreground="{StaticResource TextTertiary}"
+                             FontSize="11.5" Margin="0,0,0,7"/>
+                  <UniformGrid Columns="6">
+                    <Button Style="{StaticResource GhostButton}" Content="0" Tag="0" Click="BulkFavoriteLevel_Click" ToolTip="Clear favorite for selected images" AutomationProperties.Name="Set selected images to favorite level 0" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="1" Tag="1" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 1" AutomationProperties.Name="Set selected images to favorite level 1" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="2" Tag="2" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 2" AutomationProperties.Name="Set selected images to favorite level 2" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="3" Tag="3" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 3" AutomationProperties.Name="Set selected images to favorite level 3" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="4" Tag="4" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 4" AutomationProperties.Name="Set selected images to favorite level 4" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="5" Tag="5" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 5" AutomationProperties.Name="Set selected images to favorite level 5"/>
+                  </UniformGrid>
+                  <UniformGrid Columns="2" Margin="0,8,0,0">
+                    <Button Style="{StaticResource GhostButton}" Content="Decrease all" Click="FavoriteDecrease_Click"
+                            ToolTip="Decrease favorite level for selected images (U)" AutomationProperties.Name="Decrease favorite level for selected images" Margin="0,0,4,0"/>
+                    <Button Style="{StaticResource GhostButton}" Content="Increase all" Click="FavoriteIncrease_Click"
+                            ToolTip="Increase favorite level for selected images" AutomationProperties.Name="Increase favorite level for selected images" Margin="4,0,0,0"/>
+                  </UniformGrid>
+                </StackPanel>
+              </Border>
+
               <!-- actions -->
-              <Grid Margin="0,0,0,14">
+              <Grid x:Name="SingleSelectionActions" Margin="0,0,0,14">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
                   <StackPanel Orientation="Horizontal">
