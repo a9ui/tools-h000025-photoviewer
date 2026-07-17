@@ -2075,7 +2075,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 
 | Requirement area | Source |
 | --- | --- |
-| Runtime/launcher | `package.json`, `scripts/prod_launcher.js`, `scripts/prod_launcher_cli.js`, `scripts/serve_with_parent_watch.js`, `scripts/verify-browser-runtime.ps1`, `src/app/api/runtime/route.ts` |
+| Runtime/launcher | `package.json`, `scripts/prod_launcher.js`, `scripts/prod_launcher_cli.js`, `scripts/prod_launcher_processes.js`, `scripts/serve_with_parent_watch.js`, `scripts/kill_when_parent_exits.js`, `scripts/verify-browser-runtime.ps1`, `src/app/api/runtime/route.ts` |
 | Types/default keys | `src/lib/types.ts`, `src/lib/imageFormats.ts` |
 | Main state/persistence | `src/store/ImageContext.tsx` |
 | Landing/header/bulk/global keys | `src/app/page.tsx` |
@@ -2110,7 +2110,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 
 | Contract | Test evidence |
 | --- | --- |
-| Runtime provenance tri-state / launcher CLI safety | `src/app/api/runtime/route.test.ts`, `src/lib/runtimeDiagnostics.test.ts`, `scripts/prod_launcher_cli.test.mjs`, `scripts/verify-browser-runtime.ps1` |
+| Runtime provenance tri-state / launcher ownership / CLI safety | `src/app/api/runtime/route.test.ts`, `src/lib/runtimeDiagnostics.test.ts`, `scripts/prod_launcher_cli.test.mjs`, `scripts/prod_launcher_processes.test.mjs`, `scripts/verify-browser-runtime.ps1` |
 | Settings Runtime display/copy/stale response | `src/components/SettingsModal.test.tsx`, `src/lib/runtimeDiagnostics.test.ts` |
 | Gallery/folder/tab/scan semantics | `src/components/ImageGrid.test.tsx`, `src/components/Sidebar.test.tsx`, `src/components/BottomPreviewTabs.test.tsx`, `src/components/ScanProgressStatus.test.tsx` |
 | Favorite levels/Unseen | `src/lib/browserUiPreferences.test.ts`, `src/components/Sidebar.test.tsx`, `src/components/SettingsModal.test.tsx` |

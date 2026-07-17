@@ -42,7 +42,7 @@ NON-GOAL:
 
 - .NET 8 Windows WPF、single desktop process。
 - main project: `local-native/PhotoViewer.Wpf/PhotoViewer.Wpf.csproj`。
-- 通常起動入口はproject rootの`start_wpf.bat`。Release executableとWPF source/projectのtimestampを比較し、targetがmissing/staleならRelease build、currentならdirect executableを起動する。`PHOTOVIEWER_WPF_REBUILD=1`は明示rebuild、`PHOTOVIEWER_WPF_DOTNET_RUN=1`は開発用だけに使う。
+- 通常起動入口はproject rootの`start_wpf.bat`。repo root、project/target path、git revision、WPF source fingerprint、Release exe SHA256をatomic provenanceで照合し、全て一致する時だけdirect executableを起動する。missing/unproven/invalid/wrong-worktree/wrong-revision/source drift/target改変はRelease buildへ戻り、buildまたはprovenance記録に失敗した時は旧exeを起動しない。`PHOTOVIEWER_WPF_REBUILD=1`は明示rebuild、`PHOTOVIEWER_WPF_DOTNET_RUN=1`は開発用だけに使う。
 - launcherはBrowser serverやportを開始・停止せず、既存WPF processの探索・終了もしない。process ownershipをport番号や同名exeだけから推測しない。freshness分岐は`scripts/verify-wpf-launcher-freshness.ps1`で固定する。
 - BrowserのNode/Next serverを起動しない。
 - source folderをreadし、explicit Delete時だけShell Recycle Binを呼ぶ。
@@ -601,7 +601,7 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
-通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めず、40-cycle reload soakも既定では除外する。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、cross-runtime 2本とreload soakを別途実行する。文書基準commit `64472dd`のinventoryはdefault 41 checks、`-SkipStress` 40、`-IncludeReloadSoak` 42。これはscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
+通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めない。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、`-IncludeReloadSoak`で既定24-cycleの同一process soakをaggregate内へ追加し、cross-runtime 2本を別途実行する。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。verified implementation commit `af2bc71`のinventoryはdefault 41 checks、`-SkipStress` 40、`-IncludeReloadSoak` 42。これはscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
 
 | Area | Command |
 | --- | --- |
@@ -627,7 +627,6 @@ Accessibility:
 | Folder switch/Refresh same-process soak | `powershell -File scripts/verify-wpf-reload-soak.ps1 -Count 1000 -Cycles 40` |
 | Shutdown final-state lifecycle | `powershell -File scripts/verify-wpf-shutdown-state.ps1` |
 | Runtime/version safe diagnostics | `powershell -File scripts/verify-wpf-diagnostics.ps1` |
-| Normal launcher missing/current/stale freshness | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
 | Process crash/live lock/stale recovery | `powershell -File scripts/verify-wpf-crash-lock-recovery.ps1 -Iterations 3` |
 | Partial multi-root scan / ownership | `powershell -File scripts/verify-wpf-partial-scan.ps1` |
@@ -649,7 +648,7 @@ Accessibility:
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
 | Sidebar/App Settings Unseen dots synchronization | `powershell -File scripts/verify-wpf-settings-unseen-dots.ps1` |
 | Exact visual viewports / Browser comparison states | `powershell -File scripts/verify-wpf-visual-layout.ps1 -EvidenceDir <path>` |
-| Direct launcher provenance / fail-closed rebuild | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
+| Direct launcher exact provenance / fail-closed rebuild | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 
 Reload soakのmemory correctness gateは、warm-up直後と終了時のforced-GC managed heap差が128 MiB以内、終了working set差が512 MiB以内、peak working set差が768 MiB以内であることを要求する。Windows/WPFのworking setにはnative allocator、WIC/render cache、OS trim timingが含まれ、短い24-cycleの回帰直線だけでは保持中の資源と後から解放されるcacheを区別できない。そのため`WorkingSetPlateauObserved`、tail slope/decrease、post-warm slope、managed差を含む全sampleは結果へ残すが、plateau観測単独はcorrectness gateにしない。実リークはforced-GC後のmanaged上限とworking-set絶対envelopeで停止させ、長期傾向は40-cycle以上の結果を比較して判断する。
 

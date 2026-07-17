@@ -103,9 +103,9 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-cross-runtime-shared-s
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-cross-runtime-recent.ps1 -Iterations 20
 ```
 
-`verify-wpf-product.ps1`は`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`、20,000件stressを直列に自動実行し、`-IncludeReloadSoak`で同一process reload soakも加える。`verify-cross-runtime-*.ps1`は別実行である。文書基準commit `64472dd`ではdefault 41 checks、`-SkipStress` 40、`-IncludeReloadSoak` 42だが、これはinventory sanity用のsnapshotであり固定合格件数ではない。closeoutは`-SkipStress`を使わず、live JSONの`checks`と各resultを記録する。失敗時だけ個別のfocused verifierで切り分ける。同じWPF projectを複数processから同時buildすると`obj`が競合するため、統合gate自体は直列実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。
+`verify-wpf-product.ps1`は`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`、20,000件stressを直列に自動実行し、`-IncludeReloadSoak`で既定24-cycleの同一process reload soakも加える。`verify-cross-runtime-*.ps1`は別実行である。verified implementation commit `af2bc71`ではdefault 41 checks、`-SkipStress` 40、`-IncludeReloadSoak` 42だが、これはinventory sanity用のsnapshotであり固定合格件数ではない。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。closeoutは`-SkipStress`を使わず、live JSONの`checks`と各resultを記録する。失敗時だけ個別のfocused verifierで切り分ける。同じWPF projectを複数processから同時buildすると`obj`が競合するため、統合gate自体は直列実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。
 
-通常WPF起動はproject rootの`.\start_wpf.bat`を使う。これはRelease executableがmissing/staleならbuildし、currentなら直接起動する。Browser server、port 3000、既存WPF processを所有・停止しない。`scripts/verify-wpf-launcher-freshness.ps1`でmissing/current/stale分岐を固定する。
+通常WPF起動はproject rootの`.\start_wpf.bat`を使う。repo root、project/target path、git revision、WPF source fingerprint、exe SHA256をatomic provenanceで照合し、全一致する時だけcurrentとして直接起動する。missing/unproven/invalid/別worktree/別revision/source drift/target改変はfail-closed buildへ戻す。Browser server、port 3000、既存WPF processを所有・停止しない。`scripts/verify-wpf-launcher-freshness.ps1`で分岐を固定する。
 
 Visual:
 
