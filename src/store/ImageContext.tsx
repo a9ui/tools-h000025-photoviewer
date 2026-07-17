@@ -85,6 +85,8 @@ const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
 const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
 const FAVORITES_FLUSH_DELAY_MS = 300;
 const VIEW_SETTINGS_FLUSH_DELAY_MS = 300;
+const FAVORITES_PENDING_STORAGE_KEY = 'pvu_favorites_pending';
+const KEEPALIVE_PAYLOAD_LIMIT_BYTES = 60 * 1024;
 const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
@@ -352,6 +354,49 @@ function reconcileFavoriteWriteResponse(
   return reconciled;
 }
 
+interface PendingFavoritesJournal {
+  version: 1;
+  revision: string;
+  dirtyIds: string[];
+  baseFavorites: Record<string, number>;
+  baseKnownIds: string[];
+}
+
+function readPendingFavoritesJournal(serialized: string | null): PendingFavoritesJournal | null {
+  if (!serialized) return null;
+  try {
+    const parsed: unknown = JSON.parse(serialized);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const candidate = parsed as Partial<PendingFavoritesJournal>;
+    if (candidate.version !== 1 || typeof candidate.revision !== 'string' || !candidate.revision) return null;
+    if (!Array.isArray(candidate.dirtyIds) || !Array.isArray(candidate.baseKnownIds)) return null;
+    if (!candidate.baseFavorites || typeof candidate.baseFavorites !== 'object' || Array.isArray(candidate.baseFavorites)) {
+      return null;
+    }
+    const dirtyIds = [...new Set(candidate.dirtyIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const dirtySet = new Set(dirtyIds);
+    const baseKnownIds = [...new Set(candidate.baseKnownIds.filter(
+      (id): id is string => typeof id === 'string' && dirtySet.has(id)
+    ))];
+    const baseFavorites = normalizeFavorites(candidate.baseFavorites);
+    if (dirtyIds.length === 0) return null;
+    return { version: 1, revision: candidate.revision, dirtyIds, baseFavorites, baseKnownIds };
+  } catch {
+    return null;
+  }
+}
+
+function createPersistenceRevision() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function utf8ByteLength(value: string) {
+  return new TextEncoder().encode(value).byteLength;
+}
+
 function writeJsonLocalStorage(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -547,7 +592,6 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [perfStats, setPerfStats] = useState({ searchCount: 0, lastSearchMs: 0, avgSearchMs: 0 });
   const [seenImageIds, setSeenImageIds] = useState<Record<string, true>>({});
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
-  const [favoritesHydrated, setFavoritesHydrated] = useState(false);
   const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false);
   const [previewTabsPersistenceReady, setPreviewTabsPersistenceReady] = useState(false);
 
@@ -577,7 +621,16 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const favoriteLocalStorageReadOnlyRef = useRef(false);
   const favoriteServerBaseRef = useRef<Record<string, number>>({});
   const favoritesHydratedRef = useRef(false);
-  const favoriteHydrationDirtyIdsRef = useRef<Set<string>>(new Set());
+  const favoriteDirtyIdsRef = useRef<Set<string>>(new Set());
+  const favoritePendingBaseRef = useRef<Record<string, number>>({});
+  const favoritePendingBaseKnownIdsRef = useRef<Set<string>>(new Set());
+  const favoritePendingRevisionRef = useRef<string | null>(null);
+  const favoriteWriteInFlightRef = useRef(false);
+  const favoriteFlushRequestedRef = useRef(false);
+  const favoriteFlushFunctionRef = useRef<(lifecycle: boolean) => void>(() => {});
+  const providerMountedRef = useRef(true);
+  const seenSharedDirtyRef = useRef(false);
+  const seenLastLifecycleBodyRef = useRef<string | null>(null);
   const searchMetaRef = useRef<{
     query: string;
     sortBy: SortBy;
@@ -664,24 +717,192 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       flushViewSettings();
     }, VIEW_SETTINGS_FLUSH_DELAY_MS);
   }, [flushViewSettings]);
+  const persistFavoritesLocal = useCallback((snapshot: Record<string, number>) => {
+    if (favoriteLocalStorageReadOnlyRef.current) return;
+    const serialized = JSON.stringify(snapshot);
+    try {
+      localStorage.setItem('pvu_favorites', serialized);
+      if (Object.keys(snapshot).length > 0) {
+        localStorage.setItem('pvu_favorites_backup', serialized);
+      }
+    } catch { /* ignore */ }
+  }, []);
+  const persistPendingFavoritesJournal = useCallback(() => {
+    const dirtyIds = [...favoriteDirtyIdsRef.current];
+    if (dirtyIds.length === 0) {
+      favoritePendingRevisionRef.current = null;
+      try {
+        localStorage.removeItem(FAVORITES_PENDING_STORAGE_KEY);
+      } catch { /* ignore */ }
+      return;
+    }
+    const revision = favoritePendingRevisionRef.current ?? createPersistenceRevision();
+    favoritePendingRevisionRef.current = revision;
+    writeJsonLocalStorage(FAVORITES_PENDING_STORAGE_KEY, {
+      version: 1,
+      revision,
+      dirtyIds,
+      baseFavorites: favoritePendingBaseRef.current,
+      baseKnownIds: [...favoritePendingBaseKnownIdsRef.current],
+    } satisfies PendingFavoritesJournal);
+  }, []);
+  const flushFavoriteToShared = useCallback((lifecycle: boolean) => {
+    if (!favoritesHydratedRef.current || favoriteDirtyIdsRef.current.size === 0) return;
+    if (favoriteWriteInFlightRef.current) {
+      if (!lifecycle) favoriteFlushRequestedRef.current = true;
+      return;
+    }
+
+    const dirtyIds = [...favoriteDirtyIdsRef.current];
+    if (dirtyIds.some((id) => !favoritePendingBaseKnownIdsRef.current.has(id))) return;
+    const revision = favoritePendingRevisionRef.current;
+    if (!revision) return;
+    const snapshot = favoritesRef.current;
+    const favoritesPayload: Record<string, number> = {};
+    const basePayload: Record<string, number> = {};
+    for (const id of dirtyIds) {
+      const level = snapshot[id] ?? 0;
+      const baseLevel = favoritePendingBaseRef.current[id] ?? 0;
+      if (level > 0) favoritesPayload[id] = level;
+      if (baseLevel > 0) basePayload[id] = baseLevel;
+    }
+    const body = JSON.stringify({ favorites: favoritesPayload, baseFavorites: basePayload });
+    if (lifecycle && utf8ByteLength(body) > KEEPALIVE_PAYLOAD_LIMIT_BYTES) {
+      // The browser caps all in-flight keepalive bodies to roughly 64 KiB.
+      // The durable local journal retries an oversized exact delta next load.
+      return;
+    }
+
+    favoriteWriteInFlightRef.current = true;
+    void fetch('/api/favorites', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body,
+      ...(lifecycle ? { keepalive: true } : {}),
+    })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data?.malformed) return;
+        const serverFavorites = normalizeFavorites(data?.favorites);
+        if (!providerMountedRef.current) return;
+        let storedJournal: PendingFavoritesJournal | null = null;
+        try {
+          storedJournal = readPendingFavoritesJournal(
+            localStorage.getItem(FAVORITES_PENDING_STORAGE_KEY)
+          );
+        } catch {
+          return;
+        }
+        const currentRevision = favoritePendingRevisionRef.current;
+        if (!currentRevision || storedJournal?.revision !== currentRevision) return;
+
+        favoriteServerBaseRef.current = serverFavorites;
+        const reconciled = reconcileFavoriteWriteResponse(
+          serverFavorites,
+          snapshot,
+          favoritesRef.current,
+        );
+        favoritesRef.current = reconciled;
+        persistFavoritesLocal(reconciled);
+        setFavorites(reconciled);
+
+        if (currentRevision !== revision) {
+          for (const id of [...favoriteDirtyIdsRef.current]) {
+            const currentLevel = reconciled[id] ?? 0;
+            const serverLevel = serverFavorites[id] ?? 0;
+            if (currentLevel === serverLevel) {
+              favoriteDirtyIdsRef.current.delete(id);
+              delete favoritePendingBaseRef.current[id];
+              favoritePendingBaseKnownIdsRef.current.delete(id);
+              continue;
+            }
+            if (serverLevel > 0) favoritePendingBaseRef.current[id] = serverLevel;
+            else delete favoritePendingBaseRef.current[id];
+            favoritePendingBaseKnownIdsRef.current.add(id);
+          }
+          persistPendingFavoritesJournal();
+          favoriteFlushRequestedRef.current = favoriteDirtyIdsRef.current.size > 0;
+          return;
+        }
+
+        favoriteDirtyIdsRef.current.clear();
+        favoritePendingBaseRef.current = {};
+        favoritePendingBaseKnownIdsRef.current.clear();
+        favoritePendingRevisionRef.current = null;
+        persistPendingFavoritesJournal();
+      })
+      .catch(() => {})
+      .finally(() => {
+        favoriteWriteInFlightRef.current = false;
+        if (!providerMountedRef.current) return;
+        if (favoriteFlushRequestedRef.current && favoriteDirtyIdsRef.current.size > 0) {
+          favoriteFlushRequestedRef.current = false;
+          if (favoritesFlushRef.current) clearTimeout(favoritesFlushRef.current);
+          favoritesFlushRef.current = setTimeout(() => {
+            favoritesFlushRef.current = null;
+            favoriteFlushFunctionRef.current(false);
+          }, FAVORITES_FLUSH_DELAY_MS);
+        }
+      });
+  }, [persistFavoritesLocal, persistPendingFavoritesJournal]);
+  useEffect(() => {
+    favoriteFlushFunctionRef.current = flushFavoriteToShared;
+  }, [flushFavoriteToShared]);
+  const scheduleFavoriteFlush = useCallback(() => {
+    if (favoritesFlushRef.current) clearTimeout(favoritesFlushRef.current);
+    favoritesFlushRef.current = setTimeout(() => {
+      favoritesFlushRef.current = null;
+      favoriteFlushFunctionRef.current(false);
+    }, FAVORITES_FLUSH_DELAY_MS);
+  }, []);
+  const commitFavoriteMutation = useCallback((
+    next: Record<string, number>,
+    changedIds: readonly string[],
+  ) => {
+    favoritesRef.current = next;
+    for (const id of changedIds) {
+      if (favoriteDirtyIdsRef.current.has(id)) continue;
+      favoriteDirtyIdsRef.current.add(id);
+      if (favoritesHydratedRef.current) {
+        const baseLevel = favoriteServerBaseRef.current[id] ?? 0;
+        if (baseLevel > 0) favoritePendingBaseRef.current[id] = baseLevel;
+        favoritePendingBaseKnownIdsRef.current.add(id);
+      }
+    }
+    favoritePendingRevisionRef.current = createPersistenceRevision();
+    persistFavoritesLocal(next);
+    persistPendingFavoritesJournal();
+    if (favoritesHydratedRef.current) scheduleFavoriteFlush();
+  }, [persistFavoritesLocal, persistPendingFavoritesJournal, scheduleFavoriteFlush]);
   const mergeSharedSeen = useCallback((sharedSeen: Record<string, true>) => {
     const merged = mergeSeenImageIds(sharedSeen, seenImageIdsRef.current);
     seenImageIdsRef.current = merged;
     setSeenImageIds((currentSeen) => mergeSeenImageIds(sharedSeen, currentSeen));
     return merged;
   }, []);
-  const syncSeenToShared = useCallback((snapshot: Record<string, true>) => {
+  const syncSeenToShared = useCallback((snapshot: Record<string, true>, lifecycle = false) => {
     if (Object.keys(snapshot).length === 0) return;
+    const body = JSON.stringify({ seen: snapshot });
+    if (lifecycle) {
+      if (utf8ByteLength(body) > KEEPALIVE_PAYLOAD_LIMIT_BYTES) return;
+      if (seenLastLifecycleBodyRef.current === body) return;
+      seenLastLifecycleBodyRef.current = body;
+    }
     fetch('/api/seen', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ seen: snapshot }),
+      body,
+      ...(lifecycle ? { keepalive: true } : {}),
     })
       .then(async (response) => {
         if (!response.ok) return;
         const data = await response.json();
         if (data?.malformed) return;
+        if (!providerMountedRef.current) return;
         mergeSharedSeen(normalizeSeenImageIds(data?.seen));
+        seenSharedDirtyRef.current = Object.keys(seenImageIdsRef.current)
+          .some((id) => !snapshot[id]);
       })
       .catch(() => {});
   }, [mergeSharedSeen]);
@@ -712,23 +933,37 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       // favorites; automatic hydration must not replace the only evidence.
       favoriteLocalStorageReadOnlyRef.current = true;
     }
+    const pendingJournal = readPendingFavoritesJournal(
+      localStorage.getItem(FAVORITES_PENDING_STORAGE_KEY)
+    );
+    if (pendingJournal) {
+      favoriteDirtyIdsRef.current = new Set(pendingJournal.dirtyIds);
+      favoritePendingBaseRef.current = pendingJournal.baseFavorites;
+      favoritePendingBaseKnownIdsRef.current = new Set(pendingJournal.baseKnownIds);
+      favoritePendingRevisionRef.current = pendingJournal.revision;
+    }
     fetch('/api/favorites')
       .then((r) => r.json())
       .then((data) => {
         const serverFavorites = normalizeFavorites(data?.favorites);
         favoriteServerBaseRef.current = serverFavorites;
-        const dirtyIds = new Set(favoriteHydrationDirtyIdsRef.current);
-        setFavorites((currentFavorites) => mergeFavorites(
-          serverFavorites,
-          currentFavorites,
-          dirtyIds
-        ));
+        const dirtyIds = new Set(favoriteDirtyIdsRef.current);
+        for (const id of dirtyIds) {
+          if (favoritePendingBaseKnownIdsRef.current.has(id)) continue;
+          const baseLevel = serverFavorites[id] ?? 0;
+          if (baseLevel > 0) favoritePendingBaseRef.current[id] = baseLevel;
+          favoritePendingBaseKnownIdsRef.current.add(id);
+        }
+        const merged = mergeFavorites(serverFavorites, favoritesRef.current, dirtyIds);
+        favoritesRef.current = merged;
+        persistFavoritesLocal(merged);
+        setFavorites(merged);
       })
       .catch(() => {})
       .finally(() => {
         favoritesHydratedRef.current = true;
-        favoriteHydrationDirtyIdsRef.current.clear();
-        setFavoritesHydrated(true);
+        persistPendingFavoritesJournal();
+        if (favoriteDirtyIdsRef.current.size > 0) scheduleFavoriteFlush();
       });
     try {
       const sv = localStorage.getItem('pvu_view');
@@ -805,54 +1040,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         const localSeen = seenImageIdsRef.current;
         const merged = mergeSharedSeen(normalizeSeenImageIds(data?.seen));
         if (Object.keys(localSeen).some((id) => !data?.seen?.[id])) {
+          seenSharedDirtyRef.current = true;
           syncSeenToShared(merged);
         }
       })
       .catch(() => {});
     setUiPreferencesHydrated(true);
-  }, [mergeSharedSeen, syncSeenToShared]);
-
-  // ── Persist favorites ──
-  useEffect(() => {
-    if (!favoritesHydrated) return;
-    favoritesRef.current = favorites;
-    if (favoritesFlushRef.current) {
-      clearTimeout(favoritesFlushRef.current);
-    }
-    favoritesFlushRef.current = setTimeout(() => {
-      favoritesFlushRef.current = null;
-      const snapshot = favoritesRef.current;
-      const serialized = JSON.stringify(snapshot);
-      try {
-        if (!favoriteLocalStorageReadOnlyRef.current) {
-          localStorage.setItem('pvu_favorites', serialized);
-          if (Object.keys(snapshot).length > 0) {
-            localStorage.setItem('pvu_favorites_backup', serialized);
-          }
-        }
-      } catch { /* ignore */ }
-      fetch('/api/favorites', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          favorites: snapshot,
-          baseFavorites: favoriteServerBaseRef.current,
-        }),
-      })
-        .then(async (response) => {
-          if (!response.ok) return;
-          const data = await response.json();
-          const serverFavorites = normalizeFavorites(data?.favorites);
-          favoriteServerBaseRef.current = serverFavorites;
-          setFavorites((currentFavorites) => reconcileFavoriteWriteResponse(
-            serverFavorites,
-            snapshot,
-            currentFavorites,
-          ));
-        })
-        .catch(() => {});
-    }, FAVORITES_FLUSH_DELAY_MS);
-  }, [favorites, favoritesHydrated]);
+  }, [mergeSharedSeen, persistFavoritesLocal, persistPendingFavoritesJournal, scheduleFavoriteFlush, syncSeenToShared]);
 
   useEffect(() => {
     try {
@@ -936,21 +1130,14 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchTotalRef.current = searchTotal;
   }, [searchTotal]);
 
-  useEffect(() => () => {
+  const flushLifecycleState = useCallback(() => {
     if (favoritesFlushRef.current) {
       clearTimeout(favoritesFlushRef.current);
       favoritesFlushRef.current = null;
-      const snapshot = favoritesRef.current;
-      const serialized = JSON.stringify(snapshot);
-      try {
-        if (!favoriteLocalStorageReadOnlyRef.current) {
-          localStorage.setItem('pvu_favorites', serialized);
-          if (Object.keys(snapshot).length > 0) {
-            localStorage.setItem('pvu_favorites_backup', serialized);
-          }
-        }
-      } catch { /* ignore */ }
     }
+    persistFavoritesLocal(favoritesRef.current);
+    persistPendingFavoritesJournal();
+    flushFavoriteToShared(true);
     if (viewSettingsFlushRef.current) {
       clearTimeout(viewSettingsFlushRef.current);
       viewSettingsFlushRef.current = null;
@@ -964,8 +1151,24 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
     writeJsonLocalStorage('pvu_scroll_memory', scrollMemoryRef.current);
     writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
-    syncSeenToShared(seenImageIdsRef.current);
-  }, [flushViewSettings, syncSeenToShared]);
+    if (seenSharedDirtyRef.current) syncSeenToShared(seenImageIdsRef.current, true);
+  }, [flushFavoriteToShared, flushViewSettings, persistFavoritesLocal, persistPendingFavoritesJournal, syncSeenToShared]);
+
+  useEffect(() => {
+    providerMountedRef.current = true;
+    const onPageHide = () => flushLifecycleState();
+    const onVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') flushLifecycleState();
+    };
+    window.addEventListener('pagehide', onPageHide);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('pagehide', onPageHide);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+      providerMountedRef.current = false;
+      flushLifecycleState();
+    };
+  }, [flushLifecycleState]);
 
   // ── Load key bindings from server ──
   useEffect(() => {
@@ -1039,102 +1242,94 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
   const toggleFavorite = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
-    setFavorites(prev => {
-      const next = { ...prev };
-      if ((next[id] ?? 0) > 0) delete next[id];
-      else next[id] = 1;
-      queueFavoriteFilterNavigation(prev, next, [id]);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    const previous = favoritesRef.current;
+    const next = { ...previous };
+    if ((next[id] ?? 0) > 0) delete next[id];
+    else next[id] = 1;
+    queueFavoriteFilterNavigation(previous, next, [id]);
+    commitFavoriteMutation(next, [id]);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   const cycleFavoriteLevel = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
-    setFavorites((prev) => {
-      const next = { ...prev };
-      const current = next[id] ?? 0;
-      const upcoming = Math.min(MAX_FAVORITE_LEVEL, current + 1);
-      next[id] = upcoming;
-      queueFavoriteFilterNavigation(prev, next, [id]);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    const previous = favoritesRef.current;
+    const next = { ...previous };
+    const current = next[id] ?? 0;
+    next[id] = Math.min(MAX_FAVORITE_LEVEL, current + 1);
+    queueFavoriteFilterNavigation(previous, next, [id]);
+    commitFavoriteMutation(next, [id]);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   const clearFavorite = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
-    setFavorites((prev) => {
-      if (!(id in prev)) return prev;
-      const next = { ...prev };
-      delete next[id];
-      queueFavoriteFilterNavigation(prev, next, [id]);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    const previous = favoritesRef.current;
+    if (!(id in previous)) return;
+    const next = { ...previous };
+    delete next[id];
+    queueFavoriteFilterNavigation(previous, next, [id]);
+    commitFavoriteMutation(next, [id]);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   const setFavoriteLevels = useCallback((ids: readonly string[], level: number) => {
     if (!Number.isInteger(level) || level < 0 || level > MAX_FAVORITE_LEVEL) return;
     const targetIds = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
     if (targetIds.length === 0) return;
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) {
-      for (const id of targetIds) favoriteHydrationDirtyIdsRef.current.add(id);
+    const previous = favoritesRef.current;
+    let next: Record<string, number> | null = null;
+    const changedIds: string[] = [];
+    for (const id of targetIds) {
+      const current = previous[id] ?? 0;
+      if (current === level) continue;
+      changedIds.push(id);
+      if (!next) next = { ...previous };
+      if (level === 0) delete next[id];
+      else next[id] = level;
     }
-    setFavorites((prev) => {
-      let next = prev;
-      for (const id of targetIds) {
-        const current = prev[id] ?? 0;
-        if (current === level) continue;
-        if (next === prev) next = { ...prev };
-        if (level === 0) delete next[id];
-        else next[id] = level;
-      }
-      if (next !== prev) queueFavoriteFilterNavigation(prev, next, targetIds);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    if (!next) return;
+    queueFavoriteFilterNavigation(previous, next, changedIds);
+    commitFavoriteMutation(next, changedIds);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   const adjustFavoriteLevels = useCallback((ids: readonly string[], delta: number) => {
     if (!Number.isInteger(delta) || delta === 0) return;
     const targetIds = [...new Set(ids.filter((id): id is string => typeof id === 'string' && id.length > 0))];
     if (targetIds.length === 0) return;
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) {
-      for (const id of targetIds) favoriteHydrationDirtyIdsRef.current.add(id);
+    const previous = favoritesRef.current;
+    let next: Record<string, number> | null = null;
+    const changedIds: string[] = [];
+    for (const id of targetIds) {
+      const current = previous[id] ?? 0;
+      const level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, current + delta));
+      if (current === level) continue;
+      changedIds.push(id);
+      if (!next) next = { ...previous };
+      if (level === 0) delete next[id];
+      else next[id] = level;
     }
-    setFavorites((prev) => {
-      let next = prev;
-      for (const id of targetIds) {
-        const current = prev[id] ?? 0;
-        const level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, current + delta));
-        if (current === level) continue;
-        if (next === prev) next = { ...prev };
-        if (level === 0) delete next[id];
-        else next[id] = level;
-      }
-      if (next !== prev) queueFavoriteFilterNavigation(prev, next, targetIds);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    if (!next) return;
+    queueFavoriteFilterNavigation(previous, next, changedIds);
+    commitFavoriteMutation(next, changedIds);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   const decreaseFavoriteLevel = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
-    if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
-    setFavorites((prev) => {
-      const current = prev[id] ?? 0;
-      if (current <= 0) return prev;
-      const next = { ...prev };
-      if (current <= 1) {
-        delete next[id];
-      } else {
-        next[id] = current - 1;
-      }
-      queueFavoriteFilterNavigation(prev, next, [id]);
-      return next;
-    });
-  }, [queueFavoriteFilterNavigation]);
+    const previous = favoritesRef.current;
+    const current = previous[id] ?? 0;
+    if (current <= 0) return;
+    const next = { ...previous };
+    if (current <= 1) delete next[id];
+    else next[id] = current - 1;
+    queueFavoriteFilterNavigation(previous, next, [id]);
+    commitFavoriteMutation(next, [id]);
+    setFavorites(next);
+  }, [commitFavoriteMutation, queueFavoriteFilterNavigation]);
 
   useEffect(() => {
     const pending = pendingFavoriteFilterMutationRef.current;
@@ -1944,6 +2139,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const markImageSeen = useCallback((id: string) => {
     if (seenImageIdsRef.current[id]) return;
     seenImageIdsRef.current = { ...seenImageIdsRef.current, [id]: true };
+    seenSharedDirtyRef.current = true;
+    seenLastLifecycleBodyRef.current = null;
+    writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
     if (seenImagesFlushRef.current) {
       clearTimeout(seenImagesFlushRef.current);
     }

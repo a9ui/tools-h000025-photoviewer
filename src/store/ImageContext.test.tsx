@@ -48,6 +48,9 @@ function FavoritesProbe() {
       <button type="button" onClick={() => adjustFavoriteLevels(['bulk-a', 'bulk-b'], -1)}>
         Decrease bulk favorites
       </button>
+      <button type="button" onClick={() => setFavoriteLevels([`C:/${'x'.repeat(64 * 1024)}.png`], 1)}>
+        Add oversized favorite delta
+      </button>
     </div>
   );
 }
@@ -811,13 +814,225 @@ describe('ImageProvider browser UI preferences', () => {
       expect(screen.getByRole('status', { name: 'favorites state' }))
         .toHaveTextContent('"external":4');
     });
+    await new Promise((resolve) => setTimeout(resolve, 350));
+    expect(putBodies).toHaveLength(1);
+    expect(localStorage.getItem('pvu_favorites_pending')).toBeNull();
+  });
+
+  it('flushes an exact clear with keepalive on immediate pagehide', async () => {
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
+        return { ok: true, json: async () => ({ favorites: { 'same-key': 3 } }) } as Response;
+      }
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        favoritePuts.push(init);
+        return { ok: true, json: async () => ({ favorites: {} }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => (url.includes('/api/enhance/jobs') ? { jobs: [] } : {}),
+      } as Response;
+    }));
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+
+    expect(await screen.findByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":3');
+    await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
+    expect(localStorage.getItem('pvu_favorites')).toBe('{}');
+    expect(localStorage.getItem('pvu_favorites_pending')).not.toBeNull();
+
+    fireEvent(window, new Event('pagehide'));
+
+    await waitFor(() => expect(favoritePuts).toHaveLength(1));
+    expect(favoritePuts[0].keepalive).toBe(true);
+    expect(JSON.parse(String(favoritePuts[0].body))).toEqual({
+      favorites: {},
+      baseFavorites: { 'same-key': 3 },
+    });
+  });
+
+  it('does not let a delayed pagehide response roll back a newer favorite change', async () => {
+    let resolveFirstPut!: (response: Response) => void;
+    const firstPut = new Promise<Response>((resolve) => { resolveFirstPut = resolve; });
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ favorites: { 'same-key': 1 } }),
+        } as Response);
+      }
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        favoritePuts.push(init);
+        if (favoritePuts.length === 1) return firstPut;
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ favorites: { 'same-key': 1 } }),
+        } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => (url.includes('/api/enhance/jobs') ? { jobs: [] } : {}),
+      } as Response);
+    }));
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+
+    expect(await screen.findByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":1');
+    await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
+    fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(favoritePuts).toHaveLength(1));
+
+    await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
+    const newerJournal = localStorage.getItem('pvu_favorites_pending');
+    expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":1');
+    resolveFirstPut({ ok: true, json: async () => ({ favorites: {} }) } as Response);
 
     await waitFor(() => {
-      expect(putBodies[1]).toEqual({
-        favorites: { external: 4 },
-        baseFavorites: { external: 4 },
-      });
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"same-key":1');
+      expect(localStorage.getItem('pvu_favorites_pending')).toBe(newerJournal);
     });
+    await waitFor(() => expect(favoritePuts).toHaveLength(2), { timeout: 1500 });
+    expect(JSON.parse(String(favoritePuts[1].body))).toEqual({
+      favorites: { 'same-key': 1 },
+      baseFavorites: {},
+    });
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_pending')).toBeNull());
+  });
+
+  it('replays the local exact journal after an interrupted close and reload', async () => {
+    let favoritePutCount = 0;
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ favorites: { 'same-key': 3 } }),
+        } as Response);
+      }
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        favoritePutCount += 1;
+        if (favoritePutCount === 1) return new Promise<Response>(() => {});
+        return Promise.resolve({ ok: true, json: async () => ({ favorites: {} }) } as Response);
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => (url.includes('/api/enhance/jobs') ? { jobs: [] } : {}),
+      } as Response);
+    }));
+    const user = userEvent.setup();
+    const view = render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    expect(await screen.findByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":3');
+    await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
+    fireEvent(window, new Event('pagehide'));
+    await waitFor(() => expect(favoritePutCount).toBe(1));
+    view.unmount();
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('{}');
+    });
+    await waitFor(() => expect(favoritePutCount).toBe(2), { timeout: 1500 });
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_pending')).toBeNull());
+  });
+
+  it('does not duplicate lifecycle writes across a Strict Mode remount', async () => {
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        favoritePuts.push(init);
+        return { ok: true, json: async () => ({ favorites: { 'clicked-before-hydration': 1 } }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+    const user = userEvent.setup();
+    render(
+      <React.StrictMode>
+        <ImageProvider><FavoritesProbe /></ImageProvider>
+      </React.StrictMode>
+    );
+    await screen.findByRole('status', { name: 'favorites state' });
+    expect(favoritePuts).toHaveLength(0);
+
+    await user.click(screen.getByRole('button', { name: 'Favorite before hydration' }));
+    fireEvent(window, new Event('pagehide'));
+
+    await waitFor(() => expect(favoritePuts).toHaveLength(1));
+    expect(favoritePuts[0].keepalive).toBe(true);
+  });
+
+  it('keeps an oversized lifecycle delta in the local journal instead of exceeding keepalive limits', async () => {
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        favoritePuts.push(init);
+        return { ok: true, json: async () => ({ favorites: {} }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await screen.findByRole('status', { name: 'favorites state' });
+
+    await user.click(screen.getByRole('button', { name: 'Add oversized favorite delta' }));
+    fireEvent(window, new Event('pagehide'));
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(favoritePuts).toHaveLength(0);
+    expect(localStorage.getItem('pvu_favorites_pending')).not.toBeNull();
+    expect(localStorage.getItem('pvu_favorites')).toContain('.png');
+  });
+
+  it('mirrors Seen immediately and uses the same keepalive lifecycle flush', async () => {
+    const seenPuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/seen') && init?.method === 'PUT') {
+        seenPuts.push(init);
+        return {
+          ok: true,
+          json: async () => ({ seen: { 'browser-explicit.png': true }, malformed: false }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/seen') ? { seen: {}, malformed: false }
+            : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+    const user = userEvent.setup();
+    render(<ImageProvider><SeenProbe /></ImageProvider>);
+    await user.click(screen.getByRole('button', { name: 'Mark seen' }));
+    expect(JSON.parse(localStorage.getItem('pvu_seen_images') || '{}')).toEqual({
+      'browser-explicit.png': true,
+    });
+
+    fireEvent(window, new Event('pagehide'));
+
+    await waitFor(() => expect(seenPuts).toHaveLength(1));
+    expect(seenPuts[0].keepalive).toBe(true);
   });
 });
 
