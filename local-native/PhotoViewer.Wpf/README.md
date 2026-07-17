@@ -23,6 +23,7 @@ implementation. The normative current behavior is documented in
 - guarded Windows Recycle Bin-only source Delete with confirmation and adjacent-image continuation
 - resizable/persisted right preview panel and multi-selection actions
 - guarded native FileDrop Copy from Grid, List, and right preview to Explorer, preserving display-order multi-selection
+- guarded Show in folder actions in Right Preview and Modal; they select the canonical active source in Explorer without modifying it
 - preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, and cancellable hover decode
 - modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata Prompt chips that append to search, and Original/Enhanced display
 - refresh active folder

@@ -578,6 +578,8 @@ public partial class App : Application
                 await win.WaitForPreviewPngMetadataForSmokeAsync(win.SelectedFileNameForSmoke!);
 
             win.ShowScreen(screen);
+            if (args.Contains("--show-app-settings"))
+                win.OpenAppSettingsForSmoke();
             if (args.Contains("--show-folder-drop-affordance"))
                 win.SetFolderDropAffordanceForSmoke(screen.Equals("landing", StringComparison.OrdinalIgnoreCase), visible: true);
             if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--show-modal-metadata"))
