@@ -5,6 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import { formatBulkRecycleProgress, recycleImagesSequentially } from '../lib/bulkRecycle';
 
 const MIN_PANEL_WIDTH = 240;
 const MAX_PANEL_WIDTH = 900;
@@ -59,7 +60,6 @@ export default function RightPreviewPanel() {
     openExternal,
     selectedIds,
     searchResults,
-    clearSelection,
     deleteImage,
     view,
     setView,
@@ -219,19 +219,11 @@ export default function RightPreviewPanel() {
   const executeBulkDelete = async () => {
     if (selectedCount === 0) return;
     const targets = [...selectedIds];
-    let success = 0;
-    for (const id of targets) {
-      const ok = await deleteImage(id);
-      if (ok) success++;
-    }
-    const failed = targets.length - success;
+    const result = await recycleImagesSequentially(targets, deleteImage, (progress) => {
+      setBulkMessage(formatBulkRecycleProgress(progress));
+    });
     setConfirmBulkDelete(false);
-    clearSelection();
-    setBulkMessage(
-      failed > 0
-        ? `Moved ${success}/${targets.length} to Recycle Bin. Failed: ${failed}.`
-        : `Moved ${success} image(s) to Recycle Bin.`
-    );
+    setBulkMessage(formatBulkRecycleProgress(result));
   };
 
   const handleBulkDeleteRequest = () => {

@@ -119,6 +119,70 @@ function PreviewTabsProbe() {
   );
 }
 
+function DeleteCleanupProbe() {
+  const {
+    modalImageIds,
+    setModalImageIds,
+    selectedIds,
+    selectImage,
+    previewTabIds,
+    activePreviewId,
+    previewById,
+    pinnedPreviewIds,
+    closedPreviewTabCount,
+    openPreviewTab,
+    closePreviewTab,
+    togglePinPreviewTab,
+    restoreLastClosedPreview,
+    revealImageId,
+    requestRevealImage,
+    favorites,
+    setFavoriteLevels,
+    seenImageIds,
+    markImageSeen,
+    enhancedSourceIds,
+    deleteImage,
+  } = useImageStore();
+  const [deleteResult, setDeleteResult] = React.useState('');
+
+  return (
+    <div>
+      <output aria-label="delete modal ids">{modalImageIds.join(',')}</output>
+      <output aria-label="delete selected ids">{selectedIds.join(',')}</output>
+      <output aria-label="delete preview tabs">{previewTabIds.join(',')}</output>
+      <output aria-label="delete active preview">{activePreviewId ?? ''}</output>
+      <output aria-label="delete preview cache">{Object.keys(previewById).join(',')}</output>
+      <output aria-label="delete pinned previews">{pinnedPreviewIds.join(',')}</output>
+      <output aria-label="delete closed previews">{closedPreviewTabCount}</output>
+      <output aria-label="delete reveal id">{revealImageId ?? ''}</output>
+      <output aria-label="delete favorite history">{favorites[previewProbeImage.id] ?? 0}</output>
+      <output aria-label="delete seen history">{seenImageIds[previewProbeImage.id] ? 'seen' : 'unseen'}</output>
+      <output aria-label="delete enhancement history">{enhancedSourceIds[previewProbeImage.id] ? 'enhanced' : 'plain'}</output>
+      <output aria-label="delete result">{deleteResult}</output>
+      <button type="button" onClick={() => openPreviewTab(previewProbeImage)}>Open deleted preview</button>
+      <button type="button" onClick={() => openPreviewTab(secondPreviewProbeImage)}>Open surviving preview</button>
+      <button type="button" onClick={() => togglePinPreviewTab(previewProbeImage.id)}>Pin deleted preview</button>
+      <button type="button" onClick={() => closePreviewTab(previewProbeImage.id)}>Close deleted preview</button>
+      <button type="button" onClick={() => {
+        selectImage(previewProbeImage, [secondPreviewProbeImage.id, previewProbeImage.id]);
+        setModalImageIds([secondPreviewProbeImage.id, previewProbeImage.id]);
+        requestRevealImage(previewProbeImage.id);
+        setFavoriteLevels([previewProbeImage.id], 4);
+        markImageSeen(previewProbeImage.id);
+      }}>Prepare deleted references</button>
+      <button type="button" onClick={async () => {
+        setDeleteResult(String(await deleteImage(previewProbeImage.id)));
+      }}>Recycle deleted source</button>
+      <button type="button" onClick={restoreLastClosedPreview}>Restore last closed preview</button>
+      <button type="button" onClick={() => selectImage(
+        thirdPreviewProbeImage,
+        [previewProbeImage.id, secondPreviewProbeImage.id, thirdPreviewProbeImage.id],
+        { range: true },
+      )}>Range select after recycle</button>
+    </div>
+  );
+}
+
 function SearchProbe() {
   const {
     phase,
@@ -1364,6 +1428,166 @@ describe('ImageProvider preview tab persistence', () => {
         version: 1,
         tabIds: [previewProbeImage.id],
         activeId: previewProbeImage.id,
+      });
+    });
+  });
+});
+
+describe('ImageProvider source recycle UI ownership', () => {
+  function createSourceRecycleFetch(deleteSucceeds: boolean) {
+    return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/delete')) {
+        return {
+          ok: deleteSucceeds,
+          status: deleteSucceeds ? 200 : 500,
+          statusText: deleteSucceeds ? 'OK' : 'Recycle failed',
+          json: async () => deleteSucceeds ? { ok: true } : { error: 'Recycle failed' },
+        } as Response;
+      }
+      if (url.includes('/api/search')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ results: [secondPreviewProbeImage], total: 1, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      if (url.includes('/api/enhance/jobs')) {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ jobs: [{
+            id: 'enhanced-history',
+            sourceId: previewProbeImage.id,
+            status: 'succeeded',
+            outputPath: 'C:/managed-output/preview-probe.png',
+          }] }),
+        } as Response;
+      }
+      if (url.includes('/api/favorites')) {
+        const request = init?.body ? JSON.parse(String(init.body)) as { favorites?: Record<string, number> } : null;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ favorites: request?.favorites ?? {} }),
+        } as Response;
+      }
+      if (url.includes('/api/seen')) {
+        const request = init?.body ? JSON.parse(String(init.body)) as { seen?: Record<string, true> } : null;
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ seen: request?.seen ?? {}, malformed: false }),
+        } as Response;
+      }
+      return { ok: true, status: 200, json: async () => ({}) } as Response;
+    });
+  }
+
+  async function prepareDeletedReferences() {
+    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete enhancement history' })).toHaveTextContent('enhanced');
+    });
+    await user.click(screen.getByRole('button', { name: 'Open deleted preview' }));
+    await user.click(screen.getByRole('button', { name: 'Open surviving preview' }));
+    await user.click(screen.getByRole('button', { name: 'Pin deleted preview' }));
+    await user.click(screen.getByRole('button', { name: 'Close deleted preview' }));
+    await user.click(screen.getByRole('button', { name: 'Open deleted preview' }));
+    await user.click(screen.getByRole('button', { name: 'Prepare deleted references' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete favorite history' })).toHaveTextContent('4');
+      expect(screen.getByRole('status', { name: 'delete seen history' })).toHaveTextContent('seen');
+      expect(screen.getByRole('status', { name: 'delete closed previews' })).toHaveTextContent('1');
+      expect(screen.getByRole('status', { name: 'delete active preview' })).toHaveTextContent(previewProbeImage.id);
+    });
+    return user;
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  it('purges every volatile path reference after recycle while retaining shared history', async () => {
+    vi.stubGlobal('fetch', createSourceRecycleFetch(true));
+    render(<ImageProvider><DeleteCleanupProbe /></ImageProvider>);
+    const user = await prepareDeletedReferences();
+
+    await user.click(screen.getByRole('button', { name: 'Recycle deleted source' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete result' })).toHaveTextContent('true');
+      expect(screen.getByRole('status', { name: 'delete modal ids' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'delete selected ids' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'delete preview tabs' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'delete active preview' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'delete preview cache' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'delete pinned previews' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'delete closed previews' })).toHaveTextContent('0');
+      expect(screen.getByRole('status', { name: 'delete reveal id' })).toHaveTextContent('');
+    });
+    expect(screen.getByRole('status', { name: 'delete favorite history' })).toHaveTextContent('4');
+    expect(screen.getByRole('status', { name: 'delete seen history' })).toHaveTextContent('seen');
+    expect(screen.getByRole('status', { name: 'delete enhancement history' })).toHaveTextContent('enhanced');
+    expect(JSON.parse(localStorage.getItem('pvu_pinned_tabs') || 'null')).toEqual([]);
+    expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || 'null')).toEqual({
+      version: 1,
+      tabIds: [secondPreviewProbeImage.id],
+      activeId: secondPreviewProbeImage.id,
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Restore last closed preview' }));
+    expect(screen.getByRole('status', { name: 'delete preview tabs' })).not.toHaveTextContent(previewProbeImage.id);
+    await user.click(screen.getByRole('button', { name: 'Range select after recycle' }));
+    expect(screen.getByRole('status', { name: 'delete selected ids' })).toHaveTextContent(thirdPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete selected ids' })).not.toHaveTextContent(previewProbeImage.id);
+  });
+
+  it('does not mutate UI or shared history when source recycle fails', async () => {
+    vi.stubGlobal('fetch', createSourceRecycleFetch(false));
+    render(<ImageProvider><DeleteCleanupProbe /></ImageProvider>);
+    const user = await prepareDeletedReferences();
+
+    await user.click(screen.getByRole('button', { name: 'Recycle deleted source' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete result' })).toHaveTextContent('false');
+    });
+    expect(screen.getByRole('status', { name: 'delete modal ids' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete selected ids' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete active preview' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete preview cache' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete pinned previews' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete closed previews' })).toHaveTextContent('1');
+    expect(screen.getByRole('status', { name: 'delete reveal id' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete favorite history' })).toHaveTextContent('4');
+    expect(screen.getByRole('status', { name: 'delete seen history' })).toHaveTextContent('seen');
+    expect(screen.getByRole('status', { name: 'delete enhancement history' })).toHaveTextContent('enhanced');
+  });
+
+  it('removes a recycled path from not-yet-restored tab and pin snapshots', async () => {
+    localStorage.setItem('pvu_preview_tabs', JSON.stringify({
+      version: 1,
+      tabIds: [previewProbeImage.id, secondPreviewProbeImage.id],
+      activeId: previewProbeImage.id,
+    }));
+    localStorage.setItem('pvu_pinned_tabs', JSON.stringify([previewProbeImage.id, secondPreviewProbeImage.id]));
+    vi.stubGlobal('fetch', createSourceRecycleFetch(true));
+    render(<ImageProvider><DeleteCleanupProbe /></ImageProvider>);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete pinned previews' }))
+        .toHaveTextContent(`${previewProbeImage.id},${secondPreviewProbeImage.id}`);
+    });
+    await user.click(screen.getByRole('button', { name: 'Recycle deleted source' }));
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_pinned_tabs') || 'null')).toEqual([secondPreviewProbeImage.id]);
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || 'null')).toEqual({
+        version: 1,
+        tabIds: [secondPreviewProbeImage.id],
+        activeId: secondPreviewProbeImage.id,
       });
     });
   });

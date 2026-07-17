@@ -150,6 +150,31 @@ describe('RightPreviewPanel bulk favorite levels', () => {
   });
 });
 
+describe('RightPreviewPanel bulk recycle', () => {
+  it('keeps failed image ids selected for retry after a partial recycle', async () => {
+    const secondId = 'C:/images/second.png';
+    const store = createStore({
+      withPreview: true,
+      selectedIds: [previewImage.id, secondId],
+      searchResults: [previewImage, { ...previewImage, id: secondId }],
+    });
+    vi.mocked(store.deleteImage)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
+    vi.mocked(useImageStore).mockReturnValue(store);
+    render(<RightPreviewPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Recycle' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Move to Recycle Bin' }));
+
+    expect(await screen.findByText('Moved 1/2 image(s) to Recycle Bin. 1 failed and remain selected for retry.'))
+      .toBeInTheDocument();
+    expect(store.deleteImage).toHaveBeenNthCalledWith(1, previewImage.id);
+    expect(store.deleteImage).toHaveBeenNthCalledWith(2, secondId);
+    expect(store.clearSelection).not.toHaveBeenCalled();
+  });
+});
+
 describe('RightPreviewPanel search availability', () => {
   it('explains why modal navigation is unavailable for an active tab outside the loaded result', () => {
     vi.mocked(useImageStore).mockReturnValue(createStore({ withPreview: true, searchResults: [] }));

@@ -668,6 +668,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const selectedIndexRef = useRef<number | null>(null);
   const activePreviewIdRef = useRef<string | null>(null);
   const previewTabIdsRef = useRef<string[]>([]);
+  const pinnedPreviewIdsRef = useRef<string[]>([]);
   const favoriteFilterNavigationRef = useRef<FavoriteFilterNavigationSnapshot>({
     showFavOnly: false,
     showUnfavOnly: false,
@@ -680,6 +681,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     selectedIndexRef.current = selectedIndex;
     activePreviewIdRef.current = activePreviewId;
     previewTabIdsRef.current = previewTabIds;
+    pinnedPreviewIdsRef.current = pinnedPreviewIds;
     favoriteFilterNavigationRef.current = {
       showFavOnly: showFavOnlyState,
       showUnfavOnly: showUnfavOnlyState,
@@ -691,6 +693,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     activePreviewId,
     enhancedSourceIds,
     favoriteFilterLevels,
+    pinnedPreviewIds,
     previewTabIds,
     selectedIndex,
     showEnhancedOnlyState,
@@ -2050,21 +2053,67 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         setSearchResults(nextResults);
         setSearchTotal(nextTotal);
         setTotalIndexed(prev => Math.max(0, prev - 1));
+
+        // A successful source recycle invalidates every browser-owned UI
+        // reference to the path. Shared Favorite/Seen history and enhancement
+        // jobs are intentionally independent records and are not deleted here.
+        const remainingTabIds = previewTabIdsRef.current.filter(tabId => tabId !== id);
+        const remainingPinnedIds = pinnedPreviewIdsRef.current.filter(pinnedId => pinnedId !== id);
+        const currentActiveId = activePreviewIdRef.current;
+        const nextActiveId = currentActiveId === id
+          ? remainingTabIds[remainingTabIds.length - 1] ?? null
+          : currentActiveId;
+        const pendingRestore = pendingPreviewTabsRestoreRef.current;
+        const remainingPendingTabIds = pendingRestore?.tabIds.filter(tabId => tabId !== id) ?? [];
+        const nextPendingRestore = pendingRestore && remainingPendingTabIds.length > 0
+          ? serializePersistedPreviewTabs(
+            remainingPendingTabIds,
+            pendingRestore.activeId === id ? null : pendingRestore.activeId,
+          )
+          : null;
+
+        previewTabIdsRef.current = remainingTabIds;
+        pinnedPreviewIdsRef.current = remainingPinnedIds;
+        activePreviewIdRef.current = nextActiveId;
+        pendingPreviewTabsRestoreRef.current = nextPendingRestore;
+        if (!nextPendingRestore) setPreviewTabsPersistenceReady(true);
+        if (!pendingRestore) previewTabsUserModifiedRef.current = true;
+
+        const persistedTabIds = [
+          ...remainingPendingTabIds,
+          ...remainingTabIds.filter(tabId => !remainingPendingTabIds.includes(tabId)),
+        ];
+        const persistedActiveId = nextPendingRestore?.activeId
+          ?? (nextActiveId && persistedTabIds.includes(nextActiveId) ? nextActiveId : null);
+        writeJsonLocalStorage(
+          PREVIEW_TAB_STORAGE_KEY,
+          serializePersistedPreviewTabs(persistedTabIds, persistedActiveId),
+        );
+        writeJsonLocalStorage('pvu_pinned_tabs', remainingPinnedIds);
+
         setModalImageIdsState(prev => prev.filter(imageId => imageId !== id));
         setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
-        setPreviewTabIds(prev => {
-          const remaining = prev.filter(tabId => tabId !== id);
-          setActivePreviewIdState(active => {
-            if (active !== id) return active;
-            return remaining.length > 0 ? remaining[remaining.length - 1] : null;
-          });
-          return remaining;
-        });
+        setSelectionAnchorId(anchorId => anchorId === id ? null : anchorId);
+        setPreviewTabIds(prev => prev.filter(tabId => tabId !== id));
+        setPinnedPreviewIds(prev => prev.filter(pinnedId => pinnedId !== id));
+        setActivePreviewIdState(activeId => activeId === id ? nextActiveId : activeId);
         setPreviewById(prev => {
+          if (!(id in prev)) return prev;
           const next = { ...prev };
           delete next[id];
           return next;
         });
+        setClosedPreviewStack(prev => prev.filter(closedId => closedId !== id));
+        setClosedPreviewById(prev => {
+          if (!(id in prev)) return prev;
+          const next = { ...prev };
+          delete next[id];
+          return next;
+        });
+        setRevealImageId(revealId => revealId === id ? null : revealId);
+        if (pendingFavoriteFilterMutationRef.current?.currentId === id) {
+          pendingFavoriteFilterMutationRef.current = null;
+        }
         const meta = searchMetaRef.current;
         void doSearchPage(
           meta.query,
