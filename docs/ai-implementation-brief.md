@@ -28,7 +28,7 @@ WPF版:
 
 - .NET 8 Windows WPF。Node、localhost、WebView/WebView2を必要としない。
 - Browserの意味と結果を維持し、native virtualization、Shell Recycle Bin、Explorer/FileDrop、Windows focus/Automationを使う。
-- current WPF実装はP0/P1と主要P2を実装済み。別実装は契約ID `WPF-*` とSection 17 gateを満たす。
+- current WPF実装はBrowser契約のP0〜P2を実装済み。別実装は契約ID `WPF-*` とSection 17 gateを満たし、P3のEnhancement ownershipや公開packagingを製品判断前に混ぜない。
 
 ## 3. 絶対に変えない意味
 
@@ -98,9 +98,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p0.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1a.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1b.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-catalog-stress.ps1 -Count 20000
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-product.ps1 -IncludeReloadSoak
 ```
 
-加えて`docs/wpf-product-spec.md` Section 17の全focused verifierを実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。
+最後のコマンドがSection 17のfocused verifier、20,000件stress、同一process reload soakを順番に統合実行する。個別コマンドは失敗箇所の切り分け用である。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。同じWPF projectを複数processから同時buildすると`obj`が競合するため、統合gate自体は直列実行する。
 
 Visual:
 
