@@ -111,6 +111,22 @@ function readStoredFavoritesSnapshot(serialized: string): Record<string, number>
   return normalizeFavorites(parsed);
 }
 
+function normalizeSeenImageIds(value: unknown): Record<string, true> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {};
+  const normalized: Record<string, true> = {};
+  for (const [id, marker] of Object.entries(value)) {
+    if (id && marker) normalized[id] = true;
+  }
+  return normalized;
+}
+
+function mergeSeenImageIds(
+  first: Record<string, true>,
+  second: Record<string, true>,
+): Record<string, true> {
+  return { ...first, ...second };
+}
+
 function mergeFavorites(
   first: Record<string, number>,
   second: Record<string, number>,
@@ -379,6 +395,27 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       flushViewSettings();
     }, VIEW_SETTINGS_FLUSH_DELAY_MS);
   }, [flushViewSettings]);
+  const mergeSharedSeen = useCallback((sharedSeen: Record<string, true>) => {
+    const merged = mergeSeenImageIds(sharedSeen, seenImageIdsRef.current);
+    seenImageIdsRef.current = merged;
+    setSeenImageIds((currentSeen) => mergeSeenImageIds(sharedSeen, currentSeen));
+    return merged;
+  }, []);
+  const syncSeenToShared = useCallback((snapshot: Record<string, true>) => {
+    if (Object.keys(snapshot).length === 0) return;
+    fetch('/api/seen', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ seen: snapshot }),
+    })
+      .then(async (response) => {
+        if (!response.ok) return;
+        const data = await response.json();
+        if (data?.malformed) return;
+        mergeSharedSeen(normalizeSeenImageIds(data?.seen));
+      })
+      .catch(() => {});
+  }, [mergeSharedSeen]);
 
   // ── Load favorites + view settings from localStorage ──
   useEffect(() => {
@@ -469,19 +506,24 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     try {
       const seen = localStorage.getItem('pvu_seen_images');
       if (seen) {
-        const parsed = JSON.parse(seen);
-        if (parsed && typeof parsed === 'object') {
-          const normalized: Record<string, true> = {};
-          for (const [id, value] of Object.entries(parsed)) {
-            if (typeof id === 'string' && value) normalized[id] = true;
-          }
-          seenImageIdsRef.current = normalized;
-          setSeenImageIds(normalized);
-        }
+        const normalized = normalizeSeenImageIds(JSON.parse(seen));
+        seenImageIdsRef.current = normalized;
+        setSeenImageIds(normalized);
       }
     } catch { /* ignore */ }
+    fetch('/api/seen')
+      .then((response) => response.json())
+      .then((data) => {
+        if (data?.malformed) return;
+        const localSeen = seenImageIdsRef.current;
+        const merged = mergeSharedSeen(normalizeSeenImageIds(data?.seen));
+        if (Object.keys(localSeen).some((id) => !data?.seen?.[id])) {
+          syncSeenToShared(merged);
+        }
+      })
+      .catch(() => {});
     setUiPreferencesHydrated(true);
-  }, []);
+  }, [mergeSharedSeen, syncSeenToShared]);
 
   // ── Persist favorites ──
   useEffect(() => {
@@ -626,7 +668,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
     writeJsonLocalStorage('pvu_scroll_memory', scrollMemoryRef.current);
     writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
-  }, [flushViewSettings]);
+    syncSeenToShared(seenImageIdsRef.current);
+  }, [flushViewSettings, syncSeenToShared]);
 
   // ── Load key bindings from server ──
   useEffect(() => {
@@ -1185,13 +1228,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
     seenImagesFlushRef.current = setTimeout(() => {
       seenImagesFlushRef.current = null;
-      writeJsonLocalStorage('pvu_seen_images', seenImageIdsRef.current);
+      const snapshot = seenImageIdsRef.current;
+      writeJsonLocalStorage('pvu_seen_images', snapshot);
+      syncSeenToShared(snapshot);
     }, SEEN_IMAGES_FLUSH_DELAY_MS);
     setSeenImageIds((prev) => {
       if (prev[id]) return prev;
       return { ...prev, [id]: true };
     });
-  }, []);
+  }, [syncSeenToShared]);
 
   const requestRevealImage = useCallback((id: string) => {
     setRevealImageId(id);

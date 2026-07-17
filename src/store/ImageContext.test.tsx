@@ -41,6 +41,16 @@ function FavoritesProbe() {
   );
 }
 
+function SeenProbe() {
+  const { seenImageIds, markImageSeen } = useImageStore();
+  return (
+    <div>
+      <output aria-label="seen state">{JSON.stringify(seenImageIds)}</output>
+      <button type="button" onClick={() => markImageSeen('browser-explicit.png')}>Mark seen</button>
+    </div>
+  );
+}
+
 class MockEventSource {
   static instances: MockEventSource[] = [];
   onmessage: ((event: MessageEvent) => void) | null = null;
@@ -261,6 +271,60 @@ describe('ImageProvider browser UI preferences', () => {
     await waitFor(() => {
       expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('{}');
     });
+  });
+
+  it('unions shared seen state and preserves a newer local mark during response reconciliation', async () => {
+    const seenPutBodies: unknown[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/seen') && (!init?.method || init.method === 'GET')) {
+        return {
+          ok: true,
+          json: async () => ({ seen: { 'wpf-existing.png': true }, malformed: false }),
+        } as Response;
+      }
+      if (url.includes('/api/seen') && init?.method === 'PUT') {
+        seenPutBodies.push(JSON.parse(String(init.body)));
+        return {
+          ok: true,
+          json: async () => ({
+            seen: {
+              'wpf-existing.png': true,
+              'wpf-during-write.png': true,
+              'browser-explicit.png': true,
+            },
+            malformed: false,
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => (url.includes('/api/favorites') ? { favorites: {} } : { jobs: [] }),
+      } as Response;
+    }));
+    const user = userEvent.setup();
+
+    render(
+      <ImageProvider>
+        <SeenProbe />
+      </ImageProvider>
+    );
+
+    expect(await screen.findByRole('status', { name: 'seen state' }))
+      .toHaveTextContent('"wpf-existing.png":true');
+    await user.click(screen.getByRole('button', { name: 'Mark seen' }));
+
+    await waitFor(() => {
+      expect(seenPutBodies).toEqual([{
+        seen: { 'wpf-existing.png': true, 'browser-explicit.png': true },
+      }]);
+    });
+    await waitFor(() => {
+      const seen = screen.getByRole('status', { name: 'seen state' });
+      expect(seen).toHaveTextContent('"browser-explicit.png":true');
+    });
+    expect(screen.getByRole('status', { name: 'seen state' }))
+      .toHaveTextContent('"wpf-during-write.png":true');
   });
 
   it('restores a valid favorite backup when the primary key is missing', async () => {
