@@ -8350,6 +8350,20 @@ public partial class App : Application
                 await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
                 bool deleteFocusRestored = win.IsCardsListFocusedForSmoke;
 
+                bool modalOpened = win.OpenModalForSmoke();
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool modalInitialFocus = modalOpened
+                    && win.IsModalDialogFocusedForSmoke
+                    && win.ModalFocusTrapConfiguredForSmoke
+                    && win.ModalAccessibilityContractForSmoke;
+                bool modalControlFocused = win.FocusModalCloseForSmoke();
+                bool modalEscCloses = win.InvokePreviewKeyForSmoke(Key.Escape);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool modalFocusRestored = modalControlFocused
+                    && modalEscCloses
+                    && !win.ModalVisibleForSmoke
+                    && win.IsCardsListFocusedForSmoke;
+
                 File.WriteAllText(statePath + ".lock", "{\"pid\":1}");
                 win.FlushStateForSmoke();
                 bool lockBusyStatus = win.DeleteStatusForSmoke.Contains("busy", StringComparison.OrdinalIgnoreCase) && win.DeleteStatusRetryVisibleForSmoke;
@@ -8393,6 +8407,7 @@ public partial class App : Application
                     && cardsFocused && globalShortcutHandled
                     && settingsFocus && settingsFocusRestored
                     && deleteFocus && deleteFocusRestored
+                    && modalInitialFocus && modalFocusRestored
                     && lockBusyStatus && lockRetryCleared
                     && favoriteRefused && seenRefused && stateRefused && recentRefused
                     && logoAccessible && logoActivated;
@@ -8400,7 +8415,7 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "non-blocking recoverable status, persistence refusal, scan/decode warning, accessibility naming, dialog focus, and shortcut guards passed"
+                        ? "non-blocking recoverable status, persistence refusal, scan/decode warning, accessibility naming, settings/delete/modal focus return, and shortcut guards passed"
                         : "P1B error-surface or accessibility expectations did not match",
                     DecoderStatus = decoderStatus,
                     ScanStatus = scanStatus,
@@ -8428,6 +8443,8 @@ public partial class App : Application
                     SettingsFocusRestored = settingsFocusRestored,
                     DeleteFocus = deleteFocus,
                     DeleteFocusRestored = deleteFocusRestored,
+                    ModalInitialFocus = modalInitialFocus,
+                    ModalFocusRestored = modalFocusRestored,
                     LogoAccessible = logoAccessible,
                     LogoActivated = logoActivated,
                 };
@@ -10809,10 +10826,10 @@ public partial class App : Application
                 int enhancementJobsBefore = win.EnhancementJobsReadForSmoke;
                 int enhancementCandidatesBefore = win.EnhancedCandidateCountForSmoke;
 
-                PromptTagSearchSmokeSnapshot appended = win.SearchModalPromptTagForSmoke("soft light");
+                PromptTagSearchSmokeSnapshot appended = win.SearchModalPromptTagWithKeyForSmoke("soft light", Key.Enter);
                 bool reopened = win.OpenModalForSmoke();
                 PngMetadataSmokeSnapshot refreshedMetadata = await win.WaitForPreviewPngMetadataForSmokeAsync(taggedName);
-                PromptTagSearchSmokeSnapshot deduped = win.SearchModalPromptTagForSmoke("soft light");
+                PromptTagSearchSmokeSnapshot deduped = win.SearchModalPromptTagWithKeyForSmoke("soft light", Key.Space);
                 ViewerState? persistedState = ReadPersistedState(statePath);
                 var reloaded = HiddenWindow();
                 reloaded.Show();
@@ -13818,6 +13835,8 @@ public partial class App : Application
         public bool SettingsFocusRestored { get; init; }
         public bool DeleteFocus { get; init; }
         public bool DeleteFocusRestored { get; init; }
+        public bool ModalInitialFocus { get; init; }
+        public bool ModalFocusRestored { get; init; }
         public bool LogoAccessible { get; init; }
         public bool LogoActivated { get; init; }
     }

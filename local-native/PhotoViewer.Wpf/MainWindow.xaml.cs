@@ -228,6 +228,7 @@ public partial class MainWindow : Window
     private Action? _statusRetryAction;
     private IInputElement? _deleteFocusBeforeDialog;
     private IInputElement? _settingsFocusBeforeDialog;
+    private IInputElement? _modalFocusBeforeOverlay;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -6127,6 +6128,8 @@ public partial class MainWindow : Window
     {
         if (SelectedTile() is not Tile t) return;
         bool opening = Modal.Visibility != Visibility.Visible;
+        if (opening)
+            _modalFocusBeforeOverlay = Keyboard.FocusedElement;
         if (!string.Equals(_modalTransformPath, t.Path, StringComparison.OrdinalIgnoreCase))
             ResetModalTransform(t.Path);
         if (!string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase))
@@ -6158,6 +6161,8 @@ public partial class MainWindow : Window
         ModalArtGlow.Fill = t.ArtGlow;
         SetModalMetadataSidebarVisible(false);
         Modal.Visibility = Visibility.Visible;
+        if (opening)
+            Dispatcher.BeginInvoke(Modal.Focus, DispatcherPriority.Input);
         Modal.UpdateLayout();
         UpdateModalFit();
         ScheduleModalFitUpdate();
@@ -6284,7 +6289,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal();
+    private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal(restoreFocus: true);
 
     private void ToggleModalMetadataSidebar_Click(object sender, RoutedEventArgs e)
         => SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
@@ -6320,8 +6325,11 @@ public partial class MainWindow : Window
         ScheduleModalFitUpdate();
     }
 
-    private void CloseModal()
+    private void CloseModal(bool restoreFocus = false)
     {
+        bool wasVisible = Modal.Visibility == Visibility.Visible;
+        IInputElement? focusTarget = _modalFocusBeforeOverlay;
+        _modalFocusBeforeOverlay = null;
         CancelPendingModalSingleClick();
         EndModalPointerGesture();
         _modalCts?.Cancel();
@@ -6334,6 +6342,8 @@ public partial class MainWindow : Window
         _modalFeedbackTimer.Stop();
         ModalInteractionFeedback.Visibility = Visibility.Collapsed;
         ResetModalTransform();
+        if (wasVisible && restoreFocus)
+            RestoreOverlayFocus(focusTarget);
     }
 
     private void ToggleModalEnhanced_Click(object sender, RoutedEventArgs e) => ToggleModalEnhanced();
@@ -7346,7 +7356,12 @@ public partial class MainWindow : Window
         {
             if (target is UIElement element && element.IsVisible && element.IsEnabled && element.Focus())
                 return;
-            CardsList.Focus();
+            if (Landing.Visibility == Visibility.Visible && OpenFolderSetButton.IsVisible && OpenFolderSetButton.IsEnabled && OpenFolderSetButton.Focus())
+                return;
+            ListBox activeList = RowsList.Visibility == Visibility.Visible ? RowsList : CardsList;
+            if (activeList.IsVisible && activeList.IsEnabled && activeList.Focus())
+                return;
+            LogoHomeButton.Focus();
         }, DispatcherPriority.Input);
 
     private static string StatePath => Path.Combine(
@@ -7833,7 +7848,7 @@ public partial class MainWindow : Window
         if (Modal.Visibility != Visibility.Visible)
             return false;
 
-        CloseModal();
+        CloseModal(restoreFocus: true);
         return true;
     }
 
@@ -7852,6 +7867,13 @@ public partial class MainWindow : Window
             // Let dialog controls retain normal Tab/Shift+Tab/Space/Enter behavior;
             // only gallery-global shortcuts are suppressed while an overlay is active.
             base.OnPreviewKeyDown(e);
+            return;
+        }
+
+        if (Modal.Visibility == Visibility.Visible && key == Key.Escape)
+        {
+            CloseModal(restoreFocus: true);
+            e.Handled = true;
             return;
         }
 
@@ -8328,6 +8350,31 @@ public partial class MainWindow : Window
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ShowSelectedFolderBucketsButton), "Show selected folder buckets", StringComparison.Ordinal)
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(HideSelectedFolderBucketsButton), "Hide selected folder buckets", StringComparison.Ordinal);
     public bool ModalVisibleForSmoke => Modal.Visibility == Visibility.Visible;
+    public bool IsModalDialogFocusedForSmoke => Modal.IsKeyboardFocusWithin;
+    public bool ModalFocusTrapConfiguredForSmoke
+        => KeyboardNavigation.GetTabNavigation(Modal) == KeyboardNavigationMode.Cycle
+            && KeyboardNavigation.GetControlTabNavigation(Modal) == KeyboardNavigationMode.Cycle;
+    public bool ModalAccessibilityContractForSmoke
+        => string.Equals(AutomationProperties.GetName(Modal), "Image preview dialog", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(Modal))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalPreviousButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalPreviousButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalNextButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalNextButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalMetadataSidebar))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalMetadataSidebar))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalPromptTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalPromptTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalNegativeTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalNegativeTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(ModalSettingsTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ModalSettingsTabButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(CopyModalPromptButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(CopyModalPromptButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(CopyModalNegativeButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(CopyModalNegativeButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(CopyModalMetadataButton))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(CopyModalMetadataButton));
     public string? PreviewDecodedPathForSmoke => _previewDecodedPath;
     public string? PreviewMetadataPathForSmoke => _currentPreviewMetadataPath;
     public string? ModalSourcePathForSmoke => _modalSourceTilePath;
@@ -9363,6 +9410,27 @@ public partial class MainWindow : Window
         bool applied = chip is not null;
         if (chip is not null)
             chip.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+
+        return PromptTagSearchSnapshotForSmoke(applied);
+    }
+
+    public PromptTagSearchSmokeSnapshot SearchModalPromptTagWithKeyForSmoke(string tag, Key key)
+    {
+        Button? chip = ModalPromptChips.Children
+            .OfType<Button>()
+            .FirstOrDefault(candidate => string.Equals(candidate.Tag as string, tag, StringComparison.OrdinalIgnoreCase));
+        PresentationSource? source = PresentationSource.FromVisual(this);
+        bool applied = false;
+        if (chip is not null && source is not null)
+        {
+            chip.Focus();
+            var args = new KeyEventArgs(Keyboard.PrimaryDevice, source, Environment.TickCount, key)
+            {
+                RoutedEvent = Keyboard.PreviewKeyDownEvent,
+            };
+            chip.RaiseEvent(args);
+            applied = args.Handled;
+        }
 
         return PromptTagSearchSnapshotForSmoke(applied);
     }

@@ -573,6 +573,8 @@ Accessibility:
 - interactive controlはButton/Toggle/CheckBox等のnative peerを使う。
 - icon-only controlはAutomationName/ToolTipを持つ。
 - dialogはinitial focus、Escape、close後focus returnを持つ。
+- Modalはnamed focusable rootへinitial focusを置き、Tab/Control+Tabをsurface内でcycleする。Modal内buttonへfocus中でもEscapeは最上位surfaceを閉じ、明示close後はopener、現在表示中のGrid/List、Landing primary actionの順で有効なfocus targetへ戻す。
+- Modal metadata sidebar、Prompt/Negative/Settings tab、copy action、previous/next edge zoneはAutomation Name/HelpTextを持つ。
 - bulk summary/errorはscreen readerが理解できる名前/statusを持つ。
 - disabled actionは単に消すのではなく、必要なら理由をstatusへ示す。
 - keyboardだけでLanding→Viewer→filter→selection→preview→tab→modal→settings→Delete confirmationを操作できる。

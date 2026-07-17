@@ -758,7 +758,10 @@
       </Border>
     </Grid>
 
-    <Grid x:Name="Modal" Grid.RowSpan="3" Panel.ZIndex="300" Visibility="Collapsed" Background="#EB040407">
+    <Grid x:Name="Modal" Grid.RowSpan="3" Panel.ZIndex="300" Visibility="Collapsed" Background="#EB040407"
+          Focusable="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
+          AutomationProperties.Name="Image preview dialog"
+          AutomationProperties.HelpText="Preview the selected image. Use Left and Right to navigate, Escape to close, and Tab to move through preview controls.">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
@@ -834,17 +837,21 @@
         </Button>
 
         <Border x:Name="ModalMetadataSidebar" HorizontalAlignment="Right" VerticalAlignment="Center" Width="300" MaxHeight="640" Visibility="Collapsed"
-                Margin="0,0,84,0" CornerRadius="10" Background="#E6121218" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12">
+                Margin="0,0,84,0" CornerRadius="10" Background="#E6121218" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="12"
+                AutomationProperties.Name="Image metadata sidebar" AutomationProperties.HelpText="Review prompt, negative prompt, generation settings, and PNG metadata.">
           <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <StackPanel>
               <Border Background="{StaticResource SoftFill}" CornerRadius="7" Padding="3" Margin="0,0,0,12">
                 <UniformGrid Columns="3">
                   <RadioButton x:Name="ModalPromptTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
-                               Content="Prompt" Tag="prompt" IsChecked="True" Click="ModalMetadataTab_Click"/>
+                               Content="Prompt" Tag="prompt" IsChecked="True" Click="ModalMetadataTab_Click"
+                               AutomationProperties.Name="Prompt metadata tab" AutomationProperties.HelpText="Show prompt tags and prompt copy actions."/>
                   <RadioButton x:Name="ModalNegativeTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
-                               Content="Negative" Tag="negative" Click="ModalMetadataTab_Click"/>
+                               Content="Negative" Tag="negative" Click="ModalMetadataTab_Click"
+                               AutomationProperties.Name="Negative prompt metadata tab" AutomationProperties.HelpText="Show negative prompt text and copy actions."/>
                   <RadioButton x:Name="ModalSettingsTabButton" Style="{StaticResource Seg}" GroupName="ModalMetadataTabs"
-                               Content="Settings" Tag="settings" Click="ModalMetadataTab_Click"/>
+                               Content="Settings" Tag="settings" Click="ModalMetadataTab_Click"
+                               AutomationProperties.Name="Generation settings metadata tab" AutomationProperties.HelpText="Show generation settings parsed from PNG metadata."/>
                 </UniformGrid>
               </Border>
 
@@ -852,7 +859,8 @@
                 <DockPanel Margin="0,0,0,6">
                   <TextBlock Text="PROMPT" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                   <Button x:Name="CopyModalPromptButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
-                          Content="Copy" IsEnabled="False" ToolTip="No prompt metadata loaded" Click="CopyPreviewPrompt_Click"/>
+                          Content="Copy" IsEnabled="False" ToolTip="No prompt metadata loaded" Click="CopyPreviewPrompt_Click"
+                          AutomationProperties.Name="Copy prompt metadata" AutomationProperties.HelpText="Copy the loaded prompt text to the clipboard."/>
                 </DockPanel>
                 <WrapPanel x:Name="ModalPromptChips" Margin="0,0,0,12" AutomationProperties.Name="Prompt search tags" AutomationProperties.HelpText="Choose a prompt tag to append it to search, close the modal, and focus search."/>
                 <TextBlock x:Name="ModalPromptEmptyText" Text="No prompt tags available." Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="0,0,0,12"/>
@@ -863,7 +871,8 @@
                 <DockPanel Margin="0,0,0,6">
                   <TextBlock Text="NEGATIVE" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                   <Button x:Name="CopyModalNegativeButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
-                          Content="Copy" IsEnabled="False" ToolTip="No negative prompt metadata loaded" Click="CopyPreviewNegative_Click"/>
+                          Content="Copy" IsEnabled="False" ToolTip="No negative prompt metadata loaded" Click="CopyPreviewNegative_Click"
+                          AutomationProperties.Name="Copy negative prompt metadata" AutomationProperties.HelpText="Copy the loaded negative prompt text to the clipboard."/>
                 </DockPanel>
                 <TextBlock x:Name="ModalNegativeText" Text="-" Foreground="#F5A5A5" FontSize="12" TextWrapping="Wrap" LineHeight="18" MaxHeight="180" Margin="0,0,0,12"/>
               </StackPanel>
@@ -878,7 +887,8 @@
               <DockPanel Margin="0,0,0,8">
                 <TextBlock Text="PNG INFO" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
                 <Button x:Name="CopyModalMetadataButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Height="24" MinWidth="52" Padding="8,2"
-                        Content="Copy" IsEnabled="False" ToolTip="No PNG metadata loaded" Click="CopyPreviewMetadata_Click"/>
+                        Content="Copy" IsEnabled="False" ToolTip="No PNG metadata loaded" Click="CopyPreviewMetadata_Click"
+                        AutomationProperties.Name="Copy PNG metadata" AutomationProperties.HelpText="Copy the loaded PNG metadata summary to the clipboard."/>
               </DockPanel>
               <TextBlock x:Name="ModalMetadataStatusText" Text="No PNG metadata loaded" Foreground="{StaticResource TextTertiary}" FontSize="12" TextWrapping="Wrap"/>
             </StackPanel>
