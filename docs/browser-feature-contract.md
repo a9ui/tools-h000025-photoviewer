@@ -1972,7 +1972,6 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 16. API errorにlocal path/internal detailが含まれ得る。
 17. `/api/scan` はcaller指定absolute directoryを走査し、HTTP layerのauthentication/CSRF protectionもない。
 18. `/api/thumbs/warm` のtokenなしlegacy explicit pathはcaller指定dir containmentだけをguardし、active index membershipを必須にしない。現行clientのtoken付き経路はsession membershipもguardする。
-19. unknown enhancement preset IDは明示rejectせず先頭presetへfallbackする。
 20. ComfyUIのtimeout既定0は無期限待機を意味する。
 21. Browser interaction E2Eはcomponent/unit契約より範囲が狭く、Landing/recent中心の既存suiteに依存する。
 22. Sparse resultのgallery range selectionとmodal外keyboard selectionはloaded subsetに制限される。Modal navigation/Delete neighborはfull sparse order resolverを使う。
