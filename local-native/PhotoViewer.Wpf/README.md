@@ -76,6 +76,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
 - `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
+- `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
@@ -881,3 +882,8 @@ These files explain the early shell only and are not the current source of truth
 
 Current visual/product truth is the live Browser contract plus the real WPF
 `--shot` output described in `../../docs/wpf-product-spec.md`.
+
+Recursive scan does not descend into nested junctions, symbolic links, or
+other reparse-point directories. The scan-boundary verifier proves that only
+in-root images are indexed and that outside/cyclic targets and source files
+remain untouched.

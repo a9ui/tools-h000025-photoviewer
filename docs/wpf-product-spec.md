@@ -130,7 +130,7 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 ### WPF-LND-003 Scan
 
 - 各rootをrecursive enumerationする。
-- symbolic link/reparse pointを意図せず追跡しない。
+- 利用者が明示したroot自体はscan対象にできるが、その配下で見つけたjunction、symbolic link、mount point等のreparse file/directoryはcatalogへ入れず追跡しない。各rootのlexical tree外をcatalogへ入れず、visited directory setで循環を有限時間に止め、skip件数をrecoverable statusで知らせる。
 - permission/individual file failureは可能な項目を継続し、summary warningを出す。
 - supported extension以外をcatalogへ入れない。
 - recursive enumerationまたはmetadata読取中だけ`Cancel scan`を表示・有効化する。cancelはcurrent generationだけを無効化し、100ms以内を目標にLandingへ戻る。ordered folder draftを保持し、progressを0へ戻し、polite live statusでcancelを通知し、`Open folder set`へfocusを戻す。double cancelはno-op。
@@ -586,6 +586,7 @@ Accessibility:
 | Rapid UI/final-state stress | `powershell -File scripts/verify-wpf-rapid-ui-state.ps1` |
 | Shutdown final-state lifecycle | `powershell -File scripts/verify-wpf-shutdown-state.ps1` |
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
+| Recursive scan boundary | `powershell -File scripts/verify-wpf-scan-boundary.ps1` |
 | Preview hover | `powershell -File scripts/verify-wpf-preview-tab-hover.ps1` |
 | Preview tab reorder | `powershell -File scripts/verify-wpf-preview-tab-reorder.ps1` |
 | Modal wrap | `powershell -File scripts/verify-wpf-modal-wrap.ps1` |

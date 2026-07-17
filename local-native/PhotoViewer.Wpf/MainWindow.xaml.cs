@@ -429,6 +429,7 @@ public partial class MainWindow : Window
 
         IReadOnlyList<FileInfo> files;
         var scanAccessFailures = new ConcurrentQueue<string>();
+        var scanBoundarySkips = new ConcurrentQueue<string>();
         var scanWatch = Stopwatch.StartNew();
         try
         {
@@ -439,7 +440,7 @@ public partial class MainWindow : Window
                         Thread.Sleep(enumerationDelayForSmokeMs);
                     cts.Token.ThrowIfCancellationRequested();
                     return existingFolderSet
-                        .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures, cts.Token))
+                        .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures, scanBoundarySkips, cts.Token))
                         .Distinct(StringComparer.OrdinalIgnoreCase)
                         .Select(path => new FileInfo(path))
                         .OrderByDescending(file => file.LastWriteTimeUtc)
@@ -455,8 +456,8 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
-        if (!scanAccessFailures.IsEmpty)
-            ReportScanAccessFailures(scanAccessFailures.Count);
+        if (!scanAccessFailures.IsEmpty || !scanBoundarySkips.IsEmpty)
+            ReportScanTraversalWarnings(scanAccessFailures.Count, scanBoundarySkips.Count);
 
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
         if (files.Count > 0)
@@ -647,7 +648,17 @@ public partial class MainWindow : Window
     }
 
     private void ReportScanAccessFailures(int skippedCount)
-        => SetStatusToast($"Some folders could not be scanned because access was denied. {skippedCount:N0} location(s) were skipped; fix access and refresh the folder.");
+        => ReportScanTraversalWarnings(skippedCount, 0);
+
+    private void ReportScanTraversalWarnings(int accessFailureCount, int boundarySkipCount)
+    {
+        var messages = new List<string>();
+        if (accessFailureCount > 0)
+            messages.Add($"Some folders could not be scanned because access was denied. {accessFailureCount:N0} location(s) were skipped; fix access and refresh the folder.");
+        if (boundarySkipCount > 0)
+            messages.Add($"{boundarySkipCount:N0} junction or symbolic-link location(s) were not followed outside the selected folder tree.");
+        SetStatusToast(string.Join(" ", messages));
+    }
 
     private int AppendLandingFolders(IEnumerable<string> folders)
     {
@@ -1012,24 +1023,58 @@ public partial class MainWindow : Window
     private static IEnumerable<string> EnumerateImageFiles(
         string root,
         ConcurrentQueue<string>? accessFailures = null,
+        ConcurrentQueue<string>? boundarySkips = null,
         CancellationToken cancellationToken = default)
     {
         var pending = new Stack<string>();
         var images = new List<string>();
-        pending.Push(root);
+        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        string scanRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        pending.Push(scanRoot);
 
         while (pending.Count > 0)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var folder = pending.Pop();
+            string folder;
+            try
+            {
+                folder = Path.TrimEndingDirectorySeparator(Path.GetFullPath(pending.Pop()));
+            }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+            {
+                accessFailures?.Enqueue(root);
+                continue;
+            }
+            if (!IsPathInside(folder, scanRoot))
+            {
+                boundarySkips?.Enqueue(folder);
+                continue;
+            }
+            if (!visited.Add(folder))
+                continue;
 
             try
             {
                 foreach (var file in Directory.EnumerateFiles(folder))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (SupportedImageExtensions.Contains(Path.GetExtension(file)))
-                        images.Add(file);
+                    if (!SupportedImageExtensions.Contains(Path.GetExtension(file)))
+                        continue;
+                    try
+                    {
+                        string filePath = Path.GetFullPath(file);
+                        FileAttributes attributes = File.GetAttributes(filePath);
+                        if ((attributes & FileAttributes.ReparsePoint) != 0 || !IsPathInside(filePath, scanRoot))
+                        {
+                            boundarySkips?.Enqueue(filePath);
+                            continue;
+                        }
+                        images.Add(filePath);
+                    }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or ArgumentException or NotSupportedException)
+                    {
+                        accessFailures?.Enqueue(file);
+                    }
                 }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
@@ -1041,7 +1086,21 @@ public partial class MainWindow : Window
                 foreach (var child in Directory.EnumerateDirectories(folder))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    pending.Push(child);
+                    try
+                    {
+                        string childPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(child));
+                        FileAttributes attributes = File.GetAttributes(childPath);
+                        if ((attributes & FileAttributes.ReparsePoint) != 0 || !IsPathInside(childPath, scanRoot))
+                        {
+                            boundarySkips?.Enqueue(childPath);
+                            continue;
+                        }
+                        pending.Push(childPath);
+                    }
+                    catch (Exception ex) when (ex is UnauthorizedAccessException or IOException or ArgumentException or NotSupportedException)
+                    {
+                        accessFailures?.Enqueue(child);
+                    }
                 }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
@@ -1051,6 +1110,18 @@ public partial class MainWindow : Window
         }
 
         return images;
+    }
+
+    public static ScanBoundarySmokeSnapshot EnumerateImageFilesForSmoke(string root)
+    {
+        var accessFailures = new ConcurrentQueue<string>();
+        var boundarySkips = new ConcurrentQueue<string>();
+        var watch = Stopwatch.StartNew();
+        List<string> images = EnumerateImageFiles(root, accessFailures, boundarySkips)
+            .OrderBy(static path => path, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        watch.Stop();
+        return new ScanBoundarySmokeSnapshot(images, accessFailures.ToList(), boundarySkips.ToList(), watch.ElapsedMilliseconds);
     }
 
     private Tile MakeFileTile(
@@ -6809,7 +6880,9 @@ public partial class MainWindow : Window
     private static bool IsPathInside(string candidate, string root)
     {
         string normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
-        string prefix = normalizedRoot + Path.DirectorySeparatorChar;
+        string prefix = Path.EndsInDirectorySeparator(normalizedRoot)
+            ? normalizedRoot
+            : normalizedRoot + Path.DirectorySeparatorChar;
         return string.Equals(candidate, normalizedRoot, StringComparison.OrdinalIgnoreCase)
             || candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
     }
@@ -9027,6 +9100,12 @@ public sealed class LoadMetrics
             CompletedAtUtc = DateTime.UtcNow.ToString("O"),
         };
 }
+
+public sealed record ScanBoundarySmokeSnapshot(
+    IReadOnlyList<string> Images,
+    IReadOnlyList<string> AccessFailures,
+    IReadOnlyList<string> BoundarySkips,
+    long ElapsedMs);
 
 public sealed record PreviewDecodeSmokeSnapshot(
     bool Selected,

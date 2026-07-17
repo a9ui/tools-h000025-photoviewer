@@ -66,6 +66,13 @@ public partial class App : Application
             return;
         }
 
+        int scanBoundarySmokeIdx = Array.IndexOf(e.Args, "--scan-boundary-smoke");
+        if (scanBoundarySmokeIdx >= 0 && scanBoundarySmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureScanBoundarySmoke(e.Args[scanBoundarySmokeIdx + 1], e.Args);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -444,7 +451,40 @@ public partial class App : Application
         => args.Any(static arg => arg.StartsWith("--", StringComparison.Ordinal)
             && (string.Equals(arg, "--shot", StringComparison.OrdinalIgnoreCase)
                 || string.Equals(arg, "--startup-smoke", StringComparison.OrdinalIgnoreCase)
-                || arg.EndsWith("-smoke", StringComparison.OrdinalIgnoreCase)));
+                 || arg.EndsWith("-smoke", StringComparison.OrdinalIgnoreCase)));
+
+    private void CaptureScanBoundarySmoke(string resultPath, IReadOnlyList<string> args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string? root = ArgValue(args.ToArray(), "--folder");
+        object result;
+        bool ok = false;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(root) || !Directory.Exists(root))
+                throw new ArgumentException("scan boundary smoke requires an existing --folder");
+            ScanBoundarySmokeSnapshot snapshot = PhotoViewer.Wpf.MainWindow.EnumerateImageFilesForSmoke(root);
+            ok = true;
+            result = new
+            {
+                ok = true,
+                root = Path.GetFullPath(root),
+                images = snapshot.Images,
+                accessFailures = snapshot.AccessFailures,
+                boundarySkips = snapshot.BoundarySkips,
+                elapsedMs = snapshot.ElapsedMs,
+            };
+        }
+        catch (Exception ex)
+        {
+            result = new { ok = false, message = ex.Message };
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+        File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        Environment.ExitCode = ok ? 0 : 1;
+        Shutdown(Environment.ExitCode);
+    }
 
     private static void ConfigureAutomationStorage(IReadOnlyList<string> args)
     {
