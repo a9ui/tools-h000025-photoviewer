@@ -59,6 +59,13 @@ public partial class App : Application
             return;
         }
 
+        int scanCancelSmokeIdx = Array.IndexOf(e.Args, "--scan-cancel-smoke");
+        if (scanCancelSmokeIdx >= 0 && scanCancelSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureScanCancellationSmoke(e.Args[scanCancelSmokeIdx + 1]);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -697,6 +704,281 @@ public partial class App : Application
                 foreach (MainWindow window in windows)
                 {
                     try { if (window.IsLoaded) window.Close(); } catch { }
+                }
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureScanCancellationSmoke(string resultPath)
+    {
+        static async Task<bool> WaitForPhaseAsync(MainWindow window, string phase, int timeoutMilliseconds = 4000)
+        {
+            var watch = Stopwatch.StartNew();
+            while (watch.ElapsedMilliseconds < timeoutMilliseconds)
+            {
+                if (string.Equals(window.LoadPhaseForSmoke, phase, StringComparison.Ordinal))
+                    return true;
+                await Task.Delay(10);
+            }
+            return false;
+        }
+
+        static bool JsonContainsString(string path, string expected)
+        {
+            if (!File.Exists(path))
+                return false;
+            try
+            {
+                using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+                return Contains(document.RootElement);
+            }
+            catch
+            {
+                return false;
+            }
+
+            bool Contains(JsonElement element)
+            {
+                if (element.ValueKind == JsonValueKind.String)
+                    return string.Equals(element.GetString(), expected, StringComparison.OrdinalIgnoreCase);
+                if (element.ValueKind == JsonValueKind.Object)
+                    return element.EnumerateObject().Any(property => string.Equals(property.Name, expected, StringComparison.OrdinalIgnoreCase) || Contains(property.Value));
+                if (element.ValueKind == JsonValueKind.Array)
+                    return element.EnumerateArray().Any(Contains);
+                return false;
+            }
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-scan-cancel-" + Guid.NewGuid().ToString("N"));
+        string sourceRoot = Path.Combine(smokeRoot, "sources");
+        string enumerationA = Path.Combine(sourceRoot, "01 enumeration alpha");
+        string enumerationB = Path.Combine(sourceRoot, "02 enumeration beta");
+        string baselineFolder = Path.Combine(sourceRoot, "03 published baseline");
+        string metadataFolder = Path.Combine(sourceRoot, "04 metadata canceled");
+        string newerFolder = Path.Combine(sourceRoot, "05 immediate rescan wins");
+        string statePath = Path.Combine(smokeRoot, "cache", "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "cache", "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "cache", "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "cache", "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "cache", "enhance", "jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        foreach (string folder in new[] { enumerationA, enumerationB, baselineFolder, metadataFolder, newerFolder })
+            Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+        DateTime fixtureTime = new(2026, 7, 18, 1, 0, 0, DateTimeKind.Utc);
+        void WriteFolder(string folder, string prefix, int count)
+        {
+            for (int index = 0; index < count; index++)
+            {
+                string path = Path.Combine(folder, $"{prefix}-{index:00}.png");
+                WriteSmokePng(path, 128, 96, Color.FromRgb((byte)(60 + index * 7 % 170), (byte)(90 + index * 11 % 150), 165));
+                File.SetLastWriteTimeUtc(path, fixtureTime.AddMinutes(-index));
+            }
+        }
+        WriteFolder(enumerationA, "enum-a", 4);
+        WriteFolder(enumerationB, "enum-b", 3);
+        WriteFolder(baselineFolder, "baseline", 2);
+        WriteFolder(metadataFolder, "metadata", 8);
+        WriteFolder(newerFolder, "newer", 2);
+        Directory.CreateDirectory(Path.GetDirectoryName(statePath)!);
+        File.WriteAllText(statePath, "{\"Version\":2,\"futureScanMarker\":\"preserve\"}");
+        File.WriteAllText(favoritesPath, "{}");
+        File.WriteAllText(seenPath, "{}");
+        File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\",\"futureRecentMarker\":\"preserve\"}");
+        File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+
+        var sourceFingerprints = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string folder in new[] { enumerationA, enumerationB, baselineFolder, metadataFolder, newerFolder })
+            sourceFingerprints[folder] = FolderFingerprint(folder);
+        string favoritesBefore = FileFingerprint(favoritesPath);
+        string jobsBefore = FileFingerprint(jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var windows = new List<MainWindow>();
+        var window = HiddenWindow();
+        windows.Add(window);
+        window.Show();
+        window.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                int initialCatalog = window.CatalogCountForSmoke;
+                string stateBeforeEnumeration = FileFingerprint(statePath);
+                string seenBeforeEnumeration = FileFingerprint(seenPath);
+                string recentBeforeEnumeration = FileFingerprint(recentPath);
+                bool initiallyInactive = !window.CancelScanVisibleForSmoke && !window.CancelScanEnabledForSmoke
+                    && window.ScanCancellationSurfaceContractForSmoke;
+
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 650, metadataMilliseconds: 0);
+                Task enumerationTask = window.LoadFolderSetAsync([enumerationA, enumerationB]);
+                bool enumerationPhase = await WaitForPhaseAsync(window, "enumeration")
+                    && window.CancelScanVisibleForSmoke && window.CancelScanEnabledForSmoke;
+                var enumerationCancelWatch = Stopwatch.StartNew();
+                bool enumerationCancelAccepted = window.CancelActiveScanForSmoke();
+                enumerationCancelWatch.Stop();
+                await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool enumerationCancelUi = window.LandingVisibleForSmoke
+                    && !window.CancelScanVisibleForSmoke && !window.CancelScanEnabledForSmoke
+                    && window.OpenFolderSetFocusedForSmoke
+                    && window.ScanProgressForSmoke == 0
+                    && window.ScanLabelForSmoke.Contains("canceled", StringComparison.OrdinalIgnoreCase)
+                    && window.ScanMessageForSmoke.Contains("kept", StringComparison.OrdinalIgnoreCase);
+                string canceledUiMessage = window.ScanMessageForSmoke;
+                bool doubleCancelNoOp = !window.CancelActiveScanForSmoke()
+                    && string.Equals(canceledUiMessage, window.ScanMessageForSmoke, StringComparison.Ordinal);
+                bool enumerationDraftPreserved = window.LandingFolderSetForSmoke.SequenceEqual([enumerationA, enumerationB], StringComparer.OrdinalIgnoreCase);
+                bool enumerationImmediateIsolation = string.Equals(stateBeforeEnumeration, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeEnumeration, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeEnumeration, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && window.CurrentFolderSetForSmoke.Count == 0
+                    && window.CatalogCountForSmoke == initialCatalog;
+                await enumerationTask;
+                bool enumerationLateIgnored = string.Equals(window.LoadPhaseForSmoke, "canceled", StringComparison.Ordinal)
+                    && window.LandingVisibleForSmoke
+                    && window.CurrentFolderSetForSmoke.Count == 0
+                    && window.CatalogCountForSmoke == initialCatalog
+                    && string.Equals(canceledUiMessage, window.ScanMessageForSmoke, StringComparison.Ordinal)
+                    && string.Equals(stateBeforeEnumeration, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeEnumeration, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeEnumeration, FileFingerprint(recentPath), StringComparison.Ordinal);
+
+                window.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                await window.LoadFolderAsync(baselineFolder);
+                List<string> baselineNames = window.AllFileNamesForSmoke;
+                bool baselinePublished = !window.LandingVisibleForSmoke
+                    && window.CurrentFolderSetForSmoke.SequenceEqual([baselineFolder], StringComparer.OrdinalIgnoreCase)
+                    && baselineNames.Count == 2 && baselineNames.All(name => name.StartsWith("baseline-", StringComparison.Ordinal));
+                string stateBeforeMetadataCancel = FileFingerprint(statePath);
+                string seenBeforeMetadataCancel = FileFingerprint(seenPath);
+                string recentBeforeMetadataCancel = FileFingerprint(recentPath);
+
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 0, metadataMilliseconds: 900);
+                Task metadataTask = window.LoadFolderAsync(metadataFolder);
+                bool metadataPhase = await WaitForPhaseAsync(window, "metadata")
+                    && window.CancelScanVisibleForSmoke && window.CancelScanEnabledForSmoke;
+                var metadataCancelWatch = Stopwatch.StartNew();
+                bool metadataCancelAccepted = window.CancelActiveScanForSmoke();
+                metadataCancelWatch.Stop();
+                await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                bool metadataCancelUi = window.LandingVisibleForSmoke
+                    && window.OpenFolderSetFocusedForSmoke
+                    && !window.CancelScanVisibleForSmoke && !window.CancelScanEnabledForSmoke
+                    && window.ScanProgressForSmoke == 0
+                    && window.LandingFolderSetForSmoke.SequenceEqual([metadataFolder], StringComparer.OrdinalIgnoreCase);
+                bool metadataCancelIsolation = string.Equals(stateBeforeMetadataCancel, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeMetadataCancel, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeMetadataCancel, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && window.CurrentFolderSetForSmoke.SequenceEqual([baselineFolder], StringComparer.OrdinalIgnoreCase)
+                    && window.AllFileNamesForSmoke.SequenceEqual(baselineNames, StringComparer.OrdinalIgnoreCase);
+
+                window.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                Task newerTask = window.LoadFolderAsync(newerFolder);
+                await newerTask;
+                bool newerCompletedBeforeLateCanceledTask = !metadataTask.IsCompleted;
+                await metadataTask;
+                List<string> finalNames = window.AllFileNamesForSmoke;
+                ViewerState? finalState = ReadPersistedState(statePath);
+                bool newerRunWon = !window.LandingVisibleForSmoke
+                    && string.Equals(window.LoadPhaseForSmoke, "idle", StringComparison.Ordinal)
+                    && !window.CancelScanVisibleForSmoke && !window.CancelScanEnabledForSmoke
+                    && window.CurrentFolderSetForSmoke.SequenceEqual([newerFolder], StringComparer.OrdinalIgnoreCase)
+                    && window.LandingFolderSetForSmoke.SequenceEqual([newerFolder], StringComparer.OrdinalIgnoreCase)
+                    && finalNames.Count == 2 && finalNames.All(name => name.StartsWith("newer-", StringComparison.Ordinal))
+                    && finalState?.LastFolderSet?.SequenceEqual([newerFolder], StringComparer.OrdinalIgnoreCase) == true
+                    && string.Equals(window.LastLoadMetrics?.Folder, newerFolder, StringComparison.OrdinalIgnoreCase);
+                bool canceledFoldersNeverPublished = !JsonContainsString(statePath, enumerationA)
+                    && !JsonContainsString(statePath, enumerationB)
+                    && !JsonContainsString(statePath, metadataFolder)
+                    && !JsonContainsString(recentPath, enumerationA)
+                    && !JsonContainsString(recentPath, enumerationB)
+                    && !JsonContainsString(recentPath, metadataFolder)
+                    && !JsonContainsString(seenPath, enumerationA)
+                    && !JsonContainsString(seenPath, enumerationB)
+                    && !JsonContainsString(seenPath, metadataFolder);
+                bool successfulRunsPersisted = JsonContainsString(recentPath, baselineFolder)
+                    && JsonContainsString(recentPath, newerFolder)
+                    && JsonContainsString(seenPath, Path.Combine(baselineFolder, "baseline-00.png"))
+                    && JsonContainsString(seenPath, Path.Combine(newerFolder, "newer-00.png"));
+                bool unknownFieldsPreserved = JsonContainsString(statePath, "preserve")
+                    && JsonContainsString(recentPath, "preserve");
+                bool sourceUntouched = sourceFingerprints.All(pair => string.Equals(pair.Value, FolderFingerprint(pair.Key), StringComparison.Ordinal));
+                bool unrelatedCacheUntouched = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                string rootPrefix = Path.GetFullPath(smokeRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase));
+                bool residueFree = NoPersistenceResidue(smokeRoot);
+                bool responsive = enumerationCancelWatch.ElapsedMilliseconds < 100 && metadataCancelWatch.ElapsedMilliseconds < 100;
+                bool loadCtsBalanced = window.LoadCtsCreatedCountForSmoke == 4
+                    && window.LoadCtsRetiredCountForSmoke == window.LoadCtsCreatedCountForSmoke;
+                ok = initiallyInactive && enumerationPhase && enumerationCancelAccepted && enumerationCancelUi
+                    && doubleCancelNoOp && enumerationDraftPreserved && enumerationImmediateIsolation && enumerationLateIgnored
+                    && baselinePublished && metadataPhase && metadataCancelAccepted && metadataCancelUi && metadataCancelIsolation
+                    && newerCompletedBeforeLateCanceledTask && newerRunWon && canceledFoldersNeverPublished
+                    && successfulRunsPersisted && unknownFieldsPreserved && sourceUntouched && unrelatedCacheUntouched
+                    && isolated && residueFree && responsive && loadCtsBalanced;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "enumeration and metadata cancellation kept the draft and stores intact; an immediate newer rescan won over delayed canceled work"
+                        : "scan cancellation smoke did not meet its focus, publication, generation, or isolation contract",
+                    initiallyInactive,
+                    enumerationPhase,
+                    enumerationCancelAccepted,
+                    enumerationCancelMs = enumerationCancelWatch.ElapsedMilliseconds,
+                    enumerationCancelUi,
+                    doubleCancelNoOp,
+                    enumerationDraftPreserved,
+                    enumerationImmediateIsolation,
+                    enumerationLateIgnored,
+                    baselinePublished,
+                    metadataPhase,
+                    metadataCancelAccepted,
+                    metadataCancelMs = metadataCancelWatch.ElapsedMilliseconds,
+                    metadataCancelUi,
+                    metadataCancelIsolation,
+                    newerCompletedBeforeLateCanceledTask,
+                    newerRunWon,
+                    canceledFoldersNeverPublished,
+                    successfulRunsPersisted,
+                    unknownFieldsPreserved,
+                    sourceUntouched,
+                    unrelatedCacheUntouched,
+                    isolated,
+                    residueFree,
+                    loadCtsBalanced,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message, smokeRoot };
+            }
+            finally
+            {
+                foreach (MainWindow candidate in windows)
+                {
+                    try { if (candidate.IsLoaded) candidate.Close(); } catch { }
                 }
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);

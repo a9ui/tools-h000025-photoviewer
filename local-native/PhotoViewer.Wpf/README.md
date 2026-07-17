@@ -54,6 +54,7 @@ implementation. The normative current behavior is documented in
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
 - `--settings-unseen-dots-smoke <path>` temp-only sidebar/App Settings Unseen dots synchronization, persistence, accessibility, and Seen/cache isolation smoke
+- `--scan-cancel-smoke <path>` temp-only enumeration/metadata Cancel scan, generation, focus, immediate-rescan, and no-partial-publish smoke
 - `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
 - `--recent-write-ownership-smoke <path>` temp-only explicit folder-set commit ownership, retry, and byte-isolation smoke
 - `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
@@ -302,6 +303,19 @@ local WPF state persistence, and favorites/seen isolation:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --folder-set-smoke "$env:TEMP\photoviewer-wpf-folder-set-smoke.json" --folder .\local-native\ui-mockup
+```
+
+While recursive enumeration or metadata loading is active, Landing exposes a
+single `Cancel scan` action. Cancellation invalidates only that load generation,
+keeps the ordered folder draft, clears progress with a polite status, and returns
+focus to `Open folder set`. A canceled run cannot publish a partial catalog,
+current folder, state, recent entry, or Seen entry, and a delayed completion
+cannot overwrite an immediate newer rescan. The verifier injects delayed worker
+completion under a temporary root and covers both phases, double cancel, focus /
+Automation, source/cache isolation, and final newer-run ownership:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-scan-cancel.ps1
 ```
 
 Grid zoom smoke verifies thumbnail size controls and the same card-width helper

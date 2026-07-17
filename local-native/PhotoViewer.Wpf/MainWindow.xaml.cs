@@ -152,6 +152,13 @@ public partial class MainWindow : Window
     private long _modalSingleClickGeneration;
     private readonly DispatcherTimer _modalFeedbackTimer;
     private CancellationTokenSource? _loadCts;
+    private long _loadGeneration;
+    private bool _scanCancelable;
+    private string _loadPhase = "idle";
+    private int _scanEnumerationDelayForSmokeMs;
+    private int _scanMetadataDelayForSmokeMs;
+    private int _loadCtsCreatedCount;
+    private int _loadCtsRetiredCount;
     private CancellationTokenSource? _modalCts;
     private TaskCompletionSource<bool>? _modalDecodeCompletion;
     private CancellationTokenSource? _previewCts;
@@ -398,12 +405,23 @@ public partial class MainWindow : Window
         string resolvedFolderSummary = FormatFolderSetSummary(existingFolderSet);
 
         _loadCts?.Cancel();
+        long generation = ++_loadGeneration;
         var cts = new CancellationTokenSource();
+        _loadCtsCreatedCount++;
         _loadCts = cts;
+        int enumerationDelayForSmokeMs = _scanEnumerationDelayForSmokeMs;
+        int metadataDelayForSmokeMs = _scanMetadataDelayForSmokeMs;
+        SetLandingFolderSet(requestedFolderSet);
 
+        try
+        {
         Landing.Visibility = Visibility.Visible;
         LandingPanel.IsEnabled = false;
         ScanPanel.Visibility = Visibility.Visible;
+        _scanCancelable = true;
+        _loadPhase = "enumeration";
+        CancelScanButton.Visibility = Visibility.Visible;
+        CancelScanButton.IsEnabled = true;
         ScanBar.Value = 0;
         ScanPercent.Text = "0%";
         ScanLabel.Text = "Scanning...";
@@ -415,12 +433,18 @@ public partial class MainWindow : Window
         try
         {
             files = await Task.Run(
-                () => existingFolderSet
-                    .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures))
-                    .Distinct(StringComparer.OrdinalIgnoreCase)
-                    .Select(path => new FileInfo(path))
-                    .OrderByDescending(file => file.LastWriteTimeUtc)
-                    .ToList(),
+                () =>
+                {
+                    if (enumerationDelayForSmokeMs > 0)
+                        Thread.Sleep(enumerationDelayForSmokeMs);
+                    cts.Token.ThrowIfCancellationRequested();
+                    return existingFolderSet
+                        .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures, cts.Token))
+                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                        .Select(path => new FileInfo(path))
+                        .OrderByDescending(file => file.LastWriteTimeUtc)
+                        .ToList();
+                },
                 cts.Token);
         }
         catch (OperationCanceledException)
@@ -429,7 +453,7 @@ public partial class MainWindow : Window
         }
         scanWatch.Stop();
 
-        if (cts.IsCancellationRequested)
+        if (!IsCurrentLoad(generation, cts))
             return;
         if (!scanAccessFailures.IsEmpty)
             ReportScanAccessFailures(scanAccessFailures.Count);
@@ -437,18 +461,34 @@ public partial class MainWindow : Window
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
         if (files.Count > 0)
         {
+            _loadPhase = "metadata";
             ScanLabel.Text = "Reading image metadata...";
             try
             {
-                metadata = await Task.Run(() => ReadImageMetadata(files, cts.Token), cts.Token);
+                metadata = await Task.Run(() =>
+                {
+                    if (metadataDelayForSmokeMs > 0)
+                        Thread.Sleep(metadataDelayForSmokeMs);
+                    cts.Token.ThrowIfCancellationRequested();
+                    return ReadImageMetadata(files, cts.Token);
+                }, cts.Token);
             }
             catch (OperationCanceledException)
             {
                 return;
             }
+            if (!IsCurrentLoad(generation, cts))
+                return;
             if (metadata.DecodeFailures > 0)
                 SetStatusToast($"{metadata.DecodeFailures:N0} image file(s) could not be decoded. They remain listed; refresh after fixing the files.");
         }
+
+        if (!IsCurrentLoad(generation, cts))
+            return;
+        _scanCancelable = false;
+        _loadPhase = "publishing";
+        CancelScanButton.Visibility = Visibility.Collapsed;
+        CancelScanButton.IsEnabled = false;
 
         var materializeWatch = Stopwatch.StartNew();
         Tile? restoredActivePreviewTile = null;
@@ -510,6 +550,7 @@ public partial class MainWindow : Window
             ScanPercent.Text = "0%";
             ScanLabel.Text = "No images found";
             ScanMessage.Text = "Choose another folder set.";
+            FinishCurrentLoad(generation, cts);
             return;
         }
 
@@ -522,6 +563,8 @@ public partial class MainWindow : Window
             CommitSharedRecentFolderSet(_currentFolderSet);
 
         var thumbnails = await LoadThumbnailsAsync(cts.Token);
+        if (!IsCurrentLoad(generation, cts))
+            return;
         totalWatch.Stop();
         LastLoadMetrics = LoadMetrics.Create(
             resolvedFolderSummary,
@@ -540,6 +583,67 @@ public partial class MainWindow : Window
             _previewDeferredDecodeCount,
             totalWatch.ElapsedMilliseconds);
         UpdateGridMetrics(LastLoadMetrics);
+        FinishCurrentLoad(generation, cts);
+        }
+        finally
+        {
+            RetireLoad(generation, cts);
+        }
+    }
+
+    private bool IsCurrentLoad(long generation, CancellationTokenSource cts)
+        => generation == _loadGeneration
+            && ReferenceEquals(_loadCts, cts)
+            && !cts.IsCancellationRequested;
+
+    private void FinishCurrentLoad(long generation, CancellationTokenSource cts)
+    {
+        if (generation != _loadGeneration || !ReferenceEquals(_loadCts, cts))
+            return;
+
+        _scanCancelable = false;
+        _loadPhase = "idle";
+        CancelScanButton.Visibility = Visibility.Collapsed;
+        CancelScanButton.IsEnabled = false;
+        _loadCts = null;
+    }
+
+    private void RetireLoad(long generation, CancellationTokenSource cts)
+    {
+        // Every return path (success, explicit cancel, supersession, close, or
+        // exception) owns exactly one disposal. A stale run must not touch UI.
+        if (generation == _loadGeneration && ReferenceEquals(_loadCts, cts))
+        {
+            _scanCancelable = false;
+            _loadCts = null;
+        }
+        cts.Dispose();
+        _loadCtsRetiredCount++;
+    }
+
+    private bool CancelActiveScan()
+    {
+        if (!_scanCancelable || _loadCts is null || _loadCts.IsCancellationRequested)
+            return false;
+
+        CancellationTokenSource canceled = _loadCts;
+        _scanCancelable = false;
+        _loadPhase = "canceled";
+        _loadGeneration++;
+        _loadCts = null;
+        canceled.Cancel();
+        CancelScanButton.Visibility = Visibility.Collapsed;
+        CancelScanButton.IsEnabled = false;
+        Landing.Visibility = Visibility.Visible;
+        LandingPanel.IsEnabled = true;
+        ScanPanel.Visibility = Visibility.Visible;
+        ScanBar.Value = 0;
+        ScanPercent.Text = "";
+        ScanLabel.Text = "Scan canceled";
+        ScanMessage.Text = "Folder set kept. Ready to scan again.";
+        RefreshLandingFolderSetUi();
+        Dispatcher.BeginInvoke(OpenFolderSetButton.Focus, DispatcherPriority.Input);
+        return true;
     }
 
     private void ReportScanAccessFailures(int skippedCount)
@@ -905,7 +1009,10 @@ public partial class MainWindow : Window
         ScanLabel.Text = $"{done:N0} / {total:N0} thumbnails";
     }
 
-    private static IEnumerable<string> EnumerateImageFiles(string root, ConcurrentQueue<string>? accessFailures = null)
+    private static IEnumerable<string> EnumerateImageFiles(
+        string root,
+        ConcurrentQueue<string>? accessFailures = null,
+        CancellationToken cancellationToken = default)
     {
         var pending = new Stack<string>();
         var images = new List<string>();
@@ -913,12 +1020,14 @@ public partial class MainWindow : Window
 
         while (pending.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var folder = pending.Pop();
 
             try
             {
                 foreach (var file in Directory.EnumerateFiles(folder))
                 {
+                    cancellationToken.ThrowIfCancellationRequested();
                     if (SupportedImageExtensions.Contains(Path.GetExtension(file)))
                         images.Add(file);
                 }
@@ -930,7 +1039,10 @@ public partial class MainWindow : Window
             try
             {
                 foreach (var child in Directory.EnumerateDirectories(folder))
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
                     pending.Push(child);
+                }
             }
             catch (Exception ex) when (ex is UnauthorizedAccessException or IOException)
             {
@@ -5463,11 +5575,17 @@ public partial class MainWindow : Window
     {
         ScanPanel.Visibility = Visibility.Collapsed;
         LandingPanel.IsEnabled = true;
+        _scanCancelable = false;
+        _loadPhase = "idle";
+        CancelScanButton.Visibility = Visibility.Collapsed;
+        CancelScanButton.IsEnabled = false;
         ScanBar.Value = 0;
         Landing.Visibility = landing ? Visibility.Visible : Visibility.Collapsed;
     }
 
     private async void StartScan_Click(object sender, RoutedEventArgs e) => await OpenLandingFolderSetAsync();
+
+    private void CancelScan_Click(object sender, RoutedEventArgs e) => CancelActiveScan();
 
     private void AddPastedFolders_Click(object sender, RoutedEventArgs e)
     {
@@ -7615,6 +7733,26 @@ public partial class MainWindow : Window
     public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
     public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
     public bool LandingVisibleForSmoke => Landing.Visibility == Visibility.Visible;
+    public string LoadPhaseForSmoke => _loadPhase;
+    public bool CancelScanVisibleForSmoke => CancelScanButton.Visibility == Visibility.Visible;
+    public bool CancelScanEnabledForSmoke => CancelScanButton.IsEnabled;
+    public bool OpenFolderSetFocusedForSmoke => OpenFolderSetButton.IsKeyboardFocused;
+    public string ScanLabelForSmoke => ScanLabel.Text;
+    public string ScanMessageForSmoke => ScanMessage.Text;
+    public double ScanProgressForSmoke => ScanBar.Value;
+    public bool ScanCancellationSurfaceContractForSmoke
+        => string.Equals(AutomationProperties.GetName(CancelScanButton), "Cancel scan", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(CancelScanButton))
+            && string.Equals(AutomationProperties.GetName(ScanMessage), "Scan status", StringComparison.Ordinal)
+            && AutomationProperties.GetLiveSetting(ScanMessage) == AutomationLiveSetting.Polite;
+    public bool CancelActiveScanForSmoke() => CancelActiveScan();
+    public int LoadCtsCreatedCountForSmoke => _loadCtsCreatedCount;
+    public int LoadCtsRetiredCountForSmoke => _loadCtsRetiredCount;
+    public void ConfigureScanPhaseDelaysForSmoke(int enumerationMilliseconds, int metadataMilliseconds)
+    {
+        _scanEnumerationDelayForSmokeMs = Math.Max(0, enumerationMilliseconds);
+        _scanMetadataDelayForSmokeMs = Math.Max(0, metadataMilliseconds);
+    }
     public int RecentFolderSetCountForSmoke => _recentFolderSetViews.Count;
     public string LastFolderSetDisplayForSmoke => LastFolderSetText.Text;
     public int FolderBucketCountForSmoke => _folderBucketViews.Count;

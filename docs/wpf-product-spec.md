@@ -133,7 +133,8 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 - symbolic link/reparse pointを意図せず追跡しない。
 - permission/individual file failureは可能な項目を継続し、summary warningを出す。
 - supported extension以外をcatalogへ入れない。
-- scan cancellationは前loadのdecode/filterをcancelし、stale resultをUIへapplyしない。
+- recursive enumerationまたはmetadata読取中だけ`Cancel scan`を表示・有効化する。cancelはcurrent generationだけを無効化し、100ms以内を目標にLandingへ戻る。ordered folder draftを保持し、progressを0へ戻し、polite live statusでcancelを通知し、`Open folder set`へfocusを戻す。double cancelはno-op。
+- cancelされたrunはpartial catalog/current folder/state/recent/Seenをpublishしない。source、Favorite、Seen、Enhancement jobsを変更しない。遅延完了してもViewerへ遷移せず、直後に開始したnewer scanのcatalog、metrics、stateを上書きしない。
 - empty folderとscan failureは別copyにする。
 
 ## 4. 対応formatとmetadata

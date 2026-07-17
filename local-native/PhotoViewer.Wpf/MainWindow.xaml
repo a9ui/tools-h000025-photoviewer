@@ -675,8 +675,9 @@
             </ProgressBar.Template>
           </ProgressBar>
           <Border CornerRadius="8" Background="#05FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" Padding="0,8" Margin="0,10,0,0">
-            <TextBlock x:Name="ScanMessage" Text="Scanning files…" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="ScanMessage" Text="Scanning files…" Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center" AutomationProperties.Name="Scan status" AutomationProperties.LiveSetting="Polite"/>
           </Border>
+          <Button x:Name="CancelScanButton" Style="{StaticResource GhostButton}" Content="Cancel scan" Click="CancelScan_Click" Visibility="Collapsed" IsEnabled="False" HorizontalAlignment="Center" MinWidth="112" Margin="0,10,0,0" AutomationProperties.Name="Cancel scan" AutomationProperties.HelpText="Cancel only the active scan and keep the ordered folder draft."/>
         </StackPanel>
       </StackPanel>
       <Border x:Name="LandingFolderDropOverlay" Visibility="Collapsed" IsHitTestVisible="False" Margin="28" CornerRadius="14"
