@@ -517,12 +517,17 @@ public partial class App : Application
                         && Math.Abs(left.Top - right.Top) < 0.01
                         && Math.Abs(left.Width - right.Width) < 0.01
                         && Math.Abs(left.Height - right.Height) < 0.01;
+                static bool Contains(Rect outer, Rect inner)
+                    => inner.Left >= outer.Left - 0.01
+                        && inner.Top >= outer.Top - 0.01
+                        && inner.Right <= outer.Right + 0.01
+                        && inner.Bottom <= outer.Bottom + 0.01;
 
                 // Keep the injected secondary work area inside the CI desktop's
                 // physical bounds so Windows does not clamp an intentionally
                 // nonexistent monitor. Its offset/size still differs from the
                 // primary work area and proves the provider is authoritative.
-                var initial = new Rect(180, 100, 940, 570);
+                var initial = new Rect(180, 60, 940, 570);
                 var secondMonitorWorkArea = new Rect(80, 40, 1120, 600);
                 window.Left = initial.Left;
                 window.Top = initial.Top;
@@ -537,18 +542,61 @@ public partial class App : Application
                 Rect restored = window.WindowBoundsForSmoke;
                 bool restoredExactly = !window.FakeMaximizedForSmoke && SameRect(restored, initial);
 
+                // A disconnected monitor leaves the saved normal bounds far
+                // outside the current desktop. Restore must keep the complete
+                // window inside the new current work area.
+                var changedWorkArea = new Rect(100, 50, 1000, 600);
+                var disconnectedBounds = new Rect(2400, 140, 940, 570);
+                window.SetCurrentMonitorWorkAreaForSmoke(changedWorkArea);
+                Rect disconnectedRestore = window.RestoreFromFakeMaximizeForSmoke(disconnectedBounds);
+                Rect disconnectedExpected = PhotoViewer.Wpf.MainWindow.NormalizeRestoreBoundsForSmoke(disconnectedBounds, changedWorkArea);
+                bool disconnectedContained = SameRect(disconnectedRestore, disconnectedExpected)
+                    && Contains(changedWorkArea, disconnectedRestore);
+
+                // Resolution reductions must cap both dimensions and position,
+                // rather than restoring a normal window larger than the screen.
+                var oversizedBounds = new Rect(-500, -400, 2400, 1400);
+                Rect oversizedRestore = window.RestoreFromFakeMaximizeForSmoke(oversizedBounds);
+                bool oversizedContained = SameRect(oversizedRestore, changedWorkArea)
+                    && Contains(changedWorkArea, oversizedRestore);
+
+                // WPF bounds and monitor work areas are DIPs. A changed DIP work
+                // area models a PerMonitorV2 DPI transition without mutating the
+                // machine display configuration used by the verifier.
+                var dpiChangedWorkArea = new Rect(-1100, 40, 1100, 640);
+                var preDpiBounds = new Rect(-1520, 120, 1380, 780);
+                Rect dpiEquivalentRestore = PhotoViewer.Wpf.MainWindow.NormalizeRestoreBoundsForSmoke(preDpiBounds, dpiChangedWorkArea);
+                bool dpiEquivalentContained = Contains(dpiChangedWorkArea, dpiEquivalentRestore)
+                    && dpiEquivalentRestore.Width == dpiChangedWorkArea.Width
+                    && dpiEquivalentRestore.Height == dpiChangedWorkArea.Height;
+
+                window.Left = initial.Left;
+                window.Top = initial.Top;
+                window.Width = initial.Width;
+                window.Height = initial.Height;
+                initial = window.WindowBoundsForSmoke;
                 window.SetThrowingMonitorWorkAreaForSmoke();
                 window.ToggleMaximizeForSmoke();
                 Rect fallback = window.WindowBoundsForSmoke;
                 bool safeFallback = window.FakeMaximizedForSmoke && SameRect(fallback, SystemParameters.WorkArea);
                 window.ToggleMaximizeForSmoke();
                 bool fallbackRestored = !window.FakeMaximizedForSmoke && SameRect(window.WindowBoundsForSmoke, initial);
-                ok = usedCurrentMonitor && restoredExactly && safeFallback && fallbackRestored;
+                var fallbackOffscreenBounds = new Rect(5000, 5000, 1600, 900);
+                Rect fallbackNormalized = window.RestoreFromFakeMaximizeForSmoke(fallbackOffscreenBounds);
+                bool fallbackOffscreenContained = Contains(SystemParameters.WorkArea, fallbackNormalized);
+                ok = usedCurrentMonitor
+                    && restoredExactly
+                    && disconnectedContained
+                    && oversizedContained
+                    && dpiEquivalentContained
+                    && safeFallback
+                    && fallbackRestored
+                    && fallbackOffscreenContained;
                 result = new
                 {
                     ok,
                     message = ok
-                        ? "fake maximize used the current monitor work area, restored exact bounds, and retained a safe fallback"
+                        ? "fake maximize and restore stayed current-monitor-safe across topology, resolution, and DPI-equivalent changes"
                         : "window work-area contract failed",
                     initial,
                     secondMonitorWorkArea,
@@ -557,8 +605,22 @@ public partial class App : Application
                     fallback,
                     usedCurrentMonitor,
                     restoredExactly,
+                    changedWorkArea,
+                    disconnectedBounds,
+                    disconnectedRestore,
+                    disconnectedContained,
+                    oversizedBounds,
+                    oversizedRestore,
+                    oversizedContained,
+                    dpiChangedWorkArea,
+                    preDpiBounds,
+                    dpiEquivalentRestore,
+                    dpiEquivalentContained,
                     safeFallback,
                     fallbackRestored,
+                    fallbackOffscreenBounds,
+                    fallbackNormalized,
+                    fallbackOffscreenContained,
                 };
             }
             catch (Exception ex)

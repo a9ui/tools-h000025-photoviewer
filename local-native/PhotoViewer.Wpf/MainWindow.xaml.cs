@@ -7693,10 +7693,15 @@ public partial class MainWindow : Window
         // borderless content is not clipped by the maximized non-client frame.
         if (_fakeMaximized)
         {
-            Left = _restoreBounds.Left;
-            Top = _restoreBounds.Top;
-            Width = _restoreBounds.Width;
-            Height = _restoreBounds.Height;
+            Rect restored = NormalizeRestoreBounds(
+                _restoreBounds,
+                ResolveSafeCurrentMonitorWorkArea(),
+                MinWidth,
+                MinHeight);
+            Width = restored.Width;
+            Height = restored.Height;
+            Left = restored.Left;
+            Top = restored.Top;
             _fakeMaximized = false;
         }
         else
@@ -7709,6 +7714,25 @@ public partial class MainWindow : Window
             Height = wa.Height;
             _fakeMaximized = true;
         }
+    }
+
+    private static Rect NormalizeRestoreBounds(Rect saved, Rect workArea, double minWidth, double minHeight)
+    {
+        double safeMinWidth = Math.Min(workArea.Width, Math.Max(1, minWidth));
+        double safeMinHeight = Math.Min(workArea.Height, Math.Max(1, minHeight));
+        double width = double.IsFinite(saved.Width) && saved.Width > 0
+            ? Math.Clamp(saved.Width, safeMinWidth, workArea.Width)
+            : safeMinWidth;
+        double height = double.IsFinite(saved.Height) && saved.Height > 0
+            ? Math.Clamp(saved.Height, safeMinHeight, workArea.Height)
+            : safeMinHeight;
+        double left = double.IsFinite(saved.Left)
+            ? Math.Clamp(saved.Left, workArea.Left, workArea.Right - width)
+            : workArea.Left + ((workArea.Width - width) / 2);
+        double top = double.IsFinite(saved.Top)
+            ? Math.Clamp(saved.Top, workArea.Top, workArea.Bottom - height)
+            : workArea.Top + ((workArea.Height - height) / 2);
+        return new Rect(left, top, width, height);
     }
 
     private Rect ResolveSafeCurrentMonitorWorkArea()
@@ -7785,6 +7809,15 @@ public partial class MainWindow : Window
     public void SetThrowingMonitorWorkAreaForSmoke() => _currentMonitorWorkArea = () => throw new InvalidOperationException("injected monitor lookup failure");
     public void ResetCurrentMonitorWorkAreaForSmoke() => _currentMonitorWorkArea = ResolveCurrentMonitorWorkArea;
     public void ToggleMaximizeForSmoke() => Maximize_Click(this, new RoutedEventArgs());
+    public Rect RestoreFromFakeMaximizeForSmoke(Rect savedBounds)
+    {
+        _restoreBounds = savedBounds;
+        _fakeMaximized = true;
+        Maximize_Click(this, new RoutedEventArgs());
+        return WindowBoundsForSmoke;
+    }
+    public static Rect NormalizeRestoreBoundsForSmoke(Rect savedBounds, Rect workArea, double minWidth = 900, double minHeight = 560)
+        => NormalizeRestoreBounds(savedBounds, workArea, minWidth, minHeight);
 
     public string? SelectedPathForSmoke => SelectedTile()?.Path;
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;

@@ -23,8 +23,12 @@ try {
     if ($result.ok -ne $true) { $failures += "result was not ok: $($result.message)" }
     if ($result.usedCurrentMonitor -ne $true) { $failures += 'maximize did not use the injected current monitor' }
     if ($result.restoredExactly -ne $true) { $failures += 'restore bounds changed after maximize' }
+    if ($result.disconnectedContained -ne $true) { $failures += 'disconnected-monitor restore remained off-screen' }
+    if ($result.oversizedContained -ne $true) { $failures += 'resolution-change restore exceeded the current work area' }
+    if ($result.dpiEquivalentContained -ne $true) { $failures += 'DPI-equivalent restore exceeded the new DIP work area' }
     if ($result.safeFallback -ne $true) { $failures += 'monitor lookup failure did not use a safe fallback' }
     if ($result.fallbackRestored -ne $true) { $failures += 'fallback maximize did not restore exact bounds' }
+    if ($result.fallbackOffscreenContained -ne $true) { $failures += 'fallback restore did not normalize off-screen bounds' }
     $result | ConvertTo-Json -Depth 6
     if ($failures.Count -gt 0) { throw ($failures -join '; ') }
 }
