@@ -157,6 +157,8 @@ Decoderが個別画像を読めない場合、その画像だけplaceholder/reco
 
 表示開始後にsourceがtruncate/corrupt/exclusive lockへ変化した場合も同じ契約を適用する。Right PreviewまたはModalが先に表示したthumbnail/full bitmapを、後続のcurrent full decode失敗後まで成功画像として残してはならない。current path/generationの失敗だけがそのsurfaceをplaceholderへ戻してrecoverable statusを出し、cancel/stale completionは新しいsurfaceを消さない。同じpathが正常画像へreplaceまたはremove/recreateされた場合、次のdecode/Refreshはnew bytesを表示し、old completionを捨てる。
 
+巨大画像と極端な縦横比もsource dimensionのまま無制限にWICへ展開しない。`DecodePixelWidth`は小さいsourceを拡大し得るため、header dimensionからno-upscaleのfitを計算し、surface requested width²×5のpixel budget（絶対上限10,000,000 pixels）とrequested width×8のlong-edge（絶対上限16,384 pixels）の小さい方へaspect ratioを保ってdecodeする。幅が1px未満になる極端な縦長sourceは`DecodePixelHeight`でlong edgeを直接制限する。現在の呼び出し値はPreview tab hover 360、Grid 180〜520、Right Preview 900、Modal 1400で、通常画像の既存表示品質を保ちながら圧縮率の高い縦長画像による巨大allocationを防ぐ。decodeはbackground/cancel可能、path/generation guardは同じで、source bytesとEnhancement queueを変更しない。
+
 PNGは最大4MiBのparameters text chunkを読み、次を抽出する。
 
 - Prompt
@@ -609,6 +611,7 @@ Accessibility:
 | Date preset retirement/migration | `powershell -File scripts/verify-wpf-date-filter.ps1` |
 | P1 error/a11y/state | `powershell -File scripts/verify-wpf-p1b.ps1` |
 | Formats | `powershell -File scripts/verify-wpf-formats.ps1` |
+| Oversized/high-aspect decode bounds | `powershell -File scripts/verify-wpf-decode-bounds.ps1` |
 | Right panel | `powershell -File scripts/verify-wpf-right-panel.ps1` |
 | Bulk Favorite | `powershell -File scripts/verify-wpf-bulk-favorite.ps1` |
 | Search responsiveness | `powershell -File scripts/verify-wpf-search-stall.ps1` |

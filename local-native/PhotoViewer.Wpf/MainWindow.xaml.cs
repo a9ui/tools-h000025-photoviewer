@@ -34,6 +34,10 @@ public partial class MainWindow : Window
     private const int MaxThumbnailDecodeWorkers = 12;
     private const int MaxMetadataReadWorkers = 4;
     private const int MaxPngMetadataChunkBytes = 4 * 1024 * 1024;
+    private const int MaxDecodedPixelCount = 10_000_000;
+    private const int MaxDecodedLongEdge = 16_384;
+    private const int DecodePixelBudgetMultiplier = 5;
+    private const int DecodeLongEdgeMultiplier = 8;
     private const int SearchFilterDebounceMilliseconds = 150;
     private const int SearchStateSaveDebounceMilliseconds = 300;
     private const int InitialGridRealizationCount = 96;
@@ -2515,13 +2519,16 @@ public partial class MainWindow : Window
     {
         try
         {
+            BitmapDecodePlan decodePlan = BuildBitmapDecodePlan(path, decodePixelWidth);
             using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
-            if (decodePixelWidth > 0)
-                image.DecodePixelWidth = decodePixelWidth;
+            if (decodePlan.PixelWidth > 0)
+                image.DecodePixelWidth = decodePlan.PixelWidth;
+            else if (decodePlan.PixelHeight > 0)
+                image.DecodePixelHeight = decodePlan.PixelHeight;
             image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
@@ -2531,6 +2538,51 @@ public partial class MainWindow : Window
         {
             return null;
         }
+    }
+
+    private static BitmapDecodePlan BuildBitmapDecodePlan(string path, int requestedPixelWidth)
+    {
+        if (requestedPixelWidth <= 0 || !TryReadBitmapSize(path, out int sourceWidth, out int sourceHeight))
+            return new BitmapDecodePlan(Math.Max(0, requestedPixelWidth), 0);
+
+        // BitmapImage will upscale a narrow source to DecodePixelWidth. For a
+        // very tall image that can turn a small, valid file into hundreds of
+        // megabytes (for example 256 x 16,384 -> 1,400 x 89,600). Start from a
+        // no-upscale fit, then bound both total pixels and the long edge. These
+        // limits are still above the pixels the corresponding surface can show
+        // at its existing zoom range.
+        double scale = Math.Min(1d, requestedPixelWidth / (double)sourceWidth);
+        double targetWidth = sourceWidth * scale;
+        double targetHeight = sourceHeight * scale;
+        long surfacePixelBudget = Math.Min(
+            MaxDecodedPixelCount,
+            Math.Max(1L, (long)requestedPixelWidth * requestedPixelWidth * DecodePixelBudgetMultiplier));
+        double targetPixels = targetWidth * targetHeight;
+        if (targetPixels > surfacePixelBudget)
+        {
+            double pixelScale = Math.Sqrt(surfacePixelBudget / targetPixels);
+            targetWidth *= pixelScale;
+            targetHeight *= pixelScale;
+        }
+
+        int surfaceLongEdge = (int)Math.Min(
+            MaxDecodedLongEdge,
+            Math.Max((long)requestedPixelWidth, (long)requestedPixelWidth * DecodeLongEdgeMultiplier));
+        double targetLongEdge = Math.Max(targetWidth, targetHeight);
+        if (targetLongEdge > surfaceLongEdge)
+        {
+            double edgeScale = surfaceLongEdge / targetLongEdge;
+            targetWidth *= edgeScale;
+            targetHeight *= edgeScale;
+        }
+
+        // With extreme aspect ratios the bounded width can fall below one
+        // pixel. In that case DecodePixelHeight is the only way to keep WIC
+        // from decoding the full unbounded long edge.
+        if (targetWidth < 1d)
+            return new BitmapDecodePlan(0, Math.Max(1, (int)Math.Floor(targetHeight)));
+
+        return new BitmapDecodePlan(Math.Max(1, (int)Math.Floor(targetWidth)), 0);
     }
 
     private static bool TryReadBitmapSize(string path, out int width, out int height)
@@ -8384,7 +8436,13 @@ public partial class MainWindow : Window
     public string? PreviewMetadataPathForSmoke => _currentPreviewMetadataPath;
     public string? ModalSourcePathForSmoke => _modalSourceTilePath;
     public int PreviewBitmapPixelWidthForSmoke => (PreviewBitmap.Source as BitmapSource)?.PixelWidth ?? 0;
+    public int PreviewBitmapPixelHeightForSmoke => (PreviewBitmap.Source as BitmapSource)?.PixelHeight ?? 0;
     public int ModalBitmapPixelWidthForSmoke => (ModalBitmap.Source as BitmapSource)?.PixelWidth ?? 0;
+    public int ModalBitmapPixelHeightForSmoke => (ModalBitmap.Source as BitmapSource)?.PixelHeight ?? 0;
+    public int ThumbnailPixelWidthForSmoke(string fileName)
+        => (_allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Thumbnail as BitmapSource)?.PixelWidth ?? 0;
+    public int ThumbnailPixelHeightForSmoke(string fileName)
+        => (_allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.Thumbnail as BitmapSource)?.PixelHeight ?? 0;
     public string? PreviewBitmapCenterColorForSmoke => BitmapCenterColorForSmoke(PreviewBitmap.Source as BitmapSource);
     public string? ModalBitmapCenterColorForSmoke => BitmapCenterColorForSmoke(ModalBitmap.Source as BitmapSource);
     public string PreviewSizeTextForSmoke => PreviewSizeText.Text;
@@ -9925,6 +9983,8 @@ public readonly record struct ImageMetadataLoadMetrics(
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
+
+internal readonly record struct BitmapDecodePlan(int PixelWidth, int PixelHeight);
 
 internal readonly record struct GridZoomAnchor(string Path, double ViewportY, double CenterDistance);
 

@@ -14,6 +14,7 @@ $orderedNames = @(
     'verify-wpf-p1a.ps1',
     'verify-wpf-p1b.ps1',
     'verify-wpf-formats.ps1',
+    'verify-wpf-decode-bounds.ps1',
     'verify-wpf-right-panel.ps1',
     'verify-wpf-bulk-favorite.ps1',
     'verify-wpf-bulk-recycle.ps1',

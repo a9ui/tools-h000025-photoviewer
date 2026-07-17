@@ -311,6 +311,13 @@ public partial class App : Application
             return;
         }
 
+        int decodeBoundsSmokeIdx = Array.IndexOf(e.Args, "--decode-bounds-smoke");
+        if (decodeBoundsSmokeIdx >= 0 && decodeBoundsSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDecodeBoundsSmoke(e.Args[decodeBoundsSmokeIdx + 1]);
+            return;
+        }
+
         int pathRobustnessSmokeIdx = Array.IndexOf(e.Args, "--path-robustness-smoke");
         if (pathRobustnessSmokeIdx >= 0 && pathRobustnessSmokeIdx + 1 < e.Args.Length)
         {
@@ -7982,6 +7989,242 @@ public partial class App : Application
             {
                 try { exclusiveLock?.Dispose(); } catch { }
                 win.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                win.ConfigureImageDecodeDelaysForSmoke(0, 0);
+                if (win.IsVisible)
+                    win.Close();
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureDecodeBoundsSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string tempRoot = Path.GetFullPath(Path.GetTempPath());
+        if (!resultFullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-decode-bounds-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        const string anchorName = "a-anchor.png";
+        const string needleName = "y-needle-1x30000.png";
+        const string tallName = "z-tall-256x16384.png";
+        string anchorPath = Path.Combine(folder, anchorName);
+        string needlePath = Path.Combine(folder, needleName);
+        string tallPath = Path.Combine(folder, tallName);
+        Directory.CreateDirectory(folder);
+        WriteSmokePng(anchorPath, 96, 72, Color.FromRgb(55, 145, 220));
+        WriteSmokePng(needlePath, 1, 30_000, Color.FromRgb(95, 190, 120));
+        WriteSmokePng(tallPath, 256, 16_384, Color.FromRgb(210, 95, 145));
+        File.SetLastWriteTimeUtc(tallPath, new DateTime(2026, 7, 17, 0, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(needlePath, new DateTime(2026, 7, 17, 12, 0, 0, DateTimeKind.Utc));
+        File.SetLastWriteTimeUtc(anchorPath, new DateTime(2026, 7, 18, 0, 0, 0, DateTimeKind.Utc));
+        string tallBefore = FileFingerprint(tallPath);
+        string needleBefore = FileFingerprint(needlePath);
+        string anchorBefore = FileFingerprint(anchorPath);
+        string jobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH")
+            ?? throw new InvalidOperationException("automation enhancement path was not configured");
+        string jobsBefore = FileFingerprint(jobsPath);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input)
+            {
+                Interval = TimeSpan.FromMilliseconds(15),
+            };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                int thumbnailWidth = win.ThumbnailPixelWidthForSmoke(tallName);
+                int thumbnailHeight = win.ThumbnailPixelHeightForSmoke(tallName);
+                long thumbnailPixels = (long)thumbnailWidth * thumbnailHeight;
+
+                GC.Collect();
+                GC.WaitForPendingFinalizers();
+                GC.Collect();
+                long workingSetBaseline = Process.GetCurrentProcess().WorkingSet64;
+                long peakWorkingSet = workingSetBaseline;
+                object memoryGate = new();
+                using var memoryTimer = new System.Threading.Timer(
+                    _ =>
+                    {
+                        try
+                        {
+                            long current = Process.GetCurrentProcess().WorkingSet64;
+                            lock (memoryGate)
+                            {
+                                if (current > peakWorkingSet)
+                                    peakWorkingSet = current;
+                            }
+                        }
+                        catch
+                        {
+                        }
+                    },
+                    null,
+                    dueTime: 0,
+                    period: 20);
+
+                heartbeat.Start();
+                var watch = Stopwatch.StartNew();
+                PreviewDecodeSmokeSnapshot tallPreview = await win.SelectPreviewForSmokeAsync(tallName);
+                int previewWidth = win.PreviewBitmapPixelWidthForSmoke;
+                int previewHeight = win.PreviewBitmapPixelHeightForSmoke;
+                long previewPixels = (long)previewWidth * previewHeight;
+                bool tallModalOpened = win.OpenModalForSmoke();
+                bool tallModalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                int modalWidth = win.ModalBitmapPixelWidthForSmoke;
+                int modalHeight = win.ModalBitmapPixelHeightForSmoke;
+                long modalPixels = (long)modalWidth * modalHeight;
+                string? previewColor = win.PreviewBitmapCenterColorForSmoke;
+                string? modalColor = win.ModalBitmapCenterColorForSmoke;
+                win.CloseModalForSmoke();
+
+                PreviewDecodeSmokeSnapshot needlePreview = await win.SelectPreviewForSmokeAsync(needleName);
+                int needlePreviewWidth = win.PreviewBitmapPixelWidthForSmoke;
+                int needlePreviewHeight = win.PreviewBitmapPixelHeightForSmoke;
+                string? needlePreviewColor = win.PreviewBitmapCenterColorForSmoke;
+                bool needleModalOpened = win.OpenModalForSmoke();
+                bool needleModalDecoded = await win.WaitForModalFullDecodeForSmokeAsync();
+                int needleModalWidth = win.ModalBitmapPixelWidthForSmoke;
+                int needleModalHeight = win.ModalBitmapPixelHeightForSmoke;
+                string? needleModalColor = win.ModalBitmapCenterColorForSmoke;
+                win.CloseModalForSmoke();
+
+                // Start both surfaces on the oversized file, then replace the
+                // selection while the delayed decodes are in flight. Bounded
+                // decoding must retain the same latest-selection guarantees.
+                win.ConfigureImageDecodeDelaysForSmoke(350, 350);
+                bool staleSelected = win.SelectFileNameForSmoke(tallName);
+                Task<PreviewDecodeSmokeSnapshot> stalePreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync(tallName);
+                bool staleModalOpened = win.OpenModalForSmoke();
+                Task<bool> staleModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                await Task.Delay(50);
+                bool latestSelected = win.SelectFileNameForSmoke(anchorName);
+                Task<PreviewDecodeSmokeSnapshot> latestPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync(anchorName);
+                bool latestModalOpened = win.OpenModalForSmoke();
+                Task<bool> latestModalTask = win.WaitForModalFullDecodeForSmokeAsync();
+                PreviewDecodeSmokeSnapshot stalePreview = await stalePreviewTask;
+                bool staleModalDecoded = await staleModalTask;
+                PreviewDecodeSmokeSnapshot latestPreview = await latestPreviewTask;
+                bool latestModalDecoded = await latestModalTask;
+                await Task.Delay(425);
+                watch.Stop();
+                heartbeat.Stop();
+                memoryTimer.Change(Timeout.Infinite, Timeout.Infinite);
+
+                long sampledPeakWorkingSet;
+                lock (memoryGate)
+                    sampledPeakWorkingSet = peakWorkingSet;
+                long workingSetGrowth = Math.Max(0, sampledPeakWorkingSet - workingSetBaseline);
+                bool thumbnailBounded = thumbnailWidth > 0 && thumbnailHeight > 0
+                    && thumbnailPixels <= 1_352_000
+                    && Math.Max(thumbnailWidth, thumbnailHeight) <= 4_160;
+                bool previewBounded = tallPreview.StableLatestSelection
+                    && previewWidth > 0 && previewHeight > 0
+                    && previewPixels <= 4_050_000
+                    && Math.Max(previewWidth, previewHeight) <= 7_200;
+                bool modalBounded = tallModalOpened && tallModalDecoded
+                    && modalWidth > 0 && modalHeight > 0
+                    && modalPixels <= 9_800_000
+                    && Math.Max(modalWidth, modalHeight) <= 11_200;
+                bool fidelityPreserved = string.Equals(previewColor, "#FFD25F91", StringComparison.Ordinal)
+                    && string.Equals(modalColor, "#FFD25F91", StringComparison.Ordinal);
+                bool subpixelWidthFallbackBounded = needlePreview.StableLatestSelection
+                    && needleModalOpened && needleModalDecoded
+                    && needlePreviewWidth == 1 && needlePreviewHeight <= 7_200
+                    && needleModalWidth == 1 && needleModalHeight <= 11_200
+                    && string.Equals(needlePreviewColor, "#FF5FBE78", StringComparison.Ordinal)
+                    && string.Equals(needleModalColor, "#FF5FBE78", StringComparison.Ordinal);
+                bool dispatcherResponsive = heartbeatCount >= 12;
+                bool memoryBounded = workingSetGrowth <= 128L * 1024 * 1024;
+                bool latestSelectionWon = staleSelected && staleModalOpened && latestSelected && latestModalOpened
+                    && !stalePreview.StableLatestSelection && !staleModalDecoded
+                    && latestPreview.StableLatestSelection && latestModalDecoded
+                    && string.Equals(win.SelectedFileNameForSmoke, anchorName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.PreviewDecodedPathForSmoke, anchorPath, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(win.ModalDisplayPathForSmoke, anchorPath, StringComparison.OrdinalIgnoreCase)
+                    && win.PreviewBitmapPixelWidthForSmoke == 96
+                    && win.PreviewBitmapPixelHeightForSmoke == 72
+                    && win.ModalBitmapPixelWidthForSmoke == 96
+                    && win.ModalBitmapPixelHeightForSmoke == 72;
+                bool sourceAndJobsUntouched = string.Equals(tallBefore, FileFingerprint(tallPath), StringComparison.Ordinal)
+                    && string.Equals(needleBefore, FileFingerprint(needlePath), StringComparison.Ordinal)
+                    && string.Equals(anchorBefore, FileFingerprint(anchorPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && win.EnhancementJobsReadForSmoke == 0
+                    && win.EnhancedCandidateCountForSmoke == 0;
+
+                ok = thumbnailBounded && previewBounded && modalBounded && fidelityPreserved && subpixelWidthFallbackBounded
+                    && dispatcherResponsive && memoryBounded && latestSelectionWon && sourceAndJobsUntouched;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "oversized aspect-ratio decode stayed bounded, responsive, faithful, and latest-selection safe"
+                        : "oversized decode bounds or stale-selection contract failed",
+                    source = new { width = 256, height = 16_384, bytes = new FileInfo(tallPath).Length },
+                    thumbnail = new { width = thumbnailWidth, height = thumbnailHeight, pixels = thumbnailPixels, thumbnailBounded },
+                    preview = new { width = previewWidth, height = previewHeight, pixels = previewPixels, tallPreview.DeferredDecodeMs, previewBounded, previewColor },
+                    modal = new { width = modalWidth, height = modalHeight, pixels = modalPixels, modalBounded, modalColor },
+                    subpixelWidthFallback = new
+                    {
+                        sourceWidth = 1,
+                        sourceHeight = 30_000,
+                        previewWidth = needlePreviewWidth,
+                        previewHeight = needlePreviewHeight,
+                        modalWidth = needleModalWidth,
+                        modalHeight = needleModalHeight,
+                        subpixelWidthFallbackBounded,
+                    },
+                    dispatcher = new { heartbeatCount, elapsedMs = watch.ElapsedMilliseconds, dispatcherResponsive },
+                    memory = new
+                    {
+                        workingSetBaseline,
+                        sampledPeakWorkingSet,
+                        workingSetGrowth,
+                        growthMiB = Math.Round(workingSetGrowth / 1024d / 1024d, 1),
+                        memoryBounded,
+                    },
+                    latestSelection = new
+                    {
+                        stalePreviewApplied = stalePreview.StableLatestSelection,
+                        staleModalDecoded,
+                        latestPreviewApplied = latestPreview.StableLatestSelection,
+                        latestModalDecoded,
+                        selected = win.SelectedFileNameForSmoke,
+                        previewPath = win.PreviewDecodedPathForSmoke,
+                        modalPath = win.ModalDisplayPathForSmoke,
+                        latestSelectionWon,
+                    },
+                    fidelityPreserved,
+                    subpixelWidthFallbackBounded,
+                    sourceAndJobsUntouched,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot };
+            }
+            finally
+            {
+                heartbeat.Stop();
                 win.ConfigureImageDecodeDelaysForSmoke(0, 0);
                 if (win.IsVisible)
                     win.Close();
