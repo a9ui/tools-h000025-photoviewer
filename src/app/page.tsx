@@ -15,7 +15,12 @@ import { ScanErrorNotice } from '../components/ScanErrorNotice';
 import { getLoadedResultCounts, getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
-import { sharedRecentToLocalMemory } from '../lib/recentFolders';
+import {
+  mergeRecentFolderMemories,
+  normalizeRecentFolderMemory,
+  rememberRecentFolderSet,
+  sharedRecentToLocalMemory,
+} from '../lib/recentFolders';
 import { useDialogFocus } from '../lib/useDialogFocus';
 import { FolderOpen, RefreshCw, Sparkles, X } from 'lucide-react';
 
@@ -74,7 +79,7 @@ function ViewerApp() {
   });
 
   const rememberLastDirSet = useCallback((dir: string) => {
-    const normalized = formatDirSet(parseDirSet(dir));
+    const normalized = normalizeRecentFolderMemory({ lastDirSet: dir }).lastDirSet;
     if (!normalized) return;
     setLastDirSet(normalized);
     try {
@@ -100,7 +105,9 @@ function ViewerApp() {
           const sharedRes = await fetch('/api/recent-folders', { cache: 'no-store' });
           const sharedData = sharedRes.ok ? await sharedRes.json() : null;
           if (sharedData?.ok && !sharedData.malformed && sharedData.recent) {
-            const sharedMemory = sharedRecentToLocalMemory(sharedData.recent);
+            const sharedMemory = normalizeRecentFolderMemory(
+              sharedRecentToLocalMemory(sharedData.recent)
+            );
             if (sharedMemory.recentDirs.length > 0 || sharedMemory.lastDirSet) {
               activeRecentDirs = sharedMemory.recentDirs;
               activeLastDirSet = sharedMemory.lastDirSet;
@@ -129,31 +136,21 @@ function ViewerApp() {
         .then((res) => res.ok ? res.json() : null)
         .then((data) => {
           if (!data) return;
-          const legacyRecent = Array.isArray(data.recentDirs)
-            ? data.recentDirs
-              .filter((v: unknown): v is string => typeof v === 'string')
-              .map((v: string) => formatDirSet(parseDirSet(v)))
-              .filter(Boolean)
-            : [];
-          const legacyLast = typeof data.lastDirSet === 'string'
-            ? formatDirSet(parseDirSet(data.lastDirSet))
-            : '';
-          if (legacyRecent.length === 0 && !legacyLast) return;
+          const legacyMemory = normalizeRecentFolderMemory({
+            recentDirs: data.recentDirs,
+            lastDirSet: data.lastDirSet,
+          });
+          if (legacyMemory.recentDirs.length === 0 && !legacyMemory.lastDirSet) return;
 
-          const combined = [
-            ...(serverLegacyAlreadyImported ? activeRecentDirs : legacyRecent),
-            ...(serverLegacyAlreadyImported ? legacyRecent : activeRecentDirs),
-          ].filter(Boolean);
-          const seen = new Set<string>();
-          const nextRecent = combined.filter((value) => {
-            const key = value.toLowerCase();
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          }).slice(0, 8);
-          const nextLast = serverLegacyAlreadyImported
-            ? (activeLastDirSet || legacyLast)
-            : (legacyLast || activeLastDirSet);
+          const currentMemory = normalizeRecentFolderMemory({
+            recentDirs: activeRecentDirs,
+            lastDirSet: activeLastDirSet,
+          });
+          const mergedMemory = serverLegacyAlreadyImported
+            ? mergeRecentFolderMemories(currentMemory, legacyMemory)
+            : mergeRecentFolderMemories(legacyMemory, currentMemory);
+          const nextRecent = mergedMemory.recentDirs;
+          const nextLast = mergedMemory.lastDirSet;
 
           setRecentDirs(nextRecent);
           if (nextLast) setLastDirSet(nextLast);
@@ -176,11 +173,14 @@ function ViewerApp() {
   }, [dirPath, rememberLastDirSet]);
 
   const rememberRecentDir = useCallback((dir: string) => {
-    const normalized = formatDirSet(parseDirSet(dir));
+    const normalized = normalizeRecentFolderMemory({ lastDirSet: dir }).lastDirSet;
     if (!normalized) return;
     rememberLastDirSet(normalized);
     setRecentDirs((prev) => {
-      const next = [normalized, ...prev.filter((v) => v !== normalized)].slice(0, 8);
+      const next = rememberRecentFolderSet({
+        recentDirs: prev,
+        lastDirSet: normalized,
+      }, normalized).recentDirs;
       try {
         localStorage.setItem('pvu_recent_dirs', JSON.stringify(next));
       } catch {
@@ -545,18 +545,11 @@ function readStoredFolderMemory(): { recentDirs: string[]; lastDirSet: string } 
   if (typeof window === 'undefined') return { recentDirs: [], lastDirSet: '' };
   try {
     const raw = localStorage.getItem('pvu_recent_dirs');
-    const recentDirs = raw
-      ? JSON.parse(raw)
-        .filter((v: unknown): v is string => typeof v === 'string')
-        .map((v: string) => formatDirSet(parseDirSet(v)))
-        .filter(Boolean)
-        .slice(0, 8)
-      : [];
     const last = localStorage.getItem('pvu_last_dir_set');
-    return {
-      recentDirs,
-      lastDirSet: last ? formatDirSet(parseDirSet(last)) : '',
-    };
+    return normalizeRecentFolderMemory({
+      recentDirs: raw ? JSON.parse(raw) : [],
+      lastDirSet: last,
+    });
   } catch {
     return { recentDirs: [], lastDirSet: '' };
   }

@@ -41,6 +41,51 @@ function normalizeRecentFolderSets(value: unknown): string[][] {
   return sets;
 }
 
+/**
+ * Normalize the browser-local representation without discarding valid user
+ * entries. Folder spelling and in-set order come from the first (newest)
+ * occurrence; set identity is case-insensitive and capped to the UI limit.
+ */
+export function normalizeRecentFolderMemory(value: unknown): RecentFolderMemory {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const rawRecentDirs = Array.isArray(source.recentDirs) ? source.recentDirs : [];
+  const recentFolderSets = normalizeRecentFolderSets(rawRecentDirs);
+  const lastFolderSet = normalizeFolderSet(source.lastDirSet);
+  return {
+    recentDirs: recentFolderSets.map((folderSet) => formatDirSet(folderSet)),
+    lastDirSet: formatDirSet(lastFolderSet),
+  };
+}
+
+/** Keep a completed folder set newest-first while preserving all other sets. */
+export function rememberRecentFolderSet(
+  current: RecentFolderMemory,
+  folderSet: string
+): RecentFolderMemory {
+  const normalizedCurrent = normalizeRecentFolderMemory(current);
+  const normalizedFolderSet = formatDirSet(parseDirSet(folderSet));
+  if (!normalizedFolderSet) return normalizedCurrent;
+  return normalizeRecentFolderMemory({
+    lastDirSet: normalizedFolderSet,
+    recentDirs: [normalizedFolderSet, ...normalizedCurrent.recentDirs],
+  });
+}
+
+/** Merge additive legacy/shared memory without changing caller-defined recency. */
+export function mergeRecentFolderMemories(
+  preferred: RecentFolderMemory,
+  additional: RecentFolderMemory
+): RecentFolderMemory {
+  const primary = normalizeRecentFolderMemory(preferred);
+  const fallback = normalizeRecentFolderMemory(additional);
+  return normalizeRecentFolderMemory({
+    recentDirs: [...primary.recentDirs, ...fallback.recentDirs],
+    lastDirSet: primary.lastDirSet || fallback.lastDirSet,
+  });
+}
+
 export function normalizeSharedRecentFolders(value: unknown, now = new Date().toISOString()): SharedRecentFolders {
   const source = value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -60,8 +105,11 @@ export function normalizeSharedRecentFolders(value: unknown, now = new Date().to
 }
 
 export function buildSharedRecentFolders(memory: RecentFolderMemory, now = new Date().toISOString()): SharedRecentFolders {
-  const lastFolderSet = parseDirSet(memory.lastDirSet);
-  const recentFolderSets = normalizeRecentFolderSets(memory.recentDirs.map((item) => parseDirSet(item)));
+  const normalizedMemory = normalizeRecentFolderMemory(memory);
+  const lastFolderSet = parseDirSet(normalizedMemory.lastDirSet);
+  const recentFolderSets = normalizeRecentFolderSets(
+    normalizedMemory.recentDirs.map((item) => parseDirSet(item))
+  );
   const mergedRecent = normalizeRecentFolderSets([
     lastFolderSet,
     ...recentFolderSets,
@@ -76,10 +124,8 @@ export function buildSharedRecentFolders(memory: RecentFolderMemory, now = new D
 }
 
 export function sharedRecentToLocalMemory(shared: SharedRecentFolders): RecentFolderMemory {
-  const recentDirs = shared.recentFolderSets
-    .map((folderSet) => formatDirSet(folderSet))
-    .filter(Boolean)
-    .slice(0, MAX_RECENT_FOLDER_SETS);
-  const lastDirSet = formatDirSet(shared.lastFolderSet);
-  return { recentDirs, lastDirSet };
+  return normalizeRecentFolderMemory({
+    recentDirs: shared.recentFolderSets.map((folderSet) => formatDirSet(folderSet)),
+    lastDirSet: formatDirSet(shared.lastFolderSet),
+  });
 }

@@ -327,7 +327,7 @@ type RecentFoldersState = {
 - malformed shared stateは勝手に上書きせず、PUTは409で保護する。
 - legacy stateはadditive importとし、現行stateを消さない。
 
-CURRENT LIMITATION: shared recent helperのset dedupeはcase-insensitiveだが、browser-local recent listのduplicate除外にはcase-sensitiveな経路がある。別実装はcase-insensitiveへ統一してよい。
+shared、browser-local、legacy additive importのset dedupeはすべてcase-insensitiveとし、最新setのspellingとfolder順を保持する。
 
 ### BR-LND-004 Scan start
 
