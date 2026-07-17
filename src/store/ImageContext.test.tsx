@@ -263,6 +263,82 @@ describe('ImageProvider browser UI preferences', () => {
     });
   });
 
+  it('restores a valid favorite backup when the primary key is missing', async () => {
+    localStorage.setItem('pvu_favorites_backup', JSON.stringify({
+      'backup-favorite': 4,
+      'legacy-boolean': true,
+      'future-string-level': 'future-value',
+    }));
+
+    render(
+      <ImageProvider>
+        <FavoritesProbe />
+      </ImageProvider>
+    );
+
+    const favorites = await screen.findByRole('status', { name: 'favorites state' });
+    expect(favorites).toHaveTextContent('"backup-favorite":4');
+    expect(favorites).toHaveTextContent('"legacy-boolean":1');
+    expect(favorites).toHaveTextContent('"future-string-level":1');
+
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_favorites') || '{}')).toEqual({
+        'backup-favorite': 4,
+        'legacy-boolean': 1,
+        'future-string-level': 1,
+      });
+    });
+  });
+
+  it('does not replace an intentionally empty primary with its backup', async () => {
+    localStorage.setItem('pvu_favorites', '{}');
+    localStorage.setItem('pvu_favorites_backup', JSON.stringify({ 'old-backup': 5 }));
+
+    render(
+      <ImageProvider>
+        <FavoritesProbe />
+      </ImageProvider>
+    );
+
+    expect(await screen.findByRole('status', { name: 'favorites state' })).toHaveTextContent('{}');
+    expect(localStorage.getItem('pvu_favorites')).toBe('{}');
+    expect(localStorage.getItem('pvu_favorites_backup')).toBe(JSON.stringify({ 'old-backup': 5 }));
+  });
+
+  it('keeps a malformed primary and backup read-only during automatic hydration', async () => {
+    const malformedPrimary = '{not-json';
+    const validBackup = JSON.stringify({ 'backup-must-not-replace-primary': 5 });
+    localStorage.setItem('pvu_favorites', malformedPrimary);
+    localStorage.setItem('pvu_favorites_backup', validBackup);
+
+    render(
+      <ImageProvider>
+        <FavoritesProbe />
+      </ImageProvider>
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(localStorage.getItem('pvu_favorites')).toBe(malformedPrimary);
+    expect(localStorage.getItem('pvu_favorites_backup')).toBe(validBackup);
+  });
+
+  it('keeps a malformed backup read-only when the primary key is missing', async () => {
+    const malformedBackup = '{not-json';
+    localStorage.setItem('pvu_favorites_backup', malformedBackup);
+
+    render(
+      <ImageProvider>
+        <FavoritesProbe />
+      </ImageProvider>
+    );
+
+    await new Promise((resolve) => setTimeout(resolve, 350));
+
+    expect(localStorage.getItem('pvu_favorites')).toBeNull();
+    expect(localStorage.getItem('pvu_favorites_backup')).toBe(malformedBackup);
+  });
+
   it('persists favorites as a three-way change against the hydrated server base', async () => {
     const putBodies: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {

@@ -101,6 +101,16 @@ function normalizeFavorites(value: unknown): Record<string, number> {
   return normalized;
 }
 
+/**
+ * Keep the permissive per-level normalization used by existing local data, but
+ * distinguish an invalid document from an intentionally empty favorite map.
+ */
+function readStoredFavoritesSnapshot(serialized: string): Record<string, number> | null {
+  const parsed: unknown = JSON.parse(serialized);
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  return normalizeFavorites(parsed);
+}
+
 function mergeFavorites(
   first: Record<string, number>,
   second: Record<string, number>,
@@ -319,6 +329,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const pendingViewSettingsRef = useRef<ViewSettings | null>(null);
   const searchQueryRef = useRef('');
   const favoritesRef = useRef<Record<string, number>>({});
+  const favoriteLocalStorageReadOnlyRef = useRef(false);
   const favoriteServerBaseRef = useRef<Record<string, number>>({});
   const favoritesHydratedRef = useRef(false);
   const favoriteHydrationDirtyIdsRef = useRef<Set<string>>(new Set());
@@ -373,18 +384,28 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     migrateLegacyPhotoviewerState();
     let localFavorites: Record<string, number> = {};
+    const stored = localStorage.getItem('pvu_favorites');
     try {
-      const stored = localStorage.getItem('pvu_favorites');
-      if (stored) {
-        localFavorites = normalizeFavorites(JSON.parse(stored));
-        if (Object.keys(localFavorites).length === 0) {
-          const backup = localStorage.getItem('pvu_favorites_backup');
-          if (backup) localFavorites = normalizeFavorites(JSON.parse(backup));
+      // A backup is recovery data only when the primary key is absent. An
+      // intentionally empty or malformed primary must never be replaced by it.
+      const source = stored === null
+        ? localStorage.getItem('pvu_favorites_backup')
+        : stored;
+      if (source !== null) {
+        const parsed = readStoredFavoritesSnapshot(source);
+        if (parsed === null) {
+          favoriteLocalStorageReadOnlyRef.current = true;
+        } else {
+          localFavorites = parsed;
+          setFavorites(localFavorites);
+          favoritesRef.current = localFavorites;
         }
-        setFavorites(localFavorites);
-        favoritesRef.current = localFavorites;
       }
-    } catch { /* ignore */ }
+    } catch {
+      // Preserve corrupt recovery data until a user explicitly changes
+      // favorites; automatic hydration must not replace the only evidence.
+      favoriteLocalStorageReadOnlyRef.current = true;
+    }
     fetch('/api/favorites')
       .then((r) => r.json())
       .then((data) => {
@@ -474,9 +495,11 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const snapshot = favoritesRef.current;
       const serialized = JSON.stringify(snapshot);
       try {
-        localStorage.setItem('pvu_favorites', serialized);
-        if (Object.keys(snapshot).length > 0) {
-          localStorage.setItem('pvu_favorites_backup', serialized);
+        if (!favoriteLocalStorageReadOnlyRef.current) {
+          localStorage.setItem('pvu_favorites', serialized);
+          if (Object.keys(snapshot).length > 0) {
+            localStorage.setItem('pvu_favorites_backup', serialized);
+          }
         }
       } catch { /* ignore */ }
       fetch('/api/favorites', {
@@ -582,9 +605,11 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const snapshot = favoritesRef.current;
       const serialized = JSON.stringify(snapshot);
       try {
-        localStorage.setItem('pvu_favorites', serialized);
-        if (Object.keys(snapshot).length > 0) {
-          localStorage.setItem('pvu_favorites_backup', serialized);
+        if (!favoriteLocalStorageReadOnlyRef.current) {
+          localStorage.setItem('pvu_favorites', serialized);
+          if (Object.keys(snapshot).length > 0) {
+            localStorage.setItem('pvu_favorites_backup', serialized);
+          }
         }
       } catch { /* ignore */ }
     }
@@ -635,6 +660,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const toggleFavorite = useCallback((id: string) => {
+    favoriteLocalStorageReadOnlyRef.current = false;
     if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites(prev => {
       const next = { ...prev };
@@ -645,6 +671,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const cycleFavoriteLevel = useCallback((id: string) => {
+    favoriteLocalStorageReadOnlyRef.current = false;
     if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       const next = { ...prev };
@@ -656,6 +683,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const clearFavorite = useCallback((id: string) => {
+    favoriteLocalStorageReadOnlyRef.current = false;
     if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       if (!(id in prev)) return prev;
@@ -666,6 +694,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const decreaseFavoriteLevel = useCallback((id: string) => {
+    favoriteLocalStorageReadOnlyRef.current = false;
     if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
     setFavorites((prev) => {
       const current = prev[id] ?? 0;
