@@ -18,6 +18,8 @@ function getTopDialog() {
 
 function isFocusable(element: HTMLElement) {
   return !element.hasAttribute('disabled')
+    && element.getAttribute('aria-disabled') !== 'true'
+    && Number(element.getAttribute('tabindex') ?? '0') >= 0
     && !element.hidden
     && !element.closest('[hidden], [aria-hidden="true"]');
 }

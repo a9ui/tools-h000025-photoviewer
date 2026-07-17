@@ -167,6 +167,8 @@ export default function ImageGrid() {
   const previousThumbSizeRef = useRef(view.thumbSize);
   const previousGridMetricsRef = useRef<GridMetricsSnapshot | null>(null);
   const warmupBatcherRef = useRef<ReturnType<typeof createThumbnailWarmupBatcher> | null>(null);
+  const [rovingImageId, setRovingImageId] = useState<string | null>(null);
+  const pendingPrimaryFocusIdRef = useRef<string | null>(null);
 
   if (warmupBatcherRef.current === null) {
     warmupBatcherRef.current = createThumbnailWarmupBatcher({
@@ -345,6 +347,13 @@ export default function ImageGrid() {
     return items;
   }, [clientFilteredVisible, isClientFiltered, searchResults]);
 
+  useEffect(() => {
+    const availableIds = keyboardSelectionItems.map((item) => item.image.id);
+    setRovingImageId((current) => (
+      current && availableIds.includes(current) ? current : availableIds[0] ?? null
+    ));
+  }, [keyboardSelectionItems]);
+
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const searchResultIndexById = useMemo(
     () => buildImageIndexById(searchResults),
@@ -396,12 +405,42 @@ export default function ImageGrid() {
 
   const openImageDetail = (image: ImageFile, sourceIndex: number) => {
     markImageSeen(image.id);
+    setRovingImageId(image.id);
     openPreviewTab(image, { makeActive: true, pin: true });
     openModalAtImage(
       image.id,
       sourceIndex >= 0 ? sourceIndex : null,
       isClientFiltered ? filteredOrderedIds : []
     );
+  };
+
+  const selectFromPrimaryControl = (
+    event: React.MouseEvent<HTMLButtonElement> | React.KeyboardEvent<HTMLButtonElement>,
+    image: ImageFile,
+  ) => {
+    markImageSeen(image.id);
+    setRovingImageId(image.id);
+    selectImage(
+      image,
+      isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
+      { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
+    );
+  };
+
+  const handlePrimaryControlKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    image: ImageFile,
+    sourceIndex: number,
+  ) => {
+    if (event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      selectFromPrimaryControl(event, image);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      openImageDetail(image, sourceIndex);
+    }
   };
 
   const aspectRatioValue = view.aspectMode === 'square' ? 1 : 2 / 3;
@@ -433,7 +472,9 @@ export default function ImageGrid() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!arrowKeys.has(event.key)) return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (shouldIgnoreViewerShortcut(event.target)) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const isPrimaryImageControl = Boolean(target?.closest('[data-image-primary="true"]'));
+      if (shouldIgnoreViewerShortcut(event.target) && !isPrimaryImageControl) return;
 
       const currentId = selectedIds[selectedIds.length - 1] ?? null;
       const currentIndex = currentId
@@ -453,6 +494,8 @@ export default function ImageGrid() {
 
       event.preventDefault();
       markImageSeen(targetItem.image.id);
+      setRovingImageId(targetItem.image.id);
+      pendingPrimaryFocusIdRef.current = targetItem.image.id;
       selectImage(
         targetItem.image,
         isClientFiltered ? filteredOrderedIds : loadedOrderedIds
@@ -955,7 +998,8 @@ export default function ImageGrid() {
     if (!revealImageId) return;
     const container = containerRef.current;
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    if (!scrollEl) return;
+    if (!container || !scrollEl) return;
+    const primaryContainer = container;
 
     const visibleIndex = isClientFiltered
       ? filteredOrderedIds.indexOf(revealImageId)
@@ -980,6 +1024,17 @@ export default function ImageGrid() {
       scrollEl.scrollTop = targetTop;
       setScrollTop(targetTop);
       consumeRevealImage();
+      if (pendingPrimaryFocusIdRef.current === revealImageId) {
+        requestAnimationFrame(() => {
+          const primaryControl = Array.from(
+            primaryContainer.querySelectorAll<HTMLButtonElement>('[data-image-primary="true"]')
+          ).find((control) => control.dataset.imageId === revealImageId);
+          if (primaryControl) {
+            primaryControl.focus();
+            pendingPrimaryFocusIdRef.current = null;
+          }
+        });
+      }
     });
   }, [
     consumeRevealImage,
@@ -994,6 +1049,21 @@ export default function ImageGrid() {
     view.viewMode,
     viewportHeight,
   ]);
+
+  const rovingVirtualIndex = rovingImageId
+    ? (isClientFiltered
+      ? clientFilteredVisible.findIndex((item) => item.image.id === rovingImageId)
+      : searchResultIndexById.get(rovingImageId) ?? -1)
+    : -1;
+  const rovingIsRendered = rovingVirtualIndex >= virtualRange.start && rovingVirtualIndex <= virtualRange.end;
+  const fallbackRovingImage = virtualRange.start >= 0
+    ? (isClientFiltered
+      ? clientFilteredVisible[virtualRange.start]?.image ?? null
+      : searchResults[virtualRange.start] ?? null)
+    : null;
+  const effectiveRovingImageId = rovingIsRendered
+    ? rovingImageId
+    : fallbackRovingImage?.id ?? rovingImageId;
 
   if (!isSearching && fullCount === 0) {
     return (
@@ -1047,41 +1117,48 @@ export default function ImageGrid() {
         key={`slot-list-${virtualIndex}`}
         className={`list-item virtual-list-item ${isSelected ? 'is-selected' : ''} ${isUnseen ? 'is-unseen' : ''} ${showDateSeparator ? 'has-date-separator' : ''}`}
         style={{ top, height }}
-        draggable
-        onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
-        onClick={(event) => {
-          markImageSeen(image.id);
-          selectImage(
-            image,
-            isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
-            { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
-          );
-        }}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          openImageDetail(image, sourceIndex);
-        }}
+        role="group"
+        aria-label={`Image ${image.filename}`}
       >
         {showDateSeparator && <div className="date-separator list-date-separator">{dateLabel}</div>}
-        <div className="list-thumb">
-          <CachedImage
-            src={image.fileUrl}
-            requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
-            fallbackSrc={image.fullUrl}
-            cacheKind="thumb"
-            alt={image.filename}
-            loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
-            decoding="async"
-            fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
-          />
-        </div>
-        <div className="list-info">
-          <span className="list-filename">{image.filename}</span>
-          <span className="list-path" title={image.id}>{image.id}</span>
-          <span className="list-prompt">
-            {image.metadata?.prompt?.substring(0, 150) || '(no metadata)'}
-          </span>
-        </div>
+        <button
+          className="list-item-primary"
+          type="button"
+          data-image-primary="true"
+          data-image-id={image.id}
+          aria-label={`Select ${image.filename}${isSelected ? ', selected' : ''}. Press Enter to open.`}
+          aria-pressed={isSelected}
+          tabIndex={effectiveRovingImageId === image.id ? 0 : -1}
+          draggable
+          onFocus={() => setRovingImageId(image.id)}
+          onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
+          onClick={(event) => selectFromPrimaryControl(event, image)}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            openImageDetail(image, sourceIndex);
+          }}
+          onKeyDown={(event) => handlePrimaryControlKeyDown(event, image, sourceIndex)}
+        >
+          <div className="list-thumb">
+            <CachedImage
+              src={image.fileUrl}
+              requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
+              fallbackSrc={image.fullUrl}
+              cacheKind="thumb"
+              alt={image.filename}
+              loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
+              decoding="async"
+              fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
+            />
+          </div>
+          <div className="list-info">
+            <span className="list-filename">{image.filename}</span>
+            <span className="list-path" title={image.id}>{image.id}</span>
+            <span className="list-prompt">
+              {image.metadata?.prompt?.substring(0, 150) || '(no metadata)'}
+            </span>
+          </div>
+        </button>
         <div className="list-actions">
           <button
             className={`card-fav-step ${isFav ? 'active' : ''}`}
@@ -1092,6 +1169,7 @@ export default function ImageGrid() {
             }}
             style={{ position: 'static' }}
             title="Decrease favorite level"
+            aria-label={`Decrease favorite level for ${image.filename}`}
           >
             -
           </button>
@@ -1100,6 +1178,7 @@ export default function ImageGrid() {
             onClick={(event) => { event.stopPropagation(); cycleFavoriteLevel(image.id); }}
             style={{ opacity: 1, position: 'static' }}
             title="Increase favorite level"
+            aria-label={`Increase favorite level for ${image.filename}`}
           >
             <svg width="16" height="16" viewBox="0 0 24 24"
               fill={isFav ? 'var(--favorite)' : 'none'}
@@ -1149,37 +1228,47 @@ export default function ImageGrid() {
         key={`slot-grid-${virtualIndex}`}
         className={`image-card virtual-grid-item ${isSelected ? 'is-selected' : ''} ${isUnseen ? 'is-unseen' : ''} ${showDateSeparator ? 'has-date-separator' : ''}`}
         style={{ top, left, width, height }}
-        draggable
-        onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
-        onClick={(event) => {
-          markImageSeen(image.id);
-          selectImage(
-            image,
-            isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
-            { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
-          );
-        }}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          openImageDetail(image, sourceIndex);
-        }}
+        role="group"
+        aria-label={`Image ${image.filename}`}
       >
         {showDateSeparator && (
           <div className="date-separator card-date-separator">
             {compactGridActions ? compactDateLabel : dateLabel}
           </div>
         )}
-        <CachedImage
-          src={image.fileUrl}
-          requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
-          fallbackSrc={image.fullUrl}
-          cacheKind="thumb"
-          alt={image.filename}
-          loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
-          decoding="async"
-          fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
-          style={imageObjectStyle}
-        />
+        <button
+          className="image-card-primary"
+          type="button"
+          data-image-primary="true"
+          data-image-id={image.id}
+          aria-label={`Select ${image.filename}${isSelected ? ', selected' : ''}. Press Enter to open.`}
+          aria-pressed={isSelected}
+          tabIndex={effectiveRovingImageId === image.id ? 0 : -1}
+          draggable
+          onFocus={() => setRovingImageId(image.id)}
+          onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
+          onClick={(event) => selectFromPrimaryControl(event, image)}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            openImageDetail(image, sourceIndex);
+          }}
+          onKeyDown={(event) => handlePrimaryControlKeyDown(event, image, sourceIndex)}
+        >
+          <CachedImage
+            src={image.fileUrl}
+            requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
+            fallbackSrc={image.fullUrl}
+            cacheKind="thumb"
+            alt={image.filename}
+            loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
+            style={imageObjectStyle}
+          />
+          <div className="card-overlay" aria-hidden="true">
+            <span className="card-filename">{image.filename}</span>
+          </div>
+        </button>
         {compactGridActions ? (
           favLevel > 0 && (
             <div className="card-fav-count" title={`Favorite level ${favLevel}`}>
@@ -1199,6 +1288,7 @@ export default function ImageGrid() {
                 decreaseFavoriteLevel(image.id);
               }}
               title="Decrease favorite level"
+              aria-label={`Decrease favorite level for ${image.filename}`}
             >
               -
             </button>
@@ -1209,6 +1299,7 @@ export default function ImageGrid() {
                 cycleFavoriteLevel(image.id);
               }}
               title="Increase favorite level"
+              aria-label={`Increase favorite level for ${image.filename}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24"
                 fill={isFav ? 'var(--favorite)' : 'none'}
@@ -1219,9 +1310,6 @@ export default function ImageGrid() {
             </button>
           </div>
         )}
-        <div className="card-overlay">
-          <span className="card-filename">{image.filename}</span>
-        </div>
       </div>
     );
   };

@@ -31,6 +31,7 @@ function DialogFocusHarness() {
       {baseOpen && (
         <div ref={baseRef} role="dialog" aria-label="Base dialog" tabIndex={-1}>
           <button ref={baseCloseRef} type="button" onClick={() => setBaseOpen(false)}>Close base</button>
+          <button type="button" aria-disabled="true">Unavailable action</button>
           <button type="button" onClick={() => setConfirmOpen(true)}>Delete</button>
         </div>
       )}
