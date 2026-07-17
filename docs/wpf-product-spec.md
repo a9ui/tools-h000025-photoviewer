@@ -426,7 +426,8 @@ Delete直前に毎回すべて再検証する。
 3. current catalog/indexに存在。
 4. supported image extension。
 5. actual fileが存在。
-6. project/app rootや別rootへescapeしない。
+6. lexical pathまたはcanonical pathがrepository/project root、`AppContext.BaseDirectory`のapp rootへ入らない。active rootとして明示scanされていても拒否する。
+7. active root内のreparse pointからproject/app rootや別rootへescapeしない。
 
 ### WPF-DEL-002 Execution
 
@@ -449,7 +450,8 @@ Delete直前に毎回すべて再検証する。
 - multi-selectionのsnapshotを対象にする。
 - count付きexplicit confirmation。
 - 各pathを同じsingle guard/Recycle serviceで独立実行する。
-- successful pathだけをcatalog/Favorite/Seen/tab/selectionから除去する。
+- successful pathだけをcatalog、selection、open/active/pinned/closed preview tab、active preview/modal、persisted UI参照から共通reconciliation helperで除去する。
+- Favorite、Seen、Enhancement job/outputはmulti-owner履歴または別削除権限なのでsuccessful pathも保持する。
 - failed pathはsourceとUIに残す。
 - resultはsucceeded/failed countと復旧可能な理由を表示する。
 - all-or-nothingを偽装しない。hard-delete fallbackは0回。
@@ -596,6 +598,7 @@ Accessibility:
 | Explorer Show in folder | `powershell -File scripts/verify-wpf-explorer-reveal.ps1` |
 | Explorer folder drag-in | `powershell -File scripts/verify-wpf-folder-drag-in.ps1` |
 | Bulk Recycle | `powershell -File scripts/verify-wpf-bulk-recycle.ps1` |
+| Delete protected roots / ownership reconciliation | `powershell -File scripts/verify-wpf-delete-correctness.ps1` |
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
 
 共通pass条件:

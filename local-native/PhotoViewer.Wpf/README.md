@@ -61,6 +61,7 @@ implementation. The normative current behavior is documented in
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
+- `--delete-correctness-smoke <path>` temp-only protected project/app-root, single/bulk ownership reconciliation, retained Favorite/Seen/Enhancement history, reload, and partial-failure smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
 - `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image tail-search/modal/heartbeat observation gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
@@ -233,6 +234,18 @@ fake recycle folder; it does not exercise the user's actual Windows Recycle Bin:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0c-smoke "$env:TEMP\photoviewer-wpf-p0c-smoke.json"
+```
+
+Delete validation rejects a source when either its lexical or canonical path is
+inside the repository/project root or the running app root, even if that root was
+opened as an active source folder. Successful single and bulk Recycle operations
+share one reconciliation path: only catalog/selection/tab/pin/closed-history/
+preview/modal and persisted UI references are purged. Favorite, Seen, Recent, and
+Enhancement history remain under their own ownership. The focused verifier uses
+only temporary sources, protected-root injection, and a fake Recycle backend:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-delete-correctness.ps1
 ```
 
 P0D is the integrated local-native gate. It builds and removes a temporary

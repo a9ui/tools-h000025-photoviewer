@@ -248,6 +248,13 @@ public partial class App : Application
             return;
         }
 
+        int deleteCorrectnessSmokeIdx = Array.IndexOf(e.Args, "--delete-correctness-smoke");
+        if (deleteCorrectnessSmokeIdx >= 0 && deleteCorrectnessSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureDeleteCorrectnessSmoke(e.Args[deleteCorrectnessSmokeIdx + 1]);
+            return;
+        }
+
         int favoriteFilterSmokeIdx = Array.IndexOf(e.Args, "--favorite-filter-smoke");
         if (favoriteFilterSmokeIdx >= 0 && favoriteFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -5640,8 +5647,8 @@ public partial class App : Application
                 ViewerState? persistedAfterPartial = ReadPersistedState(statePath);
                 bool partialStateCorrect = !File.Exists(bravoPath) && File.Exists(charliePath)
                     && File.Exists(Path.Combine(recycle, "bravo.png"))
-                    && !FavoriteFileContainsPath(favoritesPath, bravoPath) && FavoriteFileContainsPath(favoritesPath, charliePath)
-                    && !ReadSeenFlag(seenPath, bravoPath) && ReadSeenFlag(seenPath, charliePath)
+                    && FavoriteFileContainsPath(favoritesPath, bravoPath) && FavoriteFileContainsPath(favoritesPath, charliePath)
+                    && ReadSeenFlag(seenPath, bravoPath) && ReadSeenFlag(seenPath, charliePath)
                     && !win.PreviewTabNamesForSmoke.Contains("bravo.png", StringComparer.OrdinalIgnoreCase)
                     && win.PreviewTabNamesForSmoke.Contains("charlie.png", StringComparer.OrdinalIgnoreCase)
                     && persistedAfterPartial?.PreviewTabPaths?.Any(path => string.Equals(path, charliePath, StringComparison.OrdinalIgnoreCase)) == true
@@ -5707,6 +5714,242 @@ public partial class App : Application
             File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureDeleteCorrectnessSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-delete-correctness-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string protectedRoot = Path.Combine(smokeRoot, "protected-app-root");
+        string recycle = Path.Combine(smokeRoot, "fake-recycle-bin");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhancement-jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(protectedRoot);
+        string[] names = ["alpha.png", "bravo.png", "charlie.png", "delta.png", "echo.png", "escape.png"];
+        for (int index = 0; index < names.Length; index++)
+            WriteSmokePng(Path.Combine(folder, names[index]), 32, 24, Color.FromRgb((byte)(70 + index * 20), 125, 180));
+        string protectedTarget = Path.Combine(protectedRoot, "owned.png");
+        WriteSmokePng(protectedTarget, 32, 24, Color.FromRgb(210, 80, 95));
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+        File.WriteAllText(jobsPath, JsonSerializer.Serialize(new
+        {
+            version = 1,
+            jobs = new[]
+            {
+                new { id = "retained-source-history", sourcePath = Path.Combine(folder, "alpha.png"), status = "succeeded", progress = 100 },
+            },
+        }, new JsonSerializerOptions { WriteIndented = true }));
+
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        MainWindow? reload = null;
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                foreach ((string name, int index) in names.Select((name, index) => (name, index)))
+                {
+                    if (!win.SelectFileNameForSmoke(name) || !win.SetSelectedFavoriteLevelForSmoke((index % 5) + 1))
+                        throw new InvalidOperationException($"could not seed Favorite/Seen history for {name}");
+                    win.MarkSelectedSeenForSmoke();
+                }
+
+                int backendCalls = 0;
+                win.SetRecycleBinDeleteBackendForSmoke(path =>
+                {
+                    backendCalls++;
+                    if (string.Equals(Path.GetFileName(path), "delta.png", StringComparison.OrdinalIgnoreCase))
+                        return RecycleBinDeleteResult.Failed("synthetic partial failure");
+                    Directory.CreateDirectory(recycle);
+                    File.Move(path, Path.Combine(recycle, Path.GetFileName(path)));
+                    return RecycleBinDeleteResult.Success;
+                });
+
+                string alphaPath = Path.Combine(folder, "alpha.png");
+                string bravoPath = Path.Combine(folder, "bravo.png");
+                string charliePath = Path.Combine(folder, "charlie.png");
+                string deltaPath = Path.Combine(folder, "delta.png");
+                string echoPath = Path.Combine(folder, "echo.png");
+                string escapePath = Path.Combine(folder, "escape.png");
+
+                win.SetConfirmBeforeDeleteForSmoke(false);
+                win.SelectFileNameForSmoke("alpha.png");
+                win.SetProtectedDeleteRootsForSmoke(folder);
+                bool projectAppRootBlocked = !win.RequestDeleteSelectedForSmoke()
+                    && backendCalls == 0 && File.Exists(alphaPath) && win.CatalogCountForSmoke == names.Length;
+
+                win.SetProtectedDeleteRootsForSmoke(protectedRoot);
+                win.SetCanonicalPathResolverForSmoke(path =>
+                    string.Equals(Path.GetFullPath(path), Path.GetFullPath(escapePath), StringComparison.OrdinalIgnoreCase)
+                        ? Path.GetFullPath(protectedTarget)
+                        : Path.GetFullPath(path));
+                win.SelectFileNameForSmoke("escape.png");
+                bool canonicalProtectedEscapeBlocked = !win.RequestDeleteSelectedForSmoke()
+                    && backendCalls == 0 && File.Exists(escapePath) && File.Exists(protectedTarget);
+                win.ResetCanonicalPathResolverForSmoke();
+                win.ResetProtectedDeleteRootsForSmoke();
+
+                win.SelectFileNameForSmoke("alpha.png");
+                win.SetConfirmBeforeDeleteForSmoke(true);
+                bool cancelPrompted = win.RequestDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
+                win.CancelDeleteForSmoke();
+                bool cancelNonMutation = cancelPrompted && backendCalls == 0 && File.Exists(alphaPath)
+                    && win.CatalogCountForSmoke == names.Length && string.Equals(win.SelectedFileNameForSmoke, "alpha.png", StringComparison.OrdinalIgnoreCase);
+                win.SetConfirmBeforeDeleteForSmoke(false);
+
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+
+                bool singleTabOpened = win.OpenSelectedPreviewTabForSmoke();
+                bool singlePinned = win.TogglePreviewTabPinForSmoke("alpha.png") && win.IsPreviewTabPinnedForSmoke("alpha.png");
+                bool singleModalOpened = win.OpenModalForSmoke();
+                bool singleDeleted = win.RequestDeleteSelectedForSmoke();
+                ViewerState? stateAfterSingle = ReadPersistedState(statePath);
+                bool singleUiReconciled = singleTabOpened && singlePinned && singleModalOpened && singleDeleted
+                    && !File.Exists(alphaPath) && File.Exists(Path.Combine(recycle, "alpha.png"))
+                    && string.Equals(win.SelectedFileNameForSmoke, "bravo.png", StringComparison.OrdinalIgnoreCase)
+                    && win.ModalVisibleForSmoke && string.Equals(win.ModalDisplayPathForSmoke, bravoPath, StringComparison.OrdinalIgnoreCase)
+                    && !win.PreviewTabNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.IsPreviewTabPinnedForSmoke("alpha.png") && win.PinnedPreviewCountForSmoke == 0
+                    && win.ClosedPreviewTabCountForSmoke == 0
+                    && stateAfterSingle?.PreviewTabPaths?.All(path => !string.Equals(path, alphaPath, StringComparison.OrdinalIgnoreCase)) != false
+                    && stateAfterSingle?.PinnedPreviewPaths?.All(path => !string.Equals(path, alphaPath, StringComparison.OrdinalIgnoreCase)) != false
+                    && !string.Equals(stateAfterSingle?.ActivePreviewTabPath, alphaPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateAfterSingle?.SelectedPath, alphaPath, StringComparison.OrdinalIgnoreCase);
+
+                win.CloseModalForSmoke();
+                bool charliePrepared = win.SelectFileNameForSmoke("charlie.png")
+                    && win.OpenSelectedPreviewTabForSmoke()
+                    && win.TogglePreviewTabPinForSmoke("charlie.png")
+                    && win.ClosePreviewTabForSmoke("charlie.png")
+                    && win.ClosedPreviewTabCountForSmoke == 1
+                    && win.PinnedPreviewCountForSmoke == 1;
+                bool deltaTabOpened = win.SelectFileNameForSmoke("delta.png") && win.OpenSelectedPreviewTabForSmoke();
+                List<string> bulkOrder = win.FilteredFileNamesForSmoke();
+                int charlieIndex = bulkOrder.FindIndex(name => string.Equals(name, "charlie.png", StringComparison.OrdinalIgnoreCase));
+                int deltaIndex = bulkOrder.FindIndex(name => string.Equals(name, "delta.png", StringComparison.OrdinalIgnoreCase));
+                bool bulkSelected = charlieIndex >= 0 && deltaIndex == charlieIndex + 1 && win.SelectRangeForSmoke(charlieIndex, deltaIndex);
+                bool bulkModalOpened = win.OpenModalForSmoke();
+                bool bulkExecuted = win.RequestBulkDeleteSelectedForSmoke();
+                ViewerState? stateAfterBulk = ReadPersistedState(statePath);
+                bool partialFailureCorrect = charliePrepared && deltaTabOpened && bulkSelected && bulkModalOpened && bulkExecuted
+                    && !File.Exists(charliePath) && File.Exists(Path.Combine(recycle, "charlie.png"))
+                    && File.Exists(deltaPath) && File.Exists(echoPath)
+                    && win.DeleteStatusForSmoke.Contains("1 failed", StringComparison.OrdinalIgnoreCase)
+                    && win.SelectedFileNamesForSmoke.Contains("delta.png", StringComparer.OrdinalIgnoreCase)
+                    && !win.PreviewTabNamesForSmoke.Contains("charlie.png", StringComparer.OrdinalIgnoreCase)
+                    && win.PreviewTabNamesForSmoke.Contains("delta.png", StringComparer.OrdinalIgnoreCase)
+                    && win.ClosedPreviewTabCountForSmoke == 0 && win.PinnedPreviewCountForSmoke == 0
+                    && stateAfterBulk?.PreviewTabPaths?.All(path => !string.Equals(path, charliePath, StringComparison.OrdinalIgnoreCase)) != false
+                    && stateAfterBulk?.PinnedPreviewPaths?.All(path => !string.Equals(path, charliePath, StringComparison.OrdinalIgnoreCase)) != false
+                    && !string.Equals(stateAfterBulk?.ActivePreviewTabPath, charliePath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateAfterBulk?.SelectedPath, charliePath, StringComparison.OrdinalIgnoreCase);
+
+                bool retainedHistory = FavoriteFileContainsPath(favoritesPath, alphaPath)
+                    && FavoriteFileContainsPath(favoritesPath, charliePath)
+                    && ReadSeenFlag(seenPath, alphaPath) && ReadSeenFlag(seenPath, charliePath)
+                    && string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+
+                win.Close();
+                reload = HiddenWindow();
+                reload.Show();
+                await reload.RefreshActiveFolderForSmokeAsync();
+                ViewerState? stateAfterReload = ReadPersistedState(statePath);
+                bool deadUiAbsentAfterReload = reload.CatalogCountForSmoke == 4
+                    && !reload.AllFileNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
+                    && !reload.AllFileNamesForSmoke.Contains("charlie.png", StringComparer.OrdinalIgnoreCase)
+                    && !reload.PreviewTabNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
+                    && !reload.PreviewTabNamesForSmoke.Contains("charlie.png", StringComparer.OrdinalIgnoreCase)
+                    && reload.ClosedPreviewTabCountForSmoke == 0 && reload.PinnedPreviewCountForSmoke == 0
+                    && stateAfterReload?.PreviewTabPaths?.All(path => !string.Equals(path, alphaPath, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(path, charliePath, StringComparison.OrdinalIgnoreCase)) != false
+                    && stateAfterReload?.PinnedPreviewPaths?.All(path => !string.Equals(path, alphaPath, StringComparison.OrdinalIgnoreCase)
+                        && !string.Equals(path, charliePath, StringComparison.OrdinalIgnoreCase)) != false
+                    && !string.Equals(stateAfterReload?.ActivePreviewTabPath, alphaPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateAfterReload?.ActivePreviewTabPath, charliePath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateAfterReload?.SelectedPath, alphaPath, StringComparison.OrdinalIgnoreCase)
+                    && !string.Equals(stateAfterReload?.SelectedPath, charliePath, StringComparison.OrdinalIgnoreCase);
+
+                bool storesStillByteIdentical = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool recycleOnly = backendCalls == 3
+                    && Directory.Exists(recycle)
+                    && Directory.EnumerateFiles(recycle).Select(Path.GetFileName).OrderBy(static name => name)
+                        .SequenceEqual(["alpha.png", "charlie.png"], StringComparer.OrdinalIgnoreCase)
+                    && File.Exists(bravoPath) && File.Exists(deltaPath) && File.Exists(echoPath) && File.Exists(escapePath)
+                    && File.Exists(protectedTarget);
+
+                ok = projectAppRootBlocked && canonicalProtectedEscapeBlocked && cancelNonMutation
+                    && singleUiReconciled && partialFailureCorrect && retainedHistory
+                    && deadUiAbsentAfterReload && storesStillByteIdentical && recycleOnly;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "protected-root guards and shared single/bulk Recycle reconciliation passed with retained history"
+                        : "WPF Delete correctness contract failed",
+                    projectAppRootBlocked,
+                    canonicalProtectedEscapeBlocked,
+                    cancelNonMutation,
+                    singleUiReconciled,
+                    partialFailureCorrect,
+                    retainedHistory,
+                    deadUiAbsentAfterReload,
+                    storesStillByteIdentical,
+                    recycleOnly,
+                    backendCalls,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString() };
+            }
+            finally
+            {
+                if (reload?.IsVisible == true)
+                    reload.Close();
+                if (win.IsVisible)
+                    win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 

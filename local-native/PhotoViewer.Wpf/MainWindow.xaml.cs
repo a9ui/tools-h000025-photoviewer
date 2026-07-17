@@ -218,6 +218,7 @@ public partial class MainWindow : Window
     private DeleteSnapshot? _pendingBulkDeleteSnapshot;
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
     private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
+    private Func<IReadOnlyList<string>> _protectedDeleteRoots = ResolveProtectedDeleteRoots;
     private string _deleteStatus = "";
     private Action? _statusRetryAction;
     private IInputElement? _deleteFocusBeforeDialog;
@@ -6687,9 +6688,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        _allTiles.Remove(tile);
-        _selectedPaths.Remove(tile.Path);
-        _primarySelectedPath = null;
+        bool refreshModal = ReconcileSuccessfulSourceRecycle([tile]);
         ApplyFilters(selectFirst: false);
 
         Tile? neighbor = priorFilteredOrder
@@ -6700,7 +6699,11 @@ public partial class MainWindow : Window
                 .Reverse()
                 .FirstOrDefault(_tiles.Contains);
         if (neighbor is not null)
+        {
             SelectTile(neighbor);
+            if (refreshModal)
+                OpenModal();
+        }
         else
         {
             SelectTile(null);
@@ -6738,7 +6741,7 @@ public partial class MainWindow : Window
             return false;
         }
 
-        RemoveDeletedTilesFromState(succeeded);
+        bool refreshModal = ReconcileSuccessfulSourceRecycle(succeeded);
         ApplyFilters(selectFirst: false);
 
         var remainingSelected = snapshot.Targets
@@ -6750,10 +6753,14 @@ public partial class MainWindow : Window
             if (!remainingSelected.Contains(neighbor))
                 remainingSelected.Add(neighbor);
             SetSelection(remainingSelected, neighbor);
+            if (refreshModal)
+                OpenModal();
         }
         else if (remainingSelected.Count > 0)
         {
             SetSelection(remainingSelected, remainingSelected[^1]);
+            if (refreshModal)
+                OpenModal();
         }
         else
         {
@@ -6761,46 +6768,69 @@ public partial class MainWindow : Window
             CloseModal();
         }
 
-        bool favoritesSaved = SaveFavorites();
-        bool seenSaved = SaveSeenState();
         SaveState();
-        if (failed.Count == 0 && favoritesSaved && seenSaved)
+        if (failed.Count == 0)
         {
             SetStatusToast($"Moved {succeeded.Count:N0} selected images to Recycle Bin.");
         }
         else
         {
-            string persistence = favoritesSaved && seenSaved ? "" : " Local metadata could not be saved; retry after fixing local access.";
             string firstReason = failed.Count > 0 ? $" {failed[0].Reason}" : "";
-            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}{persistence}");
+            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}");
         }
         return true;
     }
 
-    private void RemoveDeletedTilesFromState(IEnumerable<Tile> deletedTiles)
+    /// <summary>
+    /// Reconciles WPF-owned UI references after the Recycle Bin backend has
+    /// confirmed success. Favorite, Seen, and enhancement data are deliberately
+    /// retained: those stores are multi-owner history with separate deletion
+    /// authority, not children of the source-file lifecycle.
+    /// </summary>
+    private bool ReconcileSuccessfulSourceRecycle(IEnumerable<Tile> deletedTiles)
     {
         var deletedPaths = new HashSet<string>(deletedTiles.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
-        foreach (Tile tile in deletedTiles)
-        {
-            string key = NormalizeFavoritePath(tile.Path);
-            _allTiles.Remove(tile);
-            _selectedPaths.Remove(tile.Path);
-            _favorites.Remove(key);
-            _favoriteDirtyPaths.Add(key);
-            _seenPaths.Remove(key);
-            _seenDirtyPaths.Add(key);
-            _pinnedPreviewPaths.Remove(key);
-        }
+        var deletedKeys = new HashSet<string>(deletedPaths.Select(NormalizeFavoritePath), StringComparer.OrdinalIgnoreCase);
+        bool refreshModal = Modal.Visibility == Visibility.Visible;
+        bool deletedModalSource = refreshModal
+            && !string.IsNullOrWhiteSpace(_modalSourceTilePath)
+            && deletedPaths.Contains(_modalSourceTilePath);
 
+        if (deletedModalSource)
+            CloseModal();
+        if (_hoverPreviewTabPath is not null && deletedPaths.Contains(_hoverPreviewTabPath))
+            HidePreviewTabHover();
+
+        _allTiles.RemoveAll(tile => deletedPaths.Contains(tile.Path));
+        _selectedPaths.RemoveWhere(deletedPaths.Contains);
+        if (_primarySelectedPath is not null && deletedPaths.Contains(_primarySelectedPath))
+            _primarySelectedPath = null;
+        if (_restoredSelectedPath is not null && deletedPaths.Contains(_restoredSelectedPath))
+            _restoredSelectedPath = null;
+
+        foreach (string key in deletedKeys)
+            _pinnedPreviewPaths.Remove(key);
         foreach (PreviewTabView tab in _previewTabs.Where(tab => deletedPaths.Contains(tab.Path)).ToList())
             _previewTabs.Remove(tab);
         _closedPreviewTabs.RemoveAll(tile => deletedPaths.Contains(tile.Path));
-        if (_activePreviewTabPath is not null && deletedPaths.Contains(_activePreviewTabPath))
+        _restoredPreviewTabPaths.RemoveAll(path => deletedPaths.Contains(path));
+        bool activePreviewTabDeleted = _activePreviewTabPath is not null && deletedPaths.Contains(_activePreviewTabPath);
+        if (activePreviewTabDeleted)
             _activePreviewTabPath = null;
-        if (_hoverPreviewTabPath is not null && deletedPaths.Contains(_hoverPreviewTabPath))
-            HidePreviewTabHover();
-        _primarySelectedPath = null;
+        if (activePreviewTabDeleted && _previewTabs.LastOrDefault() is { } nextActiveTab)
+            _activePreviewTabPath = nextActiveTab.Path;
+        if (_restoredActivePreviewTabPath is not null && deletedPaths.Contains(_restoredActivePreviewTabPath))
+            _restoredActivePreviewTabPath = null;
+        if (_previewDecodedPath is not null && deletedPaths.Contains(_previewDecodedPath))
+            _previewDecodedPath = null;
+        if (_currentPreviewMetadataPath is not null && deletedPaths.Contains(_currentPreviewMetadataPath))
+        {
+            _currentPreviewMetadataPath = null;
+            _currentPreviewMetadata = null;
+        }
+
         RefreshPreviewTabs();
+        return refreshModal;
     }
 
     private Tile? FindBulkDeleteNeighbor(IReadOnlyList<Tile> priorFilteredOrder, IReadOnlyList<Tile> targets)
@@ -6850,6 +6880,9 @@ public partial class MainWindow : Window
             return Fail($"canonical path failed ({ex.Message})", out reason);
         }
 
+        if (IsProtectedDeletePath(lexical, canonical, out reason))
+            return false;
+
         var activeRoots = _currentFolderSet.Count > 0 ? _currentFolderSet : _currentFolder is null ? [] : [_currentFolder];
         if (activeRoots.Count == 0)
             return Fail("no active source root", out reason);
@@ -6869,6 +6902,63 @@ public partial class MainWindow : Window
         }
 
         return Fail("source is outside the active root", out reason);
+    }
+
+    private bool IsProtectedDeletePath(string lexical, string canonical, out string reason)
+    {
+        IReadOnlyList<string> protectedRoots;
+        try
+        {
+            protectedRoots = _protectedDeleteRoots();
+        }
+        catch
+        {
+            reason = "protected project/app root could not be verified";
+            return true;
+        }
+
+        foreach (string root in protectedRoots.Where(static root => !string.IsNullOrWhiteSpace(root)))
+        {
+            try
+            {
+                string lexicalRoot = Path.GetFullPath(root);
+                string canonicalRoot = _resolveFinalPath(lexicalRoot);
+                if (IsPathInside(lexical, lexicalRoot)
+                    || IsPathInside(canonical, canonicalRoot)
+                    || IsPathInside(lexical, canonicalRoot)
+                    || IsPathInside(canonical, lexicalRoot))
+                {
+                    reason = "source is inside a protected project/app root";
+                    return true;
+                }
+            }
+            catch
+            {
+                // A root that cannot be resolved cannot safely authorize a
+                // destructive operation. Fail closed without disclosing it.
+                reason = "protected project/app root could not be verified";
+                return true;
+            }
+        }
+
+        reason = "";
+        return false;
+    }
+
+    private static IReadOnlyList<string> ResolveProtectedDeleteRoots()
+    {
+        var roots = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        static void Add(HashSet<string> destination, string? candidate)
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+                destination.Add(Path.GetFullPath(candidate));
+        }
+
+        Add(roots, AppContext.BaseDirectory);
+        Add(roots, FindProjectRoot(Environment.CurrentDirectory));
+        Add(roots, FindProjectRoot(AppContext.BaseDirectory));
+        Add(roots, FindProjectRoot(Path.GetDirectoryName(Environment.ProcessPath ?? "") ?? ""));
+        return roots.ToList();
     }
 
     private static bool Fail(string value, out string reason)
@@ -7752,6 +7842,18 @@ public partial class MainWindow : Window
     public void SetCanonicalPathResolverForSmoke(Func<string, string> resolver)
         => _resolveFinalPath = resolver ?? throw new ArgumentNullException(nameof(resolver));
     public void ResetCanonicalPathResolverForSmoke() => _resolveFinalPath = ResolveFinalPathCore;
+
+    public void SetProtectedDeleteRootsForSmoke(params string[] roots)
+    {
+        string[] snapshot = roots
+            .Where(static root => !string.IsNullOrWhiteSpace(root))
+            .Select(Path.GetFullPath)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        _protectedDeleteRoots = () => snapshot;
+    }
+
+    public void ResetProtectedDeleteRootsForSmoke() => _protectedDeleteRoots = ResolveProtectedDeleteRoots;
 
     public void SetConfirmBeforeDeleteForSmoke(bool value) => _confirmBeforeDelete = value;
     public void FlushStateForSmoke()
