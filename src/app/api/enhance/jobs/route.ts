@@ -13,6 +13,10 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
 const OUTPUT_FORMATS = new Set(['png', 'webp', 'jpg']);
+const KNOWN_PRESET_IDS = new Set([
+  ...ENHANCEMENT_PRESETS.map((preset) => preset.id),
+  SHARP_TEST_PRESET.id,
+]);
 
 function roundMP(width?: number, height?: number) {
   if (!width || !height) return undefined;
@@ -157,6 +161,11 @@ export async function POST(request: NextRequest) {
   }
   if (body.presetId !== undefined && typeof body.presetId !== 'string') {
     return NextResponse.json({ error: 'presetId must be a string' }, { status: 400 });
+  }
+  if (body.presetId !== undefined && !KNOWN_PRESET_IDS.has(body.presetId)) {
+    // Reject only at the request boundary. The store and queue retain their
+    // fallback so persisted jobs from older versions can still be recovered.
+    return NextResponse.json({ error: `Unknown enhancement preset: ${body.presetId}` }, { status: 400 });
   }
   if (body.adapterId !== undefined && typeof body.adapterId !== 'string') {
     return NextResponse.json({ error: 'adapterId must be a string' }, { status: 400 });
