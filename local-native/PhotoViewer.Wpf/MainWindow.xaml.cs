@@ -5056,10 +5056,15 @@ public partial class MainWindow : Window
 
         var selected = SelectedTile();
         int currentIndex = selected is null ? -1 : _tiles.IndexOf(selected);
+        int nextIndex;
         if (currentIndex < 0)
-            currentIndex = delta > 0 ? -1 : _tiles.Count;
-
-        int nextIndex = Math.Clamp(currentIndex + delta, 0, _tiles.Count - 1);
+        {
+            nextIndex = delta > 0 ? 0 : _tiles.Count - 1;
+        }
+        else
+        {
+            nextIndex = ((currentIndex + delta) % _tiles.Count + _tiles.Count) % _tiles.Count;
+        }
         if (nextIndex == currentIndex)
             return false;
 

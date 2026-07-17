@@ -4806,6 +4806,14 @@ public partial class App : Application
                 var persisted = ReadPersistedState(statePath);
                 string? persistedName = persisted?.SelectedPath is null ? null : Path.GetFileName(persisted.SelectedPath);
 
+                int filteredCount = win.FilteredCountForSmoke;
+                bool selectedLast = filteredCount > 1 && win.SelectIndexForSmoke(filteredCount - 1);
+                string? lastName = win.SelectedFileNameForSmoke;
+                bool wrappedLastToFirst = selectedLast && win.NavigateModalForSmoke(1);
+                string? wrappedFirstName = win.SelectedFileNameForSmoke;
+                bool wrappedFirstToLast = wrappedLastToFirst && win.NavigateModalForSmoke(-1);
+                string? wrappedLastName = win.SelectedFileNameForSmoke;
+
                 bool ok = selected
                     && win.ModalVisibleForSmoke
                     && movedNext
@@ -4813,11 +4821,16 @@ public partial class App : Application
                     && !string.IsNullOrWhiteSpace(startPath)
                     && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
                     && string.Equals(startPath, previousPath, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(previousPath, persisted?.SelectedPath, StringComparison.OrdinalIgnoreCase);
+                    && string.Equals(previousPath, persisted?.SelectedPath, StringComparison.OrdinalIgnoreCase)
+                    && selectedLast
+                    && wrappedLastToFirst
+                    && wrappedFirstToLast
+                    && !string.Equals(lastName, wrappedFirstName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(lastName, wrappedLastName, StringComparison.OrdinalIgnoreCase);
 
                 result = new ModalNavigationSmokeResult(
                     ok,
-                    ok ? "modal navigation moved next, returned previous, and persisted selected path" : "modal navigation did not keep selection/state in sync",
+                    ok ? "modal navigation moved next/previous, wrapped both ends, and persisted selected path" : "modal navigation did not keep selection/state or wrap behavior in sync",
                     statePath,
                     folder,
                     query,
@@ -4834,7 +4847,13 @@ public partial class App : Application
                     previousPath,
                     win.ModalVisibleForSmoke,
                     persistedName,
-                    persisted?.SelectedPath);
+                    persisted?.SelectedPath,
+                    filteredCount,
+                    lastName,
+                    wrappedLastToFirst,
+                    wrappedFirstName,
+                    wrappedFirstToLast,
+                    wrappedLastName);
             }
             catch (Exception ex)
             {
@@ -7067,7 +7086,13 @@ public partial class App : Application
         string? PreviousPath,
         bool ModalVisible,
         string? PersistedName,
-        string? PersistedPath);
+        string? PersistedPath,
+        int FilteredCount = 0,
+        string? LastName = null,
+        bool WrappedLastToFirst = false,
+        string? WrappedFirstName = null,
+        bool WrappedFirstToLast = false,
+        string? WrappedLastName = null);
 
     private sealed record ModalTransformSmokeResult(
         bool Ok,
