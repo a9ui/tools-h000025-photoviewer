@@ -4,7 +4,7 @@
 
 Browser版を製品挙動の正本として再定義し、その契約をWPFへP0〜P2まで適用した。実装、正規仕様、focused verifier、20,000画像stress、同一process reload soak、Browser production runtime、Browser/WPF共有state競合を同じbranchで検証した。
 
-このmilestoneで検証した実装headは`af2bc71624deb7e51e6cb3208351b692646bcd85`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`で、branchはcloseout前時点で137 commits aheadだった。
+このmilestoneで最終検証した実装headは`7a39ab711bd6020b9c6d8a9243236ba2967098f3`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`だった。
 
 Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement write ownership、cache quota/eviction、installer/signing/public packagingはこの判定へ含めない。公開、deployment、user port 3000のrestart、user state/cache削除は実施していない。
 
@@ -36,7 +36,8 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 - production launcherのprocess ownershipをexact Node entrypointとdirect child treeへ限定した。port番号やrepo root文字列だけで他processを停止しない。
 - launcher watchdogは後から同じportを取得した無関係processを停止しない。
 - isolated runtimeは`127.0.0.1`へbindし、source revision、dirty flag、build id、server PIDを`/api/runtime`とverifierで証明する。
-- 既存のzoom anchor/sidebar固定、Favorite exact levels、Unseen display-only、Folders collapse、Quick Search/date presets不在、Delete adjacent selectionを回帰guardで保持した。
+- zoom後もwheel対象画像のviewport offsetが不変であることをImageGrid結合testで固定した。sidebarは`width` / `min-width` / `max-width` / `flex-basis`が240px tokenから外れた時にUI regression guardで拒否する。
+- Favorite exact levels、Unseen display-only、Folders collapse、Quick Search/date presets不在、Delete adjacent selectionを回帰guardで保持した。
 
 ## WPF updates
 
@@ -50,12 +51,13 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 - Modalをnamed focusable dialog surfaceへし、initial focus、Tab/Control+Tab cycle、focused child上のEscape、close後focus return、Automation Name/HelpTextを固定した。
 - WPF launcherをmtime判定からprovenance判定へ変更した。repo root、project/target path、git HEAD、source fingerprint、exe SHA256の一致を要求し、missing/unproven/tampered/wrong-root/wrong-revisionはbuildし直す。
 - WPF launcherはBrowser、Node、localhost、port 3000、既存WPF processを所有・停止しない。
+- scan後のexistence snapshotからcatalog materializeまでにsourceが消えるTOCTOUを再現し、想定内のIO/access/path/security failureだけを画像単位でskipするよう修正した。survivor件数、selection、Preview tab、Modal、state、既存persistence警告を同時に整合する。
 
 ## Final verification
 
 ### Browser
 
-- `pnpm test -- --run`: 53 files PASS / 2 skipped、420 tests PASS / 2 skipped、warning/stderr diagnostics 0。
+- `pnpm test -- --run`: 53 files PASS / 2 skipped、421 tests PASS / 2 skipped、warning/stderr diagnostics 0。
 - `pnpm typecheck`: PASS、diagnostics 0。
 - `pnpm lint`: PASS、warning/error 0。
 - `pnpm build`: PASS、Next.js 16.2.10 production routes生成。
@@ -66,10 +68,11 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 ### WPF
 
 - `dotnet build -c Release --no-restore`: 0 warnings / 0 errors。
-- `verify-wpf-product.ps1 -IncludeReloadSoak`: **42 / 42 PASS**、235,488 ms、`SkipStress=false`。
-- 20,000 stress: catalog 20,000 / filtered 20,000 / silent truncate 0、Grid 96 / maximum 384、List 19、load 9,960 ms、tail search 358 ms、heartbeat 16、source 20,000、Enhancement reads/candidates 0。
-- oversized decode: 256x16,384 sourceをGrid 35x2,240、Preview 112x7,168、Modal 175x11,200へ制限。peak working-set growth 12.2 MiB、latest selection勝利。
-- reload soak: 1,000画像 x 2 folders、24 cycles、explicit cancel 8、supersede 16、stale completion 0、preview/modal 24/24、CTS 73/73、managed growth 11,117,856 bytes、final working-set growth 78,204,928 bytes、stores/source byte-identical。
+- `verify-wpf-product.ps1 -IncludeReloadSoak`: **43 / 43 PASS**、237,432 ms、`SkipStress=false`。
+- 20,000 stress: catalog 20,000 / filtered 20,000 / silent truncate 0、Grid 96 / maximum 384、List 19、load 9,765 ms、tail search 361 ms、heartbeat 16、source 20,000、Enhancement reads/candidates 0。
+- oversized decode: 256x16,384 sourceをGrid 35x2,240、Preview 112x7,168、Modal 175x11,200へ制限。peak working-set growth 16.9 MiB、latest selection勝利。
+- scan materialization race: existence snapshot直後に1 sourceを削除してもcrashせず、survivor 2件、warning、selection/Modal、state、shared stores、residue 0を保持。
+- reload soak: 1,000画像 x 2 folders、24 cycles、explicit cancel 8、supersede 16、stale completion 0、preview/modal 24/24、CTS 73/73、managed growth 12,145,240 bytes、final working-set growth 66,543,616 bytes、stores/source byte-identical。
 - Delete raceの初回false negativeは、正しいModal root focusに対して旧testがClose button固定を要求したoracle不整合。正本へ合わせ、focused 3/3、関連4 gates、最終aggregateでPASS。
 - cross-runtime Favorite/Seen writer 20 iterations: 40 favorite + 40 seen entries、valid JSON、residue 0、HTTP/port不使用。
 - cross-runtime recent writer 20 iterations: Browser/WPF/third writerのhistory merge、unknown field保持、residue 0、HTTP/port不使用。
