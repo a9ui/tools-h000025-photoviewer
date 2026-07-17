@@ -51,6 +51,13 @@ public partial class App : Application
             return;
         }
 
+        int modalInteractionSmokeIdx = Array.IndexOf(e.Args, "--modal-interaction-smoke");
+        if (modalInteractionSmokeIdx >= 0 && modalInteractionSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureModalInteractionSmoke(e.Args[modalInteractionSmokeIdx + 1]);
+            return;
+        }
+
         int selectionSmokeIdx = Array.IndexOf(e.Args, "--selection-smoke");
         if (selectionSmokeIdx >= 0 && selectionSmokeIdx + 1 < e.Args.Length)
         {
@@ -5097,6 +5104,116 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureModalInteractionSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-modal-interaction-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        Directory.CreateDirectory(folder);
+        const string firstName = "a-modal.png";
+        const string secondName = "b-modal.png";
+        const string thirdName = "c-modal.png";
+        WriteSmokePng(Path.Combine(folder, firstName), 48, 36, Color.FromRgb(80, 130, 210));
+        WriteSmokePng(Path.Combine(folder, secondName), 48, 36, Color.FromRgb(230, 100, 130));
+        WriteSmokePng(Path.Combine(folder, thirdName), 48, 36, Color.FromRgb(100, 200, 130));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ModalInteractionSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                win.SetSortByForSmoke("name");
+                bool selected = win.SelectFileNameForSmoke(secondName);
+                bool opened = win.OpenModalForSmoke();
+                bool accessibility = win.ModalEdgeZonesAccessibleForSmoke;
+
+                win.ScheduleModalChromeToggleForSmoke();
+                await Task.Delay(230);
+                bool chromeHidden = !win.ModalChromeVisibleForSmoke
+                    && win.ModalInteractionFeedbackVisibleForSmoke
+                    && win.ModalInteractionFeedbackForSmoke.Contains("hidden", StringComparison.OrdinalIgnoreCase);
+                win.ScheduleModalChromeToggleForSmoke();
+                await Task.Delay(230);
+                bool chromeShown = win.ModalChromeVisibleForSmoke
+                    && win.ModalInteractionFeedbackForSmoke.Contains("shown", StringComparison.OrdinalIgnoreCase);
+
+                bool controlDidNotToggle = win.ToggleModalMetadataForSmoke();
+                bool doubleClickMetadata = win.ToggleModalMetadataFromImageDoubleClickForSmoke();
+
+                string? beforeEdge = win.SelectedFileNameForSmoke;
+                bool edgeNext = win.ModalEdgeNavigateForSmoke(1);
+                string? afterEdge = win.SelectedFileNameForSmoke;
+                bool edgeFeedback = win.ModalInteractionFeedbackVisibleForSmoke
+                    && win.ModalInteractionFeedbackForSmoke.Contains("Next", StringComparison.OrdinalIgnoreCase);
+
+                string? beforeSwipe = win.SelectedFileNameForSmoke;
+                bool swipeNext = win.ModalSwipeForSmoke(-200);
+                string? afterSwipe = win.SelectedFileNameForSmoke;
+                bool smallSwipeIgnored = !win.ModalSwipeForSmoke(20)
+                    && string.Equals(win.SelectedFileNameForSmoke, afterSwipe, StringComparison.OrdinalIgnoreCase);
+
+                bool zoomed = win.ModalZoomShortcutForSmoke("plus");
+                bool zoomFeedback = win.ModalInteractionFeedbackVisibleForSmoke
+                    && win.ModalInteractionFeedbackForSmoke.Contains("Zoom", StringComparison.OrdinalIgnoreCase);
+                string? beforeBlockedSwipe = win.SelectedFileNameForSmoke;
+                bool zoomedSwipeBlocked = !win.ModalSwipeForSmoke(-200)
+                    && string.Equals(win.SelectedFileNameForSmoke, beforeBlockedSwipe, StringComparison.OrdinalIgnoreCase);
+                bool reset = win.ResetModalTransformForSmoke();
+                bool closed = win.CloseTopmostOverlayForSmoke();
+
+                bool ok = selected && opened && accessibility
+                    && chromeHidden && chromeShown && controlDidNotToggle && doubleClickMetadata
+                    && edgeNext && !string.Equals(beforeEdge, afterEdge, StringComparison.OrdinalIgnoreCase) && edgeFeedback
+                    && swipeNext && !string.Equals(beforeSwipe, afterSwipe, StringComparison.OrdinalIgnoreCase) && smallSwipeIgnored
+                    && zoomed && zoomFeedback && zoomedSwipeBlocked && reset && closed && !win.ModalVisibleForSmoke;
+                result = new ModalInteractionSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok ? "modal chrome, edge navigation, swipe threshold, feedback, metadata double-click, and zoom/pan isolation passed" : "modal interaction parity did not meet the expected contract",
+                    Accessibility = accessibility,
+                    ChromeHidden = chromeHidden,
+                    ChromeShown = chromeShown,
+                    ControlDidNotToggle = controlDidNotToggle,
+                    DoubleClickMetadata = doubleClickMetadata,
+                    EdgeNext = edgeNext && !string.Equals(beforeEdge, afterEdge, StringComparison.OrdinalIgnoreCase),
+                    SwipeNext = swipeNext && !string.Equals(beforeSwipe, afterSwipe, StringComparison.OrdinalIgnoreCase),
+                    SmallSwipeIgnored = smallSwipeIgnored,
+                    ZoomedSwipeBlocked = zoomedSwipeBlocked,
+                    Feedback = edgeFeedback && zoomFeedback,
+                    EscapeClosed = closed && !win.ModalVisibleForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                win.Close();
+                result = new ModalInteractionSmokeResult { Message = ex.Message };
+            }
+            finally
+            {
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+            }
+
+            WriteModalInteractionSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureModalTransformSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -7310,6 +7427,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteModalInteractionSmokeResult(string path, ModalInteractionSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteModalPanSmokeResult(string path, ModalPanSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -7635,6 +7759,23 @@ public partial class App : Application
         ModalTransformSnapshot AfterNavigation = default,
         bool Closed = false,
         ModalTransformSnapshot AfterClose = default);
+
+    private sealed class ModalInteractionSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public bool Accessibility { get; init; }
+        public bool ChromeHidden { get; init; }
+        public bool ChromeShown { get; init; }
+        public bool ControlDidNotToggle { get; init; }
+        public bool DoubleClickMetadata { get; init; }
+        public bool EdgeNext { get; init; }
+        public bool SwipeNext { get; init; }
+        public bool SmallSwipeIgnored { get; init; }
+        public bool ZoomedSwipeBlocked { get; init; }
+        public bool Feedback { get; init; }
+        public bool EscapeClosed { get; init; }
+    }
 
     private sealed record ModalPanSmokeResult(
         bool Ok,

@@ -706,7 +706,7 @@
       </Grid.RowDefinitions>
 
       <!-- topbar -->
-      <DockPanel Grid.Row="0" Margin="16,12" LastChildFill="False">
+      <DockPanel x:Name="ModalTopBar" Grid.Row="0" Margin="16,12" LastChildFill="False">
         <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" VerticalAlignment="Center">
           <TextBlock x:Name="ModalTitle" Text="00427-portrait.png · 832 × 1216 · animagineXL_v31" Foreground="{StaticResource TextSecondary}" FontSize="13" VerticalAlignment="Center"/>
           <TextBlock x:Name="ModalSourceLabel" Text="Original" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="10,0,0,0" VerticalAlignment="Center"/>
@@ -762,12 +762,12 @@
           </Grid>
         </Border>
 
-        <Button HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous (←)" Background="Transparent" Click="ModalPrevious_Click">
+        <Button x:Name="ModalPreviousButton" HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous image (Left arrow)" Background="Transparent" Click="ModalPrevious_Click" AutomationProperties.Name="Previous image edge zone" AutomationProperties.HelpText="Navigate to the previous image. The sequence wraps at the first image.">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M15,18 l-6,-6 l6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>
         </Button>
-        <Button HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next (→)" Background="Transparent" Click="ModalNext_Click">
+        <Button x:Name="ModalNextButton" HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next image (Right arrow)" Background="Transparent" Click="ModalNext_Click" AutomationProperties.Name="Next image edge zone" AutomationProperties.HelpText="Navigate to the next image. The sequence wraps at the last image.">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M9,18 l6,-6 l-6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>
@@ -823,10 +823,13 @@
           </ScrollViewer>
         </Border>
 
-        <Border VerticalAlignment="Bottom" HorizontalAlignment="Center" CornerRadius="999" Background="#80000000" Padding="12,5" Margin="0,0,0,10">
+        <Border x:Name="ModalFooter" VerticalAlignment="Bottom" HorizontalAlignment="Center" CornerRadius="999" Background="#80000000" Padding="12,5" Margin="0,0,0,10">
           <TextBlock Foreground="{StaticResource TextSecondary}" FontSize="12">
             <Run x:Name="ModalZoomLabel" Text="100%"/><Run Text="   ·   ← → navigate   ·   +/- zoom   ·   Esc close" Foreground="{StaticResource TextTertiary}"/>
           </TextBlock>
+        </Border>
+        <Border x:Name="ModalInteractionFeedback" VerticalAlignment="Top" HorizontalAlignment="Center" CornerRadius="999" Background="{StaticResource AccentGlass}" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" Padding="12,5" Margin="0,18,0,0" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="20">
+          <TextBlock x:Name="ModalInteractionFeedbackText" Foreground="{StaticResource TextPrimary}" FontSize="12" FontWeight="SemiBold"/>
         </Border>
       </Grid>
     </Grid>

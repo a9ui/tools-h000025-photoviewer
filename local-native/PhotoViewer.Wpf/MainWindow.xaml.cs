@@ -142,6 +142,11 @@ public partial class MainWindow : Window
     private string? _modalDisplayPath;
     private Point? _modalPanStartPoint;
     private Vector _modalPanStartOffset;
+    private Point? _modalPointerStartPoint;
+    private bool _modalPointerMoved;
+    private bool _modalChromeVisible = true;
+    private long _modalSingleClickGeneration;
+    private readonly DispatcherTimer _modalFeedbackTimer;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
     private CancellationTokenSource? _previewCts;
@@ -208,6 +213,16 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(SearchStateSaveDebounceMilliseconds),
         };
         _searchStateSaveTimer.Tick += SearchStateSaveTimer_Tick;
+        _modalFeedbackTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(650),
+        };
+        _modalFeedbackTimer.Tick += (_, _) =>
+        {
+            _modalFeedbackTimer.Stop();
+            if (ModalInteractionFeedback is not null)
+                ModalInteractionFeedback.Visibility = Visibility.Collapsed;
+        };
         LandingFolderSetList.ItemsSource = _landingFolderSet;
         SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
@@ -5238,6 +5253,7 @@ public partial class MainWindow : Window
     private void OpenModal()
     {
         if (SelectedTile() is not Tile t) return;
+        bool opening = Modal.Visibility != Visibility.Visible;
         if (!string.Equals(_modalTransformPath, t.Path, StringComparison.OrdinalIgnoreCase))
             ResetModalTransform(t.Path);
         if (!string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase))
@@ -5266,6 +5282,8 @@ public partial class MainWindow : Window
         ModalArtGlow.Fill = t.ArtGlow;
         SetModalMetadataSidebarVisible(false);
         Modal.Visibility = Visibility.Visible;
+        if (opening)
+            SetModalChromeVisible(true, showFeedback: false);
         SyncModalMetadataSidebar();
         watch.Stop();
 
@@ -5382,12 +5400,17 @@ public partial class MainWindow : Window
 
     private void CloseModal()
     {
+        CancelPendingModalSingleClick();
+        EndModalPointerGesture();
         _modalCts?.Cancel();
         Modal.Visibility = Visibility.Collapsed;
         _modalShowingEnhanced = false;
         _modalSourceTilePath = null;
         _modalDisplayPath = null;
         UpdateModalEnhancedControls(false);
+        SetModalChromeVisible(true, showFeedback: false);
+        _modalFeedbackTimer.Stop();
+        ModalInteractionFeedback.Visibility = Visibility.Collapsed;
         ResetModalTransform();
     }
 
@@ -5405,7 +5428,7 @@ public partial class MainWindow : Window
 
     private void ToggleModalFlip_Click(object sender, RoutedEventArgs e) => ToggleModalFlip();
 
-    private void ResetModalTransform_Click(object sender, RoutedEventArgs e) => ResetModalTransform(_modalTransformPath);
+    private void ResetModalTransform_Click(object sender, RoutedEventArgs e) => ResetModalTransform(_modalTransformPath, showFeedback: true);
 
     private bool ToggleModalFlip()
     {
@@ -5434,10 +5457,11 @@ public partial class MainWindow : Window
         _modalZoom = next;
         ClampModalPan();
         UpdateModalTransform();
+        ShowModalInteractionFeedback($"Zoom {Math.Round(_modalZoom * 100):0}%");
         return true;
     }
 
-    private bool ResetModalTransform(string? path = null)
+    private bool ResetModalTransform(string? path = null, bool showFeedback = false)
     {
         bool changed = Math.Abs(_modalZoom - 1) >= 0.0001
             || _modalFlipped
@@ -5449,6 +5473,8 @@ public partial class MainWindow : Window
         _modalPanY = 0;
         _modalTransformPath = path;
         UpdateModalTransform();
+        if (showFeedback && changed)
+            ShowModalInteractionFeedback("Zoom reset");
         return changed;
     }
 
@@ -5520,25 +5546,32 @@ public partial class MainWindow : Window
             Key.E => ToggleModalEnhanced(),
             Key.Add or Key.OemPlus => AdjustModalZoom(ModalZoomKeyboardStep),
             Key.Subtract or Key.OemMinus => AdjustModalZoom(1 / ModalZoomKeyboardStep),
-            Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath),
+            Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath, showFeedback: true),
             _ => false,
         };
     }
 
     private void ModalImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
+        CancelPendingModalSingleClick();
         if (e.ClickCount == 2 && ToggleModalMetadataSidebarFromImageDoubleClick())
         {
-            EndModalPan();
+            EndModalPointerGesture();
             e.Handled = true;
             return;
         }
 
-        if (Modal.Visibility != Visibility.Visible || _modalZoom <= 1)
+        if (Modal.Visibility != Visibility.Visible)
             return;
 
-        _modalPanStartPoint = e.GetPosition(ModalImage);
-        _modalPanStartOffset = new Vector(_modalPanX, _modalPanY);
+        Point start = e.GetPosition(ModalImage);
+        _modalPointerStartPoint = start;
+        _modalPointerMoved = false;
+        if (_modalZoom > 1)
+        {
+            _modalPanStartPoint = start;
+            _modalPanStartOffset = new Vector(_modalPanX, _modalPanY);
+        }
         ModalImage.CaptureMouse();
         e.Handled = true;
     }
@@ -5554,28 +5587,110 @@ public partial class MainWindow : Window
 
     private void ModalImage_MouseMove(object sender, MouseEventArgs e)
     {
-        if (!_modalPanStartPoint.HasValue || !ModalImage.IsMouseCaptured)
+        if (!_modalPointerStartPoint.HasValue || !ModalImage.IsMouseCaptured)
             return;
 
         Point current = e.GetPosition(ModalImage);
-        Vector delta = current - _modalPanStartPoint.Value;
-        SetModalPan(_modalPanStartOffset.X + delta.X, _modalPanStartOffset.Y + delta.Y);
+        Vector delta = current - _modalPointerStartPoint.Value;
+        if (Math.Abs(delta.X) >= SystemParameters.MinimumHorizontalDragDistance
+            || Math.Abs(delta.Y) >= SystemParameters.MinimumVerticalDragDistance)
+        {
+            _modalPointerMoved = true;
+        }
+
+        if (_modalZoom > 1 && _modalPanStartPoint.HasValue)
+        {
+            Vector panDelta = current - _modalPanStartPoint.Value;
+            SetModalPan(_modalPanStartOffset.X + panDelta.X, _modalPanStartOffset.Y + panDelta.Y);
+        }
         e.Handled = true;
     }
 
     private void ModalImage_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
     {
-        EndModalPan();
+        Point end = e.GetPosition(ModalImage);
+        Point? start = _modalPointerStartPoint;
+        bool zoomed = _modalZoom > 1;
+        bool moved = _modalPointerMoved;
+        EndModalPointerGesture();
+        if (!zoomed && start.HasValue)
+        {
+            Vector delta = end - start.Value;
+            if (!TryNavigateModalSwipe(delta) && !moved)
+                ScheduleModalChromeToggle();
+        }
         e.Handled = true;
     }
 
-    private void ModalImage_LostMouseCapture(object sender, MouseEventArgs e) => EndModalPan();
+    private void ModalImage_LostMouseCapture(object sender, MouseEventArgs e) => EndModalPointerGesture();
 
     private void EndModalPan()
     {
         _modalPanStartPoint = null;
         if (ModalImage.IsMouseCaptured)
             ModalImage.ReleaseMouseCapture();
+    }
+
+    private void EndModalPointerGesture()
+    {
+        _modalPointerStartPoint = null;
+        _modalPointerMoved = false;
+        EndModalPan();
+    }
+
+    private bool TryNavigateModalSwipe(Vector delta)
+    {
+        if (Modal.Visibility != Visibility.Visible || _modalZoom > 1 || Math.Abs(delta.X) <= Math.Abs(delta.Y))
+            return false;
+
+        double threshold = Math.Clamp(ModalImage.ActualWidth * 0.16, 72, 180);
+        if (Math.Abs(delta.X) < threshold)
+            return false;
+
+        return NavigateModal(delta.X < 0 ? 1 : -1);
+    }
+
+    private void ScheduleModalChromeToggle()
+    {
+        if (Modal.Visibility != Visibility.Visible || _modalZoom > 1)
+            return;
+
+        long generation = ++_modalSingleClickGeneration;
+        _ = Dispatcher.InvokeAsync(async () =>
+        {
+            await Task.Delay(180);
+            if (generation == _modalSingleClickGeneration
+                && Modal.Visibility == Visibility.Visible
+                && _modalZoom <= 1)
+            {
+                SetModalChromeVisible(!_modalChromeVisible, showFeedback: true);
+            }
+        }, DispatcherPriority.Background);
+    }
+
+    private void CancelPendingModalSingleClick() => _modalSingleClickGeneration++;
+
+    private void SetModalChromeVisible(bool visible, bool showFeedback)
+    {
+        _modalChromeVisible = visible;
+        Visibility visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        ModalTopBar.Visibility = visibility;
+        ModalFooter.Visibility = visibility;
+        ModalPreviousButton.Visibility = visibility;
+        ModalNextButton.Visibility = visibility;
+        if (showFeedback)
+            ShowModalInteractionFeedback(visible ? "Controls shown" : "Controls hidden");
+    }
+
+    private void ShowModalInteractionFeedback(string message)
+    {
+        if (Modal.Visibility != Visibility.Visible || string.IsNullOrWhiteSpace(message))
+            return;
+
+        ModalInteractionFeedbackText.Text = message;
+        ModalInteractionFeedback.Visibility = Visibility.Visible;
+        _modalFeedbackTimer.Stop();
+        _modalFeedbackTimer.Start();
     }
 
     private void ModalPrevious_Click(object sender, RoutedEventArgs e)
@@ -5611,7 +5726,10 @@ public partial class MainWindow : Window
         SaveState();
 
         if (Modal.Visibility == Visibility.Visible)
+        {
             OpenModal();
+            ShowModalInteractionFeedback(delta > 0 ? "Next image" : "Previous image");
+        }
 
         return true;
     }
@@ -7210,9 +7328,36 @@ public partial class MainWindow : Window
     public bool ModalZoomWheelForSmoke(int delta)
         => AdjustModalZoom(delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
 
-    public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath);
+    public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath, showFeedback: true);
 
     public bool SetModalPanForSmoke(double x, double y) => SetModalPan(x, y);
+
+    public bool ModalChromeVisibleForSmoke
+        => _modalChromeVisible
+            && ModalTopBar.Visibility == Visibility.Visible
+            && ModalFooter.Visibility == Visibility.Visible
+            && ModalPreviousButton.Visibility == Visibility.Visible
+            && ModalNextButton.Visibility == Visibility.Visible;
+    public bool ModalEdgeZonesAccessibleForSmoke
+        => string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalPreviousButton), "Previous image edge zone", StringComparison.Ordinal)
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalNextButton), "Next image edge zone", StringComparison.Ordinal);
+    public bool ModalInteractionFeedbackVisibleForSmoke => ModalInteractionFeedback.Visibility == Visibility.Visible;
+    public string ModalInteractionFeedbackForSmoke => ModalInteractionFeedbackText.Text;
+    public void ScheduleModalChromeToggleForSmoke() => ScheduleModalChromeToggle();
+    public bool ModalEdgeNavigateForSmoke(int delta) => NavigateModal(delta);
+    public bool ModalSwipeForSmoke(double horizontalDelta, double verticalDelta = 0) => TryNavigateModalSwipe(new Vector(horizontalDelta, verticalDelta));
+    public bool ToggleModalMetadataForSmoke()
+    {
+        bool beforeChrome = ModalChromeVisibleForSmoke;
+        SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
+        return beforeChrome == ModalChromeVisibleForSmoke;
+    }
+    public bool ToggleModalMetadataFromImageDoubleClickForSmoke()
+    {
+        bool beforeChrome = ModalChromeVisibleForSmoke;
+        bool toggled = ToggleModalMetadataSidebarFromImageDoubleClick();
+        return toggled && beforeChrome == ModalChromeVisibleForSmoke;
+    }
 
     public bool CloseTopmostOverlayForSmoke() => CloseTopmostOverlay();
 
