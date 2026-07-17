@@ -1385,6 +1385,7 @@ export default function ImageGrid() {
       )}
       <div
         className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}
+        data-testid="image-grid-background"
         style={{ height: virtualRange.totalHeight }}
         onClick={(event) => {
           if (event.target === event.currentTarget) clearSelection();

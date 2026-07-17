@@ -290,7 +290,7 @@ describe("ImageGrid keyboard primary controls", () => {
   it.each(["grid", "list"] as const)("clears selection from %s background but not image controls", (viewMode) => {
     vi.mocked(useImageStore).mockReturnValue(createStore(viewMode, { selectedIds: [firstImage.id] }));
     renderGrid();
-    const canvas = document.querySelector('.virtual-canvas') as HTMLDivElement;
+    const canvas = screen.getByTestId('image-grid-background');
     fireEvent.click(canvas);
     expect(clearSelection).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole('button', { name: /select first\.png/i }));
