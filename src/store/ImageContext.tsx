@@ -6,7 +6,11 @@ import React, {
 } from 'react';
 import type { ImageFile, KeyBindings, SearchResponse } from '../lib/types';
 import { DEFAULT_KEY_BINDINGS } from '../lib/types';
-import type { FolderSortBy } from '../lib/viewerUi';
+import {
+  getClientFilteredLoadedIds,
+  nextAfterClientFilterMutation,
+  type FolderSortBy,
+} from '../lib/viewerUi';
 import { removeImageSlot } from '../lib/imageListState';
 import { formatDirSet, parseDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
@@ -89,6 +93,35 @@ const MAX_MODAL_EDGE_RATIO = 0.40;
 const MAX_RANDOM_SEED_LENGTH = 256;
 const MAX_HIDDEN_FOLDERS = 500;
 const MAX_HIDDEN_FOLDER_LENGTH = 4096;
+
+interface FavoriteFilterNavigationSnapshot {
+  showFavOnly: boolean;
+  showUnfavOnly: boolean;
+  favoriteFilterLevels: FavoriteFilterLevel[];
+  showEnhancedOnly: boolean;
+  enhancedSourceIds: Record<string, true>;
+}
+
+interface PendingFavoriteFilterMutation {
+  currentId: string;
+  previousOrderedIds: string[];
+  searchResults: Array<ImageFile | null>;
+  filter: FavoriteFilterNavigationSnapshot;
+  modalWasOpen: boolean;
+  activeWasOpenTab: boolean;
+  expectedLevel: number;
+}
+
+function sameFavoriteFilter(
+  left: FavoriteFilterNavigationSnapshot,
+  right: FavoriteFilterNavigationSnapshot
+): boolean {
+  return left.showFavOnly === right.showFavOnly
+    && left.showUnfavOnly === right.showUnfavOnly
+    && left.showEnhancedOnly === right.showEnhancedOnly
+    && left.favoriteFilterLevels.length === right.favoriteFilterLevels.length
+    && left.favoriteFilterLevels.every((level, index) => level === right.favoriteFilterLevels[index]);
+}
 
 const VIEW_MODES: readonly ViewMode[] = ['grid', 'list'];
 const ASPECT_MODES: readonly AspectMode[] = ['original', 'square', 'portrait'];
@@ -563,6 +596,38 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const pendingPagesRef = useRef<Set<string>>(new Set());
   const pendingSearchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const warmedThumbDirRef = useRef('');
+  const selectedIndexRef = useRef<number | null>(null);
+  const activePreviewIdRef = useRef<string | null>(null);
+  const previewTabIdsRef = useRef<string[]>([]);
+  const favoriteFilterNavigationRef = useRef<FavoriteFilterNavigationSnapshot>({
+    showFavOnly: false,
+    showUnfavOnly: false,
+    favoriteFilterLevels: [],
+    showEnhancedOnly: false,
+    enhancedSourceIds: {},
+  });
+  const pendingFavoriteFilterMutationRef = useRef<PendingFavoriteFilterMutation | null>(null);
+  useEffect(() => {
+    selectedIndexRef.current = selectedIndex;
+    activePreviewIdRef.current = activePreviewId;
+    previewTabIdsRef.current = previewTabIds;
+    favoriteFilterNavigationRef.current = {
+      showFavOnly: showFavOnlyState,
+      showUnfavOnly: showUnfavOnlyState,
+      favoriteFilterLevels,
+      showEnhancedOnly: showEnhancedOnlyState,
+      enhancedSourceIds,
+    };
+  }, [
+    activePreviewId,
+    enhancedSourceIds,
+    favoriteFilterLevels,
+    previewTabIds,
+    selectedIndex,
+    showEnhancedOnlyState,
+    showFavOnlyState,
+    showUnfavOnlyState,
+  ]);
   const PAGE_SIZE = 100;
   const buildHiddenFoldersKey = useCallback(
     (folders: string[]) => folders.slice().sort().join('\u0001'),
@@ -917,6 +982,45 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }).catch(() => {});
   }, []);
 
+  const queueFavoriteFilterNavigation = useCallback((
+    previousFavorites: Record<string, number>,
+    nextFavorites: Record<string, number>,
+    mutatedIds: readonly string[]
+  ) => {
+    const filter = favoriteFilterNavigationRef.current;
+    if (!filter.showFavOnly && !filter.showUnfavOnly) return;
+
+    const results = searchResultsRef.current;
+    const modalIndex = selectedIndexRef.current;
+    const modalId = modalIndex !== null ? results[modalIndex]?.id ?? null : null;
+    const currentId = modalId ?? activePreviewIdRef.current;
+    if (!currentId || !mutatedIds.includes(currentId)) return;
+
+    const existing = pendingFavoriteFilterMutationRef.current;
+    if (existing && existing.currentId === currentId && sameFavoriteFilter(existing.filter, filter)) {
+      existing.expectedLevel = nextFavorites[currentId] ?? 0;
+      return;
+    }
+
+    pendingFavoriteFilterMutationRef.current = {
+      currentId,
+      previousOrderedIds: getClientFilteredLoadedIds({
+        searchResults: results,
+        favorites: previousFavorites,
+        showFavOnly: filter.showFavOnly,
+        showUnfavOnly: filter.showUnfavOnly,
+        favoriteFilterLevels: filter.favoriteFilterLevels,
+        showEnhancedOnly: filter.showEnhancedOnly,
+        enhancedSourceIds: filter.enhancedSourceIds,
+      }),
+      searchResults: results,
+      filter,
+      modalWasOpen: modalIndex !== null,
+      activeWasOpenTab: previewTabIdsRef.current.includes(currentId),
+      expectedLevel: nextFavorites[currentId] ?? 0,
+    };
+  }, []);
+
   const toggleFavorite = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
     if (!favoritesHydratedRef.current) favoriteHydrationDirtyIdsRef.current.add(id);
@@ -924,9 +1028,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const next = { ...prev };
       if ((next[id] ?? 0) > 0) delete next[id];
       else next[id] = 1;
+      queueFavoriteFilterNavigation(prev, next, [id]);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
 
   const cycleFavoriteLevel = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
@@ -936,9 +1041,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const current = next[id] ?? 0;
       const upcoming = Math.min(MAX_FAVORITE_LEVEL, current + 1);
       next[id] = upcoming;
+      queueFavoriteFilterNavigation(prev, next, [id]);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
 
   const clearFavorite = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
@@ -947,9 +1053,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (!(id in prev)) return prev;
       const next = { ...prev };
       delete next[id];
+      queueFavoriteFilterNavigation(prev, next, [id]);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
 
   const setFavoriteLevels = useCallback((ids: readonly string[], level: number) => {
     if (!Number.isInteger(level) || level < 0 || level > MAX_FAVORITE_LEVEL) return;
@@ -968,9 +1075,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (level === 0) delete next[id];
         else next[id] = level;
       }
+      if (next !== prev) queueFavoriteFilterNavigation(prev, next, targetIds);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
 
   const adjustFavoriteLevels = useCallback((ids: readonly string[], delta: number) => {
     if (!Number.isInteger(delta) || delta === 0) return;
@@ -990,9 +1098,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (level === 0) delete next[id];
         else next[id] = level;
       }
+      if (next !== prev) queueFavoriteFilterNavigation(prev, next, targetIds);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
 
   const decreaseFavoriteLevel = useCallback((id: string) => {
     favoriteLocalStorageReadOnlyRef.current = false;
@@ -1006,9 +1115,69 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       } else {
         next[id] = current - 1;
       }
+      queueFavoriteFilterNavigation(prev, next, [id]);
       return next;
     });
-  }, []);
+  }, [queueFavoriteFilterNavigation]);
+
+  useEffect(() => {
+    const pending = pendingFavoriteFilterMutationRef.current;
+    if (!pending) return;
+    pendingFavoriteFilterMutationRef.current = null;
+
+    const currentFilter = favoriteFilterNavigationRef.current;
+    if (
+      (!currentFilter.showFavOnly && !currentFilter.showUnfavOnly)
+      || !sameFavoriteFilter(pending.filter, currentFilter)
+      || searchResultsRef.current !== pending.searchResults
+      || (favorites[pending.currentId] ?? 0) !== pending.expectedLevel
+    ) return;
+
+    const results = pending.searchResults;
+    const currentModalIndex = selectedIndexRef.current;
+    const currentModalId = currentModalIndex !== null ? results[currentModalIndex]?.id ?? null : null;
+    const currentUiId = pending.modalWasOpen ? currentModalId : activePreviewIdRef.current;
+    if (currentUiId !== pending.currentId) return;
+
+    const nextOrderedIds = getClientFilteredLoadedIds({
+      searchResults: results,
+      favorites,
+      showFavOnly: pending.filter.showFavOnly,
+      showUnfavOnly: pending.filter.showUnfavOnly,
+      favoriteFilterLevels: pending.filter.favoriteFilterLevels,
+      showEnhancedOnly: pending.filter.showEnhancedOnly,
+      enhancedSourceIds: pending.filter.enhancedSourceIds,
+    });
+    const navigation = nextAfterClientFilterMutation(
+      pending.currentId,
+      pending.previousOrderedIds,
+      nextOrderedIds
+    );
+    if (!navigation.shouldSync) return;
+
+    const nextImageIndex = navigation.nextId
+      ? results.findIndex((image) => image?.id === navigation.nextId)
+      : -1;
+    const nextImage = nextImageIndex >= 0 ? results[nextImageIndex] : null;
+    const nextId = nextImage?.id ?? null;
+
+    if (pending.modalWasOpen) {
+      setModalImageIdsState(navigation.orderedIds);
+      setSelectedIndex(nextImageIndex >= 0 ? nextImageIndex : null);
+    }
+    setSelectedIds(nextId ? [nextId] : []);
+    setSelectionAnchorId(nextId);
+    setActivePreviewIdState(nextId);
+    if (nextImage) {
+      setPreviewById((previous) => ({ ...previous, [nextImage.id]: nextImage }));
+      if (pending.activeWasOpenTab) {
+        previewTabsUserModifiedRef.current = true;
+        setPreviewTabIds((previous) => (
+          previous.includes(nextImage.id) ? previous : [...previous, nextImage.id]
+        ));
+      }
+    }
+  }, [favorites]);
 
   const setShowFavOnly = useCallback((value: boolean) => {
     setShowFavOnlyState(value);

@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest';
 import {
   getEmptyResultMessage,
   getArrowSelectionIndex,
+  getClientFilteredLoadedIds,
   getLoadedResultCounts,
+  nextAfterClientFilterMutation,
   getResultCountLabel,
   getZoomCenteredScrollTop,
   isInteractiveShortcutTarget,
@@ -133,6 +135,36 @@ describe('getLoadedResultCounts', () => {
       showEnhancedOnly: false,
       enhancedSourceIds: {},
     })).toEqual({ loadedCount: 3, shownCount: 3, hasClientFilters: false });
+  });
+});
+
+describe('client-filter favorite mutation navigation', () => {
+  it('keeps sparse loaded order while applying exact favorite and enhanced predicates', () => {
+    expect(getClientFilteredLoadedIds({
+      searchResults: [{ id: 'a' }, null, { id: 'b' }, { id: 'c' }],
+      favorites: { a: 2, b: 3, c: 2 },
+      showFavOnly: true,
+      showUnfavOnly: false,
+      favoriteFilterLevels: [2],
+      showEnhancedOnly: true,
+      enhancedSourceIds: { a: true, b: true },
+    })).toEqual(['a']);
+  });
+
+  it('uses the next survivor at the removed position, then falls back to previous', () => {
+    expect(nextAfterClientFilterMutation('b', ['a', 'b', 'c'], ['a', 'c']))
+      .toEqual({ shouldSync: true, orderedIds: ['a', 'c'], nextId: 'c' });
+    expect(nextAfterClientFilterMutation('c', ['a', 'b', 'c'], ['a', 'b']))
+      .toEqual({ shouldSync: true, orderedIds: ['a', 'b'], nextId: 'b' });
+  });
+
+  it('closes only after the current filtered image leaves and no survivor remains', () => {
+    expect(nextAfterClientFilterMutation('only', ['only'], []))
+      .toEqual({ shouldSync: true, orderedIds: [], nextId: null });
+    expect(nextAfterClientFilterMutation('b', ['a', 'b'], ['a', 'b']))
+      .toEqual({ shouldSync: false, orderedIds: ['a', 'b'], nextId: 'b' });
+    expect(nextAfterClientFilterMutation('outside', ['a', 'b'], ['a']))
+      .toEqual({ shouldSync: false, orderedIds: ['a'], nextId: 'outside' });
   });
 });
 

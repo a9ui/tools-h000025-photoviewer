@@ -29,6 +29,12 @@ export interface LoadedResultCountArgs {
   enhancedSourceIds: Record<string, true>;
 }
 
+export interface ClientFilterMutationNavigation {
+  shouldSync: boolean;
+  orderedIds: string[];
+  nextId: string | null;
+}
+
 export interface GridMetricsSnapshot {
   scrollTop: number;
   viewportHeight: number;
@@ -134,6 +140,63 @@ export function getLoadedResultCounts({
     shownCount: hasClientFilters ? shownCount : loadedCount,
     hasClientFilters,
   };
+}
+
+export function getClientFilteredLoadedIds({
+  searchResults,
+  favorites,
+  showFavOnly,
+  showUnfavOnly,
+  favoriteFilterLevels,
+  showEnhancedOnly,
+  enhancedSourceIds,
+}: LoadedResultCountArgs): string[] {
+  const orderedIds: string[] = [];
+  for (const image of searchResults) {
+    if (!image) continue;
+    const level = favorites[image.id] ?? 0;
+    const matchesFavorite = showFavOnly
+      ? matchesFavoriteLevel(level, favoriteFilterLevels)
+      : showUnfavOnly
+        ? level === 0
+        : true;
+    const matchesEnhanced = showEnhancedOnly ? Boolean(enhancedSourceIds[image.id]) : true;
+    if (matchesFavorite && matchesEnhanced) orderedIds.push(image.id);
+  }
+  return orderedIds;
+}
+
+/**
+ * Resolve the image that should take over when a local mutation removes the
+ * current image from an exact client-side filter. The pre-mutation order is
+ * authoritative: prefer the next surviving image, then the previous one.
+ * `shouldSync` stays false for matching changes and unrelated/currently hidden
+ * images so hydration or filter changes cannot accidentally move the viewer.
+ */
+export function nextAfterClientFilterMutation(
+  currentId: string | null,
+  previousOrderedIds: readonly string[],
+  nextOrderedIds: readonly string[]
+): ClientFilterMutationNavigation {
+  const previousIds = Array.from(new Set(previousOrderedIds.filter(Boolean)));
+  const orderedIds = Array.from(new Set(nextOrderedIds.filter(Boolean)));
+  const previousIndex = currentId ? previousIds.indexOf(currentId) : -1;
+  if (!currentId || previousIndex < 0 || orderedIds.includes(currentId)) {
+    return { shouldSync: false, orderedIds, nextId: currentId };
+  }
+
+  const nextIdSet = new Set(orderedIds);
+  for (let index = previousIndex + 1; index < previousIds.length; index += 1) {
+    if (nextIdSet.has(previousIds[index])) {
+      return { shouldSync: true, orderedIds, nextId: previousIds[index] };
+    }
+  }
+  for (let index = previousIndex - 1; index >= 0; index -= 1) {
+    if (nextIdSet.has(previousIds[index])) {
+      return { shouldSync: true, orderedIds, nextId: previousIds[index] };
+    }
+  }
+  return { shouldSync: true, orderedIds, nextId: null };
 }
 
 export function sortFolderBuckets(

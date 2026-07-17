@@ -375,7 +375,10 @@ export default function ImageGrid() {
 
   useEffect(() => {
     if (!isClientFiltered || modalImageIds.length === 0) return;
-    if (showFavOnly) return;
+    // Favorite/unrated membership changes are reconciled only by the explicit
+    // local mutation that caused them. Reacting here would also move the modal
+    // during shared-state hydration or when a filter is merely toggled.
+    if (showFavOnly || showUnfavOnly || !showEnhancedOnly) return;
     const currentId = selectedIndex !== null ? searchResults[selectedIndex]?.id ?? null : null;
     const nextState = reconcileModalOrderAfterFilterChange(
       currentId,
@@ -404,7 +407,9 @@ export default function ImageGrid() {
     selectedIndex,
     setModalImageIds,
     setSelectedIndex,
+    showEnhancedOnly,
     showFavOnly,
+    showUnfavOnly,
   ]);
 
   const handleImageDragStart = (event: React.DragEvent, imageId: string, filename: string, fullUrl: string) => {

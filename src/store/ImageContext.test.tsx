@@ -84,6 +84,16 @@ const secondPreviewProbeImage: ImageFile = {
   fullUrl: '/api/image?preview-probe-second&full=1',
 };
 
+const thirdPreviewProbeImage: ImageFile = {
+  ...previewProbeImage,
+  id: 'C:/images/preview-probe-third.png',
+  filename: 'preview-probe-third.png',
+  absolutePath: 'C:/images/preview-probe-third.png',
+  fileUrl: '/api/image?preview-probe-third',
+  displayUrl: '/api/image?preview-probe-third&display=1',
+  fullUrl: '/api/image?preview-probe-third&full=1',
+};
+
 function PreviewTabsProbe() {
   const {
     previewTabIds, activePreviewId, pinnedPreviewIds, closedPreviewTabCount,
@@ -138,6 +148,100 @@ function SearchProbe() {
       <button type="button" onClick={rescanExpiredSearchSession}>Rescan expired session</button>
     </div>
   );
+}
+
+function FavoriteFilterNavigationProbe() {
+  const {
+    phase,
+    setPhase,
+    setDirPath,
+    searchResults,
+    favorites,
+    setFavoriteLevels,
+    cycleFavoriteLevel,
+    toggleFavoriteFilterLevel,
+    setShowFavOnly,
+    setShowUnfavOnly,
+    selectedIndex,
+    setSelectedIndex,
+    modalImageIds,
+    setModalImageIds,
+    selectedIds,
+    selectImage,
+    openModalAtImage,
+    activePreviewId,
+    openPreviewTab,
+    previewTabIds,
+  } = useImageStore();
+  const loadedImages = searchResults.filter((image): image is ImageFile => Boolean(image));
+  const loadedIds = loadedImages.map((image) => image.id);
+  const modalCurrentId = selectedIndex !== null ? searchResults[selectedIndex]?.id ?? '' : '';
+  const currentId = modalCurrentId || activePreviewId || '';
+
+  const openMiddle = (modal: boolean) => {
+    const image = loadedImages[1];
+    if (!image) return;
+    selectImage(image, loadedIds);
+    if (modal) {
+      openPreviewTab(image, { makeActive: true, pin: true });
+      openModalAtImage(image.id, 1, loadedIds);
+    }
+    else {
+      setSelectedIndex(null);
+      setModalImageIds([]);
+    }
+  };
+
+  return (
+    <div>
+      <output aria-label="favorite navigation phase">{phase}</output>
+      <output aria-label="favorite navigation results">{loadedIds.join(',')}</output>
+      <output aria-label="favorite navigation state">{JSON.stringify(favorites)}</output>
+      <output aria-label="favorite navigation modal current">{modalCurrentId}</output>
+      <output aria-label="favorite navigation modal order">{modalImageIds.join(',')}</output>
+      <output aria-label="favorite navigation active preview">{activePreviewId ?? ''}</output>
+      <output aria-label="favorite navigation preview tabs">{previewTabIds.join(',')}</output>
+      <output aria-label="favorite navigation selection">{selectedIds.join(',')}</output>
+      <button type="button" onClick={() => { setDirPath('C:/images'); setPhase('viewer'); }}>Load favorite navigation results</button>
+      <button type="button" onClick={() => setFavoriteLevels(loadedIds, 2)}>Seed all at level 2</button>
+      <button type="button" onClick={() => toggleFavoriteFilterLevel(2)}>Toggle exact level 2</button>
+      <button type="button" onClick={() => toggleFavoriteFilterLevel(3)}>Toggle exact level 3</button>
+      <button type="button" onClick={() => { setShowFavOnly(false); setShowUnfavOnly(false); }}>Disable favorite filters</button>
+      <button type="button" onClick={() => setShowUnfavOnly(true)}>Enable unrated filter</button>
+      <button type="button" onClick={() => openMiddle(true)}>Open middle in modal</button>
+      <button type="button" onClick={() => openMiddle(false)}>Open middle in preview</button>
+      <button type="button" onClick={() => { if (currentId) cycleFavoriteLevel(currentId); }}>Increase current favorite</button>
+    </div>
+  );
+}
+
+function createFavoriteNavigationFetch(
+  images: ImageFile[],
+  initialFavorites: Record<string, number> = {}
+) {
+  return vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.includes('/api/search')) {
+      return {
+        ok: true,
+        json: async () => ({ results: images, total: images.length, page: 0, totalPages: 1 }),
+      } as Response;
+    }
+    if (url.includes('/api/favorites')) {
+      if (init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body || '{}')) as { favorites?: Record<string, number> };
+        return { ok: true, json: async () => ({ favorites: body.favorites ?? {} }) } as Response;
+      }
+      return { ok: true, json: async () => ({ favorites: initialFavorites }) } as Response;
+    }
+    if (url.includes('/api/seen')) {
+      return { ok: true, json: async () => ({ seen: {} }) } as Response;
+    }
+    return {
+      ok: true,
+      json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+    } as Response;
+  });
 }
 
 class MockEventSource {
@@ -679,6 +783,156 @@ describe('ImageProvider browser UI preferences', () => {
         baseFavorites: { external: 4 },
       });
     });
+  });
+});
+
+describe('ImageProvider favorite filter mutation navigation', () => {
+  const images = [previewProbeImage, secondPreviewProbeImage, thirdPreviewProbeImage];
+
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal('fetch', createFavoriteNavigationFetch(images));
+  });
+
+  async function loadNavigationProbe() {
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoriteFilterNavigationProbe /></ImageProvider>);
+    await user.click(screen.getByRole('button', { name: 'Load favorite navigation results' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation results' }))
+        .toHaveTextContent(images.map((image) => image.id).join(','));
+    });
+    return user;
+  }
+
+  it('moves exact-filter modal state next then previous and closes when no match remains', async () => {
+    const user = await loadNavigationProbe();
+    await user.click(screen.getByRole('button', { name: 'Seed all at level 2' }));
+    await user.click(screen.getByRole('button', { name: 'Toggle exact level 2' }));
+    await user.click(screen.getByRole('button', { name: 'Open middle in modal' }));
+
+    expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+        .toHaveTextContent(thirdPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation active preview' }))
+        .toHaveTextContent(thirdPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation selection' }))
+        .toHaveTextContent(thirdPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation modal order' }))
+        .toHaveTextContent(`${previewProbeImage.id},${thirdPreviewProbeImage.id}`);
+      expect(screen.getByRole('status', { name: 'favorite navigation preview tabs' }))
+        .toHaveTextContent(`${secondPreviewProbeImage.id},${thirdPreviewProbeImage.id}`);
+    });
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+        version: 1,
+        tabIds: [secondPreviewProbeImage.id, thirdPreviewProbeImage.id],
+        activeId: thirdPreviewProbeImage.id,
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+        .toHaveTextContent(previewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation active preview' }))
+        .toHaveTextContent(previewProbeImage.id);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation modal current' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'favorite navigation modal order' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'favorite navigation active preview' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'favorite navigation selection' })).toHaveTextContent('');
+    });
+  });
+
+  it('keeps the current image for matching mutations and while favorite filters are off', async () => {
+    const user = await loadNavigationProbe();
+    await user.click(screen.getByRole('button', { name: 'Seed all at level 2' }));
+    await user.click(screen.getByRole('button', { name: 'Toggle exact level 2' }));
+    await user.click(screen.getByRole('button', { name: 'Toggle exact level 3' }));
+    await user.click(screen.getByRole('button', { name: 'Open middle in modal' }));
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+
+    expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'favorite navigation preview tabs' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+
+    await user.click(screen.getByRole('button', { name: 'Disable favorite filters' }));
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+    expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'favorite navigation active preview' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+  });
+
+  it('moves an unrated right preview without opening a modal or inventing a tab', async () => {
+    const user = await loadNavigationProbe();
+    await user.click(screen.getByRole('button', { name: 'Enable unrated filter' }));
+    await user.click(screen.getByRole('button', { name: 'Open middle in preview' }));
+    await user.click(screen.getByRole('button', { name: 'Increase current favorite' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation modal current' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'favorite navigation active preview' }))
+        .toHaveTextContent(thirdPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation selection' }))
+        .toHaveTextContent(thirdPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'favorite navigation preview tabs' })).toHaveTextContent('');
+    });
+  });
+
+  it('does not navigate when shared favorite hydration changes filter membership', async () => {
+    localStorage.setItem('pvu_favorites', JSON.stringify({
+      [previewProbeImage.id]: 2,
+      [secondPreviewProbeImage.id]: 2,
+      [thirdPreviewProbeImage.id]: 2,
+    }));
+    let resolveFavorites!: (response: Response) => void;
+    const pendingFavorites = new Promise<Response>((resolve) => { resolveFavorites = resolve; });
+    const fallbackFetch = createFavoriteNavigationFetch(images);
+    vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
+        return pendingFavorites;
+      }
+      return fallbackFetch(input, init);
+    }));
+
+    const user = userEvent.setup();
+    render(<ImageProvider><FavoriteFilterNavigationProbe /></ImageProvider>);
+    await user.click(screen.getByRole('button', { name: 'Load favorite navigation results' }));
+    await screen.findByText(images.map((image) => image.id).join(','));
+    await user.click(screen.getByRole('button', { name: 'Toggle exact level 2' }));
+    await user.click(screen.getByRole('button', { name: 'Open middle in modal' }));
+
+    resolveFavorites({
+      ok: true,
+      json: async () => ({ favorites: {
+        [previewProbeImage.id]: 2,
+        [secondPreviewProbeImage.id]: 3,
+        [thirdPreviewProbeImage.id]: 2,
+      } }),
+    } as Response);
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorite navigation state' }))
+        .toHaveTextContent(`"${secondPreviewProbeImage.id}":3`);
+    });
+    expect(screen.getByRole('status', { name: 'favorite navigation modal current' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'favorite navigation active preview' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'favorite navigation selection' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'favorite navigation preview tabs' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
   });
 });
 
