@@ -6,6 +6,7 @@ import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../lib/types';
 import { clampModalEdgeRatio } from '../lib/modalNavigation';
 import { useDialogFocus } from '../lib/useDialogFocus';
 import { getKeyBindingConflicts } from '../lib/keyBindings';
+import RuntimeDiagnosticsSection from './RuntimeDiagnosticsSection';
 
 const KEY_LABELS: Record<keyof KeyBindings, string> = {
   nextImage: 'Next image',
@@ -105,6 +106,8 @@ export default function SettingsModal() {
         </div>
 
         <div className="settings-body">
+          <RuntimeDiagnosticsSection />
+
           <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
             Behavior
           </h3>

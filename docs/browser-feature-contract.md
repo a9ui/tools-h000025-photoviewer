@@ -1291,6 +1291,20 @@ Settings cellをclick後、次のkeydownをdraftへ記録する。
 - modifier付きで別browser/app commandを示す
 - pointer操作中のinteractive control
 
+### BR-SET-004 Runtime / Version diagnostics
+
+Landing/scanningとViewerのどちらからも開けるSettingsで、開いている時だけ`GET /api/runtime`を`no-store`で取得するread-only surface。通常のBehavior/key binding設定を待たせたりdisableしたりしない。
+
+- Productは`PhotoViewer`。
+- Source revisionは先頭10文字を表示し、full revisionをtitleに保持する。Dirty/Cleanを別表示する。
+- Build ID、Build completed UTC、通常launcherの`127.0.0.1:<port>`を表示する。
+- launcher外起動で取得不能なnullable fieldは`Unavailable`とし、Settingsを閉じない。
+- loading、invalid payload、HTTP/fetch failureはsection内に表示し、Reloadで再試行できる。
+- close/unmount/reloadは前requestをabortし、古いresponseで新しい表示を上書きしない。
+- Copy diagnosticsは上記のvalidated fieldとbrowser user agentだけをplain textへ出す。absolute project path、user folder、state/cache path、token、environment、process IDを含めない。
+- clipboard成功/拒否はSettingsを閉じず、aria-liveで通知する。
+- Runtime表示/Reload/Copyはsettings、localStorage、shared JSON、Enhancement stateを変更しない。
+
 ## 15. Persistence
 
 ### BR-PER-001 localStorage
@@ -1734,6 +1748,8 @@ Query empty、filter empty、folder no imageを別copyで識別する。Enhancem
 - favorite feedbackにaria-live。
 - folder collapseに `aria-expanded`。
 - Search chipはposition/setsize、focus維持、reorder/remove結果のaria-liveを持つ。
+- Settingsはinitial focus、Tab trap、Escape、focus returnを持ち、Runtime Reload/Copyも同じkeyboard sequenceへ入る。
+- Runtime loading/copy resultはlive region、failureはrecoverable alert。長いID/timestampはdesktop/mobileともpanel外へoverflowしない。
 
 ### BR-A11Y-002 Keyboard/focus contractと残るgap
 
@@ -1745,7 +1761,7 @@ Query empty、filter empty、folder no imageを別copyで識別する。Enhancem
 - bottom tab activate/pin/closeはnative buttonで、active/pin stateとaccessible nameを持つ。
 - action iconはLucide iconを使い、iconだけのcontrolは`aria-label`を持つ。文字記号を視覚iconとして代用しない。
 
-CURRENT LIMITATION: chip reorderのtouch drag操作は限定的。WPFはAutomationName、tab order、focus return、keyboard equivalentをMUST検証する。
+WPFはAutomationName、tab order、focus return、keyboard equivalentをMUST検証する。
 
 ## 20. Performance、cancellation、cache
 
@@ -1916,6 +1932,16 @@ Desktopで:
 9. open order/active/pinをreload後に復元する。Pinはclose防止ではない。
 10. current result外tabはright previewを保ち、`Outside current search/filter` statusを出す。Result内へ戻るかactive tabなしでstatusを消す。
 
+### BR-ACC-077 Settings Runtime / Version
+
+1. LandingとViewerの両方からSettingsを開ける。閉じている間は`/api/runtime` request 0。開いた時だけ`cache: no-store`で1回取得し、Reloadは前requestをabortして再取得する。
+2. dirty fixtureでPhotoViewer、short/full revision、Dirty、Build ID、UTC build time、`127.0.0.1:<port>`を表示する。
+3. nullable provenanceは`Unavailable`、invalid/path-shaped/non-loopback payloadとHTTP failureはinline recoverable error。どの場合もBehavior/key binding操作を継続できる。
+4. close/unmount後に遅延responseを解決してもstate updateせず、reopen後のnewer responseをstale responseが上書きしない。
+5. Copy diagnosticsはvalidated runtime fieldsとuser agentだけを含み、project/user/state/cache path、process ID、unknown API fieldを含めない。clipboard拒否はaria-live error。
+6. Close→Reload→Copyへkeyboardで到達し、focus trap/returnを維持する。320px幅相当でも長いrevision/build ID/timeが横overflowしない。
+7. Runtime操作前後でkey binding draft/save、Confirm before delete、Unseen dotsの値と保存requestが変わらない。
+
 ### BR-ACC-080 Delete
 
 Disposable source copyだけを使用。
@@ -2018,7 +2044,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Right preview | `src/components/RightPreviewPanel.tsx` |
 | Bottom tabs | `src/components/BottomPreviewTabs.tsx` |
 | Modal/Delete neighbor | `src/components/ImageModal.tsx` |
-| Settings | `src/components/SettingsModal.tsx` |
+| Settings / Runtime diagnostics | `src/components/SettingsModal.tsx`, `src/components/RuntimeDiagnosticsSection.tsx`, `src/lib/runtimeDiagnostics.ts` |
 | Enhance UI | `src/components/EnhanceQueuePanel.tsx` |
 | Search/sort/index/folders | `src/lib/indexer.ts` |
 | PNG parse | `src/lib/pngParser.ts` |
@@ -2044,6 +2070,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Contract | Test evidence |
 | --- | --- |
 | Runtime provenance | `src/app/api/runtime/route.test.ts`, `scripts/verify-browser-runtime.ps1` |
+| Settings Runtime display/copy/stale response | `src/components/SettingsModal.test.tsx`, `src/lib/runtimeDiagnostics.test.ts` |
 | Favorite levels/Unseen | `src/lib/browserUiPreferences.test.ts`, `src/components/Sidebar.test.tsx`, `src/components/SettingsModal.test.tsx` |
 | Favorite shared write safety | `src/app/api/favorites/route.test.ts` |
 | Shared Seen union/write safety | `src/app/api/seen/route.test.ts` |

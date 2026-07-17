@@ -27,7 +27,7 @@ import {
   recycleImagesSequentially,
   snapshotBulkRecycleTargets,
 } from '../lib/bulkRecycle';
-import { FolderOpen, RefreshCw, Sparkles, X } from 'lucide-react';
+import { FolderOpen, RefreshCw, Settings, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
   const {
@@ -36,7 +36,7 @@ function ViewerApp() {
     setPhase, view, setView,
     selectedIds, deleteImage,
     cycleFavoriteLevel, decreaseFavoriteLevel, selectedIndex,
-    keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview,
+    keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview, setShowSettings,
     favorites, showFavOnly, showUnfavOnly, favoriteFilterLevels, showEnhancedOnly, enhancedSourceIds,
   } = useImageStore();
 
@@ -359,7 +359,17 @@ function ViewerApp() {
 
   if (phase === 'landing' || phase === 'scanning') {
     return (
-      <div className="landing">
+      <>
+        <div className="landing">
+        <button
+          className="landing-settings-btn"
+          type="button"
+          onClick={() => setShowSettings(true)}
+          aria-label="Open settings and runtime version"
+        >
+          <Settings size={17} aria-hidden="true" />
+          Settings
+        </button>
         <h1 className="landing-title">PhotoViewer</h1>
         <p className="landing-subtitle">Index and search Stable Diffusion PNG metadata locally</p>
 
@@ -480,7 +490,9 @@ function ViewerApp() {
         {phase === 'scanning' && scanProgress && (
           <ScanProgressStatus progress={scanProgress} />
         )}
-      </div>
+        </div>
+        <SettingsModal />
+      </>
     );
   }
 

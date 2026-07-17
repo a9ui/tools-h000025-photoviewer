@@ -149,6 +149,29 @@ a { color: inherit; text-decoration: none; }
     radial-gradient(ellipse at 80% 50%, rgba(168, 85, 247, 0.06) 0%, transparent 50%),
     var(--bg-primary);
 }
+.landing-settings-btn {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 10;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  min-height: 36px;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-full);
+  background: var(--bg-elevated);
+  color: var(--text-secondary);
+  font-size: 0.8rem;
+  box-shadow: var(--shadow-sm);
+  transition: color var(--transition-fast), border-color var(--transition-fast), background var(--transition-fast);
+}
+.landing-settings-btn:hover {
+  color: var(--text-primary);
+  border-color: rgba(129, 140, 248, 0.45);
+  background: var(--bg-secondary);
+}
 
 .landing-title {
   font-size: clamp(2.5rem, 5vw, 4rem);
@@ -2588,6 +2611,88 @@ a { color: inherit; text-decoration: none; }
   overflow-y: auto;
   max-height: 60vh;
 }
+.settings-runtime {
+  min-width: 0;
+  margin-bottom: 1.25rem;
+  padding-bottom: 1.25rem;
+  border-bottom: 1px solid var(--glass-border);
+}
+.settings-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.75rem;
+}
+.settings-section-header h3 {
+  min-width: 0;
+  color: var(--text-secondary);
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+.settings-runtime-reload {
+  flex: 0 0 auto;
+}
+.settings-runtime-message {
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+.settings-runtime-message.error,
+.settings-runtime-copy-status.error {
+  color: #fda4af;
+}
+.settings-runtime-grid {
+  min-width: 0;
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid rgba(255,255,255,0.06);
+  border-radius: var(--radius-sm);
+  background: rgba(255,255,255,0.025);
+}
+.settings-runtime-row {
+  display: grid;
+  grid-template-columns: minmax(7.5rem, 0.8fr) minmax(0, 1.2fr);
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 0.28rem 0;
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+.settings-runtime-row dt {
+  color: var(--text-tertiary);
+}
+.settings-runtime-row dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-primary);
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.settings-runtime-row dd.is-clean {
+  color: #86efac;
+}
+.settings-runtime-row dd.is-dirty {
+  color: #fda4af;
+  font-weight: 700;
+}
+.settings-runtime-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.45rem 0.75rem;
+  min-width: 0;
+  margin-top: 0.7rem;
+}
+.settings-runtime-copy-status {
+  min-width: 0;
+  margin: 0;
+  color: var(--text-tertiary);
+  font-size: 0.75rem;
+  line-height: 1.35;
+}
 .setting-row {
   display: flex;
   justify-content: space-between;
@@ -2802,6 +2907,16 @@ a { color: inherit; text-decoration: none; }
   .settings-panel,
   .confirm-panel {
     width: calc(100vw - 1.5rem);
+  }
+  .settings-body {
+    padding: 1rem;
+  }
+  .settings-runtime-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.1rem;
+  }
+  .settings-runtime-row dd {
+    text-align: left;
   }
   .dir-input-group { flex-direction: column; }
   .folder-set-actions {

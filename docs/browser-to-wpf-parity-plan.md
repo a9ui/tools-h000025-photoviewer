@@ -95,7 +95,7 @@ Browser 側の根拠:
 - selection: `BR-GAL-008`～`010`
 - Delete: `BR-DEL-001`～`007`
 - enhancement isolation: `BR-ENH-001`～`007`
-- Settings / state: `BR-SET-001`～`003`, `BR-PER-001`～`005`
+- Settings / state: `BR-SET-001`～`004`, `BR-PER-001`～`005`
 
 ## 3. Browser → WPF 初回監査差分表（履歴）
 
@@ -179,6 +179,7 @@ WPF App SettingsにはAbout / Diagnosticsを追加する。clipboard exportはsa
 | 項目 | 判定 | 優先度 | WPF live 状態と証拠 | 完成条件 |
 | --- | --- | --- | --- | --- |
 | App Settings surface | `ADD` | P0 | app settings なし。modal の Settings は PNG generation metadata。 `MainWindow.xaml:697-737` | Confirm before delete、Unseen dots、必要な modal 設定を一か所へ配置 |
+| Runtime / Version | `ADAPT` | P1 | native build identityを安全に表示・copyするsurfaceなし | Product、assembly/source revision、dirty/clean、build ID/time、architectureをread-only表示。nativeに存在しないserver portは表示せず、path/state/cache/process IDをcopyしない |
 | WPF state schema | `ADAPT` | P1 | version なし JSON。scalar favorite threshold 等を保存。 `MainWindow.xaml.cs:4387-4508,5318-5337` | schema version、field normalization、未知 field 保持、旧 state の additive migration |
 | State write | `ADAPT` | P1 | UI thread で同期 `File.WriteAllText`。 `MainWindow.xaml.cs:4470-4500` | debounce、atomic replace、失敗時に既存ファイル保持、UI thread を止めない |
 | 保存対象 | `ADAPT` | P1 | mode/sidebar/right/scroll/dots/open tabs 等が不足。 `MainWindow.xaml.cs:4481-4497` | Browser 契約と native 必要項目を明示し、reload fixture で全項目確認 |
@@ -277,6 +278,7 @@ WPF App SettingsにはAbout / Diagnosticsを追加する。clipboard exportはsa
 - AVIF decoder採否とformat fixture。
 - unified error surface。
 - focus return、tab order、AutomationName、shortcut guard。
+- read-only Runtime / Versionとsafe Copy diagnostics。nullable/invalid build metadataでもSettings本体を塞がない。
 
 受入条件:
 
@@ -285,6 +287,7 @@ WPF App SettingsにはAbout / Diagnosticsを追加する。clipboard exportはsa
 - malformed/null/out-of-range旧stateでstartup crashせず、正常fieldを可能な範囲で保持。
 - rapid search/resize/filterでUI thread stallとstate破損がない。
 - permission/decode/open failure後も他画像を閲覧できる。
+- Runtime copyにproject/user/state/cache pathがなく、長いbuild identityがsmall windowで横overflowしない。
 
 ### WPF-P2 — 操作完成
 
