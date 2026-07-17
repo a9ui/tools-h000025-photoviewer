@@ -1,6 +1,13 @@
 export type ModalSwipeNavigation = 'prev' | 'next' | null;
 export type ModalClickTarget = 'image' | 'empty';
 export type ModalClickAction = 'toggleChrome' | 'close' | 'prev' | 'next';
+export type SparseModalNavigationIntent = 'prev' | 'next' | 'delete';
+
+export interface SparseModalNavigationRange {
+  start: number;
+  end: number;
+  step: 1 | -1;
+}
 
 export interface ModalOrderReconcileResult {
   orderedIds: string[];
@@ -44,6 +51,58 @@ export function getSwipeNavigation(
   if (deltaX <= -distanceThreshold || velocity <= -velocityThreshold) return 'next';
   if (deltaX >= distanceThreshold || velocity >= velocityThreshold) return 'prev';
   return null;
+}
+
+/**
+ * Describe the absolute search-index order used to resolve modal navigation.
+ * Search results are sparse and paged, so callers can load each encountered
+ * page before deciding whether an entry matches a client-side filter.
+ *
+ * Normal navigation wraps once without revisiting the current image. Delete
+ * navigation does not wrap: the item shifted into the deleted slot is the
+ * first candidate, followed by later items, then earlier items in reverse.
+ */
+export function getSparseModalNavigationRanges(
+  currentIndex: number,
+  total: number,
+  intent: SparseModalNavigationIntent
+): SparseModalNavigationRange[] {
+  const safeTotal = Math.max(0, Math.trunc(total));
+  if (safeTotal === 0) return [];
+
+  if (intent === 'delete') {
+    const deletedSlot = Math.min(safeTotal, Math.max(0, Math.trunc(currentIndex)));
+    const ranges: SparseModalNavigationRange[] = [];
+    if (deletedSlot < safeTotal) {
+      ranges.push({ start: deletedSlot, end: safeTotal - 1, step: 1 });
+    }
+    const previousStart = Math.min(safeTotal - 1, deletedSlot - 1);
+    if (previousStart >= 0) {
+      ranges.push({ start: previousStart, end: 0, step: -1 });
+    }
+    return ranges;
+  }
+
+  const current = Math.min(safeTotal - 1, Math.max(0, Math.trunc(currentIndex)));
+  if (intent === 'next') {
+    const ranges: SparseModalNavigationRange[] = [];
+    if (current + 1 < safeTotal) {
+      ranges.push({ start: current + 1, end: safeTotal - 1, step: 1 });
+    }
+    if (current > 0) {
+      ranges.push({ start: 0, end: current - 1, step: 1 });
+    }
+    return ranges;
+  }
+
+  const ranges: SparseModalNavigationRange[] = [];
+  if (current > 0) {
+    ranges.push({ start: current - 1, end: 0, step: -1 });
+  }
+  if (current + 1 < safeTotal) {
+    ranges.push({ start: safeTotal - 1, end: current + 1, step: -1 });
+  }
+  return ranges;
 }
 
 function uniqueImageIds(ids: string[]) {

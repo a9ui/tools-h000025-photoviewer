@@ -16,6 +16,7 @@ import { formatDirSet, parseDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import {
   DEFAULT_SHOW_UNSEEN_MARKERS,
+  matchesFavoriteLevel,
   readFavoriteFilterLevelsPreference,
   toggleFavoriteFilterLevel as toggleFavoriteFilterLevelValue,
   type FavoriteFilterLevel,
@@ -26,6 +27,10 @@ import {
   serializePersistedPreviewTabs,
   type PersistedPreviewTabs,
 } from '../lib/previewTabPersistence';
+import {
+  getSparseModalNavigationRanges,
+  type SparseModalNavigationIntent,
+} from '../lib/modalNavigation';
 
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
@@ -111,6 +116,12 @@ interface PendingFavoriteFilterMutation {
   activeWasOpenTab: boolean;
   expectedLevel: number;
 }
+
+export type ModalNavigationResolution =
+  | { status: 'found'; index: number; id: string; filteredOrderedIds: string[] | null }
+  | { status: 'empty'; filteredOrderedIds: string[] | null }
+  | { status: 'stale' }
+  | { status: 'unavailable' };
 
 function sameFavoriteFilter(
   left: FavoriteFilterNavigationSnapshot,
@@ -404,6 +415,10 @@ interface Ctx {
   searchError: string | null;
   searchErrorKind: SearchErrorKind | null;
   ensureSearchRange: (startIndex: number, endIndex: number) => void;
+  resolveModalNavigationTarget: (
+    currentIndex: number,
+    intent: SparseModalNavigationIntent
+  ) => Promise<ModalNavigationResolution>;
   retrySearch: () => void;
   rescanExpiredSearchSession: () => void;
   dismissSearchError: () => void;
@@ -594,6 +609,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const previewTabsUserModifiedRef = useRef(false);
   const loadedPagesRef = useRef<Set<string>>(new Set());
   const pendingPagesRef = useRef<Set<string>>(new Set());
+  const pendingSearchPagePromisesRef = useRef<Map<string, Promise<void>>>(new Map());
   const pendingSearchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const warmedThumbDirRef = useRef('');
   const selectedIndexRef = useRef<number | null>(null);
@@ -1244,9 +1260,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     generation = searchGenerationRef.current
   ) => {
     const pageKey = getSearchPageKey(generation, page);
-    if (pendingPagesRef.current.has(pageKey)) return;
+    const existingPagePromise = pendingSearchPagePromisesRef.current.get(pageKey);
+    if (existingPagePromise) {
+      await existingPagePromise;
+      return;
+    }
     if (loadedPagesRef.current.has(pageKey) && isSearchPageComplete(page)) return;
     loadedPagesRef.current.delete(pageKey);
+
+    let resolvePagePromise!: () => void;
+    const pagePromise = new Promise<void>((resolve) => {
+      resolvePagePromise = resolve;
+    });
+    pendingSearchPagePromisesRef.current.set(pageKey, pagePromise);
 
     pendingPagesRef.current.add(pageKey);
     setIsSearching(true);
@@ -1313,21 +1339,22 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       lastFailedSearchPageRef.current = null;
       searchTotalRef.current = searchData.total;
       setSearchTotal((prevTotal) => (prevTotal === searchData.total ? prevTotal : searchData.total));
-      setSearchResults((prev) => {
-        const needsResize = replacePreviousResults || prev.length !== searchData.total;
-        const next = needsResize ? Array<ImageFile | null>(searchData.total).fill(null) : [...prev];
-        if (needsResize && !replacePreviousResults) {
-          const keep = Math.min(prev.length, next.length);
-          for (let i = 0; i < keep; i++) next[i] = prev[i];
-        }
-        const base = page * PAGE_SIZE;
-        for (let i = 0; i < withFavs.length; i++) {
-          const idx = base + i;
-          if (idx < next.length) next[idx] = withFavs[i];
-        }
-        searchResultsRef.current = next;
-        return next;
-      });
+      const previousResults = searchResultsRef.current;
+      const needsResize = replacePreviousResults || previousResults.length !== searchData.total;
+      const nextResults = needsResize
+        ? Array<ImageFile | null>(searchData.total).fill(null)
+        : [...previousResults];
+      if (needsResize && !replacePreviousResults) {
+        const keep = Math.min(previousResults.length, nextResults.length);
+        for (let i = 0; i < keep; i++) nextResults[i] = previousResults[i];
+      }
+      const base = page * PAGE_SIZE;
+      for (let i = 0; i < withFavs.length; i++) {
+        const idx = base + i;
+        if (idx < nextResults.length) nextResults[idx] = withFavs[i];
+      }
+      searchResultsRef.current = nextResults;
+      setSearchResults(nextResults);
       loadedPagesRef.current.add(pageKey);
       setPerfStats((prev) => {
         const lastSearchMs = Math.round((performance.now() - startedAt) * 10) / 10;
@@ -1348,6 +1375,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       console.error('Search failed', e);
     } finally {
       pendingSearchControllersRef.current.delete(pageKey);
+      if (pendingSearchPagePromisesRef.current.get(pageKey) === pagePromise) {
+        pendingSearchPagePromisesRef.current.delete(pageKey);
+      }
+      resolvePagePromise();
       if (generation === searchGenerationRef.current) {
         pendingPagesRef.current.delete(pageKey);
       }
@@ -1356,6 +1387,141 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       }
     }
   }, [buildHiddenFoldersKey, getSearchPageKey, isSearchPageComplete]);
+
+  const resolveModalNavigationTarget = useCallback(async (
+    currentIndex: number,
+    intent: SparseModalNavigationIntent
+  ): Promise<ModalNavigationResolution> => {
+    const generation = searchGenerationRef.current;
+    const committedGeneration = committedSearchGenerationRef.current;
+    const total = searchTotalRef.current;
+    const meta = searchMetaRef.current;
+    const metaSnapshot = {
+      query: meta.query,
+      sortBy: meta.sortBy,
+      randomSeed: meta.randomSeed,
+      dateFrom: meta.dateFrom,
+      dateTo: meta.dateTo,
+      hiddenFolders: meta.hiddenFolders,
+      hiddenFoldersKey: meta.hiddenFoldersKey,
+      dirPath: meta.dirPath,
+      indexToken: meta.indexToken,
+    };
+    const filter = favoriteFilterNavigationRef.current;
+    const favoritesSnapshot = favoritesRef.current;
+    const enhancedSourceIdsSnapshot = filter.enhancedSourceIds;
+    const hasClientFilters = filter.showFavOnly || filter.showUnfavOnly || filter.showEnhancedOnly;
+
+    const isCurrentWindow = () => {
+      const currentMeta = searchMetaRef.current;
+      if (
+        generation !== searchGenerationRef.current
+        || committedGeneration !== generation
+        || committedSearchGenerationRef.current !== generation
+        || searchTotalRef.current !== total
+        || currentMeta.query !== metaSnapshot.query
+        || currentMeta.sortBy !== metaSnapshot.sortBy
+        || currentMeta.randomSeed !== metaSnapshot.randomSeed
+        || currentMeta.dateFrom !== metaSnapshot.dateFrom
+        || currentMeta.dateTo !== metaSnapshot.dateTo
+        || currentMeta.hiddenFoldersKey !== metaSnapshot.hiddenFoldersKey
+        || currentMeta.dirPath !== metaSnapshot.dirPath
+        || currentMeta.indexToken !== metaSnapshot.indexToken
+      ) return false;
+
+      if (!hasClientFilters) return true;
+      const currentFilter = favoriteFilterNavigationRef.current;
+      if (!sameFavoriteFilter(filter, currentFilter)) return false;
+      if ((filter.showFavOnly || filter.showUnfavOnly) && favoritesRef.current !== favoritesSnapshot) return false;
+      if (filter.showEnhancedOnly && currentFilter.enhancedSourceIds !== enhancedSourceIdsSnapshot) return false;
+      return true;
+    };
+
+    const filteredOrderedIds = () => hasClientFilters
+      ? getClientFilteredLoadedIds({
+          searchResults: searchResultsRef.current,
+          favorites: favoritesSnapshot,
+          showFavOnly: filter.showFavOnly,
+          showUnfavOnly: filter.showUnfavOnly,
+          favoriteFilterLevels: filter.favoriteFilterLevels,
+          showEnhancedOnly: filter.showEnhancedOnly,
+          enhancedSourceIds: enhancedSourceIdsSnapshot,
+        })
+      : null;
+
+    const matchesFilter = (image: ImageFile) => {
+      if (!hasClientFilters) return true;
+      const level = favoritesSnapshot[image.id] ?? 0;
+      const matchesFavorite = filter.showFavOnly
+        ? matchesFavoriteLevel(level, filter.favoriteFilterLevels)
+        : filter.showUnfavOnly
+          ? level === 0
+          : true;
+      const matchesEnhanced = filter.showEnhancedOnly
+        ? Boolean(enhancedSourceIdsSnapshot[image.id])
+        : true;
+      return matchesFavorite && matchesEnhanced;
+    };
+
+    if (total <= 0) return { status: 'empty', filteredOrderedIds: hasClientFilters ? [] : null };
+    if (!isCurrentWindow()) return { status: 'stale' };
+
+    const attemptedPages = new Set<number>();
+    const ranges = getSparseModalNavigationRanges(currentIndex, total, intent);
+    for (const range of ranges) {
+      for (
+        let index = range.start;
+        range.step > 0 ? index <= range.end : index >= range.end;
+        index += range.step
+      ) {
+        let image = searchResultsRef.current[index];
+        if (!image) {
+          const page = Math.floor(index / PAGE_SIZE);
+          if (!attemptedPages.has(page)) {
+            attemptedPages.add(page);
+            await doSearchPage(
+              metaSnapshot.query,
+              page,
+              metaSnapshot.sortBy,
+              metaSnapshot.randomSeed,
+              metaSnapshot.dateFrom,
+              metaSnapshot.dateTo,
+              metaSnapshot.hiddenFolders,
+              metaSnapshot.dirPath,
+              metaSnapshot.indexToken,
+              generation,
+            );
+          }
+          if (!isCurrentWindow()) return { status: 'stale' };
+          image = searchResultsRef.current[index];
+          // Never jump across an unknown slot: it may be the nearest match.
+          if (!image) return { status: 'unavailable' };
+        }
+        if (!isCurrentWindow()) return { status: 'stale' };
+        if (matchesFilter(image)) {
+          return {
+            status: 'found',
+            index,
+            id: image.id,
+            filteredOrderedIds: filteredOrderedIds(),
+          };
+        }
+      }
+    }
+
+    if (intent !== 'delete') {
+      const current = searchResultsRef.current[currentIndex];
+      if (current && matchesFilter(current)) {
+        return {
+          status: 'found',
+          index: currentIndex,
+          id: current.id,
+          filteredOrderedIds: filteredOrderedIds(),
+        };
+      }
+    }
+    return { status: 'empty', filteredOrderedIds: filteredOrderedIds() };
+  }, [doSearchPage]);
 
   const resetSearch = useCallback((
     query: string,
@@ -1677,20 +1843,17 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       if (res.ok) {
         searchGenerationRef.current += 1;
         const generation = searchGenerationRef.current;
+        committedSearchGenerationRef.current = generation;
         abortPendingSearchRequests();
         loadedPagesRef.current = new Set();
         pendingPagesRef.current = new Set();
         setIsSearching(false);
-        setSearchResults(prev => {
-          const next = removeImageSlot(prev, id);
-          searchResultsRef.current = next;
-          return next;
-        });
-        setSearchTotal(prev => {
-          const next = Math.max(0, prev - 1);
-          searchTotalRef.current = next;
-          return next;
-        });
+        const nextResults = removeImageSlot(searchResultsRef.current, id);
+        const nextTotal = Math.max(0, searchTotalRef.current - 1);
+        searchResultsRef.current = nextResults;
+        searchTotalRef.current = nextTotal;
+        setSearchResults(nextResults);
+        setSearchTotal(nextTotal);
         setTotalIndexed(prev => Math.max(0, prev - 1));
         setModalImageIdsState(prev => prev.filter(imageId => imageId !== id));
         setSelectedIds(prev => prev.filter(selectedId => selectedId !== id));
@@ -1977,6 +2140,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       phase, setPhase, dirPath, setDirPath, indexToken, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
       isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
+      resolveModalNavigationTarget,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,
       cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite, setFavoriteLevels, adjustFavoriteLevels,

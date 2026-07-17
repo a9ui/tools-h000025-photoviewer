@@ -5,7 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
 import { useDialogFocus } from '../lib/useDialogFocus';
-import { buildImageIndexById, removeImageSlot } from '../lib/imageListState';
+import { buildImageIndexById } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
 import CachedImage from './CachedImage';
@@ -161,6 +161,7 @@ export default function ImageModal() {
     modalImageIds,
     setModalImageIds,
     ensureSearchRange,
+    resolveModalNavigationTarget,
     cycleFavoriteLevel,
     decreaseFavoriteLevel,
     favorites,
@@ -207,6 +208,8 @@ export default function ImageModal() {
   const metadataSidebarRef = useRef<HTMLElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
   const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRequestRef = useRef(0);
+  const navigationPendingRef = useRef(false);
 
   useEffect(() => {
     const previousSelectedIndex = previousSelectedIndexRef.current;
@@ -278,61 +281,44 @@ export default function ImageModal() {
     setSwipeOffset(0);
   }, []);
 
-  const goPrev = useCallback(() => {
+  const applyNavigationResolution = useCallback((resolution: Awaited<ReturnType<typeof resolveModalNavigationTarget>>) => {
+    if (resolution.status !== 'found') return;
+    if (resolution.filteredOrderedIds !== null) {
+      setModalImageIds(resolution.filteredOrderedIds);
+    } else if (modalImageIds.length > 0) {
+      setModalImageIds([]);
+    }
+    setSelectedIndex(resolution.index);
+  }, [modalImageIds.length, setModalImageIds, setSelectedIndex]);
+
+  const navigate = useCallback(async (intent: 'prev' | 'next') => {
     if (selectedIndex === null || searchTotal <= 0) return;
+    if (navigationPendingRef.current) return;
     setFlipped(false);
-
-    const current = searchResults[selectedIndex];
-    if (current && modalImageIds.length > 0) {
-      const currentOrderIndex = modalImageIds.indexOf(current.id);
-      const nextId = modalImageIds[
-        currentOrderIndex > 0 ? currentOrderIndex - 1 : modalImageIds.length - 1
-      ];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) {
-        setSelectedIndex(nextIndex);
+    navigationPendingRef.current = true;
+    const requestId = ++navigationRequestRef.current;
+    try {
+      const resolution = await resolveModalNavigationTarget(selectedIndex, intent);
+      if (navigationRequestRef.current !== requestId) return;
+      applyNavigationResolution(resolution);
+    } finally {
+      if (navigationRequestRef.current === requestId) {
+        navigationPendingRef.current = false;
       }
-      return;
     }
+  }, [applyNavigationResolution, resolveModalNavigationTarget, searchTotal, selectedIndex]);
 
-    if (modalImageIds.length > 0) {
-      const nextId = modalImageIds[modalImageIds.length - 1];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) setSelectedIndex(nextIndex);
-      return;
-    }
-
-    setSelectedIndex(selectedIndex > 0 ? selectedIndex - 1 : searchTotal - 1);
-  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+  const goPrev = useCallback(() => {
+    void navigate('prev');
+  }, [navigate]);
 
   const goNext = useCallback(() => {
-    if (selectedIndex === null || searchTotal <= 0) return;
-    setFlipped(false);
-
-    const current = searchResults[selectedIndex];
-    if (current && modalImageIds.length > 0) {
-      const currentOrderIndex = modalImageIds.indexOf(current.id);
-      const nextId = modalImageIds[
-        currentOrderIndex >= 0 && currentOrderIndex < modalImageIds.length - 1 ? currentOrderIndex + 1 : 0
-      ];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) {
-        setSelectedIndex(nextIndex);
-      }
-      return;
-    }
-
-    if (modalImageIds.length > 0) {
-      const nextId = modalImageIds[0];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) setSelectedIndex(nextIndex);
-      return;
-    }
-
-    setSelectedIndex(selectedIndex < searchTotal - 1 ? selectedIndex + 1 : 0);
-  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+    void navigate('next');
+  }, [navigate]);
 
   const close = useCallback(() => {
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = false;
     const current = selectedIndex !== null ? searchResults[selectedIndex] : null;
     if (current) {
       requestRevealImage(current.id);
@@ -571,36 +557,41 @@ export default function ImageModal() {
   const handleDelete = useCallback(async () => {
     if (!img || isDeleting) return;
     const deletedIndex = selectedIndex ?? -1;
-    const currentOrder = modalImageIds.length > 0
-      ? modalImageIds
-      : searchResults.filter((image): image is NonNullable<typeof image> => Boolean(image)).map((image) => image.id);
-    const currentOrderIndex = currentOrder.indexOf(img.id);
-    const remainingOrder = currentOrder.filter((id) => id !== img.id);
-    const nextId = remainingOrder.length > 0
-      ? remainingOrder[Math.min(Math.max(0, currentOrderIndex), remainingOrder.length - 1)]
-      : null;
-    const resultsAfterDelete = removeImageSlot(searchResults, img.id);
-    const nextIndexAfterDelete = nextId
-      ? resultsAfterDelete.findIndex((image) => image?.id === nextId)
-      : -1;
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = true;
     setIsDeleting(true);
     setShowConfirmDelete(false);
-    const ok = await deleteImage(img.id);
-    if (!ok) {
-      setIsDeleting(false);
-      return;
-    }
+    let deletionSucceeded = false;
+    try {
+      const ok = await deleteImage(img.id);
+      if (!ok) return;
+      deletionSucceeded = true;
 
-    if (!nextId || searchTotal <= 1) {
-      close();
-    } else if (nextIndexAfterDelete >= 0) {
-      setModalImageIds(remainingOrder);
-      setSelectedIndex(nextIndexAfterDelete);
-    } else if (deletedIndex >= searchTotal - 1) {
-      setSelectedIndex(Math.max(0, deletedIndex - 1));
+      const resolution = await resolveModalNavigationTarget(deletedIndex, 'delete');
+      if (resolution.status === 'found') {
+        applyNavigationResolution(resolution);
+      } else if (resolution.status === 'empty' || resolution.status === 'unavailable') {
+        // The deleted path no longer exists. An unavailable neighbor must not
+        // leave a blank modal, and closing must not reveal the deleted path.
+        setSelectedIndex(null);
+        setModalImageIds([]);
+        setFlipped(false);
+        setChromeHidden(false);
+      }
+      // A stale result belongs to a replaced query/index window. Do not let it
+      // close or move the newer window.
+    } catch {
+      if (deletionSucceeded) {
+        setSelectedIndex(null);
+        setModalImageIds([]);
+        setFlipped(false);
+        setChromeHidden(false);
+      }
+    } finally {
+      navigationPendingRef.current = false;
+      setIsDeleting(false);
     }
-    setIsDeleting(false);
-  }, [close, deleteImage, img, isDeleting, modalImageIds, searchResults, searchTotal, selectedIndex, setModalImageIds, setSelectedIndex]);
+  }, [applyNavigationResolution, deleteImage, img, isDeleting, resolveModalNavigationTarget, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   const handleEnhance = useCallback(async () => {
     if (!img || isEnhancing || isActiveEnhancementJob(activeEnhancementJob)) return;

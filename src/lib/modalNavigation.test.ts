@@ -2,9 +2,42 @@ import { describe, expect, it } from 'vitest';
 import {
   clampModalEdgeRatio,
   getModalClickAction,
+  getSparseModalNavigationRanges,
   getSwipeNavigation,
   reconcileModalOrderAfterFilterChange,
 } from './modalNavigation';
+
+describe('getSparseModalNavigationRanges', () => {
+  it('walks next through the remaining full order before wrapping', () => {
+    expect(getSparseModalNavigationRanges(99, 250, 'next')).toEqual([
+      { start: 100, end: 249, step: 1 },
+      { start: 0, end: 98, step: 1 },
+    ]);
+  });
+
+  it('walks previous through the remaining full order before wrapping', () => {
+    expect(getSparseModalNavigationRanges(100, 250, 'prev')).toEqual([
+      { start: 99, end: 0, step: -1 },
+      { start: 249, end: 101, step: -1 },
+    ]);
+  });
+
+  it('prefers the image shifted into a deleted slot, then earlier images', () => {
+    expect(getSparseModalNavigationRanges(99, 199, 'delete')).toEqual([
+      { start: 99, end: 198, step: 1 },
+      { start: 98, end: 0, step: -1 },
+    ]);
+    expect(getSparseModalNavigationRanges(200, 200, 'delete')).toEqual([
+      { start: 199, end: 0, step: -1 },
+    ]);
+  });
+
+  it('returns no ranges for an empty or one-item non-delete order', () => {
+    expect(getSparseModalNavigationRanges(0, 0, 'next')).toEqual([]);
+    expect(getSparseModalNavigationRanges(0, 1, 'next')).toEqual([]);
+    expect(getSparseModalNavigationRanges(0, 1, 'prev')).toEqual([]);
+  });
+});
 
 describe('getSwipeNavigation', () => {
   it('moves to the next image when dragging left far enough', () => {

@@ -150,6 +150,41 @@ function SearchProbe() {
   );
 }
 
+function SparseModalNavigationProbe() {
+  const {
+    phase,
+    setPhase,
+    setDirPath,
+    searchResults,
+    favorites,
+    showFavOnly,
+    setShowFavOnly,
+    resolveModalNavigationTarget,
+  } = useImageStore();
+  const [resolution, setResolution] = React.useState('');
+
+  return (
+    <div>
+      <output aria-label="sparse navigation phase">{phase}</output>
+      <output aria-label="sparse navigation loaded">
+        {searchResults.filter((image): image is ImageFile => Boolean(image)).map((image) => image.id).join(',')}
+      </output>
+      <output aria-label="sparse navigation favorite">{favorites['C:/images/sparse-099.png'] ?? 0}</output>
+      <output aria-label="sparse navigation filter">{showFavOnly ? 'favorite' : 'all'}</output>
+      <output aria-label="sparse navigation resolution">{resolution}</output>
+      <button type="button" onClick={() => { setDirPath('C:/images'); setPhase('viewer'); }}>
+        Load sparse navigation
+      </button>
+      <button type="button" onClick={() => setShowFavOnly(true)}>Enable sparse favorite filter</button>
+      <button type="button" onClick={() => {
+        void resolveModalNavigationTarget(99, 'next').then((result) => {
+          setResolution(result.status === 'found' ? `${result.index}:${result.id}` : result.status);
+        });
+      }}>Resolve sparse next</button>
+    </div>
+  );
+}
+
 function FavoriteFilterNavigationProbe() {
   const {
     phase,
@@ -1274,6 +1309,82 @@ describe('ImageProvider search recovery', () => {
     });
     expect(screen.getByRole('status', { name: 'search error kind' })).toHaveTextContent('');
     expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(secondPreviewProbeImage.id);
+  });
+});
+
+describe('ImageProvider sparse modal navigation', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    localStorage.clear();
+  });
+
+  it('loads an unseen page and resolves the nearest match in full filtered order', async () => {
+    const images = Array.from({ length: 205 }, (_, index): ImageFile => ({
+      ...previewProbeImage,
+      id: `C:/images/sparse-${String(index).padStart(3, '0')}.png`,
+      filename: `sparse-${String(index).padStart(3, '0')}.png`,
+      absolutePath: `C:/images/sparse-${String(index).padStart(3, '0')}.png`,
+    }));
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/search')) {
+        const parsed = new URL(url, 'http://localhost');
+        const page = Number(parsed.searchParams.get('page') || 0);
+        const size = Number(parsed.searchParams.get('size') || 100);
+        return {
+          ok: true,
+          json: async () => ({
+            results: images.slice(page * size, page * size + size),
+            total: images.length,
+            page,
+            totalPages: Math.ceil(images.length / size),
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/favorites')) {
+        return {
+          ok: true,
+          json: async () => ({
+            favorites: {
+              'C:/images/sparse-099.png': 2,
+              'C:/images/sparse-101.png': 2,
+            },
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/seen')) {
+        return { ok: true, json: async () => ({ seen: {} }) } as Response;
+      }
+      return { ok: true, json: async () => ({}) } as Response;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    render(
+      <ImageProvider>
+        <SparseModalNavigationProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load sparse navigation' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'sparse navigation loaded' }))
+        .toHaveTextContent('C:/images/sparse-099.png');
+      expect(screen.getByRole('status', { name: 'sparse navigation favorite' })).toHaveTextContent('2');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Enable sparse favorite filter' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'sparse navigation filter' })).toHaveTextContent('favorite');
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Resolve sparse next' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'sparse navigation resolution' }))
+        .toHaveTextContent('101:C:/images/sparse-101.png');
+    });
+    expect(fetchMock.mock.calls.some(([input]) => {
+      const url = String(input);
+      return url.includes('/api/search') && url.includes('page=1');
+    })).toBe(true);
   });
 });
 
