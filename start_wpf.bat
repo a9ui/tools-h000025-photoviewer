@@ -47,10 +47,10 @@ echo.
 set "EXIT_CODE=%ERRORLEVEL%"
 
 :exit_with_code
-if not "%EXIT_CODE%"=="0" (
-    echo.
-    echo [PhotoViewer WPF] Exited with code %EXIT_CODE%.
-)
+if "%EXIT_CODE%"=="0" exit /b 0
+
+echo.
+echo [PhotoViewer WPF] Exited with code %EXIT_CODE%.
 pause
 exit /b %EXIT_CODE%
 

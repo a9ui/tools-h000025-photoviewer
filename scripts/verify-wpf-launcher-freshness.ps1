@@ -116,6 +116,28 @@ try {
     if ($launcherText -match 'if not "%ERRORLEVEL%"' -or $launcherText -match '(?i)taskkill|stop-process') {
         throw 'start_wpf.bat has unsafe exit-code capture or process cleanup.'
     }
+    $exitSectionMatch = [regex]::Match(
+        $launcherText,
+        '(?ms)^:exit_with_code\r?\n(?<body>.*?)(?=^:build_target\r?$)')
+    if (-not $exitSectionMatch.Success) {
+        throw 'start_wpf.bat does not expose a bounded exit-code section.'
+    }
+    $exitSection = $exitSectionMatch.Groups['body'].Value
+    if ($exitSection -notmatch '(?m)^if "%EXIT_CODE%"=="0" exit /b 0\r?$' -or
+        $exitSection -notmatch '(?m)^pause\r?$' -or
+        $exitSection -notmatch '(?m)^exit /b %EXIT_CODE%\r?$') {
+        throw 'start_wpf.bat does not exit immediately on success while preserving the visible nonzero failure path.'
+    }
+    $successExitOffset = $exitSection.IndexOf('if "%EXIT_CODE%"=="0" exit /b 0', [StringComparison]::Ordinal)
+    $pauseOffset = $exitSection.IndexOf('pause', [StringComparison]::OrdinalIgnoreCase)
+    if ($successExitOffset -lt 0 -or $pauseOffset -lt 0 -or $successExitOffset -gt $pauseOffset) {
+        throw 'start_wpf.bat can pause before returning a successful application exit.'
+    }
+    $pauseLines = [regex]::Matches($launcherText, '(?m)^\s*pause\r?$')
+    if ($pauseLines.Count -ne 2 -or
+        $launcherText -notmatch '(?ms)^if not exist "%PROJECT%" \(\r?\n.*?^\s*pause\r?\n\s*exit /b 1\r?\n\)') {
+        throw 'start_wpf.bat must reserve pause only for a missing project or a nonzero application exit.'
+    }
     if ($launcherText -match '(?i)node(?:\.exe)?|localhost|127\.0\.0\.1') {
         throw 'start_wpf.bat unexpectedly depends on the Browser/Node runtime.'
     }
@@ -138,6 +160,8 @@ try {
         generatedOutputIgnored = $true
         transientWpfProjectIgnored = $true
         buildFailureFailsClosed = $true
+        successfulExitDoesNotPause = $true
+        nonzeroExitRemainsVisible = $true
         duplicateProcessesNotKilled = $true
         exactWorkingDirectory = $true
         nativeLauncherIsolated = $true
