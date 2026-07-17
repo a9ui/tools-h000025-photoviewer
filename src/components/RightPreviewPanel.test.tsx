@@ -15,6 +15,10 @@ vi.mock('./EnhanceQueuePanel', () => ({
   getEnhancementSettings: vi.fn(),
 }));
 
+vi.mock('./CachedImage', () => ({
+  default: ({ alt }: { alt: string }) => <span data-image-alt={alt} />,
+}));
+
 const setView = vi.fn();
 
 const previewImage: ImageFile = {

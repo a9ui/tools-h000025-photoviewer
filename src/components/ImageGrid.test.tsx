@@ -1,5 +1,5 @@
 import React from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ImageFile } from "../lib/types";
@@ -262,7 +262,7 @@ describe("ImageGrid keyboard primary controls", () => {
     const firstPrimary = screen.getByRole("button", {
       name: /select first\.png/i,
     });
-    firstPrimary.focus();
+    act(() => firstPrimary.focus());
     await user.keyboard("{ArrowDown}");
     expect(requestRevealImage).toHaveBeenCalledWith(secondImage.id);
     expect(

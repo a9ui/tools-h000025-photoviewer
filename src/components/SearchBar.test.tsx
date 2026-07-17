@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useImageStore } from '../store/ImageContext';
@@ -17,6 +17,12 @@ function renderSearchBar(searchQuery = '') {
     setSearchQuery,
   } as unknown as ReturnType<typeof useImageStore>);
   return render(<SearchBar />);
+}
+
+async function settleTagFetch() {
+  await act(async () => {
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
 }
 
 function dragHandle(chip: HTMLElement) {
@@ -119,8 +125,9 @@ describe('SearchBar accessibility', () => {
     expect(input).toHaveAttribute('aria-expanded', 'false');
   });
 
-  it('keeps clear and committed-tag removal controls labeled after icon rendering', () => {
+  it('keeps clear and committed-tag removal controls labeled after icon rendering', async () => {
     renderSearchBar('cat');
+    await settleTagFetch();
 
     expect(screen.getByRole('button', { name: 'Clear all search tags' })).toBeInTheDocument();
     const removeTag = screen.getByRole('button', { name: 'Remove tag cat' });
@@ -154,8 +161,9 @@ describe('SearchBar accessibility', () => {
       .toHaveTextContent('Moved tag cat to position 1 of 3.');
   });
 
-  it('keeps a sub-threshold touch gesture as a focused tap without reordering or removing', () => {
+  it('keeps a sub-threshold touch gesture as a focused tap without reordering or removing', async () => {
     renderSearchBar('cat, dog');
+    await settleTagFetch();
     const chips = screen.getAllByRole('listitem');
     mockChipLayout(chips, [{ left: 0, top: 0 }, { left: 100, top: 0 }]);
     const handle = dragHandle(chips[0]);
@@ -271,8 +279,9 @@ describe('SearchBar accessibility', () => {
     await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('cat, dog, castle'));
   });
 
-  it('cancels an active captured pointer drag without changing the query', () => {
+  it('cancels an active captured pointer drag without changing the query', async () => {
     renderSearchBar('cat, dog, castle');
+    await settleTagFetch();
     const chips = screen.getAllByRole('listitem');
     mockChipLayout(chips, [
       { left: 0, top: 0 },
