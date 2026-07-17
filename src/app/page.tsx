@@ -10,6 +10,7 @@ import Sidebar from '../components/Sidebar';
 import RightPreviewPanel from '../components/RightPreviewPanel';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
+import { ScanProgressStatus } from '../components/ScanProgressStatus';
 import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
@@ -42,19 +43,6 @@ function ViewerApp() {
     initialFocusRef: bulkDeleteCancelRef,
     onEscape: () => setShowBulkDeleteConfirm(false),
   });
-  const scanProgressTotal = Math.max(0, scanProgress?.total ?? 0);
-  const scanProgressProcessed = Math.max(0, scanProgress?.processed ?? 0);
-  const scanProgressPercent = scanProgressTotal > 0
-    ? Math.min(100, Math.round((scanProgressProcessed / scanProgressTotal) * 100))
-    : 0;
-  const scanProgressUnit = scanProgress?.message?.startsWith('[')
-    ? 'overall'
-    : scanProgress?.stage === 'preparing'
-      ? 'folders'
-      : 'files';
-  const scanProgressMessage = scanProgress?.message ?? (
-    scanProgress?.stage === 'preparing' ? 'Preparing file list...' : 'Scanning files...'
-  );
   const resultCountLabel = getResultCountLabel({
     searchQuery,
     searchTotal,
@@ -325,7 +313,8 @@ function ViewerApp() {
               className="browse-btn"
               onClick={handleBrowseFolders}
               disabled={phase === 'scanning'}
-              title="Add folders"
+              title={phase === 'scanning' ? 'Adding folders is unavailable while scanning.' : 'Add folders'}
+              aria-label={phase === 'scanning' ? 'Adding folders is unavailable while scanning.' : 'Add folders'}
               type="button"
             >
               <FolderOpen size={18} aria-hidden="true" />
@@ -335,6 +324,11 @@ function ViewerApp() {
               className="scan-btn"
               onClick={(event) => handleStartScan(event)}
               disabled={phase === 'scanning' || selectedFolders.length === 0}
+              aria-label={phase === 'scanning'
+                ? 'Scanning in progress. Opening a folder set is unavailable until scanning completes.'
+                : selectedFolders.length === 0
+                  ? 'Open folder set is unavailable because no folders are selected.'
+                  : 'Open folder set'}
               type="button"
             >
               {phase === 'scanning' ? 'Scanning...' : 'Open folder set'}
@@ -417,27 +411,10 @@ function ViewerApp() {
             </div>
           </div>
         )}
-        {browseError && <p className="landing-error">{browseError}</p>}
+        {browseError && <p className="landing-error" role="alert">{browseError}</p>}
 
         {phase === 'scanning' && scanProgress && (
-          <div className="progress-container">
-            <div className="progress-label">
-              <span>
-                {scanProgressProcessed.toLocaleString()} / {scanProgressTotal.toLocaleString()} {scanProgressUnit}
-                {scanProgress.stage !== 'preparing' && scanProgress.newFiles > 0 && ` (${scanProgress.newFiles} new)`}
-              </span>
-              <span>{scanProgressPercent}%</span>
-            </div>
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{
-                  width: `${scanProgressPercent}%`,
-                }}
-              />
-            </div>
-            <div className="progress-waiting">{scanProgressMessage}</div>
-          </div>
+          <ScanProgressStatus progress={scanProgress} />
         )}
       </div>
     );
