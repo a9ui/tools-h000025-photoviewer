@@ -147,6 +147,11 @@ public partial class MainWindow : Window
     private double _modalPanX;
     private double _modalPanY;
     private bool _modalShowingEnhanced;
+    private bool _confirmBeforeDelete = true;
+    private Tile? _pendingDeleteTile;
+    private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
+    private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
+    private string _deleteStatus = "";
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -4466,6 +4471,208 @@ public partial class MainWindow : Window
         Process.Start(new ProcessStartInfo(tile.Path) { UseShellExecute = true });
     }
 
+    private void DeleteSelected_Click(object sender, RoutedEventArgs e) => RequestDeleteSelected();
+
+    private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
+    {
+        ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
+        AppSettingsDialog.Visibility = Visibility.Visible;
+    }
+
+    private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
+        => AppSettingsDialog.Visibility = Visibility.Collapsed;
+
+    private void ConfirmBeforeDelete_Changed(object sender, RoutedEventArgs e)
+    {
+        _confirmBeforeDelete = ConfirmBeforeDeleteCheckBox.IsChecked == true;
+        SaveState();
+    }
+
+    private bool RequestDeleteSelected()
+    {
+        if (SelectedTile() is not Tile tile)
+        {
+            SetDeleteStatus("Select an image to delete.");
+            return false;
+        }
+
+        if (!TryValidateDelete(tile, out string reason))
+        {
+            SetDeleteStatus($"Delete blocked: {reason}");
+            return false;
+        }
+
+        if (_confirmBeforeDelete)
+        {
+            _pendingDeleteTile = tile;
+            DeleteConfirmationText.Text = $"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.";
+            DoNotAskAgainCheckBox.IsChecked = false;
+            DeleteConfirmationDialog.Visibility = Visibility.Visible;
+            Dispatcher.BeginInvoke(DeleteCancelButton.Focus, DispatcherPriority.Input);
+            return true;
+        }
+
+        return ExecuteDelete(tile);
+    }
+
+    private void DeleteCancel_Click(object sender, RoutedEventArgs e)
+    {
+        _pendingDeleteTile = null;
+        DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
+        SetDeleteStatus("Delete cancelled.");
+    }
+
+    private void DeleteConfirm_Click(object sender, RoutedEventArgs e)
+    {
+        Tile? tile = _pendingDeleteTile;
+        _pendingDeleteTile = null;
+        DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
+        if (DoNotAskAgainCheckBox.IsChecked == true)
+        {
+            _confirmBeforeDelete = false;
+            SaveState();
+        }
+        if (tile is not null)
+            ExecuteDelete(tile);
+    }
+
+    private bool ExecuteDelete(Tile tile)
+    {
+        // Revalidate immediately before the only destructive boundary.
+        if (!TryValidateDelete(tile, out string reason))
+        {
+            SetDeleteStatus($"Delete blocked: {reason}");
+            return false;
+        }
+
+        List<Tile> priorFilteredOrder = _tiles.ToList();
+        int oldIndex = priorFilteredOrder.IndexOf(tile);
+        RecycleBinDeleteResult result = _recycleBinDelete(tile.Path);
+        if (!result.Succeeded)
+        {
+            SetDeleteStatus($"Recycle Bin failed: {result.Reason}. Retry is available.");
+            return false;
+        }
+
+        _allTiles.Remove(tile);
+        _selectedPaths.Remove(tile.Path);
+        _primarySelectedPath = null;
+        ApplyFilters(selectFirst: false);
+
+        Tile? neighbor = priorFilteredOrder
+            .Skip(Math.Max(0, oldIndex + 1))
+            .FirstOrDefault(_tiles.Contains)
+            ?? priorFilteredOrder
+                .Take(Math.Max(0, oldIndex))
+                .Reverse()
+                .FirstOrDefault(_tiles.Contains);
+        if (neighbor is not null)
+            SelectTile(neighbor);
+        else
+        {
+            SelectTile(null);
+            CloseModal();
+        }
+
+        SetDeleteStatus($"Moved {tile.FileName} to Recycle Bin.");
+        SaveState();
+        return true;
+    }
+
+    private bool TryValidateDelete(Tile tile, out string reason)
+    {
+        reason = "";
+        if (!tile.IsRealFile || string.IsNullOrWhiteSpace(tile.Path))
+            return Fail("not a source image", out reason);
+        if (!_allTiles.Contains(tile))
+            return Fail("not in the current catalog", out reason);
+        if (!_tiles.Contains(tile))
+            return Fail("not in the current filtered order", out reason);
+        if (!Path.IsPathFullyQualified(tile.Path))
+            return Fail("path is not absolute", out reason);
+        if (!SupportedImageExtensions.Contains(Path.GetExtension(tile.Path)))
+            return Fail("unsupported file type", out reason);
+        if (!File.Exists(tile.Path))
+            return Fail("source no longer exists", out reason);
+
+        string lexical;
+        string canonical;
+        try
+        {
+            lexical = Path.GetFullPath(tile.Path);
+            canonical = _resolveFinalPath(lexical);
+        }
+        catch (Exception ex)
+        {
+            return Fail($"canonical path failed ({ex.Message})", out reason);
+        }
+
+        var activeRoots = _currentFolderSet.Count > 0 ? _currentFolderSet : _currentFolder is null ? [] : [_currentFolder];
+        if (activeRoots.Count == 0)
+            return Fail("no active source root", out reason);
+        foreach (string root in activeRoots)
+        {
+            try
+            {
+                string lexicalRoot = Path.GetFullPath(root);
+                string canonicalRoot = _resolveFinalPath(lexicalRoot);
+                if (IsPathInside(lexical, lexicalRoot) && IsPathInside(canonical, canonicalRoot))
+                    return true;
+            }
+            catch
+            {
+                // A broken root cannot authorize a delete.
+            }
+        }
+
+        return Fail("source is outside the active root", out reason);
+    }
+
+    private static bool Fail(string value, out string reason)
+    {
+        reason = value;
+        return false;
+    }
+
+    private static bool IsPathInside(string candidate, string root)
+    {
+        string normalizedRoot = Path.TrimEndingDirectorySeparator(Path.GetFullPath(root));
+        string prefix = normalizedRoot + Path.DirectorySeparatorChar;
+        return string.Equals(candidate, normalizedRoot, StringComparison.OrdinalIgnoreCase)
+            || candidate.StartsWith(prefix, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string ResolveFinalPathCore(string path)
+    {
+        var info = new FileInfo(path);
+        return info.ResolveLinkTarget(returnFinalTarget: true)?.FullName is string target
+            ? Path.GetFullPath(target)
+            : Path.GetFullPath(path);
+    }
+
+    private static RecycleBinDeleteResult SendFileToWindowsRecycleBin(string path)
+    {
+        try
+        {
+            Microsoft.VisualBasic.FileIO.FileSystem.DeleteFile(
+                path,
+                Microsoft.VisualBasic.FileIO.UIOption.OnlyErrorDialogs,
+                Microsoft.VisualBasic.FileIO.RecycleOption.SendToRecycleBin);
+            return RecycleBinDeleteResult.Success;
+        }
+        catch (Exception ex)
+        {
+            return RecycleBinDeleteResult.Failed(ex.Message);
+        }
+    }
+
+    private void SetDeleteStatus(string status)
+    {
+        _deleteStatus = status;
+        if (ScanMessage is not null)
+            ScanMessage.Text = status;
+    }
+
     private static string StatePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
         "PhotoViewer.Wpf",
@@ -4522,6 +4729,8 @@ public partial class MainWindow : Window
         else if (state.FavoriteFilterLevel is >= MinFavoriteFilterLevel and <= MaxFavoriteFilterLevel)
             _favoriteFilterLevels.Add(state.FavoriteFilterLevel.Value); // additive migration from the scalar schema
         _showUnseenDots = state.ShowUnseenDots;
+        _confirmBeforeDelete = state.ConfirmBeforeDelete;
+        if (ConfirmBeforeDeleteCheckBox is not null) ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         if (ShowUnseenDots is not null) ShowUnseenDots.IsChecked = _showUnseenDots;
         SetFavoriteFilterState(state.ShowFavoritesOnly, !state.ShowFavoritesOnly && state.ShowUnfavoriteOnly, apply: false, persist: false);
         _hiddenFolderBuckets.Clear();
@@ -4579,6 +4788,7 @@ public partial class MainWindow : Window
                 ShowUnfavoriteOnly = UnfavoriteOnlyFilter?.IsChecked == true,
                 FavoriteFilterLevels = _favoriteFilterLevels.Count > 0 ? _favoriteFilterLevels.OrderBy(static level => level).ToList() : null,
                 ShowUnseenDots = _showUnseenDots,
+                ConfirmBeforeDelete = _confirmBeforeDelete,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PinnedPreviewPaths = _pinnedPreviewPaths.Count > 0 ? _pinnedPreviewPaths.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedPath = selectedPath,
@@ -4759,6 +4969,18 @@ public partial class MainWindow : Window
 
     private bool CloseTopmostOverlay()
     {
+        if (AppSettingsDialog.Visibility == Visibility.Visible)
+        {
+            AppSettingsDialog.Visibility = Visibility.Collapsed;
+            return true;
+        }
+
+        if (DeleteConfirmationDialog.Visibility == Visibility.Visible)
+        {
+            DeleteCancel_Click(this, new RoutedEventArgs());
+            return true;
+        }
+
         if (Modal.Visibility != Visibility.Visible)
             return false;
 
@@ -4827,6 +5049,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (e.Key == Key.Delete && RequestDeleteSelected())
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Key == Key.Escape && CloseTopmostOverlay())
             e.Handled = true;
         base.OnPreviewKeyDown(e);
@@ -4888,6 +5116,43 @@ public partial class MainWindow : Window
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public int CatalogCountForSmoke => _allTiles.Count;
+    public string DeleteStatusForSmoke => _deleteStatus;
+    public bool DeleteConfirmationVisibleForSmoke => DeleteConfirmationDialog.Visibility == Visibility.Visible;
+    public bool ConfirmBeforeDeleteForSmoke => _confirmBeforeDelete;
+
+    public void SetRecycleBinDeleteBackendForSmoke(Func<string, RecycleBinDeleteResult> backend)
+        => _recycleBinDelete = backend ?? throw new ArgumentNullException(nameof(backend));
+
+    public void SetCanonicalPathResolverForSmoke(Func<string, string> resolver)
+        => _resolveFinalPath = resolver ?? throw new ArgumentNullException(nameof(resolver));
+
+    public void SetConfirmBeforeDeleteForSmoke(bool value) => _confirmBeforeDelete = value;
+    public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
+    public void CancelDeleteForSmoke() => DeleteCancel_Click(this, new RoutedEventArgs());
+    public void ConfirmDeleteForSmoke(bool doNotAskAgain)
+    {
+        DoNotAskAgainCheckBox.IsChecked = doNotAskAgain;
+        DeleteConfirm_Click(this, new RoutedEventArgs());
+    }
+
+    public bool ValidateDeletePathForSmoke(string path, bool includeInCatalog = true, bool includeInFiltered = true)
+    {
+        var tile = new Tile { Path = path, FileName = Path.GetFileName(path), IsRealFile = true };
+        if (includeInCatalog)
+            _allTiles.Add(tile);
+        if (includeInFiltered)
+            _tiles.Add(tile);
+        try
+        {
+            return TryValidateDelete(tile, out _);
+        }
+        finally
+        {
+            _allTiles.Remove(tile);
+            _tiles.Remove(tile);
+        }
+    }
     public string EnhancementJobsPathForSmoke => ResolvedEnhancementJobsPath;
     public string? CurrentFolderForSmoke => _currentFolder;
     public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
@@ -5462,11 +5727,19 @@ public sealed class ViewerState
     public bool ShowUnfavoriteOnly { get; set; }
     public List<int>? FavoriteFilterLevels { get; set; }
     public bool ShowUnseenDots { get; set; }
+    // Defaults to true for both fresh and pre-P0C state files.
+    public bool ConfirmBeforeDelete { get; set; } = true;
     // Kept only to read pre-P0A scalar state; new writes use FavoriteFilterLevels.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? FavoriteFilterLevel { get; set; }
     public List<string>? HiddenFolderBuckets { get; set; }
     public List<string>? PinnedPreviewPaths { get; set; }
+}
+
+public readonly record struct RecycleBinDeleteResult(bool Succeeded, string Reason)
+{
+    public static RecycleBinDeleteResult Success => new(true, "");
+    public static RecycleBinDeleteResult Failed(string reason) => new(false, reason);
 }
 
 public readonly record struct DisplayStyleMetrics(

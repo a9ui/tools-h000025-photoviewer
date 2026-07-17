@@ -57,6 +57,9 @@
             <Path Data="M12,5 v14 M5,12 h14" Stroke="#6EE7B7" StrokeThickness="2" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
           <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>
+          <Button Style="{StaticResource IconButton}" Click="OpenAppSettings_Click" ToolTip="App Settings" WindowChrome.IsHitTestVisibleInChrome="True">
+            <TextBlock Text="⚙" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
+          </Button>
           <Button x:Name="ToggleRight" Style="{StaticResource IconButtonActive}" Click="ToggleRight_Click" ToolTip="Hide right panel" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M3,4 h18 v16 h-18 z M15,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Button>
@@ -357,7 +360,7 @@
                 <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="52" Margin="0,0,8,0" ToolTip="Open selected preview tab" Click="OpenSelectedPreviewTab_Click">
                   <TextBlock Text="Tab"/>
                 </Button>
-                <Button Grid.Column="3" Style="{StaticResource DangerButton}" Width="40" ToolTip="Delete/recycle is deferred" IsEnabled="False" Opacity="0.45">
+                <Button Grid.Column="3" Style="{StaticResource DangerButton}" Width="40" ToolTip="Move selected source to Recycle Bin (Delete)" Click="DeleteSelected_Click">
                   <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
                 </Button>
               </Grid>
@@ -591,6 +594,34 @@
     </Grid>
 
     <!-- ═══════════════ Modal ═══════════════ -->
+    <!-- App settings are separate from the modal generation-metadata Settings tab. -->
+    <Grid x:Name="AppSettingsDialog" Grid.RowSpan="3" Visibility="Collapsed" Background="#B8040407">
+      <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel>
+          <DockPanel Margin="0,0,0,14"><TextBlock Text="App Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAppSettings_Click" ToolTip="Close"><TextBlock Text="×" FontSize="18"/></Button></DockPanel>
+          <TextBlock Text="SAFETY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <CheckBox x:Name="ConfirmBeforeDeleteCheckBox" Content="Confirm before delete" Foreground="{StaticResource TextSecondary}" Checked="ConfirmBeforeDelete_Changed" Unchecked="ConfirmBeforeDelete_Changed"/>
+          <TextBlock Text="Moves source images to the Windows Recycle Bin; it never uses a hard-delete fallback." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
+          <Button Style="{StaticResource GhostButton}" Content="Done" Click="CloseAppSettings_Click" HorizontalAlignment="Right" MinWidth="82"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+
+    <!-- Delete confirmation: Cancel is deliberately the initial focus. -->
+    <Grid x:Name="DeleteConfirmationDialog" Grid.RowSpan="3" Visibility="Collapsed" Background="#B8040407">
+      <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel>
+          <TextBlock Text="Move source to Recycle Bin?" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/>
+          <TextBlock x:Name="DeleteConfirmationText" Text="" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" Margin="0,10,0,12"/>
+          <CheckBox x:Name="DoNotAskAgainCheckBox" Content="Do not ask again" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,16"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="DeleteCancelButton" Style="{StaticResource GhostButton}" Content="Cancel" Click="DeleteCancel_Click" MinWidth="82" Margin="0,0,8,0" IsDefault="True"/>
+            <Button Style="{StaticResource DangerButton}" Content="Delete" Click="DeleteConfirm_Click" MinWidth="82" IsCancel="False"/>
+          </StackPanel>
+        </StackPanel>
+      </Border>
+    </Grid>
+
     <Grid x:Name="Modal" Grid.RowSpan="3" Visibility="Collapsed" Background="#EB040407">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
@@ -605,6 +636,9 @@
         </StackPanel>
         <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" Width="38" Height="38">
           <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
+        </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" ToolTip="Move source to Recycle Bin (Delete)" Width="38" Height="38" Margin="0,0,4,0">
+          <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
         </Button>
         <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" Width="38" Height="38">
           <TextBlock x:Name="ModalMetadataSidebarToggleLabel" Text="&lt;" Foreground="{StaticResource TextSecondary}" FontSize="15" FontWeight="SemiBold"/>

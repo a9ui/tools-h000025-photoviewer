@@ -41,6 +41,7 @@ browse and practical viewer slice:
 - `--folder-bucket-smoke <path>` folder bucket show/hide smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
+- `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
 
@@ -170,6 +171,17 @@ P0A sidebar contract smoke uses only temporary state/favorites/seen files. It ve
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0a-smoke "$env:TEMP\photoviewer-wpf-p0a-smoke.json"
+```
+
+P0C adds the App Settings `Confirm before delete` default (persisted in the WPF
+state), a Cancel-first confirmation dialog, and one guarded source-delete command
+used by Grid/List selection, right preview, modal, and `Delete`. Production sends
+only to the Windows Recycle Bin and never hard-deletes on failure. Its smoke creates
+only a temporary fixture and injects a fake backend which moves files to a temporary
+fake recycle folder; it does not exercise the user's actual Windows Recycle Bin:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0c-smoke "$env:TEMP\photoviewer-wpf-p0c-smoke.json"
 ```
 
 Favorite import smoke writes a temporary explicit browser-state export and

@@ -191,6 +191,13 @@ public partial class App : Application
             return;
         }
 
+        int p0cSmokeIdx = Array.IndexOf(e.Args, "--p0c-smoke");
+        if (p0cSmokeIdx >= 0 && p0cSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP0CSmoke(e.Args[p0cSmokeIdx + 1]);
+            return;
+        }
+
         int displayStyleSmokeIdx = Array.IndexOf(e.Args, "--display-style-smoke");
         if (displayStyleSmokeIdx >= 0 && displayStyleSmokeIdx + 1 < e.Args.Length)
         {
@@ -903,6 +910,131 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", oldFavorites);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", oldState);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
+            File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureP0CSmoke(string resultPath)
+    {
+        string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p0c-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(root, "fixture");
+        string recycle = Path.Combine(root, "fake-recycle-bin");
+        string outside = Path.Combine(root, "outside");
+        string state = Path.Combine(root, "state.json");
+        string favorites = Path.Combine(root, "favorites.json");
+        string seen = Path.Combine(root, "seen.json");
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(outside);
+        foreach (string name in new[] { "alpha.png", "bravo.png", "charlie.png" })
+            WriteSmokePng(Path.Combine(folder, name), 32, 24, Color.FromRgb(90, 130, 190));
+        string outsidePng = Path.Combine(outside, "outside.png");
+        string unsupported = Path.Combine(folder, "unsupported.txt");
+        WriteSmokePng(outsidePng, 32, 24, Color.FromRgb(190, 90, 130));
+        File.WriteAllText(unsupported, "not an image");
+        string? previousState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeen = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favorites);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seen);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                // The injected backend moves only fixture files; it deliberately contains no hard-delete fallback.
+                win.SetRecycleBinDeleteBackendForSmoke(path =>
+                {
+                    Directory.CreateDirectory(recycle);
+                    File.Move(path, Path.Combine(recycle, Path.GetFileName(path)));
+                    return RecycleBinDeleteResult.Success;
+                });
+                await win.LoadFolderAsync(folder);
+                var original = win.FilteredFileNamesForSmoke();
+                string middle = original[1];
+                string next = original[2];
+                bool selectedMiddle = win.SelectFileNameForSmoke(middle);
+                bool prompted = win.RequestDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
+                win.CancelDeleteForSmoke();
+                bool cancelledUnchanged = win.CatalogCountForSmoke == 3 && File.Exists(Path.Combine(folder, middle));
+
+                bool promptedAgain = win.RequestDeleteSelectedForSmoke();
+                win.ConfirmDeleteForSmoke(doNotAskAgain: true);
+                bool middleToNext = !File.Exists(Path.Combine(folder, middle))
+                    && string.Equals(win.SelectedFileNameForSmoke, next, StringComparison.OrdinalIgnoreCase)
+                    && !win.ConfirmBeforeDeleteForSmoke;
+
+                var afterMiddle = win.FilteredFileNamesForSmoke();
+                string last = afterMiddle[^1];
+                string previous = afterMiddle[^2];
+                win.SelectFileNameForSmoke(last);
+                bool deletedLast = win.RequestDeleteSelectedForSmoke();
+                bool lastToPrevious = deletedLast && string.Equals(win.SelectedFileNameForSmoke, previous, StringComparison.OrdinalIgnoreCase);
+                string only = win.FilteredFileNamesForSmoke().Single();
+                win.SelectFileNameForSmoke(only);
+                bool deletedOnly = win.RequestDeleteSelectedForSmoke();
+                bool onlyToEmpty = deletedOnly && win.CatalogCountForSmoke == 0 && win.SelectedPathForSmoke is null && !win.OpenModalForSmoke();
+
+                // Filtered subset uses the same command and leaves a zero-item filtered view.
+                WriteSmokePng(Path.Combine(folder, "subset-a.png"), 32, 24, Color.FromRgb(80, 150, 130));
+                WriteSmokePng(Path.Combine(folder, "subset-b.png"), 32, 24, Color.FromRgb(130, 150, 80));
+                await win.LoadFolderAsync(folder);
+                win.SetSearchQuery("subset-b", persist: false);
+                bool subsetSelected = win.SelectFileNameForSmoke("subset-b.png");
+                bool filteredSubset = subsetSelected && win.FilteredCountForSmoke == 1 && win.RequestDeleteSelectedForSmoke() && win.FilteredCountForSmoke == 0;
+                win.SetSearchQuery("", persist: false);
+
+                string remaining = win.FilteredFileNamesForSmoke().First();
+                bool outsideBlocked = !win.ValidateDeletePathForSmoke(outsidePng);
+                bool indexBlocked = !win.ValidateDeletePathForSmoke(Path.Combine(folder, remaining), includeInCatalog: false);
+                bool unsupportedBlocked = !win.ValidateDeletePathForSmoke(unsupported);
+                win.SetCanonicalPathResolverForSmoke(_ => throw new IOException("synthetic realpath failure"));
+                bool realpathBlocked = !win.ValidateDeletePathForSmoke(Path.Combine(folder, remaining));
+                win.SetCanonicalPathResolverForSmoke(path => new FileInfo(path).ResolveLinkTarget(true)?.FullName ?? Path.GetFullPath(path));
+
+                WriteSmokePng(Path.Combine(folder, "failure.png"), 32, 24, Color.FromRgb(170, 90, 100));
+                await win.LoadFolderAsync(folder);
+                string other = win.FilteredFileNamesForSmoke().First(name => !string.Equals(name, "failure.png", StringComparison.OrdinalIgnoreCase));
+                win.SelectFileNameForSmoke(other);
+                bool favoriteOther = win.SetSelectedFavoriteLevelForSmoke(3);
+                bool seenOther = win.MarkSelectedSeenForSmoke();
+                int favoriteCountBefore = win.FavoriteStoreCountForSmoke;
+                int seenCountBefore = win.SeenStoreCountForSmoke;
+                string failure = win.FilteredFileNamesForSmoke().First(name => !string.Equals(name, other, StringComparison.OrdinalIgnoreCase));
+                win.SelectFileNameForSmoke(failure);
+                win.SetRecycleBinDeleteBackendForSmoke(_ => RecycleBinDeleteResult.Failed("synthetic recycle failure"));
+                int catalogBeforeFailure = win.CatalogCountForSmoke;
+                bool recycleFailure = !win.RequestDeleteSelectedForSmoke()
+                    && File.Exists(Path.Combine(folder, failure))
+                    && win.CatalogCountForSmoke == catalogBeforeFailure
+                    && win.FavoriteStoreCountForSmoke == favoriteCountBefore
+                    && win.SeenStoreCountForSmoke == seenCountBefore
+                    && win.DeleteStatusForSmoke.Contains("Retry", StringComparison.OrdinalIgnoreCase);
+                bool persistedDoNotAskAgain = File.Exists(state) && File.ReadAllText(state).Contains("\"ConfirmBeforeDelete\": false", StringComparison.OrdinalIgnoreCase);
+                bool fakeRecycleOnly = Directory.Exists(recycle) && Directory.EnumerateFiles(recycle).Any() && !Directory.EnumerateFiles(folder).Any(path => Path.GetFileName(path) == middle);
+
+                ok = selectedMiddle && prompted && cancelledUnchanged && promptedAgain && middleToNext && lastToPrevious && onlyToEmpty
+                    && filteredSubset && outsideBlocked && indexBlocked && unsupportedBlocked && realpathBlocked && favoriteOther && seenOther
+                    && recycleFailure && persistedDoNotAskAgain && fakeRecycleOnly;
+                result = new { ok, message = ok ? "P0C guarded Recycle Bin workflow passed (fake injected backend; no real Recycle Bin integration run)" : "P0C smoke failed", folder, recycle, selectedMiddle, prompted, cancelledUnchanged, promptedAgain, middleToNext, lastToPrevious, onlyToEmpty, filteredSubset, outsideBlocked, indexBlocked, unsupportedBlocked, realpathBlocked, favoriteOther, seenOther, recycleFailure, persistedDoNotAskAgain, fakeRecycleOnly, deleteStatus = win.DeleteStatusForSmoke };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message, folder, recycle };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousState);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavorites);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeen);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
