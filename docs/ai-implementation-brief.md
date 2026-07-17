@@ -37,11 +37,13 @@ WPF版:
 - Unseen dotsは表示設定だけで既定OFF。toggleでSeen dataを削除しない。
 - Seenは明示閲覧時だけadditiveに増える。hover、scan、prefetchだけでは増やさない。
 - Quick SearchとToday/7d/30d/This year presetは存在しない。Dateはmanual From/To。
+- 旧relative DatePresetは具体的なmanual rangeへ一回だけ移行し、runtime/writeは`none|manual`だけ。旧tokenを日々再計算するhidden presetにしない。
 - Folders sectionは既定展開、折り畳み可能、状態を復元する。
 - gallery zoomは画像cardだけを40〜600で変え、sidebar/header/font/List rowを拡縮しない。
 - zoom後も現在見ていた画像anchorをviewport内のほぼ同じ位置へ保つ。
 - source Deleteは明示操作、guard再検証、Windows Recycle Binのみ。hard delete fallback禁止。
 - Delete後は変更前filtered orderのnext、なければprevious。最後の1枚ならempty/modal close。
+- exact Favorite/Unrated filter中のfavorite変更でcurrentが非該当になった時も、同じnext→previous/empty規則で即時再同期する。
 - passive browse/preview/modal/tab hoverはEnhancement jobをenqueueせずworkerを起動しない。
 - 1,200件等のsilent cap禁止。virtualization/batchingで大量catalogを扱う。
 - state/cache/shared JSONをmigrationのために全削除しない。malformed fileを自動上書きしない。
@@ -95,6 +97,7 @@ dotnet build .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -c Release
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p0.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1a.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1b.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-catalog-stress.ps1 -Count 20000
 ```
 
 加えて`docs/wpf-product-spec.md` Section 17の全focused verifierを実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。

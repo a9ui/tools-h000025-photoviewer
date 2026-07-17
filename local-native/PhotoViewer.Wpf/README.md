@@ -16,7 +16,7 @@ implementation. The normative current behavior is documented in
 - browser-aligned modal favorite `+1` / `-1` controls with the current `0..5` level visible
 - debounced background search across filename and indexed PNG prompt, with comma-AND grammar
 - independent exact Favorite Lv1-Lv5 filters, All/Unrated, bulk Favorite, and unseen-only filters
-- manual Created/Birth From/To date filter; no Quick Search or Today/7d/30d/year presets
+- manual Created/Birth From/To date filter; runtime/write state is only `none|manual`, while legacy relative tokens migrate once to a fixed manual range; no Quick Search or Today/7d/30d/year presets
 - persisted collapsible Folders section, Ctrl/Shift bucket selection, and Show/Hide selected/all/invert controls
 - full catalog with bounded/recycling Grid and List realization (no 1,200-image product cap)
 - anchored 40..600 gallery zoom that leaves sidebar/text/List dimensions unchanged
@@ -54,6 +54,7 @@ implementation. The normative current behavior is documented in
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
+- `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image tail-search/modal/heartbeat observation gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
@@ -61,6 +62,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
+- `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
 - `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
 - `--bulk-recycle-smoke <path>` temp-only cancel/partial-failure/neighbor/empty Recycle workflow smoke
 

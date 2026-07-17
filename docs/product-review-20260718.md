@@ -59,7 +59,7 @@ WPF版は「作りかけのUI shell」段階を脱し、Browser契約のP0/P1を
 | Core browse/search | Green | Green | full catalog、query/filter/sort、virtualization、stale cancellation |
 | Favorite/Seen | Green | Green | exact Lv1〜5、All、shared locks/merge、additive Seen |
 | Delete safety | Green | Green | canonical/root/index/type guard、Recycle-only、neighbor、bulk partial result |
-| Large library | Green structure | Green at 5,000 | Browser virtualized/paged、WPF 5,000 P0/search heartbeat。20,000は観測残差 |
+| Large library | Green structure | Green at 20,000 | Browser virtualized/paged。WPF exact 20,000、truncate 0、Grid 96/384、List 22、tail search/modal、heartbeat 19 |
 | Error recovery | Green with surface variance | Green | inline scan/search/WPF status。Browser全体notification centerは未統一 |
 | Multi-window/process | Green for viewer index | Green for shared files | Browser token sessions 8/30分、shared JSON lock。transaction logはない |
 | Keyboard/a11y | Green desktop/mobile primary flows | Green primary workflows | chip reorder、WPF残りmodal/tag/drag surfaceは追加検証が必要 |
@@ -91,16 +91,18 @@ WPF版は「作りかけのUI shell」段階を脱し、Browser契約のP0/P1を
 
 ### P2-B Browser deep correctness
 
-1. Favorite filter中のlevel変更後にnonmatching modal/selectionを即時再同期する。
-2. sparse paged resultでmodal/Delete neighborのfull-order整合を保証する。
-3. Delete成功後のFavorite/Seen/pin/enhancement orphan cleanup方針を確定する。
+Favorite filter中のlevel変更後にnonmatching modal/selectionを即時再同期するsliceは完了した。残りは次。
+
+1. sparse paged resultでmodal/Delete neighborのfull-order整合を保証する。
+2. Delete成功後のFavorite/Seen/pin/enhancement orphan cleanup方針を確定する。
 
 ### P2-C 共通性能・回帰
 
-1. 20,000枚観測fixtureでsearch/scroll/memoryを記録する。ただしsilent product capは置かない。
-2. rapid window/tab/filter/resizeでstale decode/state writeをstress。
-3. Browser 2window + WPF同時Favorite/Seen/Recent更新をrepeatする。
-4. process crash/stale lock recoveryとtemp file残留を確認する。
+1. rapid window/tab/filter/resizeでstale decode/state writeをstress。
+2. Browser 2window + WPF同時Favorite/Seen/Recent更新をrepeatする。
+3. process crash/stale lock recoveryとtemp file残留を確認する。
+
+20,000件の初回観測値（このmachine/fixtureの証拠であり製品hard閾値ではない）: fixture 5,953ms、load 8,180ms、final rapid search 332ms、working set 147,943,424→370,585,600 bytes、GC gen0/1/2 = 25/16/6。source 20,000維持、Enhancement 0。
 
 ### P3 製品判断後
 

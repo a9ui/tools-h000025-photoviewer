@@ -598,6 +598,9 @@ Style shortcut:
 - Unratedはlevel 0 exact。
 - FavoritesとUnratedは相互排他。
 - level setはreload後も維持。
+- activeなexact Favorite/Unrated filter中にlocal favorite levelを変更してcurrent imageが非該当になった時は、変更前のfiltered orderでnext、なければpreviousへ即時移動する。survivor 0件ならselection/modalをclearする。
+- current imageがopen preview tab由来なら移動先をopen tabへ追加してactiveにする。selection/right previewだけから始まった時はtabを捏造しない。
+- matching mutation、Favorite filter OFF、shared hydrationだけではcurrent imageを移動しない。
 
 「Lv N以上」のthreshold filterは禁止。
 
@@ -1953,7 +1956,6 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 1. Original gridはmasonryではない。
 2. Show selectedはisolate filterではない。
 4. Modal sparse orderで未fetchの直隣をDelete candidateから飛ばす可能性がある。
-5. Favorite filter中のfavorite変更後、nonmatching modal itemが一時残る場合がある。
 6. Delete後にFavorite/Seen/pin/enhance history orphanが残る。
 7. cold processのmerged cache/tagsがactive scan外のhistorical rootを含み得る。
 8. Same-name overwriteをincremental signatureで見逃す可能性があり、full scanが回復経路。

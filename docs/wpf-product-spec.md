@@ -174,7 +174,8 @@ PNGは最大4MiBのparameters text chunkを読み、次を抽出する。
 - Grid最大realized window: 384件。
 - Listはvirtualizing/recycling panelを使う。
 - containerを外してもcatalog/selection/Favorite/Seenを失わない。
-- 5,000件fixtureで先頭、中間、末尾を往復して欠落、重複、order driftを起こさない。
+- 5,000件を常用integrated gate、20,000件をstress gateとし、欠落、重複、order drift、silent truncateを起こさない。
+- 20,000件でもGridは96 initial/96 batch/最大384、Listはrecycling containerをviewport近傍へboundedに保つ。fixture実測時間/working set/GCは記録するがhardware非依存のhard閾値にはしない。
 
 ### WPF-CAT-003 Decode concurrency
 
@@ -190,7 +191,7 @@ PNGは最大4MiBのparameters text chunkを読み、次を抽出する。
 - immutable catalog snapshot上でfilter/sortをbackground計算する。
 - generationとCancellationTokenでstale queryを破棄する。
 - 最終queryだけがUI、selection、preview、stateへapplyされる。
-- 5,000件をrapid queryしてもinput handlerをblockせず、dispatcher heartbeatが継続する。
+- 20,000件をrapid queryしてもstale queryをdiscardし、最終末尾query/selection/modalがexactで、dispatcher heartbeatが継続する。
 
 ## 6. Viewer shell
 
@@ -257,7 +258,9 @@ no-resultは正常empty state。permission/decode/query failureはerror state。
 - manual From/Toだけを表示する。
 - Created/Birth timeを使う。Modified timeではない。
 - Fromはlocal day start inclusive、Toはlocal day end inclusive。
-- legacy Today/7d/30d/year tokenは起動互換のreaderにだけ残してよい。UIへ復活させない。
+- runtimeと新規writeの`DatePreset`は`none|manual`だけを許す。
+- legacy Today/7d/30d/year tokenは起動互換readerだけで受ける。既存DateFrom/DateToがあればpartial endpointを含めexact保持し、無ければload時点の対応rangeを一度だけ固定して`manual`へ書き戻す。以後、日付が進んでも相対rangeとして再計算しない。
+- migrationはunknown extension fieldを保持し、UIへpresetを復活させない。
 
 ### WPF-FLD-001 Folder buckets
 
@@ -444,7 +447,7 @@ Delete直前に毎回すべて再検証する。
 
 ## 14. Settings、state、persistence
 
-### WPF-STATE-001 ViewerState v1
+### WPF-STATE-001 ViewerState v2
 
 保存field:
 
@@ -454,16 +457,16 @@ Delete直前に毎回すべて再検証する。
 - RightPanelOpen / RightPanelWidth
 - DisplayStyle / AspectMode
 - SortBy / RandomSortSeed
-- manual DateFrom / DateTo
+- DatePreset (`none|manual`) / manual DateFrom / DateTo
 - ShowFavoritesOnly / ShowUnfavoriteOnly / FavoriteFilterLevels
 - ShowUnseenDots
 - ConfirmBeforeDelete
-- HiddenFolderBuckets
+- FoldersSectionExpanded / HiddenFolderBuckets / SelectedFolderBucketKeys / PrimarySelectedFolderBucketKey
 - PinnedPreviewPaths
 - PreviewTabPaths / ActivePreviewTabPath
 - unknown extension fields
 
-旧scalar `FavoriteFilterLevel`はreaderだけ残し、同じexact single levelへadditive migrationする。Quick Search/date presetを復活させるmigrationはしない。
+version 1はmissing folder sidebar fieldsをexpanded/emptyへadditive migrationする。旧scalar `FavoriteFilterLevel`はreaderだけ残し、同じexact single levelへ移行する。旧relative DatePresetは具体的なmanual rangeへ一回だけ移行し、次write以降は`none|manual`だけを保存する。Quick Search/date presetをUI/runtimeへ復活させない。
 
 ### WPF-STATE-002 Write safety
 
@@ -540,7 +543,9 @@ Accessibility:
 | --- | --- |
 | Retired UI regression guard | `powershell -File scripts/verify-ui-regression-guard.ps1` |
 | P0 integrated / 5,000 | `powershell -File scripts/verify-wpf-p0.ps1` |
+| Catalog stress / 20,000 | `powershell -File scripts/verify-wpf-catalog-stress.ps1 -Count 20000` |
 | P1 search/date/folder | `powershell -File scripts/verify-wpf-p1a.ps1` |
+| Date preset retirement/migration | `powershell -File scripts/verify-wpf-date-filter.ps1` |
 | P1 error/a11y/state | `powershell -File scripts/verify-wpf-p1b.ps1` |
 | Formats | `powershell -File scripts/verify-wpf-formats.ps1` |
 | Right panel | `powershell -File scripts/verify-wpf-right-panel.ps1` |
@@ -562,7 +567,7 @@ Accessibility:
 - existing state/cacheを削除しない。
 - malformed/lock/decode/Recycle failureで元データ保持。
 - passive workflow前後でenhancement jobs hash不変。
-- 5,000件でsilent truncateなし、realized UI bounded。
+- 5,000/20,000件でsilent truncateなし、realized UI bounded。時間/working set/GCは観測値としてJSONへ残す。
 - screenshotは同一viewport/stateのBrowser referenceと並べて差分確認し、screenshotだけをQA完了証拠にしない。
 
 ## 18. 現在の完成境界
