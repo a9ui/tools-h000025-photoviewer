@@ -54,6 +54,7 @@ implementation. The normative current behavior is documented in
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
 - `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
+- `--recent-write-ownership-smoke <path>` temp-only explicit folder-set commit ownership, retry, and byte-isolation smoke
 - `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
@@ -72,6 +73,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
+- `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
@@ -540,11 +542,14 @@ canonical `.cache/recent-folders.json` only when local WPF state has no
 `LastFolder`. The shared file shape is the browser-accepted versioned positive
 folder-set JSON with `lastFolderSet`, `recentFolderSets`, and `updatedAtUtc`.
 
-WPF writes the current folder through as a one-entry folder set after local state
-save, preserving existing shared folder sets additively. Malformed shared recent
-JSON is not overwritten; local WPF `state.json` still saves so passive browsing
-is not blocked. No richer multi-folder WPF history UI is added in this slice.
-WinForms and browser code remain untouched by this WPF lane.
+WPF writes a folder set only after an explicit open/change has committed. Search,
+layout/settings saves, active-folder refresh, and window close never rewrite the
+shared Recent file. A successful set is written at most once per window until a
+different set commits; a failed lock/write is not memoized, so the next explicit
+commit retries. Under the lock WPF rereads the latest file, prepends the new set,
+caps distinct history at 12, and preserves unknown fields. Malformed shared recent
+JSON is not overwritten; local WPF `state.json` still saves so browsing is not
+blocked.
 
 ## Cross-runtime recent stress
 

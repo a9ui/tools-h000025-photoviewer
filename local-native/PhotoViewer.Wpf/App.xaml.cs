@@ -73,6 +73,13 @@ public partial class App : Application
             return;
         }
 
+        int recentWriteOwnershipIdx = Array.IndexOf(e.Args, "--recent-write-ownership-smoke");
+        if (recentWriteOwnershipIdx >= 0 && recentWriteOwnershipIdx + 1 < e.Args.Length)
+        {
+            CaptureRecentWriteOwnershipSmoke(e.Args[recentWriteOwnershipIdx + 1]);
+            return;
+        }
+
         int modalNavSmokeIdx = Array.IndexOf(e.Args, "--modal-nav-smoke");
         if (modalNavSmokeIdx >= 0 && modalNavSmokeIdx + 1 < e.Args.Length)
         {
@@ -4152,6 +4159,211 @@ public partial class App : Application
 
             Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
             File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureRecentWriteOwnershipSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-recent-ownership-" + Guid.NewGuid().ToString("N"));
+        string folderA = Path.Combine(smokeRoot, "folder-a");
+        string folderB = Path.Combine(smokeRoot, "folder-b");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string lockPath = recentPath + ".lock";
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folderA);
+            Directory.CreateDirectory(folderB);
+            WriteSmokePng(Path.Combine(folderA, "a.png"), 32, 24, Color.FromRgb(80, 130, 210));
+            WriteSmokePng(Path.Combine(folderB, "b.png"), 32, 24, Color.FromRgb(200, 110, 90));
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            File.WriteAllText(recentPath, JsonSerializer.Serialize(new
+            {
+                version = 1,
+                lastFolderSet = new[] { Path.Combine(smokeRoot, "seed") },
+                recentFolderSets = new[] { new[] { Path.Combine(smokeRoot, "seed") } },
+                updatedAtUtc = "2026-07-18T00:00:00.0000000Z",
+                futureOwner = new { token = "seed-owner", nested = new[] { 3, 1, 4 } },
+            }, new JsonSerializerOptions { WriteIndented = true }));
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteRecentWriteOwnershipSmokeResult(resultFullPath, new RecentWriteOwnershipSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            var windows = new List<MainWindow>();
+            RecentWriteOwnershipSmokeResult result;
+            try
+            {
+                var initial = HiddenWindow();
+                windows.Add(initial);
+                initial.Show();
+                await initial.LoadFolderAsync(folderA);
+                bool firstExplicitCommit = initial.SharedRecentCommitAttemptCountForSmoke == 1
+                    && initial.SharedRecentCommitSuccessCountForSmoke == 1;
+                string afterFirstCommit = FileFingerprint(recentPath);
+                await initial.SetSearchInputForSmokeAsync("a.png");
+                initial.SetRightPanelWidthForSmoke(612);
+                initial.SetShowUnseenDotsForSmoke(true);
+                initial.FlushStateForSmoke();
+                await initial.RefreshActiveFolderForSmokeAsync();
+                initial.FlushStateForSmoke();
+                bool sameWindowGeneralSavesUntouched = string.Equals(afterFirstCommit, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && initial.SharedRecentCommitAttemptCountForSmoke == 1
+                    && initial.SharedRecentCommitSuccessCountForSmoke == 1;
+                initial.Close();
+                bool firstCloseUntouched = string.Equals(afterFirstCommit, FileFingerprint(recentPath), StringComparison.Ordinal);
+
+                string externalFolder = Path.Combine(smokeRoot, "external-owner");
+                var externalHistory = Enumerable.Range(0, 12)
+                    .Select(index => new[] { index == 0 ? externalFolder : Path.Combine(smokeRoot, $"external-history-{index:00}") })
+                    .ToArray();
+                File.WriteAllText(recentPath, JsonSerializer.Serialize(new
+                {
+                    version = 1,
+                    lastFolderSet = new[] { externalFolder },
+                    recentFolderSets = externalHistory,
+                    updatedAtUtc = "2026-07-18T01:02:03.0000000Z",
+                    futureOwner = new { token = "external-newest", nested = new[] { 2, 7, 1, 8 } },
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                string externalBytes = FileFingerprint(recentPath);
+                string externalUnknown;
+                using (JsonDocument document = JsonDocument.Parse(File.ReadAllText(recentPath)))
+                    externalUnknown = document.RootElement.GetProperty("futureOwner").GetRawText();
+
+                var passive = HiddenWindow();
+                windows.Add(passive);
+                passive.Show();
+                passive.SetRightPanelWidthForSmoke(477);
+                passive.FlushStateForSmoke();
+                passive.Close();
+                bool externalOwnerPreservedByGeneralState = string.Equals(externalBytes, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && passive.SharedRecentCommitAttemptCountForSmoke == 0
+                    && passive.SharedRecentCommitSuccessCountForSmoke == 0;
+
+                var explicitB = HiddenWindow();
+                windows.Add(explicitB);
+                explicitB.Show();
+                await explicitB.LoadFolderAsync(folderB);
+                bool secondExplicitCommit = explicitB.SharedRecentCommitAttemptCountForSmoke == 1
+                    && explicitB.SharedRecentCommitSuccessCountForSmoke == 1;
+                bool latestMerged;
+                bool unknownPreserved;
+                int mergedHistoryCount;
+                using (JsonDocument document = JsonDocument.Parse(File.ReadAllText(recentPath)))
+                {
+                    JsonElement root = document.RootElement;
+                    var last = root.GetProperty("lastFolderSet").EnumerateArray().Select(static item => item.GetString()).ToList();
+                    var history = root.GetProperty("recentFolderSets").EnumerateArray().ToList();
+                    mergedHistoryCount = history.Count;
+                    string? first = history[0].EnumerateArray().First().GetString();
+                    string? second = history[1].EnumerateArray().First().GetString();
+                    latestMerged = last.Count == 1
+                        && string.Equals(last[0], Path.GetFullPath(folderB), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(first, Path.GetFullPath(folderB), StringComparison.OrdinalIgnoreCase)
+                        && string.Equals(second, Path.GetFullPath(externalFolder), StringComparison.OrdinalIgnoreCase)
+                        && history.Count == 12;
+                    unknownPreserved = string.Equals(root.GetProperty("futureOwner").GetRawText(), externalUnknown, StringComparison.Ordinal);
+                }
+                string afterSecondCommit = FileFingerprint(recentPath);
+                explicitB.FlushStateForSmoke();
+                explicitB.SetRightPanelWidthForSmoke(688);
+                explicitB.Close();
+                bool secondCloseUntouched = string.Equals(afterSecondCommit, FileFingerprint(recentPath), StringComparison.Ordinal);
+
+                var retry = HiddenWindow();
+                windows.Add(retry);
+                retry.Show();
+                File.WriteAllText(lockPath, "{\"owner\":\"external-test\"}");
+                string beforeRefusal = FileFingerprint(recentPath);
+                await retry.LoadFolderAsync(folderA);
+                bool failedNotMarkedSuccessful = retry.SharedRecentCommitAttemptCountForSmoke == 1
+                    && retry.SharedRecentCommitSuccessCountForSmoke == 0
+                    && string.Equals(beforeRefusal, FileFingerprint(recentPath), StringComparison.Ordinal);
+                File.Delete(lockPath);
+                await retry.LoadFolderAsync(folderA);
+                int attemptsAfterRetry = retry.SharedRecentCommitAttemptCountForSmoke;
+                int successesAfterRetry = retry.SharedRecentCommitSuccessCountForSmoke;
+                string afterRetry = FileFingerprint(recentPath);
+                await retry.LoadFolderAsync(folderA);
+                bool retriedThenDeduplicated = attemptsAfterRetry == 2
+                    && successesAfterRetry == 1
+                    && retry.SharedRecentCommitAttemptCountForSmoke == 2
+                    && retry.SharedRecentCommitSuccessCountForSmoke == 1
+                    && string.Equals(afterRetry, FileFingerprint(recentPath), StringComparison.Ordinal);
+                retry.Close();
+                bool retryCloseUntouched = string.Equals(afterRetry, FileFingerprint(recentPath), StringComparison.Ordinal);
+
+                bool sourceUntouched = Directory.EnumerateFiles(folderA, "*.png").Count() == 1
+                    && Directory.EnumerateFiles(folderB, "*.png").Count() == 1;
+                bool residueFree = NoPersistenceResidue(smokeRoot);
+                bool ok = firstExplicitCommit && sameWindowGeneralSavesUntouched && firstCloseUntouched
+                    && externalOwnerPreservedByGeneralState && secondExplicitCommit && latestMerged && unknownPreserved
+                    && secondCloseUntouched && failedNotMarkedSuccessful && retriedThenDeduplicated
+                    && retryCloseUntouched && sourceUntouched && residueFree;
+                result = new RecentWriteOwnershipSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "shared recent writes are owned only by successful explicit folder-set commits; latest external data, unknown fields, retry, cap, and close isolation passed"
+                        : "recent write ownership smoke did not meet the explicit-commit contract",
+                    SmokeRoot = smokeRoot,
+                    FirstExplicitCommit = firstExplicitCommit,
+                    GeneralStateAndRefreshByteIdentical = sameWindowGeneralSavesUntouched && firstCloseUntouched,
+                    ExternalOwnerByteIdentical = externalOwnerPreservedByGeneralState,
+                    SecondExplicitCommit = secondExplicitCommit,
+                    LatestExternalHistoryMerged = latestMerged,
+                    UnknownFieldsPreserved = unknownPreserved,
+                    MergedHistoryCount = mergedHistoryCount,
+                    ExplicitCommitThenCloseByteIdentical = secondCloseUntouched,
+                    FailedWriteNotMarkedSuccessful = failedNotMarkedSuccessful,
+                    RetrySucceededAndSameSetDeduplicated = retriedThenDeduplicated,
+                    RetryThenCloseByteIdentical = retryCloseUntouched,
+                    SourceUntouched = sourceUntouched,
+                    ResidueFree = residueFree,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new RecentWriteOwnershipSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot };
+            }
+            finally
+            {
+                foreach (MainWindow window in windows)
+                {
+                    try { if (window.IsLoaded) window.Close(); } catch { }
+                }
+                try { if (File.Exists(lockPath)) File.Delete(lockPath); } catch { }
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteRecentWriteOwnershipSmokeResult(resultFullPath, result);
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
@@ -9129,6 +9341,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteRecentWriteOwnershipSmokeResult(string path, RecentWriteOwnershipSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteFolderDragInSmokeResult(string path, FolderDragInSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -10323,6 +10541,26 @@ public partial class App : Application
         public ShutdownRefusalSnapshot Malformed { get; init; }
         public ShutdownRefusalSnapshot ProtectedFuture { get; init; }
         public ShutdownRefusalSnapshot Contended { get; init; }
+    }
+
+    private sealed class RecentWriteOwnershipSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public bool FirstExplicitCommit { get; init; }
+        public bool GeneralStateAndRefreshByteIdentical { get; init; }
+        public bool ExternalOwnerByteIdentical { get; init; }
+        public bool SecondExplicitCommit { get; init; }
+        public bool LatestExternalHistoryMerged { get; init; }
+        public bool UnknownFieldsPreserved { get; init; }
+        public int MergedHistoryCount { get; init; }
+        public bool ExplicitCommitThenCloseByteIdentical { get; init; }
+        public bool FailedWriteNotMarkedSuccessful { get; init; }
+        public bool RetrySucceededAndSameSetDeduplicated { get; init; }
+        public bool RetryThenCloseByteIdentical { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool ResidueFree { get; init; }
     }
 
     private readonly record struct ShutdownRefusalSnapshot(

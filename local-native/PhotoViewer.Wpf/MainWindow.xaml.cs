@@ -101,6 +101,8 @@ public partial class MainWindow : Window
     private int _enhancementJobsRead;
     private int _enhancedCandidateCount;
     private int _favoriteSaveAttemptCount;
+    private int _sharedRecentCommitAttemptCount;
+    private int _sharedRecentCommitSuccessCount;
     private bool _enhancementReadOk = true;
     private string? _enhancementReadError;
     private Rect _restoreBounds;
@@ -122,6 +124,7 @@ public partial class MainWindow : Window
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
     private List<string> _lastFolderSet = [];
+    private string? _lastSuccessfulSharedRecentFolderSetKey;
     private string? _restoredSelectedPath;
     private string? _primarySelectedPath;
     private string? _activePreviewTabPath;
@@ -300,7 +303,7 @@ public partial class MainWindow : Window
         // Closing flushes only the viewer state. Folder recents, favorites,
         // seen data, enhancement jobs, and source files are separate stores
         // and must not be rewritten merely because the window is closing.
-        SaveState(persistRecent: false);
+        SaveState();
     }
 
     private sealed record FilterSnapshot(
@@ -371,7 +374,7 @@ public partial class MainWindow : Window
     public async Task LoadFolderAsync(string folder)
         => await LoadFolderSetAsync([folder]);
 
-    public async Task LoadFolderSetAsync(IEnumerable<string> folders)
+    public async Task LoadFolderSetAsync(IEnumerable<string> folders, bool commitRecent = true)
     {
         var totalWatch = Stopwatch.StartNew();
         LastLoadMetrics = null;
@@ -481,6 +484,8 @@ public partial class MainWindow : Window
         if (files.Count == 0)
         {
             SaveState();
+            if (commitRecent)
+                CommitSharedRecentFolderSet(_currentFolderSet);
             totalWatch.Stop();
             LastLoadMetrics = LoadMetrics.Create(
                 resolvedFolderSummary,
@@ -512,6 +517,8 @@ public partial class MainWindow : Window
             _restoredSelectedPath = restoredActivePreviewTile.Path;
         SelectRestoredOrFirst();
         SaveState();
+        if (commitRecent)
+            CommitSharedRecentFolderSet(_currentFolderSet);
 
         var thumbnails = await LoadThumbnailsAsync(cts.Token);
         totalWatch.Stop();
@@ -5477,7 +5484,7 @@ public partial class MainWindow : Window
     private async void RefreshActiveFolder_Click(object sender, RoutedEventArgs e)
     {
         if (_currentFolderSet.Any(Directory.Exists))
-            await LoadFolderSetAsync(_currentFolderSet);
+            await LoadFolderSetAsync(_currentFolderSet, commitRecent: false);
         else
             await ChooseAndLoadFolderAsync();
     }
@@ -6911,9 +6918,7 @@ public partial class MainWindow : Window
         return clone;
     }
 
-    private void SaveState() => SaveState(persistRecent: true);
-
-    private void SaveState(bool persistRecent)
+    private void SaveState()
     {
         if (_initializing || _suppressStateSave) return;
         if (_stateWriteBlocked)
@@ -6989,8 +6994,6 @@ public partial class MainWindow : Window
                 return;
             }
             _stateExtensionData = CloneExtensionData(state.ExtensionData);
-            if (persistRecent && _currentFolderSet.Count > 0)
-                SaveSharedRecentFolderSet(_currentFolderSet);
         }
         catch
         {
@@ -7217,6 +7220,25 @@ public partial class MainWindow : Window
             ReportPersistenceRefusal("Recent folder history", ResolvedSharedRecentPath, retryAction: () => SaveSharedRecentFolderSet(folderSet));
             return false;
         }
+    }
+
+    private bool CommitSharedRecentFolderSet(IEnumerable<string> folders)
+    {
+        var folderSet = NormalizeFolderSet(folders);
+        if (folderSet.Count == 0)
+            return true;
+
+        string key = FormatRecentFolderSet(folderSet);
+        if (string.Equals(key, _lastSuccessfulSharedRecentFolderSetKey, StringComparison.OrdinalIgnoreCase))
+            return true;
+
+        _sharedRecentCommitAttemptCount++;
+        if (!SaveSharedRecentFolderSet(folderSet))
+            return false;
+
+        _lastSuccessfulSharedRecentFolderSetKey = key;
+        _sharedRecentCommitSuccessCount++;
+        return true;
     }
 
     private bool CloseTopmostOverlay()
@@ -7524,6 +7546,13 @@ public partial class MainWindow : Window
     {
         _searchStateSaveTimer.Stop();
         SaveState();
+    }
+    public int SharedRecentCommitAttemptCountForSmoke => _sharedRecentCommitAttemptCount;
+    public int SharedRecentCommitSuccessCountForSmoke => _sharedRecentCommitSuccessCount;
+    public async Task RefreshActiveFolderForSmokeAsync()
+    {
+        if (_currentFolderSet.Any(Directory.Exists))
+            await LoadFolderSetAsync(_currentFolderSet, commitRecent: false);
     }
     public int ShutdownPersistenceFlushCountForSmoke => _shutdownPersistenceFlushCount;
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
