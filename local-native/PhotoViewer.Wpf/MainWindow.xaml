@@ -58,7 +58,7 @@
           </Button>
           <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>
           <Button Style="{StaticResource IconButton}" Click="OpenAppSettings_Click" ToolTip="App Settings" WindowChrome.IsHitTestVisibleInChrome="True">
-            <TextBlock Text="⚙" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
+            <Path Data="M12,8 a4,4 0 1 0 0,8 a4,4 0 1 0 0,-8 M12,2 v3 M12,19 v3 M2,12 h3 M19,12 h3 M4.9,4.9 l2.1,2.1 M17,17 l2.1,2.1 M19.1,4.9 l-2.1,2.1 M7,17 l-2.1,2.1" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.5" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
           <Button x:Name="ToggleRight" Style="{StaticResource IconButtonActive}" Click="ToggleRight_Click" ToolTip="Hide right panel" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M3,4 h18 v16 h-18 z M15,4 v16" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
@@ -595,10 +595,10 @@
 
     <!-- ═══════════════ Modal ═══════════════ -->
     <!-- App settings are separate from the modal generation-metadata Settings tab. -->
-    <Grid x:Name="AppSettingsDialog" Grid.RowSpan="3" Visibility="Collapsed" Background="#B8040407">
+    <Grid x:Name="AppSettingsDialog" Grid.RowSpan="3" Panel.ZIndex="500" Visibility="Collapsed" Background="#B8040407">
       <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel>
-          <DockPanel Margin="0,0,0,14"><TextBlock Text="App Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAppSettings_Click" ToolTip="Close"><TextBlock Text="×" FontSize="18"/></Button></DockPanel>
+          <DockPanel Margin="0,0,0,14"><TextBlock Text="App Settings" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/><Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="CloseAppSettings_Click" ToolTip="Close"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="14" Height="14"/></Button></DockPanel>
           <TextBlock Text="SAFETY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <CheckBox x:Name="ConfirmBeforeDeleteCheckBox" Content="Confirm before delete" Foreground="{StaticResource TextSecondary}" Checked="ConfirmBeforeDelete_Changed" Unchecked="ConfirmBeforeDelete_Changed"/>
           <TextBlock Text="Moves source images to the Windows Recycle Bin; it never uses a hard-delete fallback." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
@@ -608,7 +608,7 @@
     </Grid>
 
     <!-- Delete confirmation: Cancel is deliberately the initial focus. -->
-    <Grid x:Name="DeleteConfirmationDialog" Grid.RowSpan="3" Visibility="Collapsed" Background="#B8040407">
+    <Grid x:Name="DeleteConfirmationDialog" Grid.RowSpan="3" Panel.ZIndex="600" Visibility="Collapsed" Background="#B8040407">
       <Border Width="440" Padding="22" CornerRadius="12" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel>
           <TextBlock Text="Move source to Recycle Bin?" Foreground="{StaticResource TextPrimary}" FontSize="17" FontWeight="SemiBold"/>
@@ -616,13 +616,23 @@
           <CheckBox x:Name="DoNotAskAgainCheckBox" Content="Do not ask again" Foreground="{StaticResource TextSecondary}" Margin="0,0,0,16"/>
           <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
             <Button x:Name="DeleteCancelButton" Style="{StaticResource GhostButton}" Content="Cancel" Click="DeleteCancel_Click" MinWidth="82" Margin="0,0,8,0" IsDefault="True"/>
-            <Button Style="{StaticResource DangerButton}" Content="Delete" Click="DeleteConfirm_Click" MinWidth="82" IsCancel="False"/>
+            <Button Style="{StaticResource DangerButton}" Content="Move to Recycle Bin" Click="DeleteConfirm_Click" MinWidth="142" IsCancel="False"/>
           </StackPanel>
         </StackPanel>
       </Border>
     </Grid>
 
-    <Grid x:Name="Modal" Grid.RowSpan="3" Visibility="Collapsed" Background="#EB040407">
+    <Grid x:Name="DeleteStatusToast" Grid.RowSpan="3" Panel.ZIndex="400" Visibility="Collapsed" IsHitTestVisible="True" VerticalAlignment="Top" HorizontalAlignment="Center" Margin="0,66,0,0">
+      <Border Width="560" Padding="12,9" CornerRadius="9" Background="#EE1A1A24" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
+        <DockPanel LastChildFill="True">
+          <Button x:Name="DeleteStatusDismissButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="DismissDeleteStatus_Click" ToolTip="Dismiss" Width="28" Height="28"><Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="13" Height="13"/></Button>
+          <Button x:Name="DeleteStatusRetryButton" DockPanel.Dock="Right" Style="{StaticResource GhostButton}" Content="Retry" Click="RetryDelete_Click" Visibility="Collapsed" MinWidth="58" Height="28" Margin="0,0,8,0"/>
+          <TextBlock x:Name="DeleteStatusText" AutomationProperties.LiveSetting="Assertive" Foreground="{StaticResource TextSecondary}" TextWrapping="Wrap" VerticalAlignment="Center" Margin="0,0,8,0"/>
+        </DockPanel>
+      </Border>
+    </Grid>
+
+    <Grid x:Name="Modal" Grid.RowSpan="3" Panel.ZIndex="300" Visibility="Collapsed" Background="#EB040407">
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>

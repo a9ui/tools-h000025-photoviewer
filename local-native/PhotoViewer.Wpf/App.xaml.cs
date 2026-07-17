@@ -923,16 +923,20 @@ public partial class App : Application
         string folder = Path.Combine(root, "fixture");
         string recycle = Path.Combine(root, "fake-recycle-bin");
         string outside = Path.Combine(root, "outside");
+        string sibling = folder + "-sibling";
         string state = Path.Combine(root, "state.json");
         string favorites = Path.Combine(root, "favorites.json");
         string seen = Path.Combine(root, "seen.json");
         Directory.CreateDirectory(folder);
         Directory.CreateDirectory(outside);
+        Directory.CreateDirectory(sibling);
         foreach (string name in new[] { "alpha.png", "bravo.png", "charlie.png" })
             WriteSmokePng(Path.Combine(folder, name), 32, 24, Color.FromRgb(90, 130, 190));
         string outsidePng = Path.Combine(outside, "outside.png");
+        string siblingPng = Path.Combine(sibling, "sibling.png");
         string unsupported = Path.Combine(folder, "unsupported.txt");
         WriteSmokePng(outsidePng, 32, 24, Color.FromRgb(190, 90, 130));
+        WriteSmokePng(siblingPng, 32, 24, Color.FromRgb(130, 90, 190));
         File.WriteAllText(unsupported, "not an image");
         string? previousState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
         string? previousFavorites = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
@@ -961,26 +965,43 @@ public partial class App : Application
                 string middle = original[1];
                 string next = original[2];
                 bool selectedMiddle = win.SelectFileNameForSmoke(middle);
+                bool modalOpenedMiddle = win.OpenModalForSmoke();
                 bool prompted = win.RequestDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
-                win.CancelDeleteForSmoke();
+                string screenshot = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(resultPath))!, Path.GetFileNameWithoutExtension(resultPath) + "-modal-confirm.png");
+                win.UpdateLayout();
+                var visual = (FrameworkElement)win.Content;
+                var bitmap = new RenderTargetBitmap((int)Math.Ceiling(visual.ActualWidth), (int)Math.Ceiling(visual.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+                bitmap.Render(visual);
+                var screenshotEncoder = new PngBitmapEncoder();
+                screenshotEncoder.Frames.Add(BitmapFrame.Create(bitmap));
+                using (var screenshotStream = File.Create(screenshot)) screenshotEncoder.Save(screenshotStream);
+                bool confirmationAboveModal = modalOpenedMiddle && win.ModalVisibleForSmoke && win.DeleteConfirmationZIndexForSmoke > win.ModalZIndexForSmoke && File.Exists(screenshot);
+                int favoriteBeforeOverlay = win.SelectedFavoriteLevelForSmoke;
+                bool confirmationShortcutsGuarded = win.InvokePreviewKeyForSmoke(Key.F) && win.InvokePreviewKeyForSmoke(Key.U) && win.InvokePreviewKeyForSmoke(Key.Delete)
+                    && win.SelectedFavoriteLevelForSmoke == favoriteBeforeOverlay && win.DeleteConfirmationVisibleForSmoke;
+                bool escapeClosedConfirmation = win.InvokePreviewKeyForSmoke(Key.Escape) && !win.DeleteConfirmationVisibleForSmoke && win.ModalVisibleForSmoke;
                 bool cancelledUnchanged = win.CatalogCountForSmoke == 3 && File.Exists(Path.Combine(folder, middle));
+
+                win.OpenAppSettingsForSmoke();
+                bool settingsShortcutsGuarded = win.AppSettingsVisibleForSmoke && win.InvokePreviewKeyForSmoke(Key.F) && win.InvokePreviewKeyForSmoke(Key.Escape) && !win.AppSettingsVisibleForSmoke;
 
                 bool promptedAgain = win.RequestDeleteSelectedForSmoke();
                 win.ConfirmDeleteForSmoke(doNotAskAgain: true);
                 bool middleToNext = !File.Exists(Path.Combine(folder, middle))
                     && string.Equals(win.SelectedFileNameForSmoke, next, StringComparison.OrdinalIgnoreCase)
-                    && !win.ConfirmBeforeDeleteForSmoke;
+                    && !win.ConfirmBeforeDeleteForSmoke && win.ModalVisibleForSmoke;
 
                 var afterMiddle = win.FilteredFileNamesForSmoke();
                 string last = afterMiddle[^1];
                 string previous = afterMiddle[^2];
                 win.SelectFileNameForSmoke(last);
+                bool modalOpenedLast = win.OpenModalForSmoke();
                 bool deletedLast = win.RequestDeleteSelectedForSmoke();
-                bool lastToPrevious = deletedLast && string.Equals(win.SelectedFileNameForSmoke, previous, StringComparison.OrdinalIgnoreCase);
+                bool lastToPrevious = modalOpenedLast && deletedLast && win.ModalVisibleForSmoke && string.Equals(win.SelectedFileNameForSmoke, previous, StringComparison.OrdinalIgnoreCase);
                 string only = win.FilteredFileNamesForSmoke().Single();
                 win.SelectFileNameForSmoke(only);
                 bool deletedOnly = win.RequestDeleteSelectedForSmoke();
-                bool onlyToEmpty = deletedOnly && win.CatalogCountForSmoke == 0 && win.SelectedPathForSmoke is null && !win.OpenModalForSmoke();
+                bool onlyToEmpty = deletedOnly && win.CatalogCountForSmoke == 0 && win.SelectedPathForSmoke is null && !win.ModalVisibleForSmoke;
 
                 // Filtered subset uses the same command and leaves a zero-item filtered view.
                 WriteSmokePng(Path.Combine(folder, "subset-a.png"), 32, 24, Color.FromRgb(80, 150, 130));
@@ -993,11 +1014,14 @@ public partial class App : Application
 
                 string remaining = win.FilteredFileNamesForSmoke().First();
                 bool outsideBlocked = !win.ValidateDeletePathForSmoke(outsidePng);
+                bool siblingPrefixBlocked = !win.ValidateDeletePathForSmoke(siblingPng);
                 bool indexBlocked = !win.ValidateDeletePathForSmoke(Path.Combine(folder, remaining), includeInCatalog: false);
                 bool unsupportedBlocked = !win.ValidateDeletePathForSmoke(unsupported);
                 win.SetCanonicalPathResolverForSmoke(_ => throw new IOException("synthetic realpath failure"));
                 bool realpathBlocked = !win.ValidateDeletePathForSmoke(Path.Combine(folder, remaining));
-                win.SetCanonicalPathResolverForSmoke(path => new FileInfo(path).ResolveLinkTarget(true)?.FullName ?? Path.GetFullPath(path));
+                win.SetCanonicalPathResolverForSmoke(path => string.Equals(Path.GetFullPath(path), Path.GetFullPath(folder), StringComparison.OrdinalIgnoreCase) ? Path.GetFullPath(folder) : Path.GetFullPath(outsidePng));
+                bool parentLinkEscapeBlocked = !win.ValidateDeletePathForSmoke(Path.Combine(folder, remaining));
+                win.ResetCanonicalPathResolverForSmoke();
 
                 WriteSmokePng(Path.Combine(folder, "failure.png"), 32, 24, Color.FromRgb(170, 90, 100));
                 await win.LoadFolderAsync(folder);
@@ -1016,14 +1040,15 @@ public partial class App : Application
                     && win.CatalogCountForSmoke == catalogBeforeFailure
                     && win.FavoriteStoreCountForSmoke == favoriteCountBefore
                     && win.SeenStoreCountForSmoke == seenCountBefore
-                    && win.DeleteStatusForSmoke.Contains("Retry", StringComparison.OrdinalIgnoreCase);
+                    && win.DeleteStatusForSmoke.Contains("Retry", StringComparison.OrdinalIgnoreCase)
+                    && win.DeleteStatusVisibleForSmoke && win.DeleteStatusRetryVisibleForSmoke && win.DeleteStatusZIndexForSmoke > win.ModalZIndexForSmoke;
                 bool persistedDoNotAskAgain = File.Exists(state) && File.ReadAllText(state).Contains("\"ConfirmBeforeDelete\": false", StringComparison.OrdinalIgnoreCase);
                 bool fakeRecycleOnly = Directory.Exists(recycle) && Directory.EnumerateFiles(recycle).Any() && !Directory.EnumerateFiles(folder).Any(path => Path.GetFileName(path) == middle);
 
-                ok = selectedMiddle && prompted && cancelledUnchanged && promptedAgain && middleToNext && lastToPrevious && onlyToEmpty
-                    && filteredSubset && outsideBlocked && indexBlocked && unsupportedBlocked && realpathBlocked && favoriteOther && seenOther
+                ok = selectedMiddle && prompted && confirmationAboveModal && confirmationShortcutsGuarded && escapeClosedConfirmation && cancelledUnchanged && settingsShortcutsGuarded && promptedAgain && middleToNext && lastToPrevious && onlyToEmpty
+                    && filteredSubset && outsideBlocked && siblingPrefixBlocked && indexBlocked && unsupportedBlocked && realpathBlocked && parentLinkEscapeBlocked && favoriteOther && seenOther
                     && recycleFailure && persistedDoNotAskAgain && fakeRecycleOnly;
-                result = new { ok, message = ok ? "P0C guarded Recycle Bin workflow passed (fake injected backend; no real Recycle Bin integration run)" : "P0C smoke failed", folder, recycle, selectedMiddle, prompted, cancelledUnchanged, promptedAgain, middleToNext, lastToPrevious, onlyToEmpty, filteredSubset, outsideBlocked, indexBlocked, unsupportedBlocked, realpathBlocked, favoriteOther, seenOther, recycleFailure, persistedDoNotAskAgain, fakeRecycleOnly, deleteStatus = win.DeleteStatusForSmoke };
+                result = new { ok, message = ok ? "P0C guarded Recycle Bin workflow passed (fake injected backend; no real Recycle Bin integration run)" : "P0C smoke failed", folder, recycle, screenshot, selectedMiddle, prompted, confirmationAboveModal, confirmationShortcutsGuarded, escapeClosedConfirmation, cancelledUnchanged, settingsShortcutsGuarded, promptedAgain, middleToNext, lastToPrevious, onlyToEmpty, filteredSubset, outsideBlocked, siblingPrefixBlocked, indexBlocked, unsupportedBlocked, realpathBlocked, parentLinkEscapeBlocked, favoriteOther, seenOther, recycleFailure, persistedDoNotAskAgain, fakeRecycleOnly, deleteStatus = win.DeleteStatusForSmoke };
             }
             catch (Exception ex)
             {

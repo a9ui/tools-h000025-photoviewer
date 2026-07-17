@@ -152,6 +152,9 @@ public partial class MainWindow : Window
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
     private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
     private string _deleteStatus = "";
+    private Tile? _retryDeleteTile;
+    private IInputElement? _deleteFocusBeforeDialog;
+    private IInputElement? _settingsFocusBeforeDialog;
     public LoadMetrics? LastLoadMetrics { get; private set; }
 
     public MainWindow()
@@ -1748,13 +1751,14 @@ public partial class MainWindow : Window
     {
         try
         {
+            using var stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
             var image = new BitmapImage();
             image.BeginInit();
             image.CacheOption = BitmapCacheOption.OnLoad;
             image.CreateOptions = BitmapCreateOptions.IgnoreColorProfile;
             if (decodePixelWidth > 0)
                 image.DecodePixelWidth = decodePixelWidth;
-            image.UriSource = new Uri(path, UriKind.Absolute);
+            image.StreamSource = stream;
             image.EndInit();
             image.Freeze();
             return image;
@@ -4475,12 +4479,16 @@ public partial class MainWindow : Window
 
     private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
     {
+        _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         AppSettingsDialog.Visibility = Visibility.Visible;
     }
 
     private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
-        => AppSettingsDialog.Visibility = Visibility.Collapsed;
+    {
+        AppSettingsDialog.Visibility = Visibility.Collapsed;
+        RestoreOverlayFocus(_settingsFocusBeforeDialog);
+    }
 
     private void ConfirmBeforeDelete_Changed(object sender, RoutedEventArgs e)
     {
@@ -4492,18 +4500,19 @@ public partial class MainWindow : Window
     {
         if (SelectedTile() is not Tile tile)
         {
-            SetDeleteStatus("Select an image to delete.");
+            SetDeleteStatus("Select an image to move to Recycle Bin.");
             return false;
         }
 
         if (!TryValidateDelete(tile, out string reason))
         {
-            SetDeleteStatus($"Delete blocked: {reason}");
+            SetDeleteStatus($"Move to Recycle Bin blocked: {reason}");
             return false;
         }
 
         if (_confirmBeforeDelete)
         {
+            _deleteFocusBeforeDialog = Keyboard.FocusedElement;
             _pendingDeleteTile = tile;
             DeleteConfirmationText.Text = $"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.";
             DoNotAskAgainCheckBox.IsChecked = false;
@@ -4519,7 +4528,8 @@ public partial class MainWindow : Window
     {
         _pendingDeleteTile = null;
         DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
-        SetDeleteStatus("Delete cancelled.");
+        SetDeleteStatus("Move to Recycle Bin cancelled.");
+        RestoreOverlayFocus(_deleteFocusBeforeDialog);
     }
 
     private void DeleteConfirm_Click(object sender, RoutedEventArgs e)
@@ -4534,6 +4544,7 @@ public partial class MainWindow : Window
         }
         if (tile is not null)
             ExecuteDelete(tile);
+        RestoreOverlayFocus(_deleteFocusBeforeDialog);
     }
 
     private bool ExecuteDelete(Tile tile)
@@ -4541,7 +4552,7 @@ public partial class MainWindow : Window
         // Revalidate immediately before the only destructive boundary.
         if (!TryValidateDelete(tile, out string reason))
         {
-            SetDeleteStatus($"Delete blocked: {reason}");
+            SetDeleteStatus($"Move to Recycle Bin blocked: {reason}");
             return false;
         }
 
@@ -4550,7 +4561,7 @@ public partial class MainWindow : Window
         RecycleBinDeleteResult result = _recycleBinDelete(tile.Path);
         if (!result.Succeeded)
         {
-            SetDeleteStatus($"Recycle Bin failed: {result.Reason}. Retry is available.");
+            SetDeleteStatus($"Move to Recycle Bin failed: {result.Reason}. Retry is available.", isFailure: true, retryTile: tile);
             return false;
         }
 
@@ -4644,10 +4655,30 @@ public partial class MainWindow : Window
 
     private static string ResolveFinalPathCore(string path)
     {
-        var info = new FileInfo(path);
-        return info.ResolveLinkTarget(returnFinalTarget: true)?.FullName is string target
-            ? Path.GetFullPath(target)
-            : Path.GetFullPath(path);
+        string fullPath = Path.GetFullPath(path);
+        string root = Path.GetPathRoot(fullPath) ?? throw new IOException("path root is unavailable");
+        string current = root;
+        string tail = fullPath[root.Length..];
+        foreach (string part in tail.Split([Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar], StringSplitOptions.RemoveEmptyEntries))
+        {
+            string candidate = Path.Combine(current, part);
+            if (!File.Exists(candidate) && !Directory.Exists(candidate))
+                return Path.GetFullPath(candidate);
+
+            FileSystemInfo info = Directory.Exists(candidate) ? new DirectoryInfo(candidate) : new FileInfo(candidate);
+            if (info.LinkTarget is null)
+            {
+                current = candidate;
+                continue;
+            }
+
+            FileSystemInfo? resolved = info.ResolveLinkTarget(returnFinalTarget: true);
+            if (resolved is null)
+                throw new IOException($"cannot resolve link target: {candidate}");
+            current = Path.GetFullPath(resolved.FullName);
+        }
+
+        return Path.GetFullPath(current);
     }
 
     private static RecycleBinDeleteResult SendFileToWindowsRecycleBin(string path)
@@ -4666,12 +4697,42 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SetDeleteStatus(string status)
+    private void SetDeleteStatus(string status, bool isFailure = false, Tile? retryTile = null)
     {
         _deleteStatus = status;
+        _retryDeleteTile = isFailure ? retryTile : null;
         if (ScanMessage is not null)
             ScanMessage.Text = status;
+        if (DeleteStatusText is not null)
+        {
+            DeleteStatusText.Text = status;
+            DeleteStatusRetryButton.Visibility = isFailure && retryTile is not null ? Visibility.Visible : Visibility.Collapsed;
+            DeleteStatusToast.Visibility = Visibility.Visible;
+        }
     }
+
+    private void DismissDeleteStatus_Click(object sender, RoutedEventArgs e)
+        => DeleteStatusToast.Visibility = Visibility.Collapsed;
+
+    private void RetryDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (_retryDeleteTile is null || !_tiles.Contains(_retryDeleteTile))
+        {
+            SetDeleteStatus("Retry is no longer available.");
+            return;
+        }
+
+        SelectTile(_retryDeleteTile);
+        RequestDeleteSelected();
+    }
+
+    private void RestoreOverlayFocus(IInputElement? target)
+        => Dispatcher.BeginInvoke(() =>
+        {
+            if (target is UIElement element && element.IsVisible && element.IsEnabled && element.Focus())
+                return;
+            CardsList.Focus();
+        }, DispatcherPriority.Input);
 
     private static string StatePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -4969,15 +5030,16 @@ public partial class MainWindow : Window
 
     private bool CloseTopmostOverlay()
     {
-        if (AppSettingsDialog.Visibility == Visibility.Visible)
-        {
-            AppSettingsDialog.Visibility = Visibility.Collapsed;
-            return true;
-        }
-
         if (DeleteConfirmationDialog.Visibility == Visibility.Visible)
         {
             DeleteCancel_Click(this, new RoutedEventArgs());
+            return true;
+        }
+
+        if (AppSettingsDialog.Visibility == Visibility.Visible)
+        {
+            AppSettingsDialog.Visibility = Visibility.Collapsed;
+            RestoreOverlayFocus(_settingsFocusBeforeDialog);
             return true;
         }
 
@@ -4997,6 +5059,14 @@ public partial class MainWindow : Window
         }
 
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        if (DeleteConfirmationDialog.Visibility == Visibility.Visible || AppSettingsDialog.Visibility == Visibility.Visible)
+        {
+            if (key == Key.Escape)
+                CloseTopmostOverlay();
+            e.Handled = true;
+            return;
+        }
+
         if (key == Key.T
             && (Keyboard.Modifiers & ModifierKeys.Shift) != 0
             && (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0
@@ -5119,6 +5189,12 @@ public partial class MainWindow : Window
     public int CatalogCountForSmoke => _allTiles.Count;
     public string DeleteStatusForSmoke => _deleteStatus;
     public bool DeleteConfirmationVisibleForSmoke => DeleteConfirmationDialog.Visibility == Visibility.Visible;
+    public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
+    public bool DeleteStatusRetryVisibleForSmoke => DeleteStatusRetryButton.Visibility == Visibility.Visible;
+    public bool AppSettingsVisibleForSmoke => AppSettingsDialog.Visibility == Visibility.Visible;
+    public int ModalZIndexForSmoke => Panel.GetZIndex(Modal);
+    public int DeleteConfirmationZIndexForSmoke => Panel.GetZIndex(DeleteConfirmationDialog);
+    public int DeleteStatusZIndexForSmoke => Panel.GetZIndex(DeleteStatusToast);
     public bool ConfirmBeforeDeleteForSmoke => _confirmBeforeDelete;
 
     public void SetRecycleBinDeleteBackendForSmoke(Func<string, RecycleBinDeleteResult> backend)
@@ -5126,6 +5202,7 @@ public partial class MainWindow : Window
 
     public void SetCanonicalPathResolverForSmoke(Func<string, string> resolver)
         => _resolveFinalPath = resolver ?? throw new ArgumentNullException(nameof(resolver));
+    public void ResetCanonicalPathResolverForSmoke() => _resolveFinalPath = ResolveFinalPathCore;
 
     public void SetConfirmBeforeDeleteForSmoke(bool value) => _confirmBeforeDelete = value;
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
@@ -5135,6 +5212,7 @@ public partial class MainWindow : Window
         DoNotAskAgainCheckBox.IsChecked = doNotAskAgain;
         DeleteConfirm_Click(this, new RoutedEventArgs());
     }
+    public void OpenAppSettingsForSmoke() => OpenAppSettings_Click(this, new RoutedEventArgs());
 
     public bool ValidateDeletePathForSmoke(string path, bool includeInCatalog = true, bool includeInFiltered = true)
     {
