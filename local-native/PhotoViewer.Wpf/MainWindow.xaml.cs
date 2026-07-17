@@ -10,6 +10,7 @@ using System.Text;
 using System.Text.Json;
 using Microsoft.Win32;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Data;
@@ -148,6 +149,7 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _modalFeedbackTimer;
     private CancellationTokenSource? _loadCts;
     private CancellationTokenSource? _modalCts;
+    private TaskCompletionSource<bool>? _modalDecodeCompletion;
     private CancellationTokenSource? _previewCts;
     private CancellationTokenSource? _previewMetadataCts;
     private TaskCompletionSource<PreviewDecodeResult>? _previewDecodeCompletion;
@@ -3025,6 +3027,8 @@ public partial class MainWindow : Window
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
     {
+        if (SearchWatermark is not null)
+            SearchWatermark.Visibility = string.IsNullOrEmpty(SearchInput.Text) ? Visibility.Visible : Visibility.Collapsed;
         if (_initializing || _settingSearchQuery) return;
         ScheduleSearchFilter();
         ScheduleSearchStateSave();
@@ -5499,8 +5503,11 @@ public partial class MainWindow : Window
         }
         var watch = Stopwatch.StartNew();
         _modalCts?.Cancel();
+        _modalDecodeCompletion?.TrySetCanceled();
         var cts = new CancellationTokenSource();
         _modalCts = cts;
+        var decodeCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        _modalDecodeCompletion = decodeCompletion;
 
         bool canShowEnhanced = TryGetModalEnhancedOutput(t, out string? enhancedPath);
         if (!canShowEnhanced)
@@ -5534,7 +5541,9 @@ public partial class MainWindow : Window
         }
 
         if (t.IsRealFile && File.Exists(displayPath))
-            _ = LoadModalBitmapAsync(displayPath, t.Path, cts.Token);
+            _ = LoadModalBitmapAsync(displayPath, t.Path, cts.Token, decodeCompletion);
+        else
+            decodeCompletion.TrySetResult(immediate is not null);
     }
 
     private bool TryGetModalEnhancedOutput(Tile tile, out string? outputPath)
@@ -5562,7 +5571,7 @@ public partial class MainWindow : Window
             ModalSourceLabel.Text = _modalShowingEnhanced ? "Enhanced output" : "Original";
     }
 
-    private async Task LoadModalBitmapAsync(string displayPath, string selectedPath, CancellationToken token)
+    private async Task LoadModalBitmapAsync(string displayPath, string selectedPath, CancellationToken token, TaskCompletionSource<bool> completion)
     {
         BitmapSource? bitmap;
         try
@@ -5571,11 +5580,20 @@ public partial class MainWindow : Window
         }
         catch (OperationCanceledException)
         {
+            completion.TrySetCanceled(token);
+            return;
+        }
+        catch
+        {
+            completion.TrySetResult(false);
             return;
         }
 
         if (token.IsCancellationRequested || bitmap is null)
+        {
+            completion.TrySetCanceled(token);
             return;
+        }
 
         try
         {
@@ -5593,12 +5611,14 @@ public partial class MainWindow : Window
                     ModalBitmap.Visibility = Visibility.Visible;
                     ModalArtBase.Visibility = Visibility.Collapsed;
                     ModalArtGlow.Visibility = Visibility.Collapsed;
+                    completion.TrySetResult(true);
                 },
                 DispatcherPriority.Background,
                 token);
         }
         catch (OperationCanceledException)
         {
+            completion.TrySetCanceled(token);
         }
     }
 
@@ -7301,6 +7321,13 @@ public partial class MainWindow : Window
     public int GridWindowStartIndexForSmoke => _gridStartIndex;
     public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
     public bool FocusSearchInputForSmoke() => SearchInput.Focus();
+    public bool SearchWatermarkVisibleForSmoke => SearchWatermark.Visibility == Visibility.Visible;
+    public bool SearchAutomationHelpTextForSmoke => string.Equals(
+        AutomationProperties.GetHelpText(SearchInput),
+        "Search filenames and prompts. Separate terms with commas.",
+        StringComparison.Ordinal);
+    public bool DatePickerAutomationNamesForSmoke => string.Equals(AutomationProperties.GetName(DateFromInput), "From date", StringComparison.Ordinal)
+        && string.Equals(AutomationProperties.GetName(DateToInput), "To date", StringComparison.Ordinal);
     public bool FocusCardsListForSmoke() => CardsList.Focus();
     public bool FocusDateFromInputForSmoke()
     {
@@ -7910,6 +7937,29 @@ public partial class MainWindow : Window
             PreviewSamplerText.Text,
             PreviewSamplerText.Visibility == Visibility.Visible,
             applied ? "PNG parameters metadata applied to the latest selection" : "PNG parameters metadata was unavailable or did not apply to the latest selection");
+    }
+
+    public async Task<bool> WaitForModalFullDecodeForSmokeAsync()
+    {
+        var completion = _modalDecodeCompletion;
+        if (completion is null)
+            return false;
+
+        var timeout = Task.Delay(TimeSpan.FromSeconds(8));
+        if (await Task.WhenAny(completion.Task, timeout) != completion.Task)
+            return false;
+
+        try
+        {
+            bool decoded = await completion.Task;
+            if (decoded)
+                await Task.Delay(125);
+            return decoded;
+        }
+        catch (OperationCanceledException)
+        {
+            return false;
+        }
     }
 
     public static bool HasPngParametersForSmoke(string path)

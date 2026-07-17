@@ -38,6 +38,13 @@ public partial class App : Application
             return;
         }
 
+        int automationIsolationSmokeIdx = Array.IndexOf(e.Args, "--automation-isolation-smoke");
+        if (automationIsolationSmokeIdx >= 0 && automationIsolationSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureAutomationIsolationSmoke(e.Args[automationIsolationSmokeIdx + 1]);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -371,9 +378,10 @@ public partial class App : Application
     }
 
     private static bool IsAutomationInvocation(IReadOnlyList<string> args)
-        => args.Any(static arg => string.Equals(arg, "--shot", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(arg, "--startup-smoke", StringComparison.OrdinalIgnoreCase)
-            || arg.EndsWith("-smoke", StringComparison.OrdinalIgnoreCase));
+        => args.Any(static arg => arg.StartsWith("--", StringComparison.Ordinal)
+            && (string.Equals(arg, "--shot", StringComparison.OrdinalIgnoreCase)
+                || string.Equals(arg, "--startup-smoke", StringComparison.OrdinalIgnoreCase)
+                || arg.EndsWith("-smoke", StringComparison.OrdinalIgnoreCase)));
 
     private static void ConfigureAutomationStorage(IReadOnlyList<string> args)
     {
@@ -420,6 +428,26 @@ public partial class App : Application
             if (!fullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
                 throw new ArgumentException($"Automation {option} must be under the temp directory. Refusing to touch '{fullPath}'.");
         }
+    }
+
+    private void CaptureAutomationIsolationSmoke(string resultPath)
+    {
+        bool positionalFolderRemainsInteractive = !IsAutomationInvocation([
+            "PhotoViewer.Wpf.exe",
+            @"C:\albums\portrait-smoke",
+        ]);
+        bool knownSmokeIsIsolated = IsAutomationInvocation(["PhotoViewer.Wpf.exe", "--p1a-smoke", "result.json"]);
+        bool screenshotIsIsolated = IsAutomationInvocation(["PhotoViewer.Wpf.exe", "--shot", "shot.png"]);
+        bool ok = positionalFolderRemainsInteractive && knownSmokeIsIsolated && screenshotIsIsolated;
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
+        File.WriteAllText(resultPath, JsonSerializer.Serialize(new
+        {
+            ok,
+            positionalFolderRemainsInteractive,
+            knownSmokeIsIsolated,
+            screenshotIsIsolated,
+        }));
+        Shutdown(ok ? 0 : 1);
     }
 
     /// <summary>Open the shell to dispatcher-idle readiness, write timing evidence, and exit.</summary>
@@ -500,6 +528,9 @@ public partial class App : Application
             win.ShowScreen(screen);
             if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--show-modal-metadata"))
                 win.ToggleModalMetadataSidebarForSmoke();
+            if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--wait-modal-full-decode")
+                && !await win.WaitForModalFullDecodeForSmokeAsync())
+                throw new InvalidOperationException("modal full-resolution decode did not complete before the screenshot");
             win.UpdateLayout();
             int perfIdx = Array.IndexOf(args, "--perf-log");
             if (perfIdx >= 0 && perfIdx + 1 < args.Length && win.LastLoadMetrics is not null)
@@ -4375,6 +4406,12 @@ public partial class App : Application
                 bool scanStatus = win.DeleteStatusForSmoke.Contains("access was denied", StringComparison.OrdinalIgnoreCase);
 
                 bool selected = win.SelectFileNameForSmoke("good-one.png");
+                bool searchHintVisible = win.SearchWatermarkVisibleForSmoke && win.SearchAutomationHelpTextForSmoke;
+                win.SetSearchQuery("good", persist: false);
+                bool searchHintHiddenWhenTyped = !win.SearchWatermarkVisibleForSmoke;
+                win.SetSearchQuery("", persist: false);
+                bool searchHintRestored = win.SearchWatermarkVisibleForSmoke;
+                bool datePickerNamed = win.DatePickerAutomationNamesForSmoke;
                 bool searchFocused = win.FocusSearchInputForSmoke();
                 bool searchShortcutSuppressed = win.IsGlobalShortcutInputFocusedForSmoke && !win.InvokePreviewKeyForSmoke(Key.F);
                 bool dateFocused = win.FocusDateFromInputForSmoke();
@@ -4438,6 +4475,7 @@ public partial class App : Application
                 recentWindow.Close();
 
                 bool ok = decoderStatus && scanStatus && selected
+                    && searchHintVisible && searchHintHiddenWhenTyped && searchHintRestored && datePickerNamed
                     && searchFocused && searchShortcutSuppressed
                     && dateFocused && dateShortcutSuppressed
                     && settingsButtonFocused && buttonShortcutSuppressed && comboBoxShortcutSuppressed
@@ -4456,6 +4494,10 @@ public partial class App : Application
                     DecoderStatus = decoderStatus,
                     ScanStatus = scanStatus,
                     Selected = selected,
+                    SearchHintVisible = searchHintVisible,
+                    SearchHintHiddenWhenTyped = searchHintHiddenWhenTyped,
+                    SearchHintRestored = searchHintRestored,
+                    DatePickerNamed = datePickerNamed,
                     SearchFocused = searchFocused,
                     DateFocused = dateFocused,
                     SettingsButtonFocused = settingsButtonFocused,
@@ -9288,6 +9330,10 @@ public partial class App : Application
         public bool DecoderStatus { get; init; }
         public bool ScanStatus { get; init; }
         public bool Selected { get; init; }
+        public bool SearchHintVisible { get; init; }
+        public bool SearchHintHiddenWhenTyped { get; init; }
+        public bool SearchHintRestored { get; init; }
+        public bool DatePickerNamed { get; init; }
         public bool SearchFocused { get; init; }
         public bool DateFocused { get; init; }
         public bool SettingsButtonFocused { get; init; }

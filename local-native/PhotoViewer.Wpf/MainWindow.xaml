@@ -48,7 +48,10 @@
                 WindowChrome.IsHitTestVisibleInChrome="True">
           <DockPanel Margin="12,0,10,0" LastChildFill="True">
             <Path DockPanel.Dock="Left" Data="M11,11 m-8,0 a8,8 0 1 0 16,0 a8,8 0 1 0 -16,0 M21,21 l-4.3,-4.3" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.8" Stretch="Uniform" Width="15" Height="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
-            <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center" TextChanged="SearchInput_TextChanged" AutomationProperties.Name="Search images"/>
+            <Grid>
+              <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center" TextChanged="SearchInput_TextChanged" AutomationProperties.Name="Search images" AutomationProperties.HelpText="Search filenames and prompts. Separate terms with commas."/>
+              <TextBlock x:Name="SearchWatermark" Text="Search filenames and prompts. Separate terms with commas." Foreground="{StaticResource TextTertiary}" FontSize="12.5" VerticalAlignment="Center" IsHitTestVisible="False" TextTrimming="CharacterEllipsis"/>
+            </Grid>
           </DockPanel>
         </Border>
 
@@ -139,9 +142,9 @@
                     <ColumnDefinition Width="*"/>
                   </Grid.ColumnDefinitions>
                   <TextBlock Grid.Row="0" Grid.Column="0" Text="From" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,4"/>
-                  <DatePicker x:Name="DateFromInput" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,4" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed"/>
+                  <DatePicker x:Name="DateFromInput" Style="{StaticResource DarkDatePicker}" Grid.Row="0" Grid.Column="1" Height="26" Margin="0,0,0,4" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed" AutomationProperties.Name="From date"/>
                   <TextBlock Grid.Row="1" Grid.Column="0" Text="To" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center" Margin="0,0,6,0"/>
-                  <DatePicker x:Name="DateToInput" Grid.Row="1" Grid.Column="1" Height="26" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed"/>
+                  <DatePicker x:Name="DateToInput" Style="{StaticResource DarkDatePicker}" Grid.Row="1" Grid.Column="1" Height="26" SelectedDateFormat="Short" SelectedDateChanged="ManualDateRange_Changed" AutomationProperties.Name="To date"/>
                 </Grid>
                 <TextBlock x:Name="DateFilterSummary" Text="No date filter" Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap"/>
               </StackPanel>

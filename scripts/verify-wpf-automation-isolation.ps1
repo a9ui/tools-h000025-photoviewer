@@ -43,6 +43,16 @@ foreach ($name in $sentinels.Keys) {
 }
 
 try {
+    $classification = Join-Path $root "classification.json"
+    $classificationProcess = Start-Process -FilePath $exe `
+        -ArgumentList @('--automation-isolation-smoke', ('"{0}"' -f $classification)) `
+        -WindowStyle Hidden -PassThru -Wait
+    if ($classificationProcess.ExitCode -ne 0) { throw "--automation-isolation-smoke exited with $($classificationProcess.ExitCode)" }
+    $classificationResult = Get-Content -Raw -LiteralPath $classification | ConvertFrom-Json
+    if (-not $classificationResult.ok -or -not $classificationResult.positionalFolderRemainsInteractive) {
+        throw "Automation classification did not preserve positional folder semantics."
+    }
+
     $shot = Join-Path $root "viewer.png"
     $process = Start-Process -FilePath $exe `
         -ArgumentList @('--shot', ('"{0}"' -f $shot), '--screen', 'viewer', '--folder', ('"{0}"' -f $fixture)) `
@@ -69,6 +79,7 @@ if ($unchanged.Count -ne $sentinels.Count) {
 [pscustomobject]@{
     ok = $true
     message = "--shot isolated state, favorites, seen, recent, and enhancement-job stores before WPF initialization"
+    positionalFolderRemainsInteractive = [bool]$classificationResult.positionalFolderRemainsInteractive
     sentinels = $sentinels
     before = $before
     after = $after
