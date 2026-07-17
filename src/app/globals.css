@@ -1668,11 +1668,30 @@ a { color: inherit; text-decoration: none; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 0.32rem;
 }
 .bottom-preview-action-btn:hover {
   border-color: var(--glass-border-hover);
   color: var(--text-primary);
   background: rgba(255, 255, 255, 0.08);
+}
+.bottom-preview-restore-surface {
+  height: 42px;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.7rem;
+}
+.bottom-preview-restore-count {
+  min-width: 1.15rem;
+  height: 1.15rem;
+  padding: 0 0.25rem;
+  border-radius: 999px;
+  background: rgba(99, 102, 241, 0.2);
+  color: var(--text-secondary);
+  font-size: 0.67rem;
+  line-height: 1.15rem;
+  text-align: center;
 }
 .bottom-preview-tabs-scroll {
   height: 100%;

@@ -78,6 +78,7 @@ const VIEW_SETTINGS_FLUSH_DELAY_MS = 300;
 const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
+const MAX_CLOSED_PREVIEW_TABS = 30;
 
 function normalizeStoredView(value: unknown): ViewSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
@@ -279,6 +280,7 @@ interface Ctx {
   setActivePreviewId: (id: string | null) => void;
   closePreviewTab: (id: string) => void;
   togglePinPreviewTab: (id: string) => void;
+  closedPreviewTabCount: number;
   restoreLastClosedPreview: () => void;
   closeAllPreviews: () => void;
   seenImageIds: Record<string, true>;
@@ -346,7 +348,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [pinnedPreviewIds, setPinnedPreviewIds] = useState<string[]>([]);
   const [activePreviewId, setActivePreviewIdState] = useState<string | null>(null);
   const [previewById, setPreviewById] = useState<Record<string, ImageFile>>({});
-  const [, setClosedPreviewStack] = useState<string[]>([]);
+  const [closedPreviewStack, setClosedPreviewStack] = useState<string[]>([]);
   const [closedPreviewById, setClosedPreviewById] = useState<Record<string, ImageFile>>({});
   const [keyBindings, setKeyBindingsState] = useState<KeyBindings>(DEFAULT_KEY_BINDINGS);
   const [confirmBeforeDelete, setConfirmBeforeDeleteState] = useState(true);
@@ -360,6 +362,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [favoritesHydrated, setFavoritesHydrated] = useState(false);
   const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false);
   const [previewTabsPersistenceReady, setPreviewTabsPersistenceReady] = useState(false);
+
+  useEffect(() => {
+    const retainedIds = new Set(closedPreviewStack);
+    setClosedPreviewById((previous) => {
+      const keys = Object.keys(previous);
+      if (keys.every((id) => retainedIds.has(id))) return previous;
+      const next: Record<string, ImageFile> = {};
+      for (const id of closedPreviewStack) {
+        if (previous[id]) next[id] = previous[id];
+      }
+      return next;
+    });
+  }, [closedPreviewStack]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollMemoryRef = useRef<Record<string, number>>({});
@@ -1480,7 +1495,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const existing = previewById[id];
     if (existing) {
       setClosedPreviewById((prev) => ({ ...prev, [id]: existing }));
-      setClosedPreviewStack((prev) => [id, ...prev.filter((item) => item !== id)].slice(0, 30));
+      setClosedPreviewStack((prev) => [id, ...prev.filter((item) => item !== id)].slice(0, MAX_CLOSED_PREVIEW_TABS));
     }
     setPreviewTabIds((prev) => {
       const remaining = prev.filter((tabId) => tabId !== id);
@@ -1595,7 +1610,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       selectedIds, selectImage, clearSelection,
       previewTabIds, activePreviewId, previewById, showPreviewImage, openPreviewTab, setActivePreviewId, closePreviewTab, closeAllPreviews,
       seenImageIds, markImageSeen, revealImageId, requestRevealImage, consumeRevealImage,
-      pinnedPreviewIds, togglePinPreviewTab, restoreLastClosedPreview,
+      pinnedPreviewIds, togglePinPreviewTab, closedPreviewTabCount: closedPreviewStack.length, restoreLastClosedPreview,
       keyBindings, setKeyBindings, confirmBeforeDelete, setConfirmBeforeDelete, showSettings, setShowSettings,
       view, setView,
       setSearchScrollPosition, getSearchScrollPosition,

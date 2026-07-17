@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useEffect, useRef, useState } from 'react';
-import { Pin, PinOff, X } from 'lucide-react';
+import { RotateCcw, Pin, PinOff, X } from 'lucide-react';
 import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 
@@ -22,6 +22,7 @@ export default function BottomPreviewTabs() {
     setSelectedIndex,
     closePreviewTab,
     togglePinPreviewTab,
+    closedPreviewTabCount,
     restoreLastClosedPreview,
   } = useImageStore();
 
@@ -30,6 +31,9 @@ export default function BottomPreviewTabs() {
     () => activePreviewId ?? previewTabIds[0] ?? null
   );
   const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const restoreButtonRef = useRef<HTMLButtonElement>(null);
+  const previousTabCountRef = useRef(previewTabIds.length);
+  const focusRestoredTabRef = useRef(false);
 
   const activeId = activePreviewId;
   const hoveredImage = hoverPreview ? previewById[hoverPreview.id] : null;
@@ -44,7 +48,45 @@ export default function BottomPreviewTabs() {
     ));
   }, [activePreviewId, previewTabIds]);
 
-  if (previewTabIds.length === 0) return null;
+  useEffect(() => {
+    const previouslyHadTabs = previousTabCountRef.current > 0;
+    previousTabCountRef.current = previewTabIds.length;
+    if (previouslyHadTabs && previewTabIds.length === 0 && closedPreviewTabCount > 0) {
+      restoreButtonRef.current?.focus();
+      return;
+    }
+    if (focusRestoredTabRef.current && previewTabIds.length > 0) {
+      const nextId = activePreviewId ?? previewTabIds[0];
+      tabRefs.current[nextId]?.focus();
+      focusRestoredTabRef.current = false;
+    }
+  }, [activePreviewId, closedPreviewTabCount, previewTabIds]);
+
+  const restoreRecentPreview = () => {
+    focusRestoredTabRef.current = true;
+    restoreLastClosedPreview();
+  };
+
+  if (previewTabIds.length === 0) {
+    if (closedPreviewTabCount === 0) return null;
+    return (
+      <div className="bottom-preview-tabs bottom-preview-restore-surface" role="region" aria-label="Recently closed preview tabs">
+        <button
+          ref={restoreButtonRef}
+          className="bottom-preview-action-btn"
+          type="button"
+          onClick={restoreRecentPreview}
+          aria-keyshortcuts="Control+Shift+T Meta+Shift+T"
+          aria-label={`Restore last closed preview tab. ${closedPreviewTabCount} recently closed tab${closedPreviewTabCount === 1 ? '' : 's'} available.`}
+          title={`Restore recently closed tab (${closedPreviewTabCount} available)`}
+        >
+          <RotateCcw size={14} aria-hidden="true" />
+          Restore
+        </button>
+        <span className="bottom-preview-restore-count" aria-hidden="true">{closedPreviewTabCount}</span>
+      </div>
+    );
+  }
 
   const showHoverPreview = (
     event: React.MouseEvent<HTMLElement>,
@@ -76,11 +118,21 @@ export default function BottomPreviewTabs() {
 
   return (
     <div className="bottom-preview-tabs">
-      <div className="bottom-preview-actions">
-        <button className="bottom-preview-action-btn" onClick={restoreLastClosedPreview} title="Restore recently closed tab">
-          Restore
-        </button>
-      </div>
+      {closedPreviewTabCount > 0 && (
+        <div className="bottom-preview-actions">
+          <button
+            className="bottom-preview-action-btn"
+            type="button"
+            onClick={restoreRecentPreview}
+            aria-keyshortcuts="Control+Shift+T Meta+Shift+T"
+            aria-label={`Restore last closed preview tab. ${closedPreviewTabCount} recently closed tab${closedPreviewTabCount === 1 ? '' : 's'} available.`}
+            title={`Restore recently closed tab (${closedPreviewTabCount} available)`}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            Restore
+          </button>
+        </div>
+      )}
       <div className="bottom-preview-tabs-scroll" role="tablist" aria-label="Open preview tabs">
         {previewTabIds.map((id) => {
           const img = previewById[id];

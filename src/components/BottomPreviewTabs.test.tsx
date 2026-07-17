@@ -48,6 +48,7 @@ function createStore(options: { activeId?: string | null; pinnedIds?: string[] }
     },
     searchResults: [firstImage, secondImage],
     pinnedPreviewIds: options.pinnedIds ?? [],
+    closedPreviewTabCount: 0,
     setActivePreviewId,
     setSelectedIndex,
     closePreviewTab,
@@ -62,6 +63,35 @@ beforeEach(() => {
 });
 
 describe('BottomPreviewTabs', () => {
+  it('does not render a bottom surface when both open and closed tab history are empty', () => {
+    vi.mocked(useImageStore).mockReturnValue({
+      ...createStore(),
+      previewTabIds: [],
+      activePreviewId: null,
+      closedPreviewTabCount: 0,
+    });
+    render(<BottomPreviewTabs />);
+
+    expect(screen.queryByRole('region', { name: 'Recently closed preview tabs' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('tablist', { name: 'Open preview tabs' })).not.toBeInTheDocument();
+  });
+
+  it('shows the compact Restore surface when only closed tab history remains', () => {
+    vi.mocked(useImageStore).mockReturnValue({
+      ...createStore(),
+      previewTabIds: [],
+      activePreviewId: null,
+      closedPreviewTabCount: 2,
+    });
+    render(<BottomPreviewTabs />);
+
+    const restore = screen.getByRole('button', { name: /restore last closed preview tab/i });
+    expect(screen.getByRole('region', { name: 'Recently closed preview tabs' })).toBeInTheDocument();
+    expect(restore).toHaveAttribute('aria-keyshortcuts', 'Control+Shift+T Meta+Shift+T');
+    fireEvent.click(restore);
+    expect(restoreLastClosedPreview).toHaveBeenCalledTimes(1);
+  });
+
   it('keeps the first tab keyboard reachable while a restored active id is unavailable', () => {
     vi.mocked(useImageStore).mockReturnValue(createStore({ activeId: null }));
     render(<BottomPreviewTabs />);

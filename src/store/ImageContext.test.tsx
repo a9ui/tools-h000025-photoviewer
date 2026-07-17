@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImageProvider, useImageStore } from './ImageContext';
 import type { ImageFile } from '../lib/types';
+import BottomPreviewTabs from '../components/BottomPreviewTabs';
 
 function PreferencesProbe() {
   const {
@@ -68,11 +69,12 @@ const previewProbeImage: ImageFile = {
 };
 
 function PreviewTabsProbe() {
-  const { previewTabIds, activePreviewId, openPreviewTab, closePreviewTab } = useImageStore();
+  const { previewTabIds, activePreviewId, closedPreviewTabCount, openPreviewTab, closePreviewTab } = useImageStore();
   return (
     <div>
       <output aria-label="preview tabs">{previewTabIds.join(',')}</output>
       <output aria-label="active preview tab">{activePreviewId ?? ''}</output>
+      <output aria-label="closed preview tabs">{closedPreviewTabCount}</output>
       <button type="button" onClick={() => openPreviewTab(previewProbeImage)}>Open preview tab</button>
       <button type="button" onClick={() => closePreviewTab(previewProbeImage.id)}>Close preview tab</button>
     </div>
@@ -602,6 +604,33 @@ describe('ImageProvider preview tab persistence', () => {
         activeId: null,
       });
     });
+  });
+
+  it('keeps a focused Restore control after closing the final preview tab and restores it', async () => {
+    const user = userEvent.setup();
+    render(
+      <ImageProvider>
+        <PreviewTabsProbe />
+        <BottomPreviewTabs />
+      </ImageProvider>
+    );
+
+    expect(screen.queryByRole('region', { name: 'Recently closed preview tabs' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Open preview tab' }));
+    await user.click(screen.getByRole('button', { name: 'Close preview tab' }));
+
+    const restore = await screen.findByRole('button', { name: /restore last closed preview tab/i });
+    expect(screen.getByRole('status', { name: 'preview tabs' })).toHaveTextContent('');
+    expect(screen.getByRole('status', { name: 'closed preview tabs' })).toHaveTextContent('1');
+    expect(restore).toHaveFocus();
+
+    await user.click(restore);
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'preview tabs' })).toHaveTextContent(previewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'closed preview tabs' })).toHaveTextContent('0');
+      expect(screen.queryByRole('button', { name: /restore last closed preview tab/i })).not.toBeInTheDocument();
+    });
+    expect(screen.getByRole('tab', { name: /open preview preview-probe\.png/i })).toHaveFocus();
   });
 
   it('restores only tabs found in the current scan and safely falls back from a missing active tab', async () => {
