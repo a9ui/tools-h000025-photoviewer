@@ -1357,7 +1357,7 @@ Folder set自体はlast/recentとして保存し、pin IDだけは `pvu_pinned_t
 
 - favorites/settings/recent/indexは一般的なcross-process lockやrevisionを持たない。
 - favoritesはvalidated whole-mapをtemp fileからrenameするが、cross-process revision/lockはない。settingsもvalidated partial mergeをtemp fileからrenameするが、revision/lockはない。
-- recentは意味上mergeするがtransactionはない。
+- recentは保存直前に既存setとmergeしてtemp fileからrenameするが、cross-process revision/lockはない。
 - thumb/displayはtemp+rename。
 - enhancement jobsはprocess内write serialization + temp rename。cross-process lockはない。
 
@@ -1495,9 +1495,9 @@ Query:
 
 ### BR-API-110 Recent/legacy
 
-- `GET /api/recent-folders`: `{ ok, recent, malformed, error? }`。malformedでも200。
-- `PUT /api/recent-folders`: body `{ recentDirs: string[], lastDirSet: string }`。各stringはnewline区切りfolder set。Routeがversion 1 shared schemaへbuildし、既存recentとmergeする。既存malformedは409。成功200。
-- PUT invalid JSONはempty incomingとして扱い、既存recent setを残しながらlastFolderSetをemptyへし得る。
+- `GET /api/recent-folders`: `{ ok, recent, malformed, error? }`。parseまたはversion 1 known-field schema破損でも元fileを保持して200 `malformed: true`。
+- `PUT /api/recent-folders`: bodyはbounded `{ recentDirs?: string[], lastDirSet?: string }` で最低1 field必須。各stringはnewline区切りfolder set。invalid JSON/bodyは400で既存file不変。
+- Routeがversion 1 shared schemaへbuildし、保存直前の既存recentとmergeする。既存malformedは409。valid documentはtemp fileからrenameし、成功200。
 - `GET /api/legacy-state`: 常に200 `{ recentDirs: [], lastDirSet: "" }`。
 
 ### BR-API-120 Enhancement presets/isolation
@@ -1918,6 +1918,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Favorite levels/Unseen | `src/lib/browserUiPreferences.test.ts`, `src/components/Sidebar.test.tsx`, `src/components/SettingsModal.test.tsx` |
 | Favorite shared write safety | `src/app/api/favorites/route.test.ts` |
 | Settings shared write safety | `src/app/api/settings/route.test.ts` |
+| Recent folders shared write safety | `src/app/api/recent-folders/route.test.ts` |
 | Favorite merge/view migration | `src/store/ImageContext.test.tsx` |
 | Modal order/swipe | `src/lib/modalNavigation.test.ts` |
 | Modal zoom | `src/lib/modalZoom.test.ts` |

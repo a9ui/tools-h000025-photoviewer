@@ -5,19 +5,53 @@ import { NextResponse } from 'next/server';
 import { formatDirSet } from '@/lib/pathSet';
 import { buildSharedRecentFolders, normalizeSharedRecentFolders } from '@/lib/recentFolders';
 
-const RECENT_FOLDERS_PATH = path.join(
-  /*turbopackIgnore: true*/ process.cwd(),
-  '.cache',
-  'recent-folders.json',
-);
+const MAX_INCOMING_FOLDER_SETS = 100;
+const MAX_FOLDER_SET_LENGTH = 32_768;
+
+function recentFoldersPath() {
+  return process.env.PVU_RECENT_FOLDERS_PATH
+    ? path.resolve(process.env.PVU_RECENT_FOLDERS_PATH)
+    : path.join(
+      /*turbopackIgnore: true*/ process.cwd(),
+      '.cache',
+      'recent-folders.json',
+    );
+}
+
+function isStringOrStringArray(value: unknown) {
+  return typeof value === 'string'
+    || (Array.isArray(value) && value.every((item) => typeof item === 'string'));
+}
+
+function isSupportedStoredDocument(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const source = value as Record<string, unknown>;
+  if (Object.hasOwn(source, 'version') && source.version !== 1) return false;
+  if (Object.hasOwn(source, 'lastFolderSet') && !isStringOrStringArray(source.lastFolderSet)) return false;
+  if (Object.hasOwn(source, 'recentFolderSets')) {
+    if (!Array.isArray(source.recentFolderSets)
+      || !source.recentFolderSets.every(isStringOrStringArray)) return false;
+  }
+  if (Object.hasOwn(source, 'updatedAtUtc') && typeof source.updatedAtUtc !== 'string') return false;
+  return true;
+}
 
 async function readSharedRecentFolders(): Promise<
   { ok: true; recent: ReturnType<typeof normalizeSharedRecentFolders>; malformed: false } |
   { ok: false; recent: ReturnType<typeof normalizeSharedRecentFolders>; malformed: true; error: string }
 > {
   try {
-    const raw = await fs.readFile(RECENT_FOLDERS_PATH, 'utf8');
-    return { ok: true, recent: normalizeSharedRecentFolders(JSON.parse(raw)), malformed: false };
+    const raw = await fs.readFile(recentFoldersPath(), 'utf8');
+    const parsed: unknown = JSON.parse(raw);
+    if (!isSupportedStoredDocument(parsed)) {
+      return {
+        ok: false,
+        recent: normalizeSharedRecentFolders({}),
+        malformed: true,
+        error: 'recent-folders.json does not match the supported schema.',
+      };
+    }
+    return { ok: true, recent: normalizeSharedRecentFolders(parsed), malformed: false };
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
       return { ok: true, recent: normalizeSharedRecentFolders({}), malformed: false };
@@ -32,8 +66,16 @@ async function readSharedRecentFolders(): Promise<
 }
 
 async function writeSharedRecentFolders(recent: ReturnType<typeof normalizeSharedRecentFolders>) {
-  await fs.mkdir(path.dirname(RECENT_FOLDERS_PATH), { recursive: true });
-  await fs.writeFile(RECENT_FOLDERS_PATH, `${JSON.stringify(recent, null, 2)}\n`, 'utf8');
+  const target = recentFoldersPath();
+  const dir = path.dirname(target);
+  const temp = path.join(dir, `recent-folders-${process.pid}-${Date.now()}.tmp`);
+  await fs.mkdir(dir, { recursive: true });
+  try {
+    await fs.writeFile(temp, `${JSON.stringify(recent, null, 2)}\n`, 'utf8');
+    await fs.rename(temp, target);
+  } finally {
+    await fs.unlink(temp).catch(() => {});
+  }
 }
 
 export async function GET() {
@@ -57,19 +99,46 @@ export async function PUT(req: Request) {
     }, { status: 409 });
   }
 
-  const body = await req.json().catch(() => ({}));
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ ok: false, error: 'Request body must be valid JSON.' }, { status: 400 });
+  }
+  if (!body || typeof body !== 'object' || Array.isArray(body)) {
+    return NextResponse.json({ ok: false, error: 'Request body must be an object.' }, { status: 400 });
+  }
+  const input = body as Record<string, unknown>;
+  if (!Object.hasOwn(input, 'recentDirs') && !Object.hasOwn(input, 'lastDirSet')) {
+    return NextResponse.json({ ok: false, error: 'Request body must include recentDirs or lastDirSet.' }, { status: 400 });
+  }
+  if (Object.hasOwn(input, 'recentDirs') && (
+    !Array.isArray(input.recentDirs)
+    || input.recentDirs.length > MAX_INCOMING_FOLDER_SETS
+    || !input.recentDirs.every((item) => typeof item === 'string' && item.length <= MAX_FOLDER_SET_LENGTH)
+  )) {
+    return NextResponse.json({ ok: false, error: 'recentDirs must be a bounded string array.' }, { status: 400 });
+  }
+  if (Object.hasOwn(input, 'lastDirSet') && (
+    typeof input.lastDirSet !== 'string'
+    || input.lastDirSet.length > MAX_FOLDER_SET_LENGTH
+  )) {
+    return NextResponse.json({ ok: false, error: 'lastDirSet must be a bounded string.' }, { status: 400 });
+  }
   const incoming = buildSharedRecentFolders({
-    recentDirs: Array.isArray((body as { recentDirs?: unknown }).recentDirs)
-      ? (body as { recentDirs: unknown[] }).recentDirs.filter((item): item is string => typeof item === 'string')
+    recentDirs: Array.isArray(input.recentDirs)
+      ? input.recentDirs as string[]
       : [],
-    lastDirSet: typeof (body as { lastDirSet?: unknown }).lastDirSet === 'string'
-      ? (body as { lastDirSet: string }).lastDirSet
-      : '',
+    lastDirSet: typeof input.lastDirSet === 'string'
+      ? input.lastDirSet
+      : formatDirSet(current.recent.lastFolderSet),
   });
   const incomingRecentDirs = incoming.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
   const existingRecentDirs = current.recent.recentFolderSets.map((folderSet) => formatDirSet(folderSet));
   const recent = buildSharedRecentFolders({
-    lastDirSet: formatDirSet(incoming.lastFolderSet),
+    lastDirSet: Object.hasOwn(input, 'lastDirSet')
+      ? formatDirSet(incoming.lastFolderSet)
+      : formatDirSet(current.recent.lastFolderSet),
     recentDirs: [
       ...incomingRecentDirs,
       ...existingRecentDirs,
