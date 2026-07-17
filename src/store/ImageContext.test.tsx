@@ -60,6 +60,7 @@ function ScanProbe() {
       <output aria-label="scan directory">{dirPath}</output>
       <output aria-label="scan error">{scanError ?? ''}</output>
       <output aria-label="scan progress">{scanProgress ? 'active' : 'none'}</output>
+      <output aria-label="scan processed">{scanProgress?.processed ?? ''}</output>
       <button type="button" onClick={() => startScan({ dir: 'C:/images' })}>Start test scan</button>
       <button type="button" onClick={() => startScan({ dir: '' })}>Start empty scan</button>
       <button type="button" onClick={dismissScanError}>Dismiss scan error</button>
@@ -403,6 +404,60 @@ describe('ImageProvider scan failures', () => {
     await user.click(screen.getByRole('button', { name: 'Dismiss scan error' }));
     expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
     expect(screen.getByRole('status', { name: 'scan directory' })).toHaveTextContent('C:/images');
+  });
+
+  it.each([
+    ['malformed data', '{not valid json', 'The scan stream returned malformed data.'],
+    ['unknown event', JSON.stringify({ type: 'heartbeat' }), 'The scan stream returned an unknown event.'],
+  ])('stores %s in the recoverable inline error state', async (_name, eventData, expectedError) => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const source = MockEventSource.instances[0];
+    act(() => {
+      source.onmessage?.({ data: eventData } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('landing');
+      expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent(expectedError);
+    });
+    expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
+    expect(window.alert).not.toHaveBeenCalled();
+  });
+
+  it('ignores stale events from a failed stream after retrying', async () => {
+    render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const staleSource = MockEventSource.instances[0];
+    act(() => {
+      staleSource.onerror?.(new Event('error'));
+    });
+    await screen.findByText('Connection lost before the scan completed.');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const activeSource = MockEventSource.instances[1];
+    act(() => {
+      activeSource.onmessage?.({
+        data: JSON.stringify({ type: 'progress', processed: 1, total: 4, newFiles: 0, stage: 'scanning' }),
+      } as MessageEvent);
+      staleSource.onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 999, total: 999, newFiles: 999, stage: 'complete' }),
+      } as MessageEvent);
+    });
+
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('scanning');
+    expect(screen.getByRole('status', { name: 'scan processed' })).toHaveTextContent('1');
+    expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
   });
 
   it('does not start a scan for an empty directory', () => {

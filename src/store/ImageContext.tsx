@@ -148,6 +148,27 @@ function writeJsonLocalStorage(key: string, value: unknown) {
   }
 }
 
+type ScanEventStage = 'preparing' | 'scanning' | 'complete';
+
+function normalizeScanEventProgress(data: Record<string, unknown>) {
+  const { processed, total, newFiles } = data;
+  if (![processed, total, newFiles].every((value) => typeof value === 'number' && Number.isFinite(value) && value >= 0)) {
+    return null;
+  }
+  const stage: ScanEventStage | undefined = data.stage === 'preparing'
+    || data.stage === 'scanning'
+    || data.stage === 'complete'
+    ? data.stage
+    : undefined;
+  return {
+    processed: processed as number,
+    total: total as number,
+    newFiles: newFiles as number,
+    stage,
+    message: typeof data.message === 'string' ? data.message : undefined,
+  };
+}
+
 interface Ctx {
   // App phase
   phase: 'landing' | 'scanning' | 'viewer';
@@ -251,6 +272,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [dirPath, setDirPath] = useState('');
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const scanRunRef = useRef(0);
 
   const [searchQuery, setSearchQueryRaw] = useState('');
   const [searchResults, setSearchResults] = useState<Array<ImageFile | null>>([]);
@@ -947,13 +969,16 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     });
     setPhase('scanning');
     setScanProgress({ processed: 0, total: 1, newFiles: 0, stage: 'preparing', message: 'Preparing file list...' });
+    const scanRunId = scanRunRef.current + 1;
+    scanRunRef.current = scanRunId;
 
     const params = new URLSearchParams({ dir: scanDir });
     if (options.full) params.set('full', '1');
     const es = new EventSource(`/api/scan?${params.toString()}`);
     let settled = false;
+    const isCurrentRun = () => scanRunRef.current === scanRunId;
     const failScan = (message: string) => {
-      if (settled) return;
+      if (settled || !isCurrentRun()) return;
       settled = true;
       console.error('Scan error', message);
       setScanError(message);
@@ -962,32 +987,50 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       setPhase('landing');
     };
     es.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (settled) return;
-      if (data.type === 'progress') {
+      if (settled || !isCurrentRun()) return;
+      let data: unknown;
+      try {
+        data = JSON.parse(event.data);
+      } catch {
+        failScan('The scan stream returned malformed data.');
+        return;
+      }
+      if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        failScan('The scan stream returned an unknown event.');
+        return;
+      }
+      const eventData = data as Record<string, unknown>;
+      const type = eventData.type;
+      if (type !== 'progress' && type !== 'complete' && type !== 'error') {
+        failScan('The scan stream returned an unknown event.');
+        return;
+      }
+      if (type === 'progress') {
+        const progress = normalizeScanEventProgress(eventData);
+        if (!progress) {
+          failScan('The scan stream returned invalid progress data.');
+          return;
+        }
         setScanProgress({
-          processed: data.processed,
-          total: data.total,
-          newFiles: data.newFiles,
-          stage: data.stage,
-          message: data.message,
+          ...progress,
         });
-      } else if (data.type === 'complete') {
+      } else if (type === 'complete') {
+        const progress = normalizeScanEventProgress(eventData);
+        if (!progress) {
+          failScan('The scan stream returned invalid completion data.');
+          return;
+        }
         settled = true;
         setScanProgress({
-          processed: data.processed,
-          total: data.total,
-          newFiles: data.newFiles,
-          stage: data.stage,
-          message: data.message,
+          ...progress,
         });
-        setTotalIndexed(data.processed);
+        setTotalIndexed(progress.processed);
         es.close();
         options.onComplete?.(scanDir);
         setPhase('viewer');
-      } else if (data.type === 'error') {
-        failScan(typeof data.message === 'string' && data.message.trim()
-          ? data.message
+      } else if (type === 'error') {
+        failScan(typeof eventData.message === 'string' && eventData.message.trim()
+          ? eventData.message
           : 'The scan could not be completed.');
       }
     };
