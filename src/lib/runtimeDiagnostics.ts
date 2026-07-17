@@ -1,7 +1,7 @@
 export interface RuntimeDiagnostics {
   product: 'PhotoViewer';
   sourceRevision: string | null;
-  sourceDirty: boolean;
+  sourceDirty: boolean | null;
   buildId: string | null;
   buildCompletedAtUtc: string | null;
   serverPort: number | null;
@@ -55,7 +55,7 @@ export function normalizeRuntimeDiagnostics(value: unknown): RuntimeDiagnosticsR
 
   if (
     candidate.product !== 'PhotoViewer'
-    || typeof candidate.sourceDirty !== 'boolean'
+    || (typeof candidate.sourceDirty !== 'boolean' && candidate.sourceDirty !== null)
     || (candidate.serverHost !== '127.0.0.1' && candidate.serverHost !== null)
     || sourceRevision === undefined
     || buildId === undefined
@@ -83,6 +83,12 @@ export function shortRuntimeRevision(revision: string | null): string {
   return revision.length > 10 ? revision.slice(0, 10) : revision;
 }
 
+export function runtimeSourceStateLabel(sourceDirty: boolean | null): 'Dirty' | 'Clean' | 'Unavailable' {
+  if (sourceDirty === true) return 'Dirty';
+  if (sourceDirty === false) return 'Clean';
+  return 'Unavailable';
+}
+
 export function formatRuntimeDiagnosticsCopy(
   runtime: RuntimeDiagnostics,
   browserUserAgent: string,
@@ -92,7 +98,7 @@ export function formatRuntimeDiagnosticsCopy(
     'PhotoViewer runtime diagnostics',
     `Product: ${runtime.product}`,
     `Source revision: ${runtime.sourceRevision ?? 'Unavailable'}`,
-    `Source state: ${runtime.sourceDirty ? 'Dirty' : 'Clean'}`,
+    `Source state: ${runtimeSourceStateLabel(runtime.sourceDirty)}`,
     `Build ID: ${runtime.buildId ?? 'Unavailable'}`,
     `Build completed (UTC): ${runtime.buildCompletedAtUtc ?? 'Unavailable'}`,
     `Server: ${runtime.serverPort ? `127.0.0.1:${runtime.serverPort}` : 'Unavailable'}`,

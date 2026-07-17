@@ -57,12 +57,23 @@ describe('runtime provenance route', () => {
 
     expect(body).toMatchObject({
       sourceRevision: null,
-      sourceDirty: false,
+      sourceDirty: null,
       buildId: null,
       buildCompletedAtUtc: null,
       serverHost: null,
       serverPort: null,
       serverStartedAtUtc: null,
     });
+  });
+
+  it.each([
+    ['1', true],
+    ['0', false],
+    ['true', null],
+    ['', null],
+  ])('maps PVU_SOURCE_DIRTY=%j to %j', async (value, expected) => {
+    process.env.PVU_SOURCE_DIRTY = value;
+
+    expect(await GET().json()).toMatchObject({ sourceDirty: expected });
   });
 });

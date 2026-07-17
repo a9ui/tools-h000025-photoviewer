@@ -168,6 +168,7 @@ describe('SettingsModal runtime diagnostics', () => {
     vi.stubGlobal('fetch', vi.fn(async () => runtimeResponse({
       ...validRuntimePayload,
       sourceRevision: null,
+      sourceDirty: null,
       buildId: null,
       buildCompletedAtUtc: null,
       serverHost: null,
@@ -177,9 +178,32 @@ describe('SettingsModal runtime diagnostics', () => {
 
     const runtimeSection = screen.getByRole('region', { name: 'Runtime / Version' });
     await waitFor(() => expect(runtimeSection).toHaveTextContent('Unavailable'));
+    expect(screen.getByRole('definition', { name: 'Source state' })).toHaveTextContent('Unavailable');
     expect(within(runtimeSection).getAllByRole('definition')).toHaveLength(6);
     expect(screen.getByRole('checkbox', { name: 'Show unseen markers' })).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Save key bindings' })).toBeEnabled();
+  });
+
+  it('copies an unavailable source state without claiming the source is clean', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => runtimeResponse({
+      ...validRuntimePayload,
+      sourceDirty: null,
+    })));
+    const user = userEvent.setup();
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+    writeText.mockResolvedValue(undefined);
+    render(<SettingsModal />);
+
+    expect(await screen.findByRole('definition', { name: 'Source state' })).toHaveTextContent('Unavailable');
+    await user.click(screen.getByRole('button', { name: 'Copy diagnostics' }));
+
+    await waitFor(() => expect(writeText).toHaveBeenCalledTimes(1));
+    const copied = String(writeText.mock.calls[0][0]);
+    expect(copied).toContain('Source state: Unavailable');
+    expect(copied).not.toContain('Source state: Clean');
   });
 
   it('shows invalid and failed payloads inline and recovers through Reload', async () => {

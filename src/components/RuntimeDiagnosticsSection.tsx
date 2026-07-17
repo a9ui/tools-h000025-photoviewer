@@ -5,6 +5,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   formatRuntimeDiagnosticsCopy,
   normalizeRuntimeDiagnostics,
+  runtimeSourceStateLabel,
   shortRuntimeRevision,
   type RuntimeDiagnostics,
 } from '../lib/runtimeDiagnostics';
@@ -116,8 +117,15 @@ export default function RuntimeDiagnosticsSection() {
             </div>
             <div className="settings-runtime-row">
               <dt>Source state</dt>
-              <dd className={runtimeState.runtime.sourceDirty ? 'is-dirty' : 'is-clean'}>
-                {runtimeState.runtime.sourceDirty ? 'Dirty' : 'Clean'}
+              <dd
+                aria-label="Source state"
+                className={runtimeState.runtime.sourceDirty === true
+                  ? 'is-dirty'
+                  : runtimeState.runtime.sourceDirty === false
+                    ? 'is-clean'
+                    : undefined}
+              >
+                {runtimeSourceStateLabel(runtimeState.runtime.sourceDirty)}
               </dd>
             </div>
             <div className="settings-runtime-row">

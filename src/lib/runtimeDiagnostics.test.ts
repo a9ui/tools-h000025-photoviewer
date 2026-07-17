@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatRuntimeDiagnosticsCopy,
   normalizeRuntimeDiagnostics,
+  runtimeSourceStateLabel,
   shortRuntimeRevision,
 } from './runtimeDiagnostics';
 
@@ -48,6 +49,7 @@ describe('runtime diagnostics safety boundary', () => {
   it('accepts launcher-unavailable nulls without inventing a local endpoint', () => {
     expect(normalizeRuntimeDiagnostics(runtimePayload({
       sourceRevision: null,
+      sourceDirty: null,
       buildId: null,
       buildCompletedAtUtc: null,
       serverHost: null,
@@ -57,13 +59,14 @@ describe('runtime diagnostics safety boundary', () => {
       value: {
         product: 'PhotoViewer',
         sourceRevision: null,
-        sourceDirty: false,
+        sourceDirty: null,
         buildId: null,
         buildCompletedAtUtc: null,
         serverPort: null,
       },
     });
     expect(shortRuntimeRevision(null)).toBe('Unavailable');
+    expect(runtimeSourceStateLabel(null)).toBe('Unavailable');
   });
 
   it.each([
@@ -94,5 +97,15 @@ describe('runtime diagnostics safety boundary', () => {
     expect(text).not.toContain('C:/Users/private/project');
     expect(text).not.toContain('4321');
     expect(text).not.toContain('process');
+  });
+
+  it('copies an unavailable source state without claiming the source is clean', () => {
+    const result = normalizeRuntimeDiagnostics(runtimePayload({ sourceDirty: null }));
+    if (!result.ok) throw new Error('Expected valid runtime diagnostics.');
+
+    const text = formatRuntimeDiagnosticsCopy(result.value, 'TestBrowser/1.0');
+
+    expect(text).toContain('Source state: Unavailable');
+    expect(text).not.toContain('Source state: Clean');
   });
 });
