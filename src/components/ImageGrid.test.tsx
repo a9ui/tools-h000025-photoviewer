@@ -323,4 +323,74 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(ctrlWheel.defaultPrevented).toBe(true);
     expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
   });
+
+  it("captures Ctrl/Cmd wheel only inside the grid and changes thumbnail size", () => {
+    const store = createStore();
+    vi.mocked(useImageStore).mockReturnValue(store);
+    renderGrid();
+    const primary = screen.getByRole("button", { name: /select first\.png/i });
+    const card = screen.getByRole("group", { name: "Image first.png" });
+    expect(card).toHaveAttribute("data-grid-index", "0");
+
+    const wheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(primary, wheel);
+
+    expect(wheel.defaultPrevented).toBe(true);
+    expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
+  });
+
+  it("leaves native page zoom available outside the grid and in list mode", () => {
+    const gridStore = createStore();
+    vi.mocked(useImageStore).mockReturnValue(gridStore);
+    const { unmount } = render(
+      <div>
+        <button type="button">Outside gallery</button>
+        <div className="viewer-main"><ImageGrid /></div>
+      </div>,
+    );
+    const outsideWheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(screen.getByRole("button", { name: "Outside gallery" }), outsideWheel);
+    expect(outsideWheel.defaultPrevented).toBe(false);
+    expect(gridStore.setView).not.toHaveBeenCalled();
+    unmount();
+
+    const listStore = createStore("list");
+    vi.mocked(useImageStore).mockReturnValue(listStore);
+    renderGrid();
+    const listWheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(screen.getByRole("button", { name: /select first\.png/i }), listWheel);
+    expect(listWheel.defaultPrevented).toBe(false);
+    expect(listStore.setView).not.toHaveBeenCalled();
+  });
+
+  it("does not replace browser native keyboard zoom shortcuts", () => {
+    const store = createStore();
+    vi.mocked(useImageStore).mockReturnValue(store);
+    renderGrid();
+    const keydown = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "+",
+    });
+    fireEvent(window, keydown);
+
+    expect(keydown.defaultPrevented).toBe(false);
+    expect(store.setView).not.toHaveBeenCalled();
+  });
 });

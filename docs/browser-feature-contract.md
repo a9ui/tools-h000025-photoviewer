@@ -731,17 +731,20 @@ Thumbnail sizeとaspect modeはkeyへ含めない。memoryは最大80 entry。
 
 Grid:
 
+- SidebarのSize slider
 - Ctrl/Cmd + wheel
-- Ctrl/Cmd + `+`
-- Ctrl/Cmd + `-`
-- Ctrl/Cmd + `0`
 - range 40〜600
-- reset 200
+- default 200
+- modified wheelはGrid内だけgallery zoomとして捕捉する。画像上ではcursor直下の画像、余白ではviewport center近傍の画像をanchorにする。
 
 List:
 
-- browser page zoomは抑止する。
 - Grid thumbnail settingでList thumbnailを拡大縮小しない。
+
+Browser native page zoom:
+
+- Ctrl/Cmd + `+` / `-` / `0` は捕捉しない。
+- Grid外またはList上のCtrl/Cmd + wheelは捕捉しない。
 
 Sidebar、header、text、right panelのCSS sizeはgallery zoomで変えない。
 

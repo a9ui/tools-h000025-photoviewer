@@ -47,6 +47,32 @@ export interface GridMetricsSnapshot {
   anchorViewportOffset?: number;
 }
 
+export function withGridPointerAnchor(
+  metrics: GridMetricsSnapshot | null,
+  anchorIndex: number,
+  anchorTop: number,
+  scrollTop: number
+): GridMetricsSnapshot | null {
+  if (
+    !metrics ||
+    !Number.isInteger(anchorIndex) ||
+    anchorIndex < 0 ||
+    anchorIndex >= metrics.fullCount ||
+    !Number.isFinite(anchorTop) ||
+    !Number.isFinite(scrollTop)
+  ) {
+    return metrics;
+  }
+
+  return {
+    ...metrics,
+    scrollTop,
+    anchorIndex,
+    anchorTop,
+    anchorViewportOffset: anchorTop - scrollTop,
+  };
+}
+
 export interface ArrowSelectionArgs {
   key: string;
   viewMode: 'grid' | 'list';
@@ -249,17 +275,39 @@ export function getZoomCenteredScrollTop(
   previous: GridMetricsSnapshot,
   next: GridMetricsSnapshot
 ): number {
+  const previousScrollTop = Number.isFinite(previous.scrollTop)
+    ? Math.max(0, previous.scrollTop)
+    : 0;
+  const hasFiniteNextBounds = Number.isFinite(next.viewportHeight) &&
+    Number.isFinite(next.totalHeight) &&
+    next.viewportHeight >= 0 &&
+    next.totalHeight >= 0;
+  const maxScrollTop = hasFiniteNextBounds
+    ? Math.max(0, next.totalHeight - next.viewportHeight)
+    : previousScrollTop;
   if (
+    !Number.isFinite(previous.viewportHeight) ||
+    !Number.isFinite(previous.rowHeight) ||
+    !Number.isFinite(previous.gridColumns) ||
+    !Number.isFinite(previous.fullCount) ||
+    !Number.isFinite(next.viewportHeight) ||
+    !Number.isFinite(next.rowHeight) ||
+    !Number.isFinite(next.gridColumns) ||
+    !Number.isFinite(next.fullCount) ||
+    !Number.isFinite(next.totalHeight) ||
     previous.fullCount <= 0 ||
+    next.fullCount <= 0 ||
     previous.gridColumns <= 0 ||
     next.gridColumns <= 0 ||
     previous.rowHeight <= 0 ||
-    next.rowHeight <= 0
+    next.rowHeight <= 0 ||
+    previous.viewportHeight < 0 ||
+    next.viewportHeight < 0 ||
+    next.totalHeight < 0
   ) {
-    return previous.scrollTop;
+    return clamp(previousScrollTop, 0, maxScrollTop);
   }
 
-  const maxScrollTop = Math.max(0, next.totalHeight - next.viewportHeight);
   if (
     previous.anchorIndex !== undefined &&
     previous.anchorIndex === next.anchorIndex &&
@@ -271,7 +319,7 @@ export function getZoomCenteredScrollTop(
     return clamp(next.anchorTop - previous.anchorViewportOffset, 0, maxScrollTop);
   }
 
-  const previousCenterY = previous.scrollTop + previous.viewportHeight / 2;
+  const previousCenterY = previousScrollTop + previous.viewportHeight / 2;
   const previousRow = clamp(
     Math.floor(previousCenterY / previous.rowHeight),
     0,

@@ -9,6 +9,7 @@ import {
   getEmptyResultMessage,
   getZoomCenteredScrollTop,
   shouldIgnoreViewerShortcut,
+  withGridPointerAnchor,
   type GridMetricsSnapshot,
 } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
@@ -262,9 +263,7 @@ export default function ImageGrid() {
       if (!event.ctrlKey && !event.metaKey) return;
       const container = containerRef.current;
       if (!container) return;
-      const browserZoomModifier = event.ctrlKey || event.metaKey;
-      if (browserZoomModifier) event.preventDefault();
-      const target = event.target instanceof Node ? event.target : null;
+      const target = event.target instanceof Element ? event.target : null;
       if (
         view.viewMode !== 'grid' ||
         selectedIndex !== null ||
@@ -272,42 +271,25 @@ export default function ImageGrid() {
         !target ||
         !container.contains(target)
       ) return;
-      if (!browserZoomModifier) event.preventDefault();
       if (event.deltaY === 0) return;
+
+      const anchorElement = target.closest<HTMLElement>('[data-grid-index]');
+      const scrollEl = container.closest('.viewer-main') as HTMLElement | null;
+      if (anchorElement && container.contains(anchorElement)) {
+        previousGridMetricsRef.current = withGridPointerAnchor(
+          previousGridMetricsRef.current,
+          Number.parseInt(anchorElement.dataset.gridIndex ?? '', 10),
+          Number.parseFloat(anchorElement.style.top),
+          scrollEl?.scrollTop ?? previousGridMetricsRef.current?.scrollTop ?? 0
+        );
+      }
+
+      event.preventDefault();
       const next = Math.max(40, Math.min(600, thumbSizeRef.current + (event.deltaY > 0 ? -20 : 20)));
       commitThumbSize(next);
     };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      if (!containerRef.current) return;
-      const key = event.key;
-      if (key === '+' || key === '=' || key === '-') {
-        event.preventDefault();
-        if (
-          view.viewMode !== 'grid' ||
-          selectedIndex !== null ||
-          showSettings ||
-          shouldIgnoreViewerShortcut(event.target)
-        ) return;
-        const delta = key === '-' ? -20 : 20;
-        const next = Math.max(40, Math.min(600, thumbSizeRef.current + delta));
-        commitThumbSize(next);
-      } else if (key === '0') {
-        event.preventDefault();
-        if (
-          view.viewMode === 'grid' &&
-          selectedIndex === null &&
-          !showSettings &&
-          !shouldIgnoreViewerShortcut(event.target)
-        ) commitThumbSize(200);
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown, { passive: false });
     window.addEventListener('wheel', onWheel, { passive: false, capture: true });
     return () => {
-      window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
     };
   }, [selectedIndex, setView, showSettings, view.viewMode]);
@@ -1239,6 +1221,7 @@ export default function ImageGrid() {
         <div
           key={`slot-grid-${virtualIndex}`}
           className="image-card virtual-grid-item placeholder"
+          data-grid-index={virtualIndex}
           style={{ top, left, width, height }}
         />
       );
@@ -1259,6 +1242,7 @@ export default function ImageGrid() {
       <div
         key={`slot-grid-${virtualIndex}`}
         className={`image-card virtual-grid-item ${isSelected ? 'is-selected' : ''} ${isUnseen ? 'is-unseen' : ''} ${showDateSeparator ? 'has-date-separator' : ''}`}
+        data-grid-index={virtualIndex}
         style={{ top, left, width, height }}
         role="group"
         aria-label={`Image ${image.filename}`}

@@ -107,6 +107,18 @@ describe('Sidebar favorite level controls', () => {
     expect(screen.getByLabelText('Date to')).toBeInTheDocument();
   });
 
+  it('changes only the gallery thumbnail size from the bounded Size slider', () => {
+    render(<Sidebar />);
+
+    const slider = screen.getByRole('slider', { name: 'Thumbnail size' });
+    expect(slider).toHaveAttribute('min', '40');
+    expect(slider).toHaveAttribute('max', '600');
+    expect(slider).toHaveAttribute('step', '20');
+    fireEvent.change(slider, { target: { value: '260' } });
+
+    expect(setView).toHaveBeenCalledWith({ thumbSize: 260 });
+  });
+
   it('labels sparse client-filtered matches separately from indexed totals without a live region', () => {
     vi.mocked(useImageStore).mockReturnValue(createStore({
       searchTotal: 900,

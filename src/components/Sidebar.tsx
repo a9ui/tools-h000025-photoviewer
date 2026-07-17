@@ -605,6 +605,7 @@ export default function Sidebar() {
           <input
             type="range"
             className="sidebar-slider"
+            aria-label="Thumbnail size"
             min={40}
             max={600}
             step={20}

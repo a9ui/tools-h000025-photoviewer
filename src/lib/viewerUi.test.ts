@@ -10,6 +10,7 @@ import {
   isInteractiveShortcutTarget,
   shouldIgnoreViewerShortcut,
   sortFolderBuckets,
+  withGridPointerAnchor,
   type FolderBucket,
 } from './viewerUi';
 
@@ -272,6 +273,117 @@ describe('getZoomCenteredScrollTop', () => {
     );
 
     expect(nextScrollTop).toBe(2470);
+  });
+
+  it('clamps explicit anchors at both document edges', () => {
+    const previous = {
+      scrollTop: 320,
+      viewportHeight: 600,
+      rowHeight: 180,
+      gridColumns: 4,
+      fullCount: 120,
+      totalHeight: 6000,
+      anchorIndex: 12,
+      anchorTop: 540,
+      anchorViewportOffset: 220,
+    };
+
+    expect(getZoomCenteredScrollTop(previous, {
+      ...previous,
+      totalHeight: 10000,
+      anchorTop: 80,
+    })).toBe(0);
+    expect(getZoomCenteredScrollTop(previous, {
+      ...previous,
+      totalHeight: 10000,
+      anchorTop: 9900,
+    })).toBe(9400);
+  });
+
+  it('keeps a pointer-selected image stable in a one-column mobile grid', () => {
+    const previous = withGridPointerAnchor({
+      scrollTop: 2100,
+      viewportHeight: 560,
+      rowHeight: 220,
+      gridColumns: 2,
+      fullCount: 80,
+      totalHeight: 9000,
+    }, 23, 2420, 2100);
+
+    expect(previous).not.toBeNull();
+    expect(getZoomCenteredScrollTop(previous!, {
+      scrollTop: 2100,
+      viewportHeight: 560,
+      rowHeight: 420,
+      gridColumns: 1,
+      fullCount: 80,
+      totalHeight: 34000,
+      anchorIndex: 23,
+      anchorTop: 9660,
+      anchorViewportOffset: 7560,
+    })).toBe(9340);
+  });
+
+  it('returns a finite bounded value for empty or invalid layout metrics', () => {
+    expect(getZoomCenteredScrollTop(
+      {
+        scrollTop: 420,
+        viewportHeight: 640,
+        rowHeight: 220,
+        gridColumns: 4,
+        fullCount: 40,
+        totalHeight: 3000,
+      },
+      {
+        scrollTop: 420,
+        viewportHeight: 640,
+        rowHeight: 220,
+        gridColumns: 4,
+        fullCount: 0,
+        totalHeight: 0,
+      }
+    )).toBe(0);
+
+    expect(getZoomCenteredScrollTop(
+      {
+        scrollTop: Number.NaN,
+        viewportHeight: 640,
+        rowHeight: 220,
+        gridColumns: 4,
+        fullCount: 40,
+        totalHeight: 3000,
+      },
+      {
+        scrollTop: 0,
+        viewportHeight: Number.NaN,
+        rowHeight: 0,
+        gridColumns: 0,
+        fullCount: 40,
+        totalHeight: Number.NaN,
+      }
+    )).toBe(0);
+  });
+});
+
+describe('withGridPointerAnchor', () => {
+  it('records the cursor image without accepting invalid virtual slots', () => {
+    const metrics = {
+      scrollTop: 1200,
+      viewportHeight: 800,
+      rowHeight: 200,
+      gridColumns: 5,
+      fullCount: 50,
+      totalHeight: 4000,
+    };
+
+    expect(withGridPointerAnchor(metrics, 17, 1400, 1200)).toEqual({
+      ...metrics,
+      anchorIndex: 17,
+      anchorTop: 1400,
+      anchorViewportOffset: 200,
+    });
+    expect(withGridPointerAnchor(metrics, 50, 1400, 1200)).toBe(metrics);
+    expect(withGridPointerAnchor(metrics, 17, Number.NaN, 1200)).toBe(metrics);
   });
 });
 
