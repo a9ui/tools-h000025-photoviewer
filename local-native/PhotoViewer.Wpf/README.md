@@ -40,6 +40,7 @@ browse and practical viewer slice:
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--folder-bucket-smoke <path>` folder bucket show/hide smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
+- `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
 
@@ -227,6 +228,12 @@ used by zoom shortcut and wheel paths:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
+```
+
+P0B creates a temporary 1,201-image fixture. It proves that the complete catalog is searchable and modal-addressable beyond the old 1,200 boundary while Grid stays bounded, List uses recycling virtualization, and 200-reset Grid zoom leaves List thumbnails unchanged:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0b-smoke "$env:TEMP\photoviewer-wpf-p0b-smoke.json"
 ```
 
 Aspect smoke creates a temporary three-image real-folder fixture and verifies

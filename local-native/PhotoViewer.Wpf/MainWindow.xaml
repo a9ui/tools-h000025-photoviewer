@@ -234,7 +234,7 @@
                   <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBlock Grid.Column="0" Text="Size" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
                   <Button Grid.Column="1" Style="{StaticResource StepButton}" Content="-" ToolTip="Zoom out" Click="ZoomOut_Click" Margin="0,0,5,0"/>
-                  <Slider Grid.Column="2" x:Name="SizeSlider" Minimum="130" Maximum="280" Value="190" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
+                  <Slider Grid.Column="2" x:Name="SizeSlider" Minimum="40" Maximum="600" Value="200" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
                   <Button Grid.Column="3" Style="{StaticResource StepButton}" Content="0" ToolTip="Reset zoom" Click="ZoomReset_Click" Margin="5,0,5,0"/>
                   <Button Grid.Column="4" Style="{StaticResource StepButton}" Content="+" ToolTip="Zoom in" Click="ZoomIn_Click"/>
                 </Grid>
@@ -279,8 +279,9 @@
         <!-- List mode -->
         <ListBox x:Name="RowsList" Visibility="Collapsed" Background="Transparent" BorderThickness="0" Padding="8,8,4,24"
                  ItemContainerStyle="{StaticResource ListRowItem}" SelectionMode="Extended" SelectionChanged="CardsList_SelectionChanged"
-                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto">
-          <ListBox.ItemsPanel><ItemsPanelTemplate><StackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
+                 ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto" ScrollViewer.CanContentScroll="True"
+                 VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling">
+          <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></ListBox.ItemsPanel>
           <ListBox.GroupStyle>
             <GroupStyle>
               <GroupStyle.HeaderTemplate>

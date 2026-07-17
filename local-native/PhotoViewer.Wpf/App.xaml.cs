@@ -184,6 +184,13 @@ public partial class App : Application
             return;
         }
 
+        int p0bSmokeIdx = Array.IndexOf(e.Args, "--p0b-smoke");
+        if (p0bSmokeIdx >= 0 && p0bSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureP0BSmoke(e.Args[p0bSmokeIdx + 1]);
+            return;
+        }
+
         int displayStyleSmokeIdx = Array.IndexOf(e.Args, "--display-style-smoke");
         if (displayStyleSmokeIdx >= 0 && displayStyleSmokeIdx + 1 < e.Args.Length)
         {
@@ -896,6 +903,65 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", oldFavorites);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", oldSeen);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", oldState);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
+            File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureP0BSmoke(string resultPath)
+    {
+        const int fixtureCount = 1201;
+        string root = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-p0b-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(root, "fixture");
+        Directory.CreateDirectory(folder);
+        for (int index = 0; index < fixtureCount; index++)
+            WriteSmokePng(Path.Combine(folder, $"item-{index:0000}.png"), 16, 12, Color.FromRgb((byte)(index % 200 + 30), 80, 140));
+        string state = Path.Combine(root, "state.json");
+        string? previousState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", state);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                int total = win.FilteredCountForSmoke;
+                int realized = win.GridRealizedCountForSmoke;
+                int maxRealized = win.GridMaxRealizationCountForSmoke;
+                win.SetSearchQuery("item-1200", persist: false);
+                bool selected = win.SelectFileNameForSmoke("item-1200.png");
+                bool modal = win.OpenModalForSmoke();
+                win.CloseModalForSmoke();
+                win.SetSearchQuery("", persist: false);
+                string? anchor = win.GridViewportAnchorForSmoke;
+                double listThumbBefore = win.ListThumbnailSizeForSmoke;
+                bool zoom300 = win.SetGridZoomForSmoke(300);
+                bool anchorAt300 = win.GridContainsFileForSmoke(anchor);
+                bool zoom80 = win.SetGridZoomForSmoke(80);
+                bool anchorAt80 = win.GridContainsFileForSmoke(anchor);
+                bool reset = win.ZoomResetForSmoke() && Math.Abs(win.CardWidthForSmoke - 200) < 0.01;
+                bool listMode = win.SetListModeForSmoke();
+                double listThumbAfter = win.ListThumbnailSizeForSmoke;
+                bool listVirtualized = win.ListUsesRecyclingVirtualizationForSmoke;
+                LoadMetrics? metrics = win.LastLoadMetrics;
+                ok = total == fixtureCount && realized <= maxRealized && selected && modal && zoom300 && zoom80 && reset
+                    && anchorAt300 && anchorAt80 && listMode && listVirtualized && Math.Abs(listThumbBefore - listThumbAfter) < 0.01;
+                result = new { ok, message = ok ? "P0B catalog, bounded realization, zoom anchor, and list virtualization passed" : "P0B smoke failed", folder, fixtureCount, total, realized, maxRealized, selected, modal, anchor, zoom300, anchorAt300, zoom80, anchorAt80, reset, listMode, listVirtualized, listThumbBefore, listThumbAfter, scanMs = metrics?.ScanMs, materializeMs = metrics?.MaterializeMs, thumbnailMs = metrics?.ThumbnailMs, totalMs = metrics?.TotalMs, gridDeferred = metrics?.GridDeferredItems };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message, fixtureCount, folder };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousState);
             }
             Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(resultPath))!);
             File.WriteAllText(resultPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -2149,7 +2215,7 @@ public partial class App : Application
                     && shortcutIn
                     && afterShortcutIn > afterButtonOut
                     && shortcutReset
-                    && Math.Abs(afterShortcutReset - 190) < 0.01
+                    && Math.Abs(afterShortcutReset - 200) < 0.01
                     && wheelIn
                     && afterWheelIn > afterShortcutReset
                     && wheelOut

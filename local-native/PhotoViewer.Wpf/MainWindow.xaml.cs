@@ -27,7 +27,6 @@ public partial class MainWindow : Window
     };
     private static readonly byte[] PngSignature = [137, 80, 78, 71, 13, 10, 26, 10];
 
-    private const int MaxLoadedImages = 1200;
     private const int MinParallelThumbnailCount = 32;
     private const int MaxThumbnailDecodeWorkers = 12;
     private const int MaxMetadataReadWorkers = 4;
@@ -37,8 +36,8 @@ public partial class MainWindow : Window
     private const int GridRealizationBatchSize = 96;
     private const int MaxGridRealizationCount = 384;
     private const int MaxRecentFolderSets = 8;
-    private const double DefaultCardWidth = 190;
-    private const double CardWidthStep = 15;
+    private const double DefaultCardWidth = 200;
+    private const double CardWidthStep = 20;
     private const double ModalZoomMin = 0.25;
     private const double ModalZoomMax = 10;
     private const double ModalZoomKeyboardStep = 1.15;
@@ -256,7 +255,6 @@ public partial class MainWindow : Window
                     .Distinct(StringComparer.OrdinalIgnoreCase)
                     .Select(path => new FileInfo(path))
                     .OrderByDescending(file => file.LastWriteTimeUtc)
-                    .Take(MaxLoadedImages)
                     .ToList(),
                 cts.Token);
         }
@@ -512,7 +510,8 @@ public partial class MainWindow : Window
     private async Task<ThumbnailLoadMetrics> LoadThumbnailsAsync(CancellationToken token)
     {
         var watch = Stopwatch.StartNew();
-        var snapshot = _allTiles.Where(static tile => tile.IsRealFile).ToList();
+        // Catalog entries stay lightweight; decode only the current bounded Grid window.
+        var snapshot = _gridTiles.Where(static tile => tile.IsRealFile && tile.Thumbnail is null).ToList();
         int total = snapshot.Count;
         if (total == 0)
             return new ThumbnailLoadMetrics(0, 0, 0, 0);
@@ -3215,6 +3214,9 @@ public partial class MainWindow : Window
         for (int i = _gridStartIndex; i < end; i++)
             _gridTiles.Add(_tiles[i]);
 
+        if (!_initializing && _gridTiles.Any(static tile => tile.Thumbnail is null))
+            _ = LoadThumbnailsAsync(_loadCts?.Token ?? CancellationToken.None);
+
         if (LastLoadMetrics is not null)
             UpdateGridMetrics(LastLoadMetrics);
 
@@ -3370,7 +3372,7 @@ public partial class MainWindow : Window
 
         int total = _allTiles.Count;
         int visible = _tiles.Count;
-        string loaded = total == MaxLoadedImages ? $"{total:N0}+ images loaded" : $"{total:N0} images loaded";
+        string loaded = $"{total:N0} images indexed";
         FolderCountText.Text = visible == total ? loaded : $"{visible:N0} shown / {loaded}";
         UpdateHeaderStats();
     }
@@ -4863,6 +4865,12 @@ public partial class MainWindow : Window
     }
     public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
     public double CardWidthForSmoke => SizeSlider.Value;
+    public double ListThumbnailSizeForSmoke => _allTiles.FirstOrDefault()?.ListThumbnailSize ?? 0;
+    public bool ListUsesRecyclingVirtualizationForSmoke
+        => VirtualizingPanel.GetIsVirtualizing(RowsList) && VirtualizingPanel.GetVirtualizationMode(RowsList) == VirtualizationMode.Recycling;
+    public string? GridViewportAnchorForSmoke => _gridTiles.Count == 0 ? null : _gridTiles[_gridTiles.Count / 2].FileName;
+    public bool GridContainsFileForSmoke(string? fileName)
+        => !string.IsNullOrWhiteSpace(fileName) && _gridTiles.Any(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
     public string DisplayStyleForSmoke => _displayStyle;
     public string AspectModeForSmoke => _aspectMode;
     public string SortByForSmoke => _sortBy;
@@ -4921,6 +4929,12 @@ public partial class MainWindow : Window
     public bool ZoomInForSmoke() => AdjustCardWidth(1);
     public bool ZoomOutForSmoke() => AdjustCardWidth(-1);
     public bool ZoomResetForSmoke() => ResetCardWidth();
+    public bool SetGridZoomForSmoke(double value)
+    {
+        double before = SizeSlider.Value;
+        SetCardWidth(value);
+        return Math.Abs(before - SizeSlider.Value) > 0.01;
+    }
     public bool ZoomWheelForSmoke(int delta)
     {
         return AdjustCardWidth(delta > 0 ? 1 : -1);
