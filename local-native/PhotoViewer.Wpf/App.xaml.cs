@@ -1151,7 +1151,7 @@ public partial class App : Application
                 File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1 }));
                 var futureStateWindow = HiddenWindow(); futureStateWindow.Show();
                 await futureStateWindow.LoadFolderAsync(folder);
-                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 2, futureVersion = true }));
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 3, futureVersion = true }));
                 string futureStateBefore = File.ReadAllText(state);
                 futureStateWindow.FlushStateForSmoke();
                 bool futureStateProtected = File.ReadAllText(state) == futureStateBefore;
