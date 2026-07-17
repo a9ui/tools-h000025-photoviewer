@@ -1,10 +1,32 @@
 'use client';
 
 import React, { useState, useEffect, useId, useRef, useCallback } from 'react';
-import { X } from 'lucide-react';
+import { GripVertical, X } from 'lucide-react';
 import { useImageStore } from '../store/ImageContext';
 
 interface TagEntry { tag: string; count: number; }
+
+interface TagPointerDrag {
+  pointerId: number;
+  fromIndex: number;
+  tag: string;
+  startX: number;
+  startY: number;
+  targetIndex: number;
+  active: boolean;
+  snapshot: string[];
+  captureElement: HTMLSpanElement;
+}
+
+interface TagDesktopDrag {
+  fromIndex: number;
+  tag: string;
+  snapshot: string[];
+}
+
+type TagReorderResult = 'moved' | 'same' | 'stale';
+
+const POINTER_REORDER_THRESHOLD_PX = 8;
 
 function parseQueryTags(query: string): string[] {
   return query
@@ -21,6 +43,10 @@ function chipToneClass(tag: string): string {
   return `tone-${hash % 6}`;
 }
 
+function sameTagOrder(first: readonly string[], second: readonly string[]) {
+  return first.length === second.length && first.every((tag, index) => tag === second[index]);
+}
+
 export default function SearchBar() {
   const { searchQuery, setSearchQuery, indexToken } = useImageStore();
   const [committedTags, setCommittedTags] = useState<string[]>(() => parseQueryTags(searchQuery));
@@ -35,6 +61,9 @@ export default function SearchBar() {
   const [tagArrangementStatus, setTagArrangementStatus] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const chipRefs = useRef(new Map<number, HTMLSpanElement>());
+  const committedTagsRef = useRef(committedTags);
+  const pointerDragRef = useRef<TagPointerDrag | null>(null);
+  const desktopDragRef = useRef<TagDesktopDrag | null>(null);
   const focusAfterTagChangeRef = useRef<{ index?: number; input?: boolean } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -43,6 +72,10 @@ export default function SearchBar() {
   const suggestionStatusId = useId();
 
   const composedQuery = [...committedTags, inputToken.trim()].filter(Boolean).join(', ');
+
+  useEffect(() => {
+    committedTagsRef.current = committedTags;
+  }, [committedTags]);
 
   useEffect(() => {
     if (searchQuery === lastSentQueryRef.current) return;
@@ -144,15 +177,155 @@ export default function SearchBar() {
     setTagArrangementStatus(`Removed tag ${tag}.`);
   }, []);
 
-  const reorderTag = useCallback((from: number, to: number) => {
-    if (from === to) return;
-    setCommittedTags((prev) => {
-      if (from < 0 || to < 0 || from >= prev.length || to >= prev.length) return prev;
-      const next = [...prev];
-      const [moved] = next.splice(from, 1);
-      next.splice(to, 0, moved);
-      return next;
-    });
+  const commitTagReorder = useCallback((
+    from: number,
+    to: number,
+    expectedTag?: string,
+    expectedSnapshot?: readonly string[],
+  ): TagReorderResult => {
+    const current = committedTagsRef.current;
+    if (
+      from < 0 || to < 0 || from >= current.length || to >= current.length ||
+      (expectedTag !== undefined && current[from] !== expectedTag) ||
+      (expectedSnapshot !== undefined && !sameTagOrder(current, expectedSnapshot))
+    ) {
+      return 'stale';
+    }
+    if (from === to) return 'same';
+
+    const next = [...current];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    committedTagsRef.current = next;
+    focusAfterTagChangeRef.current = { index: to };
+    setCommittedTags(next);
+    setTagArrangementStatus(`Moved tag ${moved} to position ${to + 1} of ${next.length}.`);
+    return 'moved';
+  }, []);
+
+  const findClosestChipIndex = useCallback((clientX: number, clientY: number) => {
+    let closestIndex: number | null = null;
+    let closestDistance = Number.POSITIVE_INFINITY;
+    for (const [index, chip] of chipRefs.current) {
+      const rect = chip.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      const deltaX = clientX - (rect.left + rect.width / 2);
+      const deltaY = clientY - (rect.top + rect.height / 2);
+      const distance = deltaX * deltaX + deltaY * deltaY;
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestIndex = index;
+      }
+    }
+    return closestIndex;
+  }, []);
+
+  const clearPointerDrag = useCallback((session: TagPointerDrag) => {
+    pointerDragRef.current = null;
+    setDraggingIdx(null);
+    setDragOverIdx(null);
+    try {
+      if (session.captureElement.hasPointerCapture?.(session.pointerId)) {
+        session.captureElement.releasePointerCapture(session.pointerId);
+      }
+    } catch {
+      // Pointer capture may already have been released by the browser.
+    }
+  }, []);
+
+  const handleChipPointerDown = useCallback((
+    event: React.PointerEvent<HTMLSpanElement>,
+    tag: string,
+    index: number,
+  ) => {
+    if (event.pointerType === 'mouse' || event.isPrimary === false || event.button !== 0) return;
+    const sourceChip = chipRefs.current.get(index);
+    if (!sourceChip) return;
+
+    sourceChip.focus();
+    const session: TagPointerDrag = {
+      pointerId: event.pointerId,
+      fromIndex: index,
+      tag,
+      startX: event.clientX,
+      startY: event.clientY,
+      targetIndex: index,
+      active: false,
+      snapshot: [...committedTagsRef.current],
+      captureElement: event.currentTarget,
+    };
+    pointerDragRef.current = session;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Capture is best-effort on older embedded browsers.
+    }
+  }, []);
+
+  const handleChipPointerMove = useCallback((event: React.PointerEvent<HTMLSpanElement>) => {
+    const session = pointerDragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (!sameTagOrder(committedTagsRef.current, session.snapshot)) {
+      if (session.active) setTagArrangementStatus(`Reordering tag ${session.tag} canceled because the tag list changed.`);
+      clearPointerDrag(session);
+      return;
+    }
+
+    const distance = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
+    if (!session.active && distance < POINTER_REORDER_THRESHOLD_PX) return;
+    if (!session.active) {
+      session.active = true;
+      setDraggingIdx(session.fromIndex);
+      setDragOverIdx(session.fromIndex);
+    }
+    event.preventDefault();
+
+    const targetIndex = findClosestChipIndex(event.clientX, event.clientY);
+    if (targetIndex === null || targetIndex === session.targetIndex) return;
+    session.targetIndex = targetIndex;
+    setDragOverIdx(targetIndex);
+  }, [clearPointerDrag, findClosestChipIndex]);
+
+  const finishChipPointerDrag = useCallback((event: React.PointerEvent<HTMLSpanElement>) => {
+    const session = pointerDragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    const releaseDistance = Math.hypot(event.clientX - session.startX, event.clientY - session.startY);
+    const shouldCommit = session.active || releaseDistance >= POINTER_REORDER_THRESHOLD_PX;
+    if (shouldCommit) {
+      event.preventDefault();
+      const releaseTargetIndex = findClosestChipIndex(event.clientX, event.clientY);
+      if (releaseTargetIndex !== null) session.targetIndex = releaseTargetIndex;
+      const result = commitTagReorder(
+        session.fromIndex,
+        session.targetIndex,
+        session.tag,
+        session.snapshot,
+      );
+      if (result === 'stale') {
+        setTagArrangementStatus(`Reordering tag ${session.tag} canceled because the tag list changed.`);
+      }
+    }
+    clearPointerDrag(session);
+  }, [clearPointerDrag, commitTagReorder, findClosestChipIndex]);
+
+  const cancelChipPointerDrag = useCallback((event: React.PointerEvent<HTMLSpanElement>) => {
+    const session = pointerDragRef.current;
+    if (!session || session.pointerId !== event.pointerId) return;
+    if (session.active) setTagArrangementStatus(`Reordering tag ${session.tag} canceled.`);
+    clearPointerDrag(session);
+  }, [clearPointerDrag]);
+
+  useEffect(() => () => {
+    const session = pointerDragRef.current;
+    pointerDragRef.current = null;
+    if (!session) return;
+    try {
+      if (session.captureElement.hasPointerCapture?.(session.pointerId)) {
+        session.captureElement.releasePointerCapture(session.pointerId);
+      }
+    } catch {
+      // The element may already be detached during unmount.
+    }
   }, []);
 
   const handleChipKeyDown = (event: React.KeyboardEvent<HTMLSpanElement>, tag: string, index: number) => {
@@ -167,9 +340,7 @@ export default function SearchBar() {
         return;
       }
 
-      focusAfterTagChangeRef.current = { index: nextIndex };
-      reorderTag(index, nextIndex);
-      setTagArrangementStatus(`Moved tag ${tag} to position ${nextIndex + 1} of ${committedTags.length}.`);
+      commitTagReorder(index, nextIndex, tag);
       return;
     }
 
@@ -271,10 +442,15 @@ export default function SearchBar() {
                   tabIndex={0}
                   aria-posinset={index + 1}
                   aria-setsize={committedTags.length}
-                  aria-label={`Search tag ${tag}, position ${index + 1} of ${committedTags.length}. Alt Shift Left or Right to reorder. Delete or Backspace to remove.`}
+                  aria-label={`Search tag ${tag}, position ${index + 1} of ${committedTags.length}. Drag the handle or use Alt Shift Left or Right to reorder. Delete or Backspace to remove.`}
                   draggable
                   onKeyDown={(event) => handleChipKeyDown(event, tag, index)}
                   onDragStart={(e) => {
+                    desktopDragRef.current = {
+                      fromIndex: index,
+                      tag,
+                      snapshot: [...committedTagsRef.current],
+                    };
                     setDraggingIdx(index);
                     setDragOverIdx(index);
                     e.dataTransfer.effectAllowed = 'move';
@@ -287,20 +463,40 @@ export default function SearchBar() {
                   }}
                   onDrop={(e) => {
                     e.preventDefault();
-                    const from = parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
-                    reorderTag(from, index);
-                    const movedTag = committedTags[from];
-                    if (movedTag && from !== index) {
-                      setTagArrangementStatus(`Moved tag ${movedTag} to position ${index + 1} of ${committedTags.length}.`);
+                    const session = desktopDragRef.current;
+                    const from = session?.fromIndex
+                      ?? parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
+                    const result = commitTagReorder(
+                      from,
+                      index,
+                      session?.tag,
+                      session?.snapshot,
+                    );
+                    if (result === 'stale') {
+                      setTagArrangementStatus('Tag reorder canceled because the tag list changed.');
                     }
+                    desktopDragRef.current = null;
                     setDraggingIdx(null);
                     setDragOverIdx(null);
                   }}
                   onDragEnd={() => {
+                    desktopDragRef.current = null;
                     setDraggingIdx(null);
                     setDragOverIdx(null);
                   }}
                 >
+                  <span
+                    className="search-chip-drag-handle"
+                    data-testid="search-tag-drag-handle"
+                    aria-hidden="true"
+                    onPointerDown={(event) => handleChipPointerDown(event, tag, index)}
+                    onPointerMove={handleChipPointerMove}
+                    onPointerUp={finishChipPointerDrag}
+                    onPointerCancel={cancelChipPointerDrag}
+                    onLostPointerCapture={cancelChipPointerDrag}
+                  >
+                    <GripVertical size={13} aria-hidden="true" />
+                  </span>
                   <span className="search-chip-label">{tag}</span>
                   <button
                     className="search-chip-remove"

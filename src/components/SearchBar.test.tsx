@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { useImageStore } from '../store/ImageContext';
@@ -17,6 +17,50 @@ function renderSearchBar(searchQuery = '') {
     setSearchQuery,
   } as unknown as ReturnType<typeof useImageStore>);
   return render(<SearchBar />);
+}
+
+function dragHandle(chip: HTMLElement) {
+  return within(chip).getByTestId('search-tag-drag-handle');
+}
+
+function mockChipLayout(chips: HTMLElement[], positions: Array<{ left: number; top: number }>) {
+  chips.forEach((chip, index) => {
+    const { left, top } = positions[index];
+    vi.spyOn(chip, 'getBoundingClientRect').mockReturnValue({
+      x: left,
+      y: top,
+      left,
+      top,
+      width: 80,
+      height: 26,
+      right: left + 80,
+      bottom: top + 26,
+      toJSON: () => ({}),
+    } as DOMRect);
+  });
+}
+
+function mockPointerCapture(handle: HTMLElement) {
+  const captured = new Set<number>();
+  const setPointerCapture = vi.fn((pointerId: number) => captured.add(pointerId));
+  const hasPointerCapture = vi.fn((pointerId: number) => captured.has(pointerId));
+  const releasePointerCapture = vi.fn((pointerId: number) => captured.delete(pointerId));
+  Object.defineProperties(handle, {
+    setPointerCapture: { configurable: true, value: setPointerCapture },
+    hasPointerCapture: { configurable: true, value: hasPointerCapture },
+    releasePointerCapture: { configurable: true, value: releasePointerCapture },
+  });
+  return { setPointerCapture, releasePointerCapture };
+}
+
+function mockDataTransfer() {
+  const values = new Map<string, string>();
+  return {
+    effectAllowed: 'none',
+    dropEffect: 'none',
+    setData: vi.fn((type: string, value: string) => values.set(type, value)),
+    getData: vi.fn((type: string) => values.get(type) ?? ''),
+  } as unknown as DataTransfer;
 }
 
 beforeEach(() => {
@@ -108,6 +152,256 @@ describe('SearchBar accessibility', () => {
     expect(restoredCat).toHaveAttribute('aria-posinset', '1');
     expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
       .toHaveTextContent('Moved tag cat to position 1 of 3.');
+  });
+
+  it('keeps a sub-threshold touch gesture as a focused tap without reordering or removing', () => {
+    renderSearchBar('cat, dog');
+    const chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [{ left: 0, top: 0 }, { left: 100, top: 0 }]);
+    const handle = dragHandle(chips[0]);
+    const capture = mockPointerCapture(handle);
+
+    fireEvent.pointerDown(handle, {
+      pointerId: 41,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+      clientX: 10,
+      clientY: 13,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 41,
+      pointerType: 'touch',
+      clientX: 17,
+      clientY: 13,
+    });
+    fireEvent.pointerUp(handle, {
+      pointerId: 41,
+      pointerType: 'touch',
+      clientX: 17,
+      clientY: 13,
+    });
+
+    expect(screen.getByRole('listitem', { name: /Search tag cat, position 1 of 2/i })).toHaveFocus();
+    expect(screen.getByRole('listitem', { name: /Search tag dog, position 2 of 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('button', { name: 'Remove tag cat' })).toBeInTheDocument();
+    expect(capture.setPointerCapture).toHaveBeenCalledWith(41);
+    expect(capture.releasePointerCapture).toHaveBeenCalledWith(41);
+  });
+
+  it('reorders after and before across horizontal and wrapped vertical chip layouts', async () => {
+    const view = renderSearchBar('cat, dog, castle');
+    let chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [
+      { left: 0, top: 0 },
+      { left: 100, top: 0 },
+      { left: 200, top: 0 },
+    ]);
+    let handle = dragHandle(chips[0]);
+    mockPointerCapture(handle);
+
+    fireEvent.pointerDown(handle, {
+      pointerId: 42,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+      clientX: 10,
+      clientY: 13,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 42,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+    expect(chips[0]).toHaveClass('is-dragging');
+    fireEvent.pointerUp(handle, {
+      pointerId: 42,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+
+    let movedCat = screen.getByRole('listitem', { name: /Search tag cat, position 3 of 3/i });
+    expect(movedCat).toHaveFocus();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
+      .toHaveTextContent('Moved tag cat to position 3 of 3.');
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('dog, castle, cat'));
+    vi.mocked(useImageStore).mockReturnValue({
+      searchQuery: 'dog, castle, cat',
+      setSearchQuery,
+    } as unknown as ReturnType<typeof useImageStore>);
+    view.rerender(<SearchBar />);
+
+    chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [
+      { left: 0, top: 0 },
+      { left: 0, top: 40 },
+      { left: 0, top: 80 },
+    ]);
+    movedCat = screen.getByRole('listitem', { name: /Search tag cat, position 3 of 3/i });
+    handle = dragHandle(movedCat);
+    mockPointerCapture(handle);
+    fireEvent.pointerDown(handle, {
+      pointerId: 43,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+      clientX: 40,
+      clientY: 93,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 43,
+      pointerType: 'touch',
+      clientX: 40,
+      clientY: 13,
+    });
+    fireEvent.pointerUp(handle, {
+      pointerId: 43,
+      pointerType: 'touch',
+      clientX: 40,
+      clientY: 13,
+    });
+
+    const restoredCat = screen.getByRole('listitem', { name: /Search tag cat, position 1 of 3/i });
+    expect(restoredCat).toHaveFocus();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
+      .toHaveTextContent('Moved tag cat to position 1 of 3.');
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('cat, dog, castle'));
+  });
+
+  it('cancels an active captured pointer drag without changing the query', () => {
+    renderSearchBar('cat, dog, castle');
+    const chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [
+      { left: 0, top: 0 },
+      { left: 100, top: 0 },
+      { left: 200, top: 0 },
+    ]);
+    const handle = dragHandle(chips[0]);
+    const capture = mockPointerCapture(handle);
+
+    fireEvent.pointerDown(handle, {
+      pointerId: 44,
+      pointerType: 'pen',
+      isPrimary: true,
+      button: 0,
+      clientX: 10,
+      clientY: 13,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 44,
+      pointerType: 'pen',
+      clientX: 140,
+      clientY: 13,
+    });
+    fireEvent.pointerCancel(handle, { pointerId: 44, pointerType: 'pen' });
+
+    expect(screen.getByRole('listitem', { name: /Search tag cat, position 1 of 3/i })).toHaveFocus();
+    expect(screen.getByRole('listitem', { name: /Search tag dog, position 2 of 3/i })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
+      .toHaveTextContent('Reordering tag cat canceled.');
+    expect(chips[0]).not.toHaveClass('is-dragging');
+    expect(capture.releasePointerCapture).toHaveBeenCalledWith(44);
+    expect(setSearchQuery).not.toHaveBeenCalled();
+  });
+
+  it('keeps desktop HTML5 drag on the same focus and live-region reorder contract', async () => {
+    renderSearchBar('cat, dog, castle');
+    const chips = screen.getAllByRole('listitem');
+    const dataTransfer = mockDataTransfer();
+
+    fireEvent.dragStart(chips[0], { dataTransfer });
+    fireEvent.dragOver(chips[1], { dataTransfer });
+    fireEvent.drop(chips[1], { dataTransfer });
+
+    const movedCat = screen.getByRole('listitem', { name: /Search tag cat, position 2 of 3/i });
+    expect(movedCat).toHaveFocus();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
+      .toHaveTextContent('Moved tag cat to position 2 of 3.');
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('dog, cat, castle'));
+  });
+
+  it('moves the selected duplicate tag and rejects a stale pointer index after external query replacement', async () => {
+    const view = renderSearchBar('cat, cat, dog');
+    let chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [
+      { left: 0, top: 0 },
+      { left: 100, top: 0 },
+      { left: 200, top: 0 },
+    ]);
+    let secondCat = screen.getByRole('listitem', { name: /Search tag cat, position 2 of 3/i });
+    let handle = dragHandle(secondCat);
+    mockPointerCapture(handle);
+    fireEvent.pointerDown(handle, {
+      pointerId: 45,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+      clientX: 140,
+      clientY: 13,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 45,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+    fireEvent.pointerUp(handle, {
+      pointerId: 45,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+
+    expect(screen.getByRole('listitem', { name: /Search tag cat, position 3 of 3/i })).toHaveFocus();
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('cat, dog, cat'));
+
+    chips = screen.getAllByRole('listitem');
+    mockChipLayout(chips, [
+      { left: 0, top: 0 },
+      { left: 100, top: 0 },
+      { left: 200, top: 0 },
+    ]);
+    const dog = screen.getByRole('listitem', { name: /Search tag dog, position 2 of 3/i });
+    handle = dragHandle(dog);
+    mockPointerCapture(handle);
+    fireEvent.pointerDown(handle, {
+      pointerId: 46,
+      pointerType: 'touch',
+      isPrimary: true,
+      button: 0,
+      clientX: 140,
+      clientY: 13,
+    });
+    fireEvent.pointerMove(handle, {
+      pointerId: 46,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+
+    vi.mocked(useImageStore).mockReturnValue({
+      searchQuery: 'cat, castle',
+      setSearchQuery,
+    } as unknown as ReturnType<typeof useImageStore>);
+    view.rerender(<SearchBar />);
+    await waitFor(() => {
+      expect(screen.queryByRole('listitem', { name: /Search tag dog/i })).not.toBeInTheDocument();
+    });
+    const currentHandle = dragHandle(screen.getByRole('listitem', { name: /Search tag cat, position 1 of 2/i }));
+    fireEvent.pointerUp(currentHandle, {
+      pointerId: 46,
+      pointerType: 'touch',
+      clientX: 240,
+      clientY: 13,
+    });
+
+    expect(screen.getByRole('listitem', { name: /Search tag cat, position 1 of 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: /Search tag castle, position 2 of 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('status', { name: 'Search tag arrangement' }))
+      .toHaveTextContent('canceled because the tag list changed.');
   });
 
   it('removes only the focused tag with Delete and moves focus to the next chip', async () => {

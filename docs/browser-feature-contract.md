@@ -555,9 +555,12 @@ Style shortcut:
 - Enterまたはcommaで現在tokenをchip化。
 - 空inputでBackspaceすると最後のchipを除去。
 - chipのremoveを持つ。
-- dragでchip順序を変更。
-- chipはfocusable list itemで`aria-posinset`/`aria-setsize`と操作説明を持つ。Alt+Shift+Left/Rightで位置を1つ移動し、Delete/Backspaceでそのoccurrenceだけを除去する。
-- keyboard reorder/remove後は移動したchip、次、前、最後はinputの順でfocusを回復し、結果を`aria-live`で通知する。Remove buttonのEnter/Spaceはchip shortcutへ二重伝播しない。
+- Desktop mouseはchip全体のHTML5 drag、touch/penはchip左端の明示handleをPointer Eventsでdragし、同じreorder結果へ統合する。
+- touch/penは8px未満をtapとして扱い、pointer capture中に8px以上移動した時だけdragを開始する。Drop先はchip中心への2次元距離で決めるため、横並びとmobile wrap/縦配置を同じ規則で扱う。
+- reorder成功後は移動したchipへfocusを維持し、positionと総数を`aria-live`で通知する。Pointer cancel、capture loss、drag中の外部query変更、stale/out-of-range indexは並びを変更せずcancelする。
+- `touch-action: none`は小さいdrag handleだけに限定し、chip本体と周辺の縦page scrollを奪わない。Reduced motionではdrag transition/scaleを無効にする。
+- Keyboardはchip focus中のAlt+Shift+Left/Rightで同じreorder、Delete/Backspaceでremove。Mouse/keyboardの既存操作は維持する。
+- chipはfocusable list itemで`aria-posinset`/`aria-setsize`と操作説明を持つ。keyboard reorder/remove後は移動したchip、次、前、最後はinputの順でfocusを回復し、結果を`aria-live`で通知する。Remove buttonのEnter/Spaceはchip shortcutへ二重伝播しない。
 - 外部からduplicate tokenを含むqueryが来ても、occurrence identityでfocus/reorder/removeを分離する。
 - exact-case duplicateを作らない。
 - clearで全queryを空にする。
@@ -1706,7 +1709,7 @@ Query empty、filter empty、folder no imageを別copyで識別する。Enhancem
 - Modalはpointer swipe/pan対応。
 - pinch zoomなし。
 - Gallery touch multi-selectなし。
-- chip reorderのtouch drag完全対応なし。
+- Search chip reorderはdesktop HTML5 drag、touch/pen pointer handle、keyboard Alt+Shift+Left/Rightに対応する。Handle外から始めた縦scrollは通常通りpageへ渡す。
 
 ## 19. Accessibility
 
@@ -1720,6 +1723,7 @@ Query empty、filter empty、folder no imageを別copyで識別する。Enhancem
 - modal icon buttonにaccessible label。
 - favorite feedbackにaria-live。
 - folder collapseに `aria-expanded`。
+- Search chipはposition/setsize、focus維持、reorder/remove結果のaria-liveを持つ。
 
 ### BR-A11Y-002 Keyboard/focus contractと残るgap
 
@@ -1861,6 +1865,7 @@ Fixtureにlevel 0〜5を各1枚用意。
 - date From/ToがCreatedのinclusive day。
 - hidden folderがserver resultから消える。
 - stale requestが新queryを上書きしない。
+- Search chipはmouse/touch/pen/keyboardで同じ順序へreorderでき、移動後focusとaria-live positionが一致する。Pointer threshold未満、cancel、stale indexでは順序を変えない。
 - 3 chipをAlt+Shift+Left/Rightでreorderしてquery order、focus、aria positionを同期し、Delete/Backspaceでfocused occurrenceだけを除去する。duplicate token fixtureでも別occurrenceを誤削除しない。
 
 ### BR-ACC-060 Zoom
