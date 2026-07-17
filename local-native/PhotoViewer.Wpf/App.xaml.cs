@@ -282,6 +282,13 @@ public partial class App : Application
             return;
         }
 
+        int catalogStressSmokeIdx = Array.IndexOf(e.Args, "--catalog-stress-smoke");
+        if (catalogStressSmokeIdx >= 0 && catalogStressSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureCatalogStressSmoke(e.Args[catalogStressSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int p1bSmokeIdx = Array.IndexOf(e.Args, "--p1b-smoke");
         if (p1bSmokeIdx >= 0 && p1bSmokeIdx + 1 < e.Args.Length)
         {
@@ -3526,6 +3533,196 @@ public partial class App : Application
 
             Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
             File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureCatalogStressSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        int count = ArgInt(args, "--count", 20_000);
+        if (count < 2)
+        {
+            WriteCatalogStressSmokeResult(resultFullPath, new CatalogStressSmokeResult
+            {
+                RequestedCount = count,
+                Message = "--count must be at least 2",
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-catalog-stress-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+        var fixtureWatch = Stopwatch.StartNew();
+        Directory.CreateDirectory(folder);
+        string firstPath = Path.Combine(folder, "stress-000000.png");
+        WriteSmokePng(firstPath, 4, 3, Color.FromRgb(70, 130, 210));
+        for (int index = 1; index < count; index++)
+            File.Copy(firstPath, Path.Combine(folder, $"stress-{index:D6}.png"));
+        fixtureWatch.Stop();
+
+        Environment.CurrentDirectory = smokeRoot;
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.SuppressStatePersistence();
+
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            CatalogStressSmokeResult result;
+            var process = Process.GetCurrentProcess();
+            process.Refresh();
+            long workingSetBefore = process.WorkingSet64;
+            long managedBefore = GC.GetTotalMemory(forceFullCollection: false);
+            int generation0Before = GC.CollectionCount(0);
+            int generation1Before = GC.CollectionCount(1);
+            int generation2Before = GC.CollectionCount(2);
+            var loadWatch = Stopwatch.StartNew();
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                loadWatch.Stop();
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                int sourceCountBefore = Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count();
+                int catalogCount = win.CatalogCountForSmoke;
+                int filteredCount = win.FilteredCountForSmoke;
+                int gridRealized = win.GridRealizedCountForSmoke;
+                int gridMaximum = win.GridMaxRealizationCountForSmoke;
+                int gridDeferred = win.GridDeferredCountForSmoke;
+                bool listMode = win.SetListModeForSmoke();
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                int listRealized = win.ListRealizedContainerCountForSmoke;
+                bool listBounded = win.ListUsesRecyclingVirtualizationForSmoke && listRealized <= Math.Min(count, 512);
+
+                string tailName = $"stress-{count - 1:D6}.png";
+                bool selectedTail = win.SelectFileNameForSmoke(tailName);
+                bool modalTail = selectedTail && win.OpenModalForSmoke() && win.ModalVisibleForSmoke;
+                win.CloseModalForSmoke();
+
+                heartbeat.Start();
+                var inputWatch = Stopwatch.StartNew();
+                var searchWatch = Stopwatch.StartNew();
+                string[] rapidQueries = ["s", "st", "str", "stress", "stress-0", "stress-01", "stress-019", "stress-0199", $"stress-{count - 1:D6}"];
+                var completions = new List<Task<MainWindow.SearchFilterCompletion>>();
+                foreach (string query in rapidQueries)
+                    completions.Add(win.SetSearchInputForSmokeAsync(query));
+                inputWatch.Stop();
+                Task<MainWindow.SearchFilterCompletion> finalTask = completions[^1];
+                Task completed = await Task.WhenAny(finalTask, Task.Delay(TimeSpan.FromSeconds(12)));
+                MainWindow.SearchFilterCompletion finalCompletion = completed == finalTask
+                    ? await finalTask
+                    : new MainWindow.SearchFilterCompletion(false, false, "timed out waiting for the final stress search");
+                MainWindow.SearchFilterCompletion[] earlierCompletions = await Task.WhenAll(completions.Take(completions.Count - 1));
+                await Task.Delay(120);
+                heartbeat.Stop();
+                searchWatch.Stop();
+
+                List<string> finalMatches = win.FilteredFileNamesForSmoke(4);
+                bool finalSearchExact = finalCompletion.Applied
+                    && string.Equals(win.SearchQueryForSmoke, $"stress-{count - 1:D6}", StringComparison.Ordinal)
+                    && finalMatches.SequenceEqual([tailName], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(win.SelectedFileNameForSmoke, tailName, StringComparison.OrdinalIgnoreCase);
+                bool staleCancelled = earlierCompletions.All(static completion => completion.Discarded);
+                bool heartbeatAdvanced = heartbeatCount >= 4;
+                int sourceCountAfter = Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count();
+                process.Refresh();
+                LoadMetrics? loadMetrics = win.LastLoadMetrics;
+                result = new CatalogStressSmokeResult
+                {
+                    RequestedCount = count,
+                    FixtureCount = sourceCountBefore,
+                    CatalogCount = catalogCount,
+                    FilteredCount = filteredCount,
+                    SilentTruncateCount = Math.Max(0, count - catalogCount),
+                    GridRealized = gridRealized,
+                    GridMaximum = gridMaximum,
+                    GridDeferred = gridDeferred,
+                    ListRealized = listRealized,
+                    ListBounded = listBounded,
+                    TailName = tailName,
+                    SelectedTail = selectedTail,
+                    ModalTail = modalTail,
+                    FinalSearchExact = finalSearchExact,
+                    StaleCancelled = staleCancelled,
+                    HeartbeatCount = heartbeatCount,
+                    WorkingSetBeforeBytes = workingSetBefore,
+                    WorkingSetAfterBytes = process.WorkingSet64,
+                    ManagedBytesBefore = managedBefore,
+                    ManagedBytesAfter = GC.GetTotalMemory(forceFullCollection: false),
+                    Generation0Collections = GC.CollectionCount(0) - generation0Before,
+                    Generation1Collections = GC.CollectionCount(1) - generation1Before,
+                    Generation2Collections = GC.CollectionCount(2) - generation2Before,
+                    FixtureElapsedMs = fixtureWatch.ElapsedMilliseconds,
+                    LoadElapsedMs = loadWatch.ElapsedMilliseconds,
+                    SearchInputElapsedMs = inputWatch.ElapsedMilliseconds,
+                    SearchElapsedMs = searchWatch.ElapsedMilliseconds,
+                    LoadMetricsTotalElapsedMs = loadMetrics?.TotalMs,
+                    ScanElapsedMs = loadMetrics?.ScanMs,
+                    MetadataElapsedMs = loadMetrics?.MetadataMs,
+                    SourceCountAfter = sourceCountAfter,
+                    EnhancementJobsRead = win.EnhancementJobsReadForSmoke,
+                    EnhancementCandidates = win.EnhancedCandidateCountForSmoke,
+                    Ok = sourceCountBefore == count
+                        && catalogCount == count
+                        && filteredCount == count
+                        && gridRealized <= gridMaximum
+                        && gridDeferred == count - gridRealized
+                        && listMode && listBounded
+                        && selectedTail && modalTail
+                        && finalSearchExact && staleCancelled && heartbeatAdvanced
+                        && sourceCountAfter == count
+                        && win.EnhancementJobsReadForSmoke == 0
+                        && win.EnhancedCandidateCountForSmoke == 0,
+                };
+                result.Message = result.Ok
+                    ? $"{count:N0}-image catalog stayed exact and structurally bounded while tail search, modal, stale cancellation, and dispatcher responsiveness passed"
+                    : "catalog stress structural gate did not meet the expected result";
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                loadWatch.Stop();
+                result = new CatalogStressSmokeResult
+                {
+                    RequestedCount = count,
+                    Message = ex.Message,
+                    FixtureElapsedMs = fixtureWatch.ElapsedMilliseconds,
+                    LoadElapsedMs = loadWatch.ElapsedMilliseconds,
+                };
+            }
+            finally
+            {
+                win.Close();
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteCatalogStressSmokeResult(resultFullPath, result);
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
@@ -7406,6 +7603,13 @@ public partial class App : Application
         File.WriteAllText(path, json);
     }
 
+    private static void WriteCatalogStressSmokeResult(string path, CatalogStressSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var json = System.Text.Json.JsonSerializer.Serialize(result, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+        File.WriteAllText(path, json);
+    }
+
     private static void WriteShortcutTypingSmokeResult(string path, ShortcutTypingSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8452,6 +8656,45 @@ public partial class App : Application
         public List<string> LandingFolderSet { get; init; } = [];
         public int CatalogAfterAdd { get; init; }
         public bool LandingVisible { get; init; }
+    }
+
+    private sealed class CatalogStressSmokeResult
+    {
+        public bool Ok { get; set; }
+        public string Message { get; set; } = "";
+        public int RequestedCount { get; set; }
+        public int FixtureCount { get; set; }
+        public int CatalogCount { get; set; }
+        public int FilteredCount { get; set; }
+        public int SilentTruncateCount { get; set; }
+        public int GridRealized { get; set; }
+        public int GridMaximum { get; set; }
+        public int GridDeferred { get; set; }
+        public int ListRealized { get; set; }
+        public bool ListBounded { get; set; }
+        public string TailName { get; set; } = "";
+        public bool SelectedTail { get; set; }
+        public bool ModalTail { get; set; }
+        public bool FinalSearchExact { get; set; }
+        public bool StaleCancelled { get; set; }
+        public int HeartbeatCount { get; set; }
+        public long WorkingSetBeforeBytes { get; set; }
+        public long WorkingSetAfterBytes { get; set; }
+        public long ManagedBytesBefore { get; set; }
+        public long ManagedBytesAfter { get; set; }
+        public int Generation0Collections { get; set; }
+        public int Generation1Collections { get; set; }
+        public int Generation2Collections { get; set; }
+        public long FixtureElapsedMs { get; set; }
+        public long LoadElapsedMs { get; set; }
+        public long SearchInputElapsedMs { get; set; }
+        public long SearchElapsedMs { get; set; }
+        public double? LoadMetricsTotalElapsedMs { get; set; }
+        public double? ScanElapsedMs { get; set; }
+        public double? MetadataElapsedMs { get; set; }
+        public int SourceCountAfter { get; set; }
+        public int EnhancementJobsRead { get; set; }
+        public int EnhancementCandidates { get; set; }
     }
 
     private sealed class SearchStallSmokeResult
