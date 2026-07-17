@@ -309,6 +309,8 @@ public partial class MainWindow : Window
         public static PreviewTabHoverDecodeCompletion FailedResult => new(false, false, true, "image could not be decoded");
     }
 
+    private sealed record DroppedFolderSet(List<string> Folders, int RejectedCount, string RejectionReason);
+
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
 
     private async Task ChooseAndLoadFolderAsync()
@@ -5227,6 +5229,148 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private void FolderDropTarget_DragEnter(object sender, DragEventArgs e) => UpdateFolderDropAffordance(sender, e);
+
+    private void FolderDropTarget_DragOver(object sender, DragEventArgs e) => UpdateFolderDropAffordance(sender, e);
+
+    private void FolderDropTarget_DragLeave(object sender, DragEventArgs e)
+    {
+        SetFolderDropAffordance(sender, visible: false);
+        e.Handled = true;
+    }
+
+    private async void FolderDropTarget_Drop(object sender, DragEventArgs e)
+    {
+        SetFolderDropAffordance(sender, visible: false);
+        DroppedFolderSet dropped = ReadDroppedFolders(e.Data);
+        bool landing = ReferenceEquals(sender, Landing);
+        await ApplyDroppedFoldersAsync(dropped, landing);
+        e.Handled = true;
+    }
+
+    private void UpdateFolderDropAffordance(object sender, DragEventArgs e)
+    {
+        DroppedFolderSet dropped = ReadDroppedFolders(e.Data);
+        bool accepted = dropped.Folders.Count > 0;
+        SetFolderDropAffordance(sender, accepted);
+        if (!accepted)
+            return;
+
+        // Folder intake is a reference-only operation.  Leave non-folder FileDrop
+        // payloads untouched so the existing image drag-out contract keeps its copy
+        // behavior when the cursor happens to cross this surface.
+        e.Effects = DragDropEffects.Link;
+        e.Handled = true;
+    }
+
+    private void SetFolderDropAffordance(object sender, bool visible)
+    {
+        if (ReferenceEquals(sender, Landing))
+            LandingFolderDropOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+        else if (ReferenceEquals(sender, ViewerFolderDropTarget))
+            ViewerFolderDropOverlay.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    private DroppedFolderSet ReadDroppedFolders(IDataObject? data)
+    {
+        if (data is null || !data.GetDataPresent(DataFormats.FileDrop))
+            return new DroppedFolderSet([], 1, "drop existing folders from Explorer");
+
+        try
+        {
+            return data.GetData(DataFormats.FileDrop) is string[] paths
+                ? ReadDroppedFolders(paths)
+                : new DroppedFolderSet([], 1, "folder payload was unavailable");
+        }
+        catch
+        {
+            return new DroppedFolderSet([], 1, "folder payload could not be read");
+        }
+    }
+
+    private DroppedFolderSet ReadDroppedFolders(IEnumerable<string> paths)
+    {
+        var folders = new List<string>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int rejected = 0;
+        string reason = "drop existing absolute folders only";
+
+        foreach (string raw in paths)
+        {
+            if (string.IsNullOrWhiteSpace(raw) || !Path.IsPathFullyQualified(raw))
+            {
+                rejected++;
+                reason = "folder paths must be absolute";
+                continue;
+            }
+
+            try
+            {
+                string lexical = Path.GetFullPath(raw);
+                if (!Directory.Exists(lexical))
+                {
+                    rejected++;
+                    reason = "only existing folders are accepted";
+                    continue;
+                }
+
+                string canonical = _resolveFinalPath(lexical);
+                if (!Directory.Exists(canonical))
+                {
+                    rejected++;
+                    reason = "the canonical folder is unavailable";
+                    continue;
+                }
+
+                if (seen.Add(canonical))
+                    folders.Add(canonical);
+            }
+            catch
+            {
+                rejected++;
+                reason = "a folder path could not be canonicalized";
+            }
+        }
+
+        return new DroppedFolderSet(folders, rejected, reason);
+    }
+
+    private async Task<FolderDropSmokeSnapshot> ApplyDroppedFoldersAsync(DroppedFolderSet dropped, bool landing)
+    {
+        if (dropped.Folders.Count == 0)
+        {
+            string rejectedMessage = $"Folder drop rejected: {dropped.RejectionReason}.";
+            ReportFolderDropStatus(rejectedMessage, landing);
+            return new FolderDropSmokeSnapshot(false, 0, dropped.RejectedCount, dropped.RejectionReason, landing, LandingFolderSetSnapshot().ToList(), _currentFolderSet.ToList(), rejectedMessage);
+        }
+
+        int added;
+        if (landing)
+            added = AppendLandingFolders(dropped.Folders);
+        else
+        {
+            int before = _currentFolderSet.Count;
+            await AddFoldersToCurrentSetAsync(dropped.Folders);
+            added = Math.Max(0, _currentFolderSet.Count - before);
+        }
+
+        string message = added > 0
+            ? $"Added {added:N0} folder(s) by reference; files were not copied or moved."
+            : "Dropped folders are already in the current folder set.";
+        if (dropped.RejectedCount > 0)
+            message += $" Skipped {dropped.RejectedCount:N0}: {dropped.RejectionReason}.";
+        ReportFolderDropStatus(message, landing);
+        return new FolderDropSmokeSnapshot(true, added, dropped.RejectedCount, dropped.RejectionReason, landing, LandingFolderSetSnapshot().ToList(), _currentFolderSet.ToList(), message);
+    }
+
+    private void ReportFolderDropStatus(string message, bool landing)
+    {
+        if (landing)
+            LandingFolderStatusText.Text = message;
+        else
+            SetStatusToast(message);
+    }
+
     private void ReturnToFolderSetEditor()
     {
         SetLandingFolderSet(_currentFolderSet);
@@ -7747,6 +7891,16 @@ public partial class MainWindow : Window
     public int AppendPastedFoldersForSmoke(string folderText)
         => AppendLandingFolders(SplitFolderSet(folderText));
 
+    public Task<FolderDropSmokeSnapshot> DropFoldersForSmokeAsync(IEnumerable<string> folders, bool landing)
+        => ApplyDroppedFoldersAsync(ReadDroppedFolders(folders), landing);
+
+    public void SetFolderDropAffordanceForSmoke(bool landing, bool visible)
+        => SetFolderDropAffordance(landing ? Landing : ViewerFolderDropTarget, visible);
+
+    public bool FolderDropSurfaceContractForSmoke
+        => !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(Landing))
+            && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(ViewerFolderDropTarget));
+
     public Task<bool> AddFoldersToCurrentSetForSmokeAsync(IEnumerable<string> folders)
         => AddFoldersToCurrentSetAsync(folders);
 
@@ -8433,6 +8587,16 @@ public sealed record FileDragOutSmokeSnapshot(
     string Reason,
     bool ExceedsThreshold,
     bool SurfaceContractReady);
+
+public sealed record FolderDropSmokeSnapshot(
+    bool Accepted,
+    int AddedCount,
+    int RejectedCount,
+    string RejectionReason,
+    bool Landing,
+    List<string> LandingFolders,
+    List<string> CurrentFolders,
+    string Status);
 
 public sealed record PngMetadataSmokeSnapshot(
     bool Selected,

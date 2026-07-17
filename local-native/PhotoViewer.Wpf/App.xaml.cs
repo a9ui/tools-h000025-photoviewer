@@ -143,6 +143,13 @@ public partial class App : Application
             return;
         }
 
+        int folderDragInSmokeIdx = Array.IndexOf(e.Args, "--folder-drag-in-smoke");
+        if (folderDragInSmokeIdx >= 0 && folderDragInSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureFolderDragInSmoke(e.Args[folderDragInSmokeIdx + 1]);
+            return;
+        }
+
         int shortcutTypingSmokeIdx = Array.IndexOf(e.Args, "--shortcut-typing-smoke");
         if (shortcutTypingSmokeIdx >= 0 && shortcutTypingSmokeIdx + 1 < e.Args.Length)
         {
@@ -526,6 +533,8 @@ public partial class App : Application
                 await win.WaitForPreviewPngMetadataForSmokeAsync(win.SelectedFileNameForSmoke!);
 
             win.ShowScreen(screen);
+            if (args.Contains("--show-folder-drop-affordance"))
+                win.SetFolderDropAffordanceForSmoke(screen.Equals("landing", StringComparison.OrdinalIgnoreCase), visible: true);
             if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--show-modal-metadata"))
                 win.ToggleModalMetadataSidebarForSmoke();
             if (screen.Equals("modal", StringComparison.OrdinalIgnoreCase) && args.Contains("--wait-modal-full-decode")
@@ -7092,6 +7101,118 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureFolderDragInSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-folder-drag-in-" + Guid.NewGuid().ToString("N"));
+        string firstFolder = Path.Combine(smokeRoot, "first-folder");
+        string secondFolder = Path.Combine(smokeRoot, "second-folder");
+        string rejectedFile = Path.Combine(smokeRoot, "not-a-folder.txt");
+        string missingFolder = Path.Combine(smokeRoot, "missing-folder");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(firstFolder);
+            Directory.CreateDirectory(secondFolder);
+            WriteSmokePng(Path.Combine(firstFolder, "first.png"), 48, 32, Color.FromRgb(80, 120, 210));
+            WriteSmokePng(Path.Combine(secondFolder, "second.png"), 48, 32, Color.FromRgb(120, 190, 100));
+            File.WriteAllText(rejectedFile, "not a folder");
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteFolderDragInSmokeResult(resultPath, new FolderDragInSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            FolderDragInSmokeResult result;
+            try
+            {
+                win.SetLandingFolderSetForSmoke([firstFolder]);
+                FolderDropSmokeSnapshot landingDrop = await win.DropFoldersForSmokeAsync([secondFolder, secondFolder.ToUpperInvariant(), rejectedFile, missingFolder], landing: true);
+                List<string> landingFolders = win.LandingFolderSetForSmoke;
+                FolderDropSmokeSnapshot rejectedDrop = await win.DropFoldersForSmokeAsync([rejectedFile, missingFolder], landing: true);
+
+                await win.LoadFolderAsync(firstFolder);
+                var sourceBefore = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [Path.Combine(firstFolder, "first.png")] = FileFingerprint(Path.Combine(firstFolder, "first.png")),
+                    [Path.Combine(secondFolder, "second.png")] = FileFingerprint(Path.Combine(secondFolder, "second.png")),
+                };
+                string jobsBefore = FileFingerprint(jobsPath);
+                FolderDropSmokeSnapshot viewerDrop = await win.DropFoldersForSmokeAsync([secondFolder, secondFolder.ToUpperInvariant()], landing: false);
+                bool sourceUntouched = sourceBefore.All(pair => string.Equals(pair.Value, FileFingerprint(pair.Key), StringComparison.Ordinal))
+                    && Directory.EnumerateFiles(firstFolder, "*.png").Count() == 1
+                    && Directory.EnumerateFiles(secondFolder, "*.png").Count() == 1;
+                bool isolated = new[] { win.StatePathForSmoke, win.FavoritesPathForSmoke, win.SeenPathForSmoke, win.SharedRecentPathForSmoke, win.EnhancementJobsPathForSmoke }
+                    .All(path => path.StartsWith(smokeRoot, StringComparison.OrdinalIgnoreCase));
+                bool landingOk = landingDrop.Accepted && landingDrop.AddedCount == 1 && landingDrop.RejectedCount == 2
+                    && landingFolders.Count == 2 && landingFolders.Distinct(StringComparer.OrdinalIgnoreCase).Count() == 2;
+                bool rejectedOk = !rejectedDrop.Accepted && rejectedDrop.RejectedCount == 2 && rejectedDrop.Status.Contains("rejected", StringComparison.OrdinalIgnoreCase);
+                bool viewerOk = viewerDrop.Accepted && viewerDrop.AddedCount == 1
+                    && win.CurrentFolderSetForSmoke.Count == 2 && win.CatalogCountForSmoke == 2;
+                bool passive = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                bool ok = landingOk && rejectedOk && viewerOk && sourceUntouched && isolated && passive && win.FolderDropSurfaceContractForSmoke;
+                result = new FolderDragInSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "Landing and viewer folder drop canonicalized existing folders, deduplicated case-insensitively, rescanned by reference, and left sources/jobs isolated"
+                        : "folder drag-in smoke did not meet the folder-set, rejection, or isolation contract",
+                    SmokeRoot = smokeRoot,
+                    LandingDrop = landingDrop,
+                    RejectedDrop = rejectedDrop,
+                    ViewerDrop = viewerDrop,
+                    LandingFolders = landingFolders,
+                    CurrentFolders = win.CurrentFolderSetForSmoke,
+                    CatalogCount = win.CatalogCountForSmoke,
+                    SourceUntouched = sourceUntouched,
+                    Isolated = isolated,
+                    Passive = passive,
+                    SurfaceContract = win.FolderDropSurfaceContractForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new FolderDragInSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteFolderDragInSmokeResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePreviewDecodeSmoke(string resultPath, string[] args)
     {
         string? folder = ArgValue(args, "--folder");
@@ -8193,6 +8314,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteFolderDragInSmokeResult(string path, FolderDragInSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteFormatSmokeResult(string path, FormatSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8461,6 +8588,23 @@ public partial class App : Application
         public bool MutableStateUntouched { get; init; }
         public int EnhancementJobsRead { get; init; }
         public int EnhancementCandidates { get; init; }
+    }
+
+    private sealed class FolderDragInSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public FolderDropSmokeSnapshot? LandingDrop { get; init; }
+        public FolderDropSmokeSnapshot? RejectedDrop { get; init; }
+        public FolderDropSmokeSnapshot? ViewerDrop { get; init; }
+        public List<string> LandingFolders { get; init; } = [];
+        public List<string> CurrentFolders { get; init; } = [];
+        public int CatalogCount { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool Isolated { get; init; }
+        public bool Passive { get; init; }
+        public bool SurfaceContract { get; init; }
     }
 
     private sealed record ModalNavigationSmokeResult(

@@ -735,6 +735,22 @@ text-input guard and the outside-input shortcuts together:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shortcut-typing-smoke $env:TEMP\wpf-shortcut-typing-smoke.json --folder .\local-native\ui-mockup
 ```
 
+## WPF Native Folder Drag-In
+
+Explorer folder drops now work on both Landing and the Viewer gallery. The WPF
+surface accepts only existing absolute folders, resolves canonical paths,
+deduplicates case-insensitively, and appends by reference: Landing updates the
+draft folder set and Viewer rescans the merged set. Files and folders are never
+copied, moved, or deleted. File payloads, missing folders, and relative paths
+are refused with a status message; existing image drag-out remains Copy-only.
+
+The focused verifier uses only temporary source fixtures and isolated
+state/favorites/seen/recent/jobs paths:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-folder-drag-in.ps1
+```
+
 ## WPF M50 Modal Metadata Tabs
 
 The #306 slice aligns the existing read-only modal metadata sidebar with the

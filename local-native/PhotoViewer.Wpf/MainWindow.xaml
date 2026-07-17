@@ -275,7 +275,9 @@
       </Border>
 
       <!-- ─────── Main grid ─────── -->
-      <Border Grid.Column="1" Background="{StaticResource BgPrimary}">
+      <Border Grid.Column="1" x:Name="ViewerFolderDropTarget" Background="{StaticResource BgPrimary}" AllowDrop="True"
+              DragEnter="FolderDropTarget_DragEnter" DragOver="FolderDropTarget_DragOver" DragLeave="FolderDropTarget_DragLeave" Drop="FolderDropTarget_Drop"
+              AutomationProperties.Name="Image viewer folder drop target" AutomationProperties.HelpText="Drop existing folders from Explorer to add them to the current folder set. Files are never copied or moved.">
        <Grid>
         <ListBox x:Name="CardsList" Background="Transparent" BorderThickness="0" Padding="20,16,12,24"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled" ScrollViewer.VerticalScrollBarVisibility="Auto"
@@ -335,6 +337,13 @@
             </GroupStyle>
           </ListBox.GroupStyle>
         </ListBox>
+        <Border x:Name="ViewerFolderDropOverlay" Visibility="Collapsed" IsHitTestVisible="False" Margin="18" CornerRadius="12"
+                Background="#D9101018" BorderBrush="{StaticResource AccentLight}" BorderThickness="2">
+          <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock Text="Add folders to this viewer" FontSize="16" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+            <TextBlock Text="Drop existing folders — files will not be copied or moved" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,5,0,0" HorizontalAlignment="Center"/>
+          </StackPanel>
+        </Border>
        </Grid>
       </Border>
 
@@ -542,7 +551,9 @@
     </Border>
 
     <!-- ═══════════════ Landing / scanning ═══════════════ -->
-    <Grid x:Name="Landing" Grid.RowSpan="3" Visibility="Collapsed" Background="{StaticResource BgPrimary}">
+    <Grid x:Name="Landing" Grid.RowSpan="3" Visibility="Collapsed" Background="{StaticResource BgPrimary}" AllowDrop="True"
+          DragEnter="FolderDropTarget_DragEnter" DragOver="FolderDropTarget_DragOver" DragLeave="FolderDropTarget_DragLeave" Drop="FolderDropTarget_Drop"
+          AutomationProperties.Name="Folder selection landing drop target" AutomationProperties.HelpText="Drop existing folders from Explorer to add them to the folder set. Files are never copied or moved.">
       <Rectangle HorizontalAlignment="Left" Width="700" Height="520" VerticalAlignment="Center" Margin="-160,0,0,0">
         <Rectangle.Fill>
           <RadialGradientBrush><GradientStop Color="#1A6366F1" Offset="0"/><GradientStop Color="#006366F1" Offset="1"/></RadialGradientBrush>
@@ -667,6 +678,13 @@
           </Border>
         </StackPanel>
       </StackPanel>
+      <Border x:Name="LandingFolderDropOverlay" Visibility="Collapsed" IsHitTestVisible="False" Margin="28" CornerRadius="14"
+              Background="#D9101018" BorderBrush="{StaticResource AccentLight}" BorderThickness="2">
+        <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
+          <TextBlock Text="Add folders to the folder set" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+          <TextBlock Text="Drop existing folders — files will not be copied or moved" Foreground="{StaticResource TextSecondary}" FontSize="12.5" Margin="0,5,0,0" HorizontalAlignment="Center"/>
+        </StackPanel>
+      </Border>
     </Grid>
 
     <!-- ═══════════════ Modal ═══════════════ -->
