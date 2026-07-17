@@ -84,6 +84,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-crash-lock-recovery.ps1` actual-process fresh/live lock protection, abrupt-exit stale recovery, atomic-temp cleanup, schema protection, and Browser/WPF concurrency verifier
 - `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
 - `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
+- `scripts/verify-wpf-scan-materialization-race.ps1` temp-only existence-snapshot-to-catalog-publication source disappearance and UI/state ownership verifier
 - `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
 - `scripts/verify-wpf-monitor-work-area.ps1` current-monitor maximize, exact unchanged restore, disconnected/downsized/DPI-equivalent bounded restore, and fallback verifier
 - `scripts/verify-wpf-external-stale-source.ps1` temp-only external source lifecycle, recoverable decode, focus, state, and history-isolation verifier
@@ -938,3 +939,10 @@ selected root is missing or becomes unavailable. The complete ordered folder
 set remains in WPF state and shared Recent so Refresh can retry it; only a
 successful current generation may commit those stores. Cancelled or stale runs
 publish neither catalog nor ownership changes.
+
+If a source disappears or loses access after enumeration's final existence
+snapshot but before its `FileInfo` is materialized, WPF skips only that source,
+reports a recoverable warning, and publishes survivor-based metrics and UI
+state. The current selection, Preview tabs, Modal, and persisted references are
+reconciled to the surviving catalog; unrelated stores and remaining sources
+are not rewritten.

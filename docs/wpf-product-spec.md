@@ -136,6 +136,7 @@ Landingとmodalはこのshellに重なるtop-level surface。Delete confirmation
 - folder/file pathはWindowsとfilesystemが許容する範囲で、日本語、emoji、空白、apostrophe、mixed case、従来の260文字を超えるabsolute pathを文字列加工やshell quoteへ落とさず扱う。folder set、catalog、search結果、preview/modal/tab、Explorer payload、Recycle guardまで同じabsolute path identityを保ち、case差だけの同一rootは重複scanしない。
 - 複数rootの一部がmissing、切断、permission変更等で利用不能でも、利用可能なrootの画像はcatalogへpublishする。明示folder setの順序と利用不能rootはcurrent state/Recentに保持し、recoverable statusでskipを通知するため、Refreshで同じsetを再試行できる。成功runだけがstate/Recentを各1回所有し、cancel/stale runは所有しない。
 - 利用者が明示したroot自体はscan対象にできるが、その配下で見つけたjunction、symbolic link、mount point等のreparse file/directoryはcatalogへ入れず追跡しない。各rootのlexical tree外をcatalogへ入れず、visited directory setで循環を有限時間に止め、skip件数をrecoverable statusで知らせる。
+- enumeration後のexistence snapshotとcatalog materializeの間にsourceが外部削除、rename、切断、access拒否になっても、該当fileだけをrecoverable skipにする。UI dispatcherを落とさず、warning、公開件数metrics、最後の有効selection、Preview tab、Modal、persisted UI参照をsurvivor catalogへreconcileする。source、Favorite、Seen、Recent、Enhancement jobsを副作用で変更しない。
 - permission/individual file failureは可能な項目を継続し、summary warningを出す。
 - unavailable/access/boundary skipまたはpersistence refusalとdecode failureが同時に存在する場合、後から判明したdecode warningで先の復旧手順やRetry actionを上書きしない。1つのrecoverable statusに両方を残し、利用不能rootを保持したRefresh再試行、保護されたshared state、存在するdecode不能画像のplaceholder継続を同時に説明する。
 - supported extension以外をcatalogへ入れない。
@@ -630,6 +631,7 @@ Accessibility:
 | Shared Recent write ownership | `powershell -File scripts/verify-wpf-recent-write-ownership.ps1` |
 | Process crash/live lock/stale recovery | `powershell -File scripts/verify-wpf-crash-lock-recovery.ps1 -Iterations 3` |
 | Partial multi-root scan / ownership | `powershell -File scripts/verify-wpf-partial-scan.ps1` |
+| Scan existence-to-materialization race recovery | `powershell -File scripts/verify-wpf-scan-materialization-race.ps1` |
 | Explicit scan cancellation / supersession | `powershell -File scripts/verify-wpf-scan-cancel.ps1` |
 | Recursive scan boundary | `powershell -File scripts/verify-wpf-scan-boundary.ps1` |
 | Unicode/long path/lock/corrupt/mixed-root lifecycle | `powershell -File scripts/verify-wpf-path-robustness.ps1` |

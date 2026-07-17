@@ -162,6 +162,7 @@ public partial class MainWindow : Window
     private string _loadPhase = "idle";
     private int _scanEnumerationDelayForSmokeMs;
     private int _scanMetadataDelayForSmokeMs;
+    private Action? _beforeMaterializeFilesForSmoke;
     private int _previewDecodeDelayForSmokeMs;
     private int _modalDecodeDelayForSmokeMs;
     private int _loadCtsCreatedCount;
@@ -554,8 +555,35 @@ public partial class MainWindow : Window
             _allTiles.Clear();
             _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
+            Action? beforeMaterialize = _beforeMaterializeFilesForSmoke;
+            _beforeMaterializeFilesForSmoke = null;
+            beforeMaterialize?.Invoke();
             foreach (var file in files)
-                _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts));
+            {
+                try
+                {
+                    // The source can disappear or become inaccessible after the
+                    // post-scan File.Exists snapshot. Treat that per-file race as
+                    // a recoverable scan skip instead of letting FileInfo.Length
+                    // or timestamp access tear down the UI dispatcher.
+                    if (!File.Exists(file.FullName))
+                        throw new FileNotFoundException("source disappeared before catalog publication", file.FullName);
+                    _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts));
+                }
+                catch (Exception ex) when (ex is IOException
+                    or UnauthorizedAccessException
+                    or ArgumentException
+                    or NotSupportedException
+                    or System.Security.SecurityException)
+                {
+                    scanAccessFailures.Enqueue(file.FullName);
+                }
+            }
+            ReportScanPublicationWarning(BuildScanWarning(
+                scanAccessFailures.Count,
+                scanBoundarySkips.Count,
+                unavailableFolderSet.Count,
+                metadata.DecodeFailures));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
             PruneHiddenFolderBucketsToCurrentSet();
             RefreshFolderBucketViews();
@@ -575,8 +603,9 @@ public partial class MainWindow : Window
             _suppressStateSave = previousSuppress;
         }
         materializeWatch.Stop();
+        int publishedFileCount = _allTiles.Count;
 
-        if (files.Count == 0)
+        if (publishedFileCount == 0)
         {
             ReconcileOpenSurfacesAfterCatalogReload(
                 modalWasVisibleBeforePublish,
@@ -588,7 +617,7 @@ public partial class MainWindow : Window
             totalWatch.Stop();
             LastLoadMetrics = LoadMetrics.Create(
                 resolvedFolderSummary,
-                files.Count,
+                publishedFileCount,
                 scanWatch.ElapsedMilliseconds,
                 materializeWatch.ElapsedMilliseconds,
                 metadata.ElapsedMs,
@@ -632,7 +661,7 @@ public partial class MainWindow : Window
         totalWatch.Stop();
         LastLoadMetrics = LoadMetrics.Create(
             resolvedFolderSummary,
-            files.Count,
+            publishedFileCount,
             scanWatch.ElapsedMilliseconds,
             materializeWatch.ElapsedMilliseconds,
             metadata.ElapsedMs,
@@ -732,6 +761,22 @@ public partial class MainWindow : Window
         if (decodeFailureCount > 0)
             messages.Add($"{decodeFailureCount:N0} image file(s) could not be decoded. They remain listed; refresh after fixing the files.");
         return string.Join(" ", messages);
+    }
+
+    private void ReportScanPublicationWarning(string warning)
+    {
+        if (string.IsNullOrWhiteSpace(warning))
+            return;
+
+        bool preservePersistenceRecovery = _deleteStatus.Contains("could not be saved", StringComparison.OrdinalIgnoreCase)
+            || _deleteStatus.Contains("is busy in another PhotoViewer window", StringComparison.OrdinalIgnoreCase);
+        if (preservePersistenceRecovery)
+        {
+            SetStatusToast($"{_deleteStatus} {warning}", _statusRetryAction);
+            return;
+        }
+
+        SetStatusToast(warning);
     }
 
     private int AppendLandingFolders(IEnumerable<string> folders)
@@ -8387,6 +8432,8 @@ public partial class MainWindow : Window
         _scanEnumerationDelayForSmokeMs = Math.Max(0, enumerationMilliseconds);
         _scanMetadataDelayForSmokeMs = Math.Max(0, metadataMilliseconds);
     }
+    public void SetBeforeMaterializeFilesForSmoke(Action action)
+        => _beforeMaterializeFilesForSmoke = action ?? throw new ArgumentNullException(nameof(action));
     public void ConfigureImageDecodeDelaysForSmoke(int previewMilliseconds, int modalMilliseconds)
     {
         _previewDecodeDelayForSmokeMs = Math.Max(0, previewMilliseconds);
