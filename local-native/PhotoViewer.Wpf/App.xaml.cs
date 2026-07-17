@@ -360,6 +360,13 @@ public partial class App : Application
             return;
         }
 
+        int shutdownStateSmokeIdx = Array.IndexOf(e.Args, "--shutdown-state-smoke");
+        if (shutdownStateSmokeIdx >= 0 && shutdownStateSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureShutdownStateSmoke(e.Args[shutdownStateSmokeIdx + 1]);
+            return;
+        }
+
         int catalogStressSmokeIdx = Array.IndexOf(e.Args, "--catalog-stress-smoke");
         if (catalogStressSmokeIdx >= 0 && catalogStressSmokeIdx + 1 < e.Args.Length)
         {
@@ -4413,6 +4420,244 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureShutdownStateSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-shutdown-state-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        const string firstName = "shutdown-first.png";
+        const string secondName = "shutdown-second.png";
+        const string finalName = "shutdown-final-target.png";
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            WriteSmokePng(Path.Combine(folder, firstName), 1600, 1200, Color.FromRgb(65, 125, 220));
+            WriteSmokePng(Path.Combine(folder, secondName), 1400, 1000, Color.FromRgb(95, 190, 125));
+            WriteSmokePng(Path.Combine(folder, finalName), 1800, 1350, Color.FromRgb(225, 100, 150));
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteShutdownStateSmokeResult(resultFullPath, new ShutdownStateSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ShutdownStateSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool layoutReady = win.SetDisplayStyleForSmoke("poster")
+                    && win.SetAspectModeForSmoke("portrait")
+                    && win.SetRightPanelWidthForSmoke(644);
+                win.SetFavoriteFilterLevelsForSmoke(2, 5);
+                win.SetShowUnseenDotsForSmoke(true);
+                win.SetConfirmBeforeDeleteForSmoke(false);
+
+                bool openedFirst = win.SelectFileNameForSmoke(firstName) && win.OpenSelectedPreviewTabForSmoke();
+                bool openedSecond = win.SelectFileNameForSmoke(secondName) && win.OpenSelectedPreviewTabForSmoke();
+                bool openedFinal = win.SelectFileNameForSmoke(finalName) && win.OpenSelectedPreviewTabForSmoke();
+                bool reordered = win.DragMovePreviewTabForSmoke(secondName, 0);
+                bool pinned = win.TogglePreviewTabPinForSmoke(firstName);
+                win.FlushStateForSmoke();
+
+                win.SetPreviewTabHoverDecodeDelayForSmoke(firstName, 700);
+                bool hoverStarted = win.ShowPreviewTabHoverWithDecodeForSmoke(firstName);
+                Task<MainWindow.PreviewTabHoverDecodeCompletion> hoverCompletion = win.WaitForPreviewTabHoverDecodeForSmokeAsync();
+                bool finalSelected = win.SelectFileNameForSmoke(finalName);
+                Task<PreviewDecodeSmokeSnapshot> previewCompletion = win.WaitForCurrentPreviewDecodeForSmokeAsync(finalName);
+                string sourceBefore = FolderFingerprint(folder);
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+                Task<MainWindow.SearchFilterCompletion> staleOne = win.SetSearchInputForSmokeAsync("sh");
+                Task<MainWindow.SearchFilterCompletion> staleTwo = win.SetSearchInputForSmokeAsync("shutdown-final");
+                Task<MainWindow.SearchFilterCompletion> finalSearch = win.SetSearchInputForSmokeAsync("shutdown-final-target");
+
+                var closeWatch = Stopwatch.StartNew();
+                win.Close();
+                closeWatch.Stop();
+                int flushCount = win.ShutdownPersistenceFlushCountForSmoke;
+                MainWindow.SearchFilterCompletion[] searchCompletions = await Task.WhenAll(staleOne, staleTwo, finalSearch);
+                MainWindow.PreviewTabHoverDecodeCompletion hoverAfterClose = await hoverCompletion;
+                Task previewTimeout = Task.Delay(TimeSpan.FromSeconds(3));
+                Task previewFinished = await Task.WhenAny(previewCompletion, previewTimeout);
+                bool previewSettled = previewFinished == previewCompletion;
+                string stateImmediatelyAfterClose = FileFingerprint(statePath);
+                await Task.Delay(800);
+                bool oldAsyncDidNotMutateState = string.Equals(stateImmediatelyAfterClose, FileFingerprint(statePath), StringComparison.Ordinal);
+                bool closeStoreIsolation = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal)
+                    && string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool closeResidueFree = NoPersistenceResidue(smokeRoot);
+                ViewerState? persisted = ReadPersistedState(statePath);
+                List<string> expectedTabs = [secondName, firstName, finalName];
+                bool finalPersisted = persisted is not null
+                    && string.Equals(persisted.SearchQuery, "shutdown-final-target", StringComparison.Ordinal)
+                    && string.Equals(Path.GetFileName(persisted.SelectedPath), finalName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(persisted.DisplayStyle, "poster", StringComparison.Ordinal)
+                    && string.Equals(persisted.AspectMode, "portrait", StringComparison.Ordinal)
+                    && Nearly(persisted.RightPanelWidth, 644)
+                    && persisted.FavoriteFilterLevels?.SequenceEqual([2, 5]) == true
+                    && persisted.ShowUnseenDots
+                    && !persisted.ConfirmBeforeDelete
+                    && persisted.PreviewTabPaths?.Select(Path.GetFileName).SequenceEqual(expectedTabs, StringComparer.OrdinalIgnoreCase) == true
+                    && string.Equals(Path.GetFileName(persisted.ActivePreviewTabPath), finalName, StringComparison.OrdinalIgnoreCase)
+                    && persisted.PinnedPreviewPaths?.Select(Path.GetFileName).SequenceEqual([firstName], StringComparer.OrdinalIgnoreCase) == true;
+
+                var reload = HiddenWindow();
+                reload.Show();
+                await reload.LoadFolderAsync(folder);
+                bool restored = string.Equals(reload.SearchQueryForSmoke, "shutdown-final-target", StringComparison.Ordinal)
+                    && string.Equals(reload.SelectedFileNameForSmoke, finalName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(reload.DisplayStyleForSmoke, "poster", StringComparison.Ordinal)
+                    && string.Equals(reload.AspectModeForSmoke, "portrait", StringComparison.Ordinal)
+                    && Nearly(reload.RightPanelStoredWidthForSmoke, 644)
+                    && reload.FavoriteFilterLevelsForSmoke.SequenceEqual([2, 5])
+                    && reload.ShowUnseenDotsForSmoke
+                    && !reload.ConfirmBeforeDeleteForSmoke
+                    && reload.PreviewTabNamesForSmoke.SequenceEqual(expectedTabs, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(reload.ActivePreviewTabNameForSmoke, finalName, StringComparison.OrdinalIgnoreCase)
+                    && reload.IsPreviewTabPinnedForSmoke(firstName);
+                string sourceBeforeReloadClose = FolderFingerprint(folder);
+                string favoritesBeforeReloadClose = FileFingerprint(favoritesPath);
+                string seenBeforeReloadClose = FileFingerprint(seenPath);
+                string recentBeforeReloadClose = FileFingerprint(recentPath);
+                string jobsBeforeReloadClose = FileFingerprint(jobsPath);
+                reload.Close();
+                bool reloadCloseIsolation = string.Equals(sourceBeforeReloadClose, FolderFingerprint(folder), StringComparison.Ordinal)
+                    && string.Equals(favoritesBeforeReloadClose, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeReloadClose, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeReloadClose, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBeforeReloadClose, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool reloadFlushOnce = reload.ShutdownPersistenceFlushCountForSmoke == 1;
+
+                async Task<ShutdownRefusalSnapshot> RunRefusalAsync(string name, string content, bool contend)
+                {
+                    string scenarioRoot = Path.Combine(smokeRoot, name);
+                    Directory.CreateDirectory(scenarioRoot);
+                    string scenarioState = Path.Combine(scenarioRoot, "state.json");
+                    File.WriteAllText(scenarioState, content);
+                    Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", scenarioState);
+                    Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", Path.Combine(scenarioRoot, "recent.json"));
+                    var scenario = HiddenWindow();
+                    scenario.Show();
+                    string before = FileFingerprint(scenarioState);
+                    string lockPath = scenarioState + ".lock";
+                    if (contend)
+                        File.WriteAllText(lockPath, "{\"owner\":\"smoke\"}");
+                    Task<MainWindow.SearchFilterCompletion> pending = scenario.SetSearchInputForSmokeAsync("must-not-overwrite");
+                    var scenarioCloseWatch = Stopwatch.StartNew();
+                    scenario.Close();
+                    scenarioCloseWatch.Stop();
+                    MainWindow.SearchFilterCompletion completion = await pending;
+                    bool lockRemainedOwned = !contend || File.Exists(lockPath);
+                    if (contend)
+                        File.Delete(lockPath);
+                    return new ShutdownRefusalSnapshot(
+                        Unchanged: string.Equals(before, FileFingerprint(scenarioState), StringComparison.Ordinal),
+                        Closed: !scenario.IsVisible,
+                        FlushCount: scenario.ShutdownPersistenceFlushCountForSmoke,
+                        PendingDiscarded: completion.Discarded,
+                        CloseMs: scenarioCloseWatch.ElapsedMilliseconds,
+                        LockRemainedOwned: lockRemainedOwned,
+                        ResidueFree: NoPersistenceResidue(scenarioRoot));
+                }
+
+                ShutdownRefusalSnapshot malformed = await RunRefusalAsync("malformed", "{broken", contend: false);
+                ShutdownRefusalSnapshot protectedFuture = await RunRefusalAsync(
+                    "protected",
+                    "{\"Version\":999,\"SearchQuery\":\"preserve-future\",\"future\":true}",
+                    contend: false);
+                ShutdownRefusalSnapshot contended = await RunRefusalAsync(
+                    "contended",
+                    JsonSerializer.Serialize(new ViewerState { Version = 2, SearchQuery = "preserve-contended" }),
+                    contend: true);
+
+                bool refusalsSafe = new[] { malformed, protectedFuture, contended }.All(snapshot =>
+                    snapshot.Unchanged && snapshot.Closed && snapshot.FlushCount == 1
+                    && snapshot.PendingDiscarded && snapshot.CloseMs < 1_000
+                    && snapshot.LockRemainedOwned && snapshot.ResidueFree);
+                bool searchCancelled = searchCompletions.All(static completion => completion.Discarded);
+                bool asyncCancelled = searchCancelled && hoverAfterClose.Discarded && previewSettled;
+                bool enhancementPassive = win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0
+                    && reload.EnhancementJobsReadForSmoke == 0 && reload.EnhancedCandidateCountForSmoke == 0;
+                bool setupReady = layoutReady && openedFirst && openedSecond && openedFinal && reordered && pinned && hoverStarted && finalSelected;
+                bool ok = setupReady && closeWatch.ElapsedMilliseconds < 300 && flushCount == 1
+                    && asyncCancelled && oldAsyncDidNotMutateState
+                    && closeStoreIsolation && reloadCloseIsolation
+                    && closeResidueFree && NoPersistenceResidue(smokeRoot)
+                    && finalPersisted && restored && reloadFlushOnce
+                    && refusalsSafe && enhancementPassive;
+                result = new ShutdownStateSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "shutdown flushed only the final viewer state once, cancelled stale work, and preserved protected/contended stores"
+                        : "shutdown state lifecycle did not meet final-state or refusal safety expectations",
+                    SmokeRoot = smokeRoot,
+                    SetupReady = setupReady,
+                    CloseMs = closeWatch.ElapsedMilliseconds,
+                    FlushCount = flushCount,
+                    SearchDiscarded = searchCancelled,
+                    HoverDiscarded = hoverAfterClose.Discarded,
+                    PreviewSettled = previewSettled,
+                    OldAsyncDidNotMutateState = oldAsyncDidNotMutateState,
+                    FinalPersisted = finalPersisted,
+                    Restored = restored,
+                    CloseStoreIsolation = closeStoreIsolation,
+                    ReloadCloseIsolation = reloadCloseIsolation,
+                    ResidueFree = closeResidueFree && NoPersistenceResidue(smokeRoot),
+                    EnhancementPassive = enhancementPassive,
+                    Malformed = malformed,
+                    ProtectedFuture = protectedFuture,
+                    Contended = contended,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new ShutdownStateSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot };
+            }
+            finally
+            {
+                if (win.IsVisible) win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteShutdownStateSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureBulkFavoriteSmoke(string resultPath)
     {
         string resultFullPath = Path.GetFullPath(resultPath);
@@ -8139,6 +8384,11 @@ public partial class App : Application
         return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(manifest)));
     }
 
+    private static bool NoPersistenceResidue(string root)
+        => Directory.Exists(root)
+            && !Directory.EnumerateFiles(root, "*.lock", SearchOption.AllDirectories).Any()
+            && !Directory.EnumerateFiles(root, "*.tmp", SearchOption.AllDirectories).Any();
+
     private static void WriteLegacyDateFilterState(string path, string preset, string? from, string? to)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8868,6 +9118,12 @@ public partial class App : Application
     }
 
     private static void WriteRapidUiStateSmokeResult(string path, RapidUiStateSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static void WriteShutdownStateSmokeResult(string path, ShutdownStateSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -10045,6 +10301,38 @@ public partial class App : Application
         public bool Isolated { get; init; }
         public long ElapsedMs { get; init; }
     }
+
+    private sealed class ShutdownStateSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public bool SetupReady { get; init; }
+        public long CloseMs { get; init; }
+        public int FlushCount { get; init; }
+        public bool SearchDiscarded { get; init; }
+        public bool HoverDiscarded { get; init; }
+        public bool PreviewSettled { get; init; }
+        public bool OldAsyncDidNotMutateState { get; init; }
+        public bool FinalPersisted { get; init; }
+        public bool Restored { get; init; }
+        public bool CloseStoreIsolation { get; init; }
+        public bool ReloadCloseIsolation { get; init; }
+        public bool ResidueFree { get; init; }
+        public bool EnhancementPassive { get; init; }
+        public ShutdownRefusalSnapshot Malformed { get; init; }
+        public ShutdownRefusalSnapshot ProtectedFuture { get; init; }
+        public ShutdownRefusalSnapshot Contended { get; init; }
+    }
+
+    private readonly record struct ShutdownRefusalSnapshot(
+        bool Unchanged,
+        bool Closed,
+        int FlushCount,
+        bool PendingDiscarded,
+        long CloseMs,
+        bool LockRemainedOwned,
+        bool ResidueFree);
 
     private sealed class BulkFavoriteSmokeResult
     {

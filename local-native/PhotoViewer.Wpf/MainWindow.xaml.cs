@@ -201,6 +201,8 @@ public partial class MainWindow : Window
     private double _modalPanY;
     private bool _modalShowingEnhanced;
     private bool _confirmBeforeDelete = true;
+    private bool _shutdownPersistenceFlushed;
+    private int _shutdownPersistenceFlushCount;
     private Tile? _pendingDeleteTile;
     private DeleteSnapshot? _pendingBulkDeleteSnapshot;
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
@@ -254,6 +256,7 @@ public partial class MainWindow : Window
             if (CardsList.Items.Count > 0)
                 CardsList.SelectedIndex = 0;
         };
+        Closing += MainWindow_Closing;
         Closed += (_, _) => CancelPreviewTabHoverDecode();
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
@@ -271,6 +274,33 @@ public partial class MainWindow : Window
         var cvs = new CollectionViewSource { Source = source };
         cvs.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Tile.Group)));
         return cvs.View;
+    }
+
+    private void MainWindow_Closing(object? sender, CancelEventArgs e)
+    {
+        if (_shutdownPersistenceFlushed)
+            return;
+
+        _shutdownPersistenceFlushed = true;
+        _shutdownPersistenceFlushCount++;
+        _searchFilterTimer.Stop();
+        _searchStateSaveTimer.Stop();
+        CancelPendingSearchFilter(completePending: true);
+        _loadCts?.Cancel();
+        _previewCts?.Cancel();
+        _previewDecodeCompletion?.TrySetResult(PreviewDecodeResult.Canceled);
+        _previewMetadataCts?.Cancel();
+        _previewMetadataCompletion?.TrySetResult(null);
+        _modalCts?.Cancel();
+        _modalDecodeCompletion?.TrySetResult(false);
+        _modalSingleClickGeneration++;
+        _modalFeedbackTimer.Stop();
+        CancelPreviewTabHoverDecode();
+
+        // Closing flushes only the viewer state. Folder recents, favorites,
+        // seen data, enhancement jobs, and source files are separate stores
+        // and must not be rewritten merely because the window is closing.
+        SaveState(persistRecent: false);
     }
 
     private sealed record FilterSnapshot(
@@ -6881,7 +6911,9 @@ public partial class MainWindow : Window
         return clone;
     }
 
-    private void SaveState()
+    private void SaveState() => SaveState(persistRecent: true);
+
+    private void SaveState(bool persistRecent)
     {
         if (_initializing || _suppressStateSave) return;
         if (_stateWriteBlocked)
@@ -6957,7 +6989,7 @@ public partial class MainWindow : Window
                 return;
             }
             _stateExtensionData = CloneExtensionData(state.ExtensionData);
-            if (_currentFolderSet.Count > 0)
+            if (persistRecent && _currentFolderSet.Count > 0)
                 SaveSharedRecentFolderSet(_currentFolderSet);
         }
         catch
@@ -7493,6 +7525,7 @@ public partial class MainWindow : Window
         _searchStateSaveTimer.Stop();
         SaveState();
     }
+    public int ShutdownPersistenceFlushCountForSmoke => _shutdownPersistenceFlushCount;
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
     public bool RequestBulkDeleteSelectedForSmoke() => RequestBulkDeleteSelected();
     public void CancelDeleteForSmoke() => DeleteCancel_Click(this, new RoutedEventArgs());

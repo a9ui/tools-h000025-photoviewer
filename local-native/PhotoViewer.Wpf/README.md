@@ -64,12 +64,14 @@ implementation. The normative current behavior is documented in
 - `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
 - `--rapid-ui-state-smoke <path>` temp-only rapid search/selection/layout/panel/filter/tab final-state and heartbeat stress
+- `--shutdown-state-smoke <path>` sub-debounce close flush, stale-work cancellation, refusal, and atomic-residue smoke
 - `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
 - `scripts/verify-wpf-prompt-tag-search.ps1` temp-only Prompt chip/search/focus/persistence/isolation verifier
 - `scripts/verify-wpf-file-drag-out.ps1` temp-only threshold/payload/path-guard/selection/isolation verifier without invoking an OS drag
 - `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
+- `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
