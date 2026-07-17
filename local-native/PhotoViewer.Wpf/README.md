@@ -63,11 +63,13 @@ implementation. The normative current behavior is documented in
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
+- `--rapid-ui-state-smoke <path>` temp-only rapid search/selection/layout/panel/filter/tab final-state and heartbeat stress
 - `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
 - `scripts/verify-wpf-prompt-tag-search.ps1` temp-only Prompt chip/search/focus/persistence/isolation verifier
 - `scripts/verify-wpf-file-drag-out.ps1` temp-only threshold/payload/path-guard/selection/isolation verifier without invoking an OS drag
 - `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
+- `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
@@ -92,8 +94,9 @@ Fast direct launch from the project root uses the Release executable instead of
 .\start_wpf.bat
 ```
 
-If the Release executable is missing, the launcher builds it once and then runs
-it directly. To force a rebuild before launch:
+The normal launcher compares WPF source/project timestamps with the Release
+executable and rebuilds automatically when the executable is missing or stale;
+an unchanged build starts directly. To force a rebuild before launch:
 
 ```powershell
 $env:PHOTOVIEWER_WPF_REBUILD = "1"

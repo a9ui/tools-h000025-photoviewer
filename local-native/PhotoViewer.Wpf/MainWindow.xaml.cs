@@ -3714,7 +3714,10 @@ public partial class MainWindow : Window
             ? _activePreviewTabPath
             : _restoredActivePreviewTabPath;
 
-        var currentByPath = _tiles
+        // Preview tabs are a catalog session, not a projection of the current
+        // search/filter result. A tab hidden by an exact Favorite or search
+        // filter must survive reload and become visible again when filters clear.
+        var currentByPath = _allTiles
             .Where(static tile => tile.IsRealFile)
             .ToDictionary(tile => NormalizeFavoritePath(tile.Path), StringComparer.OrdinalIgnoreCase);
         var restoredTiles = new List<Tile>();
@@ -7839,6 +7842,8 @@ public partial class MainWindow : Window
         SaveState();
         return changed;
     }
+    public bool PreviewRightPanelWidthForSmoke(double width) => SetRightPanelWidth(width);
+    public void CommitRightPanelWidthForSmoke() => SaveState();
     public void ToggleRightPanelForSmoke() => ToggleRight_Click(this, new RoutedEventArgs());
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
     public double LastGridZoomAnchorDriftForSmoke => _lastGridZoomAnchorDrift;
@@ -7865,7 +7870,11 @@ public partial class MainWindow : Window
     public string DateFilterSummaryForSmoke => DateFilterSummary.Text;
     public bool ShowFavoritesOnlyForSmoke => FavoriteOnlyFilter?.IsChecked == true;
     public bool ShowUnfavoriteOnlyForSmoke => UnfavoriteOnlyFilter?.IsChecked == true;
+    public bool ShowUnseenDotsForSmoke => _showUnseenDots;
+    public bool UnseenOnlyForSmoke => UnseenOnlyFilter?.IsChecked == true;
     public List<int> FavoriteFilterLevelsForSmoke => _favoriteFilterLevels.OrderBy(static level => level).ToList();
+    public bool GridModeVisibleForSmoke => CardsList.Visibility == Visibility.Visible;
+    public bool ListModeVisibleForSmoke => RowsList.Visibility == Visibility.Visible;
 
     public bool NavigateModalForSmoke(int delta) => NavigateModal(delta);
     public bool OpenSelectedPreviewTabForSmoke() => SelectedTile() is { IsRealFile: true } tile && OpenPreviewTab(tile, makeActive: true);
@@ -8278,6 +8287,40 @@ public partial class MainWindow : Window
             true,
             tile.Path,
             selectionWatch.ElapsedMilliseconds,
+            _lastPreviewImmediateMs,
+            decoded.DecodeMs,
+            decoded.Applied,
+            PreviewBitmap.Source is not null,
+            stable,
+            stable ? "preview decode completed for the latest selection" : "preview decode did not remain synchronized with the latest selection");
+    }
+
+    public async Task<PreviewDecodeSmokeSnapshot> WaitForCurrentPreviewDecodeForSmokeAsync(string expectedFileName)
+    {
+        Tile? tile = SelectedTile();
+        if (tile is null
+            || !tile.IsRealFile
+            || !string.Equals(tile.FileName, expectedFileName, StringComparison.OrdinalIgnoreCase)
+            || _previewDecodeCompletion is null)
+        {
+            return PreviewDecodeSmokeSnapshot.NotSelected(expectedFileName);
+        }
+
+        TaskCompletionSource<PreviewDecodeResult> completion = _previewDecodeCompletion;
+        Task timeout = Task.Delay(TimeSpan.FromSeconds(5));
+        if (await Task.WhenAny(completion.Task, timeout) != completion.Task)
+            return new PreviewDecodeSmokeSnapshot(true, tile.Path, 0, _lastPreviewImmediateMs, 0, false, false, false, "preview decode timed out");
+
+        PreviewDecodeResult decoded = await completion.Task;
+        await Task.Delay(125);
+        bool stable = decoded.Applied
+            && string.Equals(SelectedTile()?.Path, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(_previewDecodedPath, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && PreviewBitmap.Source is not null;
+        return new PreviewDecodeSmokeSnapshot(
+            true,
+            tile.Path,
+            0,
             _lastPreviewImmediateMs,
             decoded.DecodeMs,
             decoded.Applied,

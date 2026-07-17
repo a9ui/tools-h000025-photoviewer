@@ -353,6 +353,13 @@ public partial class App : Application
             return;
         }
 
+        int rapidUiStateSmokeIdx = Array.IndexOf(e.Args, "--rapid-ui-state-smoke");
+        if (rapidUiStateSmokeIdx >= 0 && rapidUiStateSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureRapidUiStateSmoke(e.Args[rapidUiStateSmokeIdx + 1]);
+            return;
+        }
+
         int catalogStressSmokeIdx = Array.IndexOf(e.Args, "--catalog-stress-smoke");
         if (catalogStressSmokeIdx >= 0 && catalogStressSmokeIdx + 1 < e.Args.Length)
         {
@@ -4143,6 +4150,269 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureRapidUiStateSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-rapid-ui-state-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "rapid fixture");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        const int fixtureCount = 321;
+        const string finalName = "rapid-final-target.png";
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            for (int index = 0; index < fixtureCount - 1; index++)
+            {
+                int width = index < 24 ? 640 : 12;
+                int height = index < 24 ? 480 : 9;
+                WriteSmokePng(
+                    Path.Combine(folder, $"rapid-image-{index:000}.png"),
+                    width,
+                    height,
+                    Color.FromRgb((byte)(40 + index % 180), (byte)(70 + index % 140), (byte)(90 + index % 120)));
+            }
+            WriteSmokePng(Path.Combine(folder, finalName), 800, 600, Color.FromRgb(230, 95, 145));
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteRapidUiStateSmokeResult(resultFullPath, new RapidUiStateSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            RapidUiStateSmokeResult result;
+            var heartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
+            int heartbeatCount = 0;
+            heartbeat.Tick += (_, _) => heartbeatCount++;
+            var watch = Stopwatch.StartNew();
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                string sourceBefore = FolderFingerprint(folder);
+                string jobsBefore = FileFingerprint(jobsPath);
+                heartbeat.Start();
+
+                string[] churnNames = Enumerable.Range(0, 24).Select(index => $"rapid-image-{index:000}.png").ToArray();
+                bool selectionChurnAccepted = churnNames.All(win.SelectFileNameForSmoke);
+                bool finalSelected = win.SelectFileNameForSmoke(finalName);
+                PreviewDecodeSmokeSnapshot preview = await win.WaitForCurrentPreviewDecodeForSmokeAsync(finalName);
+
+                bool listMode = win.SetListModeForSmoke() && win.ListModeVisibleForSmoke;
+                bool compact = win.SetDisplayStyleForSmoke("compact");
+                bool portrait = win.SetAspectModeForSmoke("portrait");
+                bool gridMode = win.SetGridModeForSmoke() && win.GridModeVisibleForSmoke;
+                bool standard = win.SetDisplayStyleForSmoke("standard");
+                bool original = win.SetAspectModeForSmoke("original");
+                bool poster = win.SetDisplayStyleForSmoke("poster");
+                bool square = win.SetAspectModeForSmoke("square");
+
+                win.FlushStateForSmoke();
+                string stateBeforeResizePreview = FileFingerprint(statePath);
+                double[] rapidWidths = [260, 740, 315, 880, 420, 612];
+                bool widthsAccepted = rapidWidths.All(win.PreviewRightPanelWidthForSmoke);
+                string stateDuringResizePreview = FileFingerprint(statePath);
+                win.CommitRightPanelWidthForSmoke();
+                string stateAfterResizeCommit = FileFingerprint(statePath);
+                bool resizeCommittedOnce = string.Equals(stateBeforeResizePreview, stateDuringResizePreview, StringComparison.Ordinal)
+                    && !string.Equals(stateDuringResizePreview, stateAfterResizeCommit, StringComparison.Ordinal)
+                    && Nearly(win.RightPanelStoredWidthForSmoke, 612);
+
+                string[] favoriteNames = ["rapid-image-000.png", "rapid-image-001.png", "rapid-image-002.png", "rapid-image-003.png", "rapid-image-004.png"];
+                bool favoriteLevelsAssigned = true;
+                for (int index = 0; index < favoriteNames.Length; index++)
+                {
+                    favoriteLevelsAssigned &= win.SelectFileNameForSmoke(favoriteNames[index]);
+                    favoriteLevelsAssigned &= win.SetSelectedFavoriteLevelForSmoke(index + 1);
+                }
+                favoriteLevelsAssigned &= win.SelectFileNameForSmoke(finalName) && win.SetSelectedFavoriteLevelForSmoke(3);
+
+                win.SetFavoriteFilterLevelsForSmoke(1);
+                win.SetFavoriteFilterLevelsForSmoke(2, 4);
+                win.SetFavoriteFilterLevelsForSmoke(5);
+                win.SetFavoriteFilterLevelsForSmoke();
+                int allCount = win.FilteredCountForSmoke;
+                int unseenCount = win.UnseenCountForSmoke;
+                win.SetUnseenOnlyFilterForSmoke(true);
+                int unseenFilteredCount = win.FilteredCountForSmoke;
+                win.SetUnseenOnlyFilterForSmoke(false);
+                int afterUnseenClearCount = win.FilteredCountForSmoke;
+                win.SetShowUnseenDotsForSmoke(false);
+                bool dotsHidden = win.VisibleUnseenDotCountForSmoke == 0;
+                win.SetShowUnseenDotsForSmoke(true);
+                bool dotsShown = win.VisibleUnseenDotCountForSmoke == unseenCount && unseenCount > 0;
+                win.SetFavoriteFilterLevelsForSmoke(3);
+
+                win.SetFavoriteFilterLevelsForSmoke();
+                bool openedFirst = win.SelectFileNameForSmoke("rapid-image-000.png") && win.OpenSelectedPreviewTabForSmoke();
+                bool openedSecond = win.SelectFileNameForSmoke("rapid-image-010.png") && win.OpenSelectedPreviewTabForSmoke();
+                bool openedThird = win.SelectFileNameForSmoke("rapid-image-020.png") && win.OpenSelectedPreviewTabForSmoke();
+                bool reordered = win.DragMovePreviewTabForSmoke("rapid-image-020.png", 0);
+                bool pinned = win.TogglePreviewTabPinForSmoke("rapid-image-000.png");
+                bool closed = win.ClosePreviewTabForSmoke("rapid-image-010.png");
+                win.SetFavoriteFilterLevelsForSmoke(3);
+
+                string[] rapidQueries = ["r", "ra", "rapid", "rapid-image", "rapid-final", "rapid-final-target"];
+                var searchTasks = new List<Task<MainWindow.SearchFilterCompletion>>();
+                foreach (string query in rapidQueries)
+                    searchTasks.Add(win.SetSearchInputForSmokeAsync(query));
+                Task timeout = Task.Delay(TimeSpan.FromSeconds(8));
+                Task finished = await Task.WhenAny(searchTasks[^1], timeout);
+                MainWindow.SearchFilterCompletion finalSearch = finished == searchTasks[^1]
+                    ? await searchTasks[^1]
+                    : new MainWindow.SearchFilterCompletion(false, false, "timed out waiting for rapid UI final search");
+                MainWindow.SearchFilterCompletion[] searchResults = await Task.WhenAll(searchTasks);
+                int discardedSearches = searchResults.Take(searchResults.Length - 1).Count(static completion => completion.Discarded);
+                bool finalSearchOnly = finalSearch.Applied
+                    && string.Equals(win.SearchQueryForSmoke, "rapid-final-target", StringComparison.Ordinal)
+                    && SameNameOrder(win.FilteredFileNamesForSmoke(10), [finalName]);
+                bool openedFinal = win.SelectFileNameForSmoke(finalName) && win.OpenSelectedPreviewTabForSmoke();
+                win.FlushStateForSmoke();
+                await Task.Delay(200);
+                heartbeat.Stop();
+
+                List<string> finalTabs = win.PreviewTabNamesForSmoke;
+                string? finalActiveTab = win.ActivePreviewTabNameForSmoke;
+                ViewerState? persisted = ReadPersistedState(statePath);
+                bool finalStatePersisted = persisted is not null
+                    && string.Equals(persisted.SearchQuery, "rapid-final-target", StringComparison.Ordinal)
+                    && string.Equals(persisted.SelectedPath, Path.Combine(folder, finalName), StringComparison.OrdinalIgnoreCase)
+                    && Nearly(persisted.RightPanelWidth, 612)
+                    && string.Equals(persisted.DisplayStyle, "poster", StringComparison.Ordinal)
+                    && string.Equals(persisted.AspectMode, "square", StringComparison.Ordinal)
+                    && persisted.FavoriteFilterLevels?.SequenceEqual([3]) == true
+                    && persisted.ShowUnseenDots
+                    && persisted.PreviewTabPaths?.Select(Path.GetFileName).SequenceEqual(finalTabs, StringComparer.OrdinalIgnoreCase) == true
+                    && string.Equals(Path.GetFileName(persisted.ActivePreviewTabPath), finalActiveTab, StringComparison.OrdinalIgnoreCase)
+                    && persisted.PinnedPreviewPaths?.Select(Path.GetFileName).SequenceEqual(["rapid-image-000.png"], StringComparer.OrdinalIgnoreCase) == true;
+
+                win.Close();
+                var reload = HiddenWindow();
+                reload.Show();
+                await reload.LoadFolderAsync(folder);
+                await reload.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+                bool restored = string.Equals(reload.SearchQueryForSmoke, "rapid-final-target", StringComparison.Ordinal)
+                    && string.Equals(reload.SelectedFileNameForSmoke, finalName, StringComparison.OrdinalIgnoreCase)
+                    && Nearly(reload.RightPanelStoredWidthForSmoke, 612)
+                    && string.Equals(reload.DisplayStyleForSmoke, "poster", StringComparison.Ordinal)
+                    && string.Equals(reload.AspectModeForSmoke, "square", StringComparison.Ordinal)
+                    && reload.FavoriteFilterLevelsForSmoke.SequenceEqual([3])
+                    && reload.ShowUnseenDotsForSmoke
+                    && !reload.UnseenOnlyForSmoke
+                    && reload.PreviewTabNamesForSmoke.SequenceEqual(finalTabs, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(reload.ActivePreviewTabNameForSmoke, finalActiveTab, StringComparison.OrdinalIgnoreCase)
+                    && reload.IsPreviewTabPinnedForSmoke("rapid-image-000.png");
+                bool passive = win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0
+                    && reload.EnhancementJobsReadForSmoke == 0 && reload.EnhancedCandidateCountForSmoke == 0
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(Path.GetFullPath(smokeRoot), StringComparison.OrdinalIgnoreCase));
+                reload.Close();
+
+                bool tabChurn = openedFirst && openedSecond && openedThird && reordered && pinned && closed && openedFinal
+                    && finalTabs.SequenceEqual(["rapid-image-020.png", "rapid-image-000.png", finalName], StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(finalActiveTab, finalName, StringComparison.OrdinalIgnoreCase);
+                bool modeAndLayoutChurn = listMode && compact && portrait && gridMode && standard && original && poster && square;
+                bool filterChurn = favoriteLevelsAssigned
+                    && allCount == fixtureCount
+                    && unseenFilteredCount == unseenCount
+                    && afterUnseenClearCount == fixtureCount
+                    && dotsHidden && dotsShown;
+                bool heartbeatAdvanced = heartbeatCount >= 5;
+                bool ok = win.CatalogCountForSmoke == fixtureCount
+                    && selectionChurnAccepted && finalSelected && preview.StableLatestSelection
+                    && modeAndLayoutChurn && widthsAccepted && resizeCommittedOnce
+                    && filterChurn && tabChurn
+                    && discardedSearches == rapidQueries.Length - 1 && finalSearchOnly
+                    && finalStatePersisted && restored && heartbeatAdvanced
+                    && passive && sourceUntouched && isolated;
+                watch.Stop();
+                result = new RapidUiStateSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "rapid UI/state churn applied only final search, selection, layout, panel, filter, and tab state while keeping heartbeat and enhancement isolation"
+                        : "rapid UI/state churn did not restore the final input state",
+                    SmokeRoot = smokeRoot,
+                    FixtureCount = fixtureCount,
+                    SelectionChurnAccepted = selectionChurnAccepted,
+                    Preview = preview,
+                    ModeAndLayoutChurn = modeAndLayoutChurn,
+                    ResizePreviewDidNotPersist = string.Equals(stateBeforeResizePreview, stateDuringResizePreview, StringComparison.Ordinal),
+                    ResizeCommitted = resizeCommittedOnce,
+                    AllFavoriteSemanticsCount = allCount,
+                    FavoriteLevelsAssigned = favoriteLevelsAssigned,
+                    UnseenCount = unseenCount,
+                    UnseenFilteredCount = unseenFilteredCount,
+                    DotsHidden = dotsHidden,
+                    DotsShown = dotsShown,
+                    TabChurn = tabChurn,
+                    FinalTabs = finalTabs,
+                    FinalActiveTab = finalActiveTab,
+                    DiscardedSearches = discardedSearches,
+                    FinalSearchApplied = finalSearchOnly,
+                    FinalStatePersisted = finalStatePersisted,
+                    Restored = restored,
+                    ReloadQuery = reload.SearchQueryForSmoke,
+                    ReloadSelected = reload.SelectedFileNameForSmoke,
+                    ReloadRightPanelWidth = reload.RightPanelStoredWidthForSmoke,
+                    ReloadDisplayStyle = reload.DisplayStyleForSmoke,
+                    ReloadAspectMode = reload.AspectModeForSmoke,
+                    ReloadFavoriteLevels = reload.FavoriteFilterLevelsForSmoke,
+                    ReloadShowUnseenDots = reload.ShowUnseenDotsForSmoke,
+                    ReloadUnseenOnly = reload.UnseenOnlyForSmoke,
+                    ReloadTabs = reload.PreviewTabNamesForSmoke,
+                    ReloadActiveTab = reload.ActivePreviewTabNameForSmoke,
+                    ReloadPinned = reload.IsPreviewTabPinnedForSmoke("rapid-image-000.png"),
+                    HeartbeatCount = heartbeatCount,
+                    EnhancementPassive = passive,
+                    SourceUntouched = sourceUntouched,
+                    Isolated = isolated,
+                    ElapsedMs = watch.ElapsedMilliseconds,
+                };
+            }
+            catch (Exception ex)
+            {
+                heartbeat.Stop();
+                result = new RapidUiStateSmokeResult { Message = ex.ToString(), SmokeRoot = smokeRoot, HeartbeatCount = heartbeatCount };
+            }
+            finally
+            {
+                if (win.IsVisible) win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteRapidUiStateSmokeResult(resultFullPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureBulkFavoriteSmoke(string resultPath)
     {
         string resultFullPath = Path.GetFullPath(resultPath);
@@ -7858,6 +8128,17 @@ public partial class App : Application
         return $"{bytes.LongLength}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))}";
     }
 
+    private static string FolderFingerprint(string path)
+    {
+        if (!Directory.Exists(path))
+            return "missing";
+
+        string manifest = string.Join("\n", Directory.EnumerateFiles(path, "*", SearchOption.AllDirectories)
+            .OrderBy(static candidate => candidate, StringComparer.OrdinalIgnoreCase)
+            .Select(candidate => $"{Path.GetRelativePath(path, candidate)}:{FileFingerprint(candidate)}"));
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(manifest)));
+    }
+
     private static void WriteLegacyDateFilterState(string path, string preset, string? from, string? to)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8581,6 +8862,12 @@ public partial class App : Application
     }
 
     private static void WriteExplorerRevealSmokeResult(string path, ExplorerRevealSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static void WriteRapidUiStateSmokeResult(string path, RapidUiStateSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
@@ -9715,6 +10002,48 @@ public partial class App : Application
         public string? SelectedFileName { get; init; }
         public int SelectedCount { get; init; }
         public long LastAppliedGeneration { get; init; }
+    }
+
+    private sealed class RapidUiStateSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public int FixtureCount { get; init; }
+        public bool SelectionChurnAccepted { get; init; }
+        public PreviewDecodeSmokeSnapshot? Preview { get; init; }
+        public bool ModeAndLayoutChurn { get; init; }
+        public bool ResizePreviewDidNotPersist { get; init; }
+        public bool ResizeCommitted { get; init; }
+        public int AllFavoriteSemanticsCount { get; init; }
+        public bool FavoriteLevelsAssigned { get; init; }
+        public int UnseenCount { get; init; }
+        public int UnseenFilteredCount { get; init; }
+        public bool DotsHidden { get; init; }
+        public bool DotsShown { get; init; }
+        public bool TabChurn { get; init; }
+        public List<string> FinalTabs { get; init; } = [];
+        public string? FinalActiveTab { get; init; }
+        public int DiscardedSearches { get; init; }
+        public bool FinalSearchApplied { get; init; }
+        public bool FinalStatePersisted { get; init; }
+        public bool Restored { get; init; }
+        public string? ReloadQuery { get; init; }
+        public string? ReloadSelected { get; init; }
+        public double ReloadRightPanelWidth { get; init; }
+        public string? ReloadDisplayStyle { get; init; }
+        public string? ReloadAspectMode { get; init; }
+        public List<int> ReloadFavoriteLevels { get; init; } = [];
+        public bool ReloadShowUnseenDots { get; init; }
+        public bool ReloadUnseenOnly { get; init; }
+        public List<string> ReloadTabs { get; init; } = [];
+        public string? ReloadActiveTab { get; init; }
+        public bool ReloadPinned { get; init; }
+        public int HeartbeatCount { get; init; }
+        public bool EnhancementPassive { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool Isolated { get; init; }
+        public long ElapsedMs { get; init; }
     }
 
     private sealed class BulkFavoriteSmokeResult
