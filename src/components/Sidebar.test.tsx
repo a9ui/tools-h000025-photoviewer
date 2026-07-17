@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen } from '@testing-library/react';
+import { render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Sidebar from './Sidebar';
@@ -11,8 +11,9 @@ vi.mock('../store/ImageContext', () => ({
 
 const toggleFavoriteFilterLevel = vi.fn();
 const clearFavoriteFilterLevels = vi.fn();
+const setView = vi.fn();
 
-function createStore() {
+function createStore(options: { dirPath?: string; hiddenFolders?: string[] } = {}) {
   return {
     view: {
       viewMode: 'grid',
@@ -30,12 +31,12 @@ function createStore() {
       enhanceQueueOpen: true,
       dateFrom: '',
       dateTo: '',
-      hiddenFolders: [],
+      hiddenFolders: options.hiddenFolders ?? [],
       showUnseenMarkers: false,
     },
-    setView: vi.fn(),
+    setView,
     setSearchQuery: vi.fn(),
-    dirPath: '',
+    dirPath: options.dirPath ?? '',
     setDirPath: vi.fn(),
     startScan: vi.fn(),
     totalIndexed: 0,
@@ -60,6 +61,7 @@ function createStore() {
 
 describe('Sidebar favorite level controls', () => {
   beforeEach(() => {
+    setView.mockReset();
     toggleFavoriteFilterLevel.mockReset();
     clearFavoriteFilterLevels.mockReset();
     vi.mocked(useImageStore).mockReturnValue(createStore());
@@ -108,5 +110,62 @@ describe('Sidebar favorite level controls', () => {
     await user.click(foldersToggle);
     expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
     expect(emptyFoldersMessage).toBeVisible();
+  });
+});
+
+describe('Sidebar folder controls', () => {
+  beforeEach(() => {
+    setView.mockReset();
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      json: () => Promise.resolve({
+        folders: [
+          { key: 'alpha', label: 'Alpha', count: 12 },
+          { key: 'beta', label: 'Beta', count: 3 },
+        ],
+      }),
+    })));
+    vi.mocked(useImageStore).mockReturnValue(createStore({ dirPath: 'C:/images' }));
+  });
+
+  it('exposes folder selection and visibility as separate keyboard controls', async () => {
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const selectAlpha = await screen.findByRole('button', { name: 'Select folder Alpha, 12 images' });
+    const visibilityAlpha = screen.getByRole('button', { name: 'Hide folder Alpha' });
+
+    expect(selectAlpha).toHaveAttribute('aria-pressed', 'false');
+    expect(visibilityAlpha).toHaveAttribute('aria-pressed', 'true');
+    expect(within(selectAlpha).queryByRole('checkbox')).not.toBeInTheDocument();
+
+    selectAlpha.focus();
+    await user.keyboard('{Enter}');
+    expect(selectAlpha).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByRole('checkbox', { name: 'Select Alpha' })).toBeChecked();
+
+    await user.click(visibilityAlpha);
+    expect(setView).toHaveBeenCalledWith({ hiddenFolders: ['alpha'] });
+  });
+
+  it('keeps folder sorting and collapse controls semantically stateful by keyboard', async () => {
+    const user = userEvent.setup();
+    render(<Sidebar />);
+
+    const foldersToggle = screen.getByRole('button', { name: 'Folders' });
+    const selectAlpha = await screen.findByRole('button', { name: 'Select folder Alpha, 12 images' });
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(selectAlpha).toBeVisible();
+
+    foldersToggle.focus();
+    await user.keyboard(' ');
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'false');
+    expect(selectAlpha).not.toBeVisible();
+
+    await user.keyboard('{Enter}');
+    expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
+    expect(selectAlpha).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Sort folders A to Z' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(screen.getByRole('button', { name: 'Sort folders by image count' }));
+    expect(setView).toHaveBeenCalledWith({ folderSortBy: 'count-desc' });
   });
 });

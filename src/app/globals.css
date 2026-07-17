@@ -589,6 +589,11 @@ a { color: inherit; text-decoration: none; }
 .sidebar-section-toggle[aria-expanded="false"] {
   margin-bottom: 0;
 }
+.sidebar-section-toggle:focus-visible,
+.sidebar-folder-primary:focus-visible,
+.sidebar-folder-visibility:focus-visible {
+  outline-offset: 2px;
+}
 .sidebar-section-chevron {
   margin-left: auto;
   transition: transform var(--transition-fast);
@@ -729,7 +734,7 @@ a { color: inherit; text-decoration: none; }
 }
 .sidebar-folder-item {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto auto;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
   align-items: center;
   gap: 0.55rem;
   padding: 0.45rem 0.55rem;
@@ -759,6 +764,19 @@ a { color: inherit; text-decoration: none; }
   height: 15px;
 }
 .sidebar-folder-select {
+  cursor: pointer;
+}
+.sidebar-folder-primary {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.4rem;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
   cursor: pointer;
 }
 .sidebar-folder-label {

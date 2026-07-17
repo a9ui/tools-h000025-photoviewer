@@ -115,7 +115,7 @@ export default function Sidebar() {
     setView({ hiddenFolders: next });
   };
 
-  const selectFolder = (folderKey: string, event: React.MouseEvent) => {
+  const selectFolder = (folderKey: string, event: React.MouseEvent<HTMLElement>) => {
     const additive = event.ctrlKey || event.metaKey;
     const range = event.shiftKey && lastSelectedFolderKey;
     const sortedKeys = sortedFolderBuckets.map((folder) => folder.key);
@@ -346,20 +346,29 @@ export default function Sidebar() {
               <>
             <div className="sidebar-pills" style={{ marginBottom: '0.5rem' }}>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'name-asc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'name-asc' })}
+                aria-pressed={view.folderSortBy === 'name-asc'}
+                aria-label="Sort folders A to Z"
               >
                 A-Z
               </button>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'name-desc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'name-desc' })}
+                aria-pressed={view.folderSortBy === 'name-desc'}
+                aria-label="Sort folders Z to A"
               >
                 Z-A
               </button>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'count-desc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'count-desc' })}
+                aria-pressed={view.folderSortBy === 'count-desc'}
+                aria-label="Sort folders by image count"
               >
                 Count
               </button>
@@ -392,7 +401,8 @@ export default function Sidebar() {
                     key={folder.key}
                     className={`sidebar-folder-item ${isVisible ? 'is-active' : ''} ${isSelected ? 'is-selected' : ''}`}
                     title={`${folder.label} (${folder.count})`}
-                    onClick={(event) => selectFolder(folder.key, event)}
+                    role="group"
+                    aria-label={`Folder ${folder.label}`}
                   >
                     <input
                       type="checkbox"
@@ -400,13 +410,20 @@ export default function Sidebar() {
                       checked={isSelected}
                       onChange={() => {}}
                       onClick={(event) => {
-                        event.stopPropagation();
                         selectFolder(folder.key, event);
                       }}
                       aria-label={`Select ${folder.label}`}
                     />
-                    <span className="sidebar-folder-label">{folder.label}</span>
-                    <span className="sidebar-folder-count">{folder.count.toLocaleString()}</span>
+                    <button
+                      type="button"
+                      className="sidebar-folder-primary"
+                      onClick={(event) => selectFolder(folder.key, event)}
+                      aria-pressed={isSelected}
+                      aria-label={`Select folder ${folder.label}, ${folder.count.toLocaleString()} images`}
+                    >
+                      <span className="sidebar-folder-label">{folder.label}</span>
+                      <span className="sidebar-folder-count">{folder.count.toLocaleString()}</span>
+                    </button>
                     <button
                       type="button"
                       className={`sidebar-folder-visibility ${isVisible ? 'is-visible' : ''}`}
@@ -415,6 +432,8 @@ export default function Sidebar() {
                         toggleFolderVisibility(folder.key);
                       }}
                       title={isVisible ? 'Hide folder' : 'Show folder'}
+                      aria-pressed={isVisible}
+                      aria-label={`${isVisible ? 'Hide' : 'Show'} folder ${folder.label}`}
                     >
                       {isVisible ? 'Shown' : 'Hidden'}
                     </button>
