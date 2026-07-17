@@ -3,8 +3,9 @@
 Native WPF (.NET 8) PhotoViewer surface. It uses native controls only: no server,
 Node, Chrome, localhost, webview, or WebView2.
 
-This project started as the Claude WPF UI shell and now includes the first real
-browse and practical viewer slice:
+This project started as a WPF UI shell and is now the native PhotoViewer
+implementation. The normative current behavior is documented in
+`../../docs/wpf-product-spec.md`; this README focuses on launch and verification:
 
 - landing folder-set picker with multi-folder selection and pasted folder paths
 - recursive image file scan
@@ -13,11 +14,19 @@ browse and practical viewer slice:
 - right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata and explicit current-selection PNG Info, Prompt, and Negative Copy actions when present
 - modal preview using the selected real image
 - browser-aligned modal favorite `+1` / `-1` controls with the current `0..5` level visible
-- search across filename, path, prompt, group, size, and modified date
-- favorites-only and unseen-only filters
+- debounced background search across filename and indexed PNG prompt, with comma-AND grammar
+- independent exact Favorite Lv1-Lv5 filters, All/Unrated, bulk Favorite, and unseen-only filters
+- manual Created/Birth From/To date filter; no Quick Search or Today/7d/30d/year presets
+- persisted collapsible Folders section, Ctrl/Shift bucket selection, and Show/Hide selected/all/invert controls
+- full catalog with bounded/recycling Grid and List realization (no 1,200-image product cap)
+- anchored 40..600 gallery zoom that leaves sidebar/text/List dimensions unchanged
+- guarded Windows Recycle Bin-only source Delete with confirmation and adjacent-image continuation
+- resizable/persisted right preview panel and multi-selection actions
+- preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, and cancellable hover decode
+- modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata, and Original/Enhanced display
 - refresh active folder
 - open the selected real image with the OS default app
-- lightweight WPF state for last folder, search query, selected image, and card size
+- versioned, normalized, unknown-field-preserving WPF state written through a bounded process lock and atomic replace
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
@@ -27,9 +36,11 @@ browse and practical viewer slice:
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
 - `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
-- `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
+- `--favorite-filter-smoke <path>` independent exact Favorite levels and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/pin/hover/activate/close/restore/reload smoke
+- `--preview-tab-hover-smoke <path>` cancellable/stale-safe/corrupt-safe preview tab hover decode smoke
+- `--preview-tab-reorder-smoke <path>` drag/keyboard reorder, middle-close, focus/Automation, and reload-order smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--png-metadata-smoke <path>` lazy active-preview and read-only modal Prompt / Negative / Settings tab plus PNG `parameters` metadata smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
@@ -38,13 +49,20 @@ browse and practical viewer slice:
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
-- `--folder-bucket-smoke <path>` folder bucket show/hide smoke
+- `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
 - `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
 - `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
-- `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
+- `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
+- `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
+- `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
+- `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
+- `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
+- `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
+- `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
+- `--bulk-recycle-smoke <path>` temp-only cancel/partial-failure/neighbor/empty Recycle workflow smoke
 
 It preserves the enhancement guardrail: browsing, preview, and modal actions do
 not start enhancement jobs or background enhancement workers.
@@ -284,6 +302,15 @@ evidence, and exits. It can be run through either launch path:
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --startup-smoke "$env:TEMP\photoviewer-wpf-startup-dotnet-run.json" --startup-mode dotnet-run
 .\local-native\PhotoViewer.Wpf\bin\Release\net8.0-windows\PhotoViewer.Wpf.exe --startup-smoke "$env:TEMP\photoviewer-wpf-startup-release-exe.json" --startup-mode release-exe
 ```
+
+## Historical milestone notes (non-normative)
+
+The remaining `M*`, issue-number, old `Current Limits`, and old `Design Evidence`
+sections preserve how the WPF surface evolved. Their claims are point-in-time
+evidence and may describe controls or gaps that were later removed or completed.
+They must not override `../../docs/wpf-product-spec.md` or its live completion
+ledger. In particular, the M21 Today/7d/30d/year UI is retired; only manual
+Created/Birth From/To is current.
 
 ## WPF M2 First Performance Slice
 
@@ -726,7 +753,7 @@ metadata and copy state preserved.
 | `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
 | `Converters.cs` | simple WPF value converters |
 
-## Current Limits
+## Historical limits at the time of those milestones (non-normative)
 
 - Folder scan is bounded to the first 1,200 images sorted by modified time.
 - The grid still uses the shell `WrapPanel`, but initial card realization is
@@ -773,9 +800,12 @@ metadata and copy state preserved.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
 
-## Design Evidence
+## Historical design evidence (non-normative)
 
-Design source of truth:
+These files explain the early shell only and are not the current source of truth:
 
 - `../ui-mockup/photoviewer-ui-mockup.html`
 - rendered WPF previews in `../ui-mockup/wpf-*.png`
+
+Current visual/product truth is the live Browser contract plus the real WPF
+`--shot` output described in `../../docs/wpf-product-spec.md`.

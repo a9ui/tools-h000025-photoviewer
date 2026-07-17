@@ -45,6 +45,20 @@ pnpm build
 
 ## Docs
 
+- `docs/ai-implementation-brief.md`: exact read order and non-negotiable build/verification handoff for another AI or team.
+- `docs/browser-feature-contract.md`: normative, implementation-ready Browser product specification.
+- `docs/wpf-product-spec.md`: normative WPF product/state/safety/acceptance specification.
+- `docs/browser-to-wpf-parity-plan.md`: initial gap history, live completion ledger, and remaining slices.
+- `docs/product-review-20260718.md`: current cross-surface review, risk closure, quality assessment, and priorities.
 - `docs/requirements.md`: what this H25 project must preserve and improve.
 - `docs/spec.md`: how measurement and optimization work should proceed.
 - `docs/legacy/`: copied reference material from the previous workspace.
+
+WPF focused verification starts with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-ui-regression-guard.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p0.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1a.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1b.ps1
+```

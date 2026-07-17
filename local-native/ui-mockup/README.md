@@ -1,10 +1,18 @@
 # PhotoViewer WPF UI Mockup
 
-This folder contains the portable design reference and rendered WPF previews for
-the `surface:wpf` native lane.
+This folder contains the original portable shell mockup and rendered WPF
+previews for the `surface:wpf` native lane. It is historical visual material,
+not a product-behavior specification.
 
-- `photoviewer-ui-mockup.html`: self-contained visual reference, no server or
-  external assets.
+> NON-NORMATIVE: the HTML/screenshots still show retired shell ideas such as
+> Quick Search, Today/date presets, threshold favorite chips, and old sidebar
+> content. Do not copy those controls back into Browser or WPF. Current behavior
+> is defined by `../../docs/browser-feature-contract.md`, then
+> `../../docs/wpf-product-spec.md`. New screenshots must come from the real WPF
+> `--shot` path and be labeled with the integrated commit.
+
+- `photoviewer-ui-mockup.html`: self-contained historical shell reference, no
+  server or external assets.
 - `wpf-preview.png`: default grid preview.
 - `wpf-list.png`: list preview.
 - `wpf-landing.png`: landing/folder-selection preview.
