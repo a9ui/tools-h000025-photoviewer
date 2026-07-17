@@ -16,23 +16,34 @@ if /I "%PHOTOVIEWER_WPF_DOTNET_RUN%"=="1" (
     echo [PhotoViewer WPF] Launching via dotnet run for development...
     echo.
     dotnet run --project "%PROJECT%" -- %*
-    set "EXIT_CODE=%ERRORLEVEL%"
-    goto exit_with_code
+    goto capture_exit_code
 )
 
 if /I "%PHOTOVIEWER_WPF_REBUILD%"=="1" (
     call :build_target
-    if not "%ERRORLEVEL%"=="0" exit /b %ERRORLEVEL%
+    if errorlevel 1 exit /b 1
 )
 
 if not exist "%TARGET%" (
     call :build_target
-    if not "%ERRORLEVEL%"=="0" exit /b %ERRORLEVEL%
+    if errorlevel 1 exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-wpf-launch-target.ps1" -ProjectPath "%PROJECT%" -TargetPath "%TARGET%"
+set "CHECK_CODE=%ERRORLEVEL%"
+if "%CHECK_CODE%"=="10" (
+    call :build_target
+    if errorlevel 1 exit /b 1
+) else if not "%CHECK_CODE%"=="0" (
+    echo [PhotoViewer WPF] Could not verify whether the Release executable is current.
+    exit /b %CHECK_CODE%
 )
 
 echo [PhotoViewer WPF] Launching direct %CONFIG% executable...
 echo.
 "%TARGET%" %*
+
+:capture_exit_code
 set "EXIT_CODE=%ERRORLEVEL%"
 
 :exit_with_code
