@@ -159,6 +159,11 @@ public partial class MainWindow : Window
     private string? _currentPreviewMetadataPath;
     private string _lastMetadataCopyText = "";
     private Action<string> _diagnosticsClipboardWriter = Clipboard.SetText;
+    private Func<ProcessStartInfo, bool> _explorerLauncher = static startInfo =>
+    {
+        Process.Start(startInfo);
+        return true;
+    };
     private string _lastDiagnosticsCopyText = "";
     private int _previewUpdateCount;
     private long _previewMs;
@@ -6219,6 +6224,37 @@ public partial class MainWindow : Window
             return;
 
         Process.Start(new ProcessStartInfo(tile.Path) { UseShellExecute = true });
+    }
+
+    private void ShowSelectedInFolder_Click(object sender, RoutedEventArgs e)
+        => ShowSelectedInFolder();
+
+    private bool ShowSelectedInFolder()
+    {
+        string reason = "select a source image";
+        if (SelectedTile() is not Tile tile || !TryValidateFileDropTile(tile, out string canonical, out reason))
+        {
+            SetStatusToast($"Show in folder unavailable: {reason}.");
+            return false;
+        }
+        try
+        {
+            var startInfo = new ProcessStartInfo("explorer.exe") { UseShellExecute = true };
+            startInfo.ArgumentList.Add($"/select,{canonical}");
+            if (!_explorerLauncher(startInfo))
+            {
+                SetStatusToast("Show in folder could not start Explorer. Try again.");
+                return false;
+            }
+            SetStatusToast("Opened Explorer with the selected source.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Trace.TraceWarning($"Show in folder failed: {ex.GetType().Name}");
+            SetStatusToast("Show in folder could not start Explorer. Try again.");
+            return false;
+        }
     }
 
     private void DeleteSelected_Click(object sender, RoutedEventArgs e) => RequestDeleteSelected();

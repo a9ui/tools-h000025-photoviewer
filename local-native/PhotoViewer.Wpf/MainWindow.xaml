@@ -413,7 +413,7 @@
 
               <!-- actions -->
               <Grid x:Name="SingleSelectionActions" Margin="0,0,0,14">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
                   <StackPanel Orientation="Horizontal">
                     <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (U)" Click="FavoriteDecrease_Click"/>
@@ -432,10 +432,11 @@
                     <TextBlock Text="Open"/>
                   </StackPanel>
                 </Button>
-                <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="52" Margin="0,0,8,0" ToolTip="Open selected preview tab" Click="OpenSelectedPreviewTab_Click">
+                <Button Grid.Column="2" Style="{StaticResource GhostButton}" Width="62" Margin="0,0,8,0" ToolTip="Show selected source in folder" AutomationProperties.Name="Show selected source in folder" Click="ShowSelectedInFolder_Click"><TextBlock Text="Folder"/></Button>
+                <Button Grid.Column="3" Style="{StaticResource GhostButton}" Width="52" Margin="0,0,8,0" ToolTip="Open selected preview tab" Click="OpenSelectedPreviewTab_Click">
                   <TextBlock Text="Tab"/>
                 </Button>
-                <Button Grid.Column="3" Style="{StaticResource DangerButton}" Width="40" ToolTip="Move selected source to Recycle Bin (Delete)" Click="DeleteSelected_Click">
+                <Button Grid.Column="4" Style="{StaticResource DangerButton}" Width="40" ToolTip="Move selected source to Recycle Bin (Delete)" Click="DeleteSelected_Click">
                   <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
                 </Button>
               </Grid>
@@ -760,6 +761,7 @@
         <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" AutomationProperties.Name="Open selected image externally" Width="38" Height="38" Click="OpenSelectedExternally_Click">
           <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="15" Height="15"/>
         </Button>
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Show selected source in folder" AutomationProperties.Name="Show selected source in folder" Width="46" Height="38" Click="ShowSelectedInFolder_Click"><TextBlock Text="Folder" Foreground="{StaticResource TextSecondary}" FontSize="10"/></Button>
         <Button x:Name="ModalEnhancedToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="No enhanced output available" AutomationProperties.Name="Toggle enhanced image output" Width="42" Height="38" Click="ToggleModalEnhanced_Click" IsEnabled="False">
           <TextBlock x:Name="ModalEnhancedToggleLabel" Text="OR" Foreground="{StaticResource TextSecondary}" FontSize="10.5" FontWeight="SemiBold"/>
         </Button>
