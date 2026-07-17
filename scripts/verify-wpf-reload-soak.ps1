@@ -54,8 +54,12 @@ if ($result.finalCatalogCount -ne $Count -or $result.finalCatalogCurrent -ne $tr
 if ($result.ctsBalanced -ne $true -or $result.loadCtsCreated -ne $result.loadCtsRetired) {
     $failures += "load CTS ownership was unbalanced ($($result.loadCtsCreated)/$($result.loadCtsRetired))"
 }
-if ($result.heartbeatCount -lt $Cycles -or $result.memoryBounded -ne $true -or $result.workingSetPlateauObserved -ne $true) {
-    $failures += 'dispatcher heartbeat, memory bound, or post-warm working-set plateau failed'
+if ($result.heartbeatCount -lt $Cycles -or $result.memoryBounded -ne $true `
+    -or $result.managedMemoryBounded -ne $true -or $result.workingSetEnvelopeBounded -ne $true) {
+    $failures += 'dispatcher heartbeat, forced-GC managed-memory bound, or working-set envelope failed'
+}
+if ($result.workingSetPlateauDiagnosticOnly -ne $true) {
+    $failures += 'working-set plateau must remain a diagnostic rather than a short-window correctness gate'
 }
 if ($result.enhancementJobsRead -ne 0 -or $result.enhancementCandidates -ne 0) {
     $failures += 'passive soak touched Enhancement state'

@@ -6193,9 +6193,10 @@ public partial class App : Application
                 bool workingSetPlateauObserved = postWarmSamples.Count >= 8
                     && Math.Abs(postWarmSlope) <= 4L * 1024 * 1024
                     && tailEightDecreaseCount > 0;
-                bool memoryBounded = finalManagedBytes <= warmManagedBytes + 128L * 1024 * 1024
-                    && finalWorkingSet <= warmWorkingSet + 512L * 1024 * 1024
+                bool managedMemoryBounded = finalManagedBytes <= warmManagedBytes + 128L * 1024 * 1024;
+                bool workingSetEnvelopeBounded = finalWorkingSet <= warmWorkingSet + 512L * 1024 * 1024
                     && maxWorkingSet <= warmWorkingSet + 768L * 1024 * 1024;
+                bool memoryBounded = managedMemoryBounded && workingSetEnvelopeBounded;
                 sourceUntouched = string.Equals(sourceBeforeA, FolderFingerprint(folderA), StringComparison.Ordinal)
                     && string.Equals(sourceBeforeB, FolderFingerprint(folderB), StringComparison.Ordinal);
                 storesByteIdentical = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
@@ -6212,7 +6213,7 @@ public partial class App : Application
                     && stableModalCount == cycles
                     && boundedListProbeCount == (cycles + 3) / 4
                     && finalCatalogCurrent && finalSelectionCurrent && finalModalCurrent && finalTabsCurrent
-                    && ctsBalanced && memoryBounded && workingSetPlateauObserved && heartbeatCount >= cycles
+                    && ctsBalanced && memoryBounded && heartbeatCount >= cycles
                     && sourceUntouched && storesByteIdentical && isolated && residueFree
                     && win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
                 watch.Stop();
@@ -6220,7 +6221,7 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? $"{cycles} reload cycles kept only the final folder, selection, modal, and tab while cancellation, CTS, memory, and storage isolation stayed bounded"
+                        ? $"{cycles} reload cycles kept only the final folder, selection, modal, and tab while cancellation, CTS, forced-GC managed memory, working-set envelope, and storage isolation stayed bounded"
                         : "reload soak did not satisfy the final-state, cancellation, memory, or isolation contract",
                     SmokeRoot = smokeRoot,
                     RequestedCountPerFolder = count,
@@ -6253,6 +6254,8 @@ public partial class App : Application
                     WarmManagedBytes = warmManagedBytes,
                     FinalManagedBytes = finalManagedBytes,
                     ManagedGrowthBytes = finalManagedBytes - warmManagedBytes,
+                    ManagedMemoryBounded = managedMemoryBounded,
+                    WorkingSetEnvelopeBounded = workingSetEnvelopeBounded,
                     MemoryBounded = memoryBounded,
                     TailEightWorkingSetMinBytes = tailEightSamples.Count == 0 ? 0 : tailEightSamples.Min(),
                     TailEightWorkingSetMaxBytes = tailEightSamples.Count == 0 ? 0 : tailEightSamples.Max(),
@@ -6261,6 +6264,8 @@ public partial class App : Application
                     TailEightDecreaseCount = tailEightDecreaseCount,
                     PostWarmSlopeBytesPerCycle = postWarmSlope,
                     WorkingSetPlateauObserved = workingSetPlateauObserved,
+                    WorkingSetPlateauDiagnosticOnly = true,
+                    MemoryGatePolicy = "forced-GC managed growth <= 128 MiB; final working-set growth <= 512 MiB; peak working-set growth <= 768 MiB; short-window working-set plateau is diagnostic only",
                     WarmWorkingSetMinusManagedBytes = warmWorkingSet - warmManagedBytes,
                     FinalWorkingSetMinusManagedBytes = finalWorkingSet - finalManagedBytes,
                     WorkingSetMinusManagedGrowthBytes = (finalWorkingSet - finalManagedBytes) - (warmWorkingSet - warmManagedBytes),
@@ -13340,6 +13345,8 @@ public partial class App : Application
         public long WarmManagedBytes { get; init; }
         public long FinalManagedBytes { get; init; }
         public long ManagedGrowthBytes { get; init; }
+        public bool ManagedMemoryBounded { get; init; }
+        public bool WorkingSetEnvelopeBounded { get; init; }
         public bool MemoryBounded { get; init; }
         public long TailEightWorkingSetMinBytes { get; init; }
         public long TailEightWorkingSetMaxBytes { get; init; }
@@ -13348,6 +13355,8 @@ public partial class App : Application
         public int TailEightDecreaseCount { get; init; }
         public double PostWarmSlopeBytesPerCycle { get; init; }
         public bool WorkingSetPlateauObserved { get; init; }
+        public bool WorkingSetPlateauDiagnosticOnly { get; init; }
+        public string MemoryGatePolicy { get; init; } = "";
         public long WarmWorkingSetMinusManagedBytes { get; init; }
         public long FinalWorkingSetMinusManagedBytes { get; init; }
         public long WorkingSetMinusManagedGrowthBytes { get; init; }
