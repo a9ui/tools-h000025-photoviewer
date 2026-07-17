@@ -32,7 +32,10 @@ export default function SearchBar() {
   const [selectedIdx, setSelectedIdx] = useState(-1);
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
+  const [tagArrangementStatus, setTagArrangementStatus] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
+  const chipRefs = useRef(new Map<number, HTMLSpanElement>());
+  const focusAfterTagChangeRef = useRef<{ index?: number; input?: boolean } | null>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastSentQueryRef = useRef(searchQuery);
@@ -50,6 +53,14 @@ export default function SearchBar() {
     setSelectedIdx(-1);
     lastSentQueryRef.current = searchQuery;
   }, [searchQuery]);
+
+  useEffect(() => {
+    const pending = focusAfterTagChangeRef.current;
+    if (!pending) return;
+    focusAfterTagChangeRef.current = null;
+    if (typeof pending.index === 'number') chipRefs.current.get(pending.index)?.focus();
+    else if (pending.input) inputRef.current?.focus();
+  }, [committedTags]);
 
   useEffect(() => {
     let isCurrent = true;
@@ -128,8 +139,9 @@ export default function SearchBar() {
     inputRef.current?.focus();
   }, []);
 
-  const removeTag = useCallback((tag: string) => {
-    setCommittedTags((prev) => prev.filter((item) => item !== tag));
+  const removeTagAt = useCallback((index: number, tag: string) => {
+    setCommittedTags((prev) => prev.filter((_, itemIndex) => itemIndex !== index));
+    setTagArrangementStatus(`Removed tag ${tag}.`);
   }, []);
 
   const reorderTag = useCallback((from: number, to: number) => {
@@ -142,6 +154,34 @@ export default function SearchBar() {
       return next;
     });
   }, []);
+
+  const handleChipKeyDown = (event: React.KeyboardEvent<HTMLSpanElement>, tag: string, index: number) => {
+    if (event.target !== event.currentTarget) return;
+
+    if (event.altKey && event.shiftKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault();
+      const delta = event.key === 'ArrowLeft' ? -1 : 1;
+      const nextIndex = Math.max(0, Math.min(committedTags.length - 1, index + delta));
+      if (nextIndex === index) {
+        setTagArrangementStatus(`Tag ${tag} is already ${index === 0 ? 'first' : 'last'}.`);
+        return;
+      }
+
+      focusAfterTagChangeRef.current = { index: nextIndex };
+      reorderTag(index, nextIndex);
+      setTagArrangementStatus(`Moved tag ${tag} to position ${nextIndex + 1} of ${committedTags.length}.`);
+      return;
+    }
+
+    if (event.key === 'Delete' || event.key === 'Backspace') {
+      event.preventDefault();
+      const remainingCount = committedTags.length - 1;
+      focusAfterTagChangeRef.current = remainingCount > 0
+        ? { index: Math.min(index, remainingCount - 1) }
+        : { input: true };
+      removeTagAt(index, tag);
+    }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (suggestions.length > 0) {
@@ -217,46 +257,65 @@ export default function SearchBar() {
         </svg>
 
         <div className="search-chip-area">
-          {committedTags.map((tag, index) => (
-            <span
-              key={`${tag}-${index}`}
-              className={`search-chip ${chipToneClass(tag)} ${draggingIdx !== null && draggingIdx === index ? 'is-dragging' : ''} ${dragOverIdx !== null && dragOverIdx === index ? 'is-drag-over' : ''}`}
-              draggable
-              onDragStart={(e) => {
-                setDraggingIdx(index);
-                setDragOverIdx(index);
-                e.dataTransfer.effectAllowed = 'move';
-                e.dataTransfer.setData('text/plain', String(index));
-              }}
-              onDragOver={(e) => {
-                e.preventDefault();
-                e.dataTransfer.dropEffect = 'move';
-                setDragOverIdx(index);
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                const from = parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
-                reorderTag(from, index);
-                setDraggingIdx(null);
-                setDragOverIdx(null);
-              }}
-              onDragEnd={() => {
-                setDraggingIdx(null);
-                setDragOverIdx(null);
-              }}
-            >
-              <span className="search-chip-label">{tag}</span>
-              <button
-                className="search-chip-remove"
-                type="button"
-                onClick={() => removeTag(tag)}
-                title={`Remove ${tag}`}
-                aria-label={`Remove tag ${tag}`}
-              >
-                <X size={13} aria-hidden="true" />
-              </button>
+          {committedTags.length > 0 && (
+            <span className="search-chip-list" role="list" aria-label="Committed search tags">
+              {committedTags.map((tag, index) => (
+                <span
+                  key={`${tag}-${index}`}
+                  ref={(node) => {
+                    if (node) chipRefs.current.set(index, node);
+                    else chipRefs.current.delete(index);
+                  }}
+                  className={`search-chip ${chipToneClass(tag)} ${draggingIdx !== null && draggingIdx === index ? 'is-dragging' : ''} ${dragOverIdx !== null && dragOverIdx === index ? 'is-drag-over' : ''}`}
+                  role="listitem"
+                  tabIndex={0}
+                  aria-posinset={index + 1}
+                  aria-setsize={committedTags.length}
+                  aria-label={`Search tag ${tag}, position ${index + 1} of ${committedTags.length}. Alt Shift Left or Right to reorder. Delete or Backspace to remove.`}
+                  draggable
+                  onKeyDown={(event) => handleChipKeyDown(event, tag, index)}
+                  onDragStart={(e) => {
+                    setDraggingIdx(index);
+                    setDragOverIdx(index);
+                    e.dataTransfer.effectAllowed = 'move';
+                    e.dataTransfer.setData('text/plain', String(index));
+                  }}
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = 'move';
+                    setDragOverIdx(index);
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    const from = parseInt(e.dataTransfer.getData('text/plain') || '-1', 10);
+                    reorderTag(from, index);
+                    const movedTag = committedTags[from];
+                    if (movedTag && from !== index) {
+                      setTagArrangementStatus(`Moved tag ${movedTag} to position ${index + 1} of ${committedTags.length}.`);
+                    }
+                    setDraggingIdx(null);
+                    setDragOverIdx(null);
+                  }}
+                  onDragEnd={() => {
+                    setDraggingIdx(null);
+                    setDragOverIdx(null);
+                  }}
+                >
+                  <span className="search-chip-label">{tag}</span>
+                  <button
+                    className="search-chip-remove"
+                    type="button"
+                    onClick={() => removeTagAt(index, tag)}
+                    onKeyDown={(event) => event.stopPropagation()}
+                    title={`Remove ${tag}`}
+                    aria-label={`Remove tag ${tag}`}
+                  >
+                    <X size={13} aria-hidden="true" />
+                  </button>
+                </span>
+              ))}
             </span>
-          ))}
+          )}
 
           <input
             ref={inputRef}
@@ -303,8 +362,11 @@ export default function SearchBar() {
         )}
       </div>
 
-      <div id={suggestionStatusId} className="search-suggestion-status" role="status" aria-live="polite">
+      <div id={suggestionStatusId} className="search-suggestion-status" role="status" aria-live="polite" aria-label="Tag suggestion status">
         {suggestionStatus}
+      </div>
+      <div className="search-suggestion-status" role="status" aria-live="polite" aria-atomic="true" aria-label="Search tag arrangement">
+        {tagArrangementStatus}
       </div>
 
       {isSuggestionListOpen && (

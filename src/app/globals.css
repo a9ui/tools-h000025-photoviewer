@@ -1081,6 +1081,14 @@ a { color: inherit; text-decoration: none; }
   flex-wrap: wrap;
   gap: 0.35rem;
 }
+.search-chip-list {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  min-width: 0;
+  max-width: 100%;
+}
 .search-chip {
   display: inline-flex;
   align-items: center;
@@ -1098,6 +1106,10 @@ a { color: inherit; text-decoration: none; }
   transition: transform var(--transition-fast), box-shadow var(--transition-fast), border-color var(--transition-fast);
 }
 .search-chip:active { cursor: grabbing; }
+.search-chip:focus-visible {
+  outline: 2px solid var(--accent-light);
+  outline-offset: 2px;
+}
 .search-chip.is-dragging {
   opacity: 0.55;
   transform: scale(0.97);
