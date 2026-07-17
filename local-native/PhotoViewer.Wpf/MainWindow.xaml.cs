@@ -5235,6 +5235,12 @@ public partial class MainWindow : Window
 
     private void FolderDropTarget_DragLeave(object sender, DragEventArgs e)
     {
+        // WPF raises DragLeave on the parent while the cursor crosses between
+        // children.  Keep the affordance until the pointer actually exits this
+        // target, rather than flashing it off between gallery elements.
+        if (sender is FrameworkElement target && PointerIsInside(target, e))
+            return;
+
         SetFolderDropAffordance(sender, visible: false);
         e.Handled = true;
     }
@@ -5253,14 +5259,22 @@ public partial class MainWindow : Window
         DroppedFolderSet dropped = ReadDroppedFolders(e.Data);
         bool accepted = dropped.Folders.Count > 0;
         SetFolderDropAffordance(sender, accepted);
-        if (!accepted)
-            return;
 
-        // Folder intake is a reference-only operation.  Leave non-folder FileDrop
-        // payloads untouched so the existing image drag-out contract keeps its copy
-        // behavior when the cursor happens to cross this surface.
-        e.Effects = DragDropEffects.Link;
+        // The intake surface accepts only existing folders.  Image FileDrop
+        // payloads remain Copy payloads at their source, but are explicitly not a
+        // valid drop here, so they cannot be mistaken for a folder intake action.
+        e.Effects = accepted ? DragDropEffects.Link : DragDropEffects.None;
         e.Handled = true;
+    }
+
+    private static bool PointerIsInside(FrameworkElement target, DragEventArgs e)
+    {
+        if (target.ActualWidth <= 0 || target.ActualHeight <= 0)
+            return false;
+
+        Point point = e.GetPosition(target);
+        return point.X >= 0 && point.X <= target.ActualWidth
+            && point.Y >= 0 && point.Y <= target.ActualHeight;
     }
 
     private void SetFolderDropAffordance(object sender, bool visible)
