@@ -3213,27 +3213,6 @@ public partial class App : Application
                 string statePath = first.StatePathForSmoke;
                 int allCount = first.FilteredCountForSmoke;
                 List<string> allOrder = first.FilteredFileNamesForSmoke(10);
-
-                bool selectedThirtyTarget = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
-                bool todayChanged = first.SetDatePresetForSmoke("today");
-                List<string> todayOrder = first.FilteredFileNamesForSmoke(10);
-                string? selectedAfterToday = first.SelectedFileNameForSmoke;
-
-                bool clearChanged = first.SetDatePresetForSmoke("clear");
-                List<string> clearOrder = first.FilteredFileNamesForSmoke(10);
-
-                bool selectedThirtyAgain = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
-                bool thirtyChanged = first.SetDatePresetForSmoke("30d");
-                List<string> thirtyOrder = first.FilteredFileNamesForSmoke(10);
-                string? selectedAfterThirty = first.SelectedFileNameForSmoke;
-
-                bool sevenChanged = first.SetDatePresetForSmoke("7d");
-                List<string> sevenOrder = first.FilteredFileNamesForSmoke(10);
-                string? selectedAfterSeven = first.SelectedFileNameForSmoke;
-
-                bool yearChanged = first.SetDatePresetForSmoke("year");
-                List<string> yearOrder = first.FilteredFileNamesForSmoke(10);
-
                 bool selectedManualExcluded = first.SelectFileNameForSmoke(fixture.TodayName);
                 bool manualRangeChanged = first.SetManualDateRangeForSmoke(fixture.ManualFromText, fixture.ManualToText);
                 List<string> manualRangeOrder = first.FilteredFileNamesForSmoke(10);
@@ -3247,51 +3226,58 @@ public partial class App : Application
                 List<string> manualToOnlyOrder = first.FilteredFileNamesForSmoke(10);
                 string? selectedAfterManualToOnly = first.SelectedFileNameForSmoke;
 
-                bool manualClearChanged = first.SetDatePresetForSmoke("clear");
+                bool manualClearChanged = first.ClearManualDateRangeForSmoke();
                 List<string> manualClearOrder = first.FilteredFileNamesForSmoke(10);
-
-                bool persistTargetChanged = first.SetDatePresetForSmoke("30d");
-                bool selectedPresetPersisted = first.SelectFileNameForSmoke(fixture.ThirtyDayName);
-                ViewerState? persistedPreset = ReadPersistedState(statePath);
+                string clearPreset = first.DatePresetForSmoke;
 
                 bool manualPersistChanged = first.SetManualDateRangeForSmoke(fixture.ManualFromText, fixture.ManualToText);
                 bool selectedManualPersisted = first.SelectFileNameForSmoke(fixture.SevenDayName);
                 ViewerState? persistedManual = ReadPersistedState(statePath);
                 first.Close();
 
-                var second = HiddenWindow();
-                second.Show();
-                await second.LoadFolderAsync(fixture.Folder);
-                string restoredPreset = second.DatePresetForSmoke;
-                string? restoredFrom = second.DateFromForSmoke;
-                string? restoredTo = second.DateToForSmoke;
-                List<string> restoredOrder = second.FilteredFileNamesForSmoke(10);
-                string? restoredSelected = second.SelectedFileNameForSmoke;
-                second.Close();
-                string? persistedPresetDatePreset = persistedPreset?.DatePreset;
-                string? persistedPresetDateFrom = persistedPreset?.DateFrom;
-                string? persistedPresetDateTo = persistedPreset?.DateTo;
+                WriteLegacyDateFilterState(statePath, "30d", fixture.ManualFromText, fixture.ManualToText);
+                var legacyWithRange = HiddenWindow();
+                legacyWithRange.Show();
+                await legacyWithRange.LoadFolderAsync(fixture.Folder);
+                string legacyRangePreset = legacyWithRange.DatePresetForSmoke;
+                string? legacyRangeFrom = legacyWithRange.DateFromForSmoke;
+                string? legacyRangeTo = legacyWithRange.DateToForSmoke;
+                string legacyRangeSummary = legacyWithRange.DateFilterSummaryForSmoke;
+                List<string> legacyRangeOrder = legacyWithRange.FilteredFileNamesForSmoke(10);
+                ViewerState? migratedLegacyWithRange = ReadPersistedState(statePath);
+                bool legacyUnknownFieldPreserved = PersistedStateHasStringProperty(statePath, "futureDateMarker", "preserve-me");
+                legacyWithRange.Close();
+
+                WriteLegacyDateFilterState(statePath, "7d", fixture.ManualFromText, null);
+                var legacyWithPartialRange = HiddenWindow();
+                legacyWithPartialRange.Show();
+                await legacyWithPartialRange.LoadFolderAsync(fixture.Folder);
+                string legacyPartialPreset = legacyWithPartialRange.DatePresetForSmoke;
+                string? legacyPartialFrom = legacyWithPartialRange.DateFromForSmoke;
+                string? legacyPartialTo = legacyWithPartialRange.DateToForSmoke;
+                List<string> legacyPartialOrder = legacyWithPartialRange.FilteredFileNamesForSmoke(10);
+                ViewerState? migratedLegacyWithPartialRange = ReadPersistedState(statePath);
+                legacyWithPartialRange.Close();
+
+                WriteLegacyDateFilterState(statePath, "today", null, null);
+                var legacyWithoutRange = HiddenWindow();
+                legacyWithoutRange.Show();
+                await legacyWithoutRange.LoadFolderAsync(fixture.Folder);
+                string legacyFallbackPreset = legacyWithoutRange.DatePresetForSmoke;
+                string? legacyFallbackFrom = legacyWithoutRange.DateFromForSmoke;
+                string? legacyFallbackTo = legacyWithoutRange.DateToForSmoke;
+                List<string> legacyFallbackOrder = legacyWithoutRange.FilteredFileNamesForSmoke(10);
+                ViewerState? migratedLegacyWithoutRange = ReadPersistedState(statePath);
+                legacyWithoutRange.Close();
+
                 string? persistedManualDatePreset = persistedManual?.DatePreset;
                 string? persistedManualDateFrom = persistedManual?.DateFrom;
                 string? persistedManualDateTo = persistedManual?.DateTo;
 
                 bool allOk = allCount == fixture.AllExpected.Count && SameNameOrder(allOrder, fixture.AllExpected);
-                bool todayOk = todayChanged
-                    && SameNameOrder(todayOrder, fixture.TodayExpected)
-                    && string.Equals(selectedAfterToday, fixture.TodayExpected.FirstOrDefault(), StringComparison.OrdinalIgnoreCase);
-                bool clearOk = clearChanged && SameNameOrder(clearOrder, fixture.AllExpected);
-                bool thirtyOk = selectedThirtyAgain
-                    && thirtyChanged
-                    && SameNameOrder(thirtyOrder, fixture.ThirtyDayExpected)
-                    && string.Equals(selectedAfterThirty, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
-                bool sevenOk = sevenChanged
-                    && SameNameOrder(sevenOrder, fixture.SevenDayExpected)
-                    && !string.Equals(selectedAfterSeven, fixture.ThirtyDayName, StringComparison.OrdinalIgnoreCase);
-                bool yearOk = yearChanged
-                    && SameNameOrder(yearOrder, fixture.ThisYearExpected)
-                    && !yearOrder.Contains(fixture.PreviousYearName, StringComparer.OrdinalIgnoreCase);
                 bool manualRangeOk = selectedManualExcluded
                     && manualRangeChanged
+                    && string.Equals(first.DatePresetForSmoke, "manual", StringComparison.OrdinalIgnoreCase)
                     && SameNameOrder(manualRangeOrder, fixture.ManualRangeExpected)
                     && string.Equals(selectedAfterManualRange, fixture.ManualRangeExpected.FirstOrDefault(), StringComparison.OrdinalIgnoreCase);
                 bool manualFromOnlyOk = manualFromOnlyChanged
@@ -3300,43 +3286,55 @@ public partial class App : Application
                 bool manualToOnlyOk = manualToOnlyChanged
                     && SameNameOrder(manualToOnlyOrder, fixture.ManualToOnlyExpected)
                     && string.Equals(selectedAfterManualToOnly, selectedAfterManualRange, StringComparison.OrdinalIgnoreCase);
-                bool manualClearOk = manualClearChanged && SameNameOrder(manualClearOrder, fixture.AllExpected);
-                bool presetPersistenceOk = selectedPresetPersisted
-                    && string.Equals(persistedPresetDatePreset, "30d", StringComparison.OrdinalIgnoreCase)
-                    && !string.IsNullOrWhiteSpace(persistedPresetDateFrom)
-                    && !string.IsNullOrWhiteSpace(persistedPresetDateTo);
+                bool manualClearOk = manualClearChanged
+                    && string.Equals(clearPreset, "none", StringComparison.OrdinalIgnoreCase)
+                    && SameNameOrder(manualClearOrder, fixture.AllExpected);
                 bool manualPersistenceOk = manualPersistChanged
                     && selectedManualPersisted
                     && string.Equals(persistedManualDatePreset, "manual", StringComparison.OrdinalIgnoreCase)
                     && string.Equals(persistedManualDateFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(persistedManualDateTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredPreset, "manual", StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
-                    && string.Equals(restoredTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
-                    && SameNameOrder(restoredOrder, fixture.ManualRangeExpected)
-                    && string.Equals(restoredSelected, fixture.SevenDayName, StringComparison.OrdinalIgnoreCase);
+                    && string.Equals(persistedManualDateTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase);
+                bool legacyRangeMigrationOk = string.Equals(legacyRangePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(legacyRangeFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(legacyRangeTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
+                    && legacyRangeSummary.StartsWith("Manual:", StringComparison.Ordinal)
+                    && SameNameOrder(legacyRangeOrder, fixture.ManualRangeExpected)
+                    && string.Equals(migratedLegacyWithRange?.DatePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(migratedLegacyWithRange?.DateFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(migratedLegacyWithRange?.DateTo, fixture.ManualToText, StringComparison.OrdinalIgnoreCase)
+                    && legacyUnknownFieldPreserved;
+                bool legacyPartialMigrationOk = string.Equals(legacyPartialPreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(legacyPartialFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && legacyPartialTo is null
+                    && SameNameOrder(legacyPartialOrder, fixture.ManualFromOnlyExpected)
+                    && string.Equals(migratedLegacyWithPartialRange?.DatePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(migratedLegacyWithPartialRange?.DateFrom, fixture.ManualFromText, StringComparison.OrdinalIgnoreCase)
+                    && migratedLegacyWithPartialRange?.DateTo is null;
+                string today = DateTime.Today.ToString("yyyy-MM-dd");
+                bool legacyFallbackMigrationOk = string.Equals(legacyFallbackPreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(legacyFallbackFrom, today, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(legacyFallbackTo, today, StringComparison.OrdinalIgnoreCase)
+                    && SameNameOrder(legacyFallbackOrder, fixture.TodayExpected)
+                    && string.Equals(migratedLegacyWithoutRange?.DatePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(migratedLegacyWithoutRange?.DateFrom, today, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(migratedLegacyWithoutRange?.DateTo, today, StringComparison.OrdinalIgnoreCase);
 
                 bool ok = allOk
-                    && selectedThirtyTarget
-                    && todayOk
-                    && clearOk
-                    && thirtyOk
-                    && sevenOk
-                    && yearOk
                     && manualRangeOk
                     && manualFromOnlyOk
                     && manualToOnlyOk
                     && manualClearOk
-                    && persistTargetChanged
-                    && presetPersistenceOk
-                    && manualPersistenceOk;
+                    && manualPersistenceOk
+                    && legacyRangeMigrationOk
+                    && legacyPartialMigrationOk
+                    && legacyFallbackMigrationOk;
 
                 result = new DateFilterSmokeResult
                 {
                     Ok = ok,
                     Message = ok
-                        ? "date preset and manual range filtering, clear action, selection fallback/preservation, and persistence checks passed"
-                        : "date filter smoke did not meet preset/manual filter/selection/persistence expectations",
+                        ? "manual Created/Birth date filtering, fixed legacy migration, clear action, selection fallback/preservation, and persistence checks passed"
+                        : "date filter smoke did not meet manual/migration/selection/persistence expectations",
                     Folder = fixture.Folder,
                     ProjectRoot = smokeRoot,
                     StatePath = statePath,
@@ -3346,43 +3344,37 @@ public partial class App : Application
                     ThisYearName = fixture.ThisYearName,
                     PreviousYearName = fixture.PreviousYearName,
                     AllExpected = fixture.AllExpected,
-                    TodayExpected = fixture.TodayExpected,
-                    SevenDayExpected = fixture.SevenDayExpected,
-                    ThirtyDayExpected = fixture.ThirtyDayExpected,
-                    ThisYearExpected = fixture.ThisYearExpected,
                     ManualFrom = fixture.ManualFromText,
                     ManualTo = fixture.ManualToText,
                     ManualRangeExpected = fixture.ManualRangeExpected,
                     ManualFromOnlyExpected = fixture.ManualFromOnlyExpected,
                     ManualToOnlyExpected = fixture.ManualToOnlyExpected,
                     AllOrder = allOrder,
-                    TodayOrder = todayOrder,
-                    SevenDayOrder = sevenOrder,
-                    ThirtyDayOrder = thirtyOrder,
-                    ThisYearOrder = yearOrder,
-                    ClearOrder = clearOrder,
+                    ClearOrder = manualClearOrder,
                     ManualRangeOrder = manualRangeOrder,
                     ManualFromOnlyOrder = manualFromOnlyOrder,
                     ManualToOnlyOrder = manualToOnlyOrder,
                     ManualClearOrder = manualClearOrder,
-                    SelectedThirtyTarget = selectedThirtyTarget,
-                    SelectedAfterToday = selectedAfterToday,
-                    SelectedAfterThirty = selectedAfterThirty,
-                    SelectedAfterSeven = selectedAfterSeven,
                     SelectedAfterManualRange = selectedAfterManualRange,
                     SelectedAfterManualFromOnly = selectedAfterManualFromOnly,
                     SelectedAfterManualToOnly = selectedAfterManualToOnly,
-                    PersistedPresetDatePreset = persistedPresetDatePreset,
-                    PersistedPresetDateFrom = persistedPresetDateFrom,
-                    PersistedPresetDateTo = persistedPresetDateTo,
                     PersistedManualDatePreset = persistedManualDatePreset,
                     PersistedManualDateFrom = persistedManualDateFrom,
                     PersistedManualDateTo = persistedManualDateTo,
-                    RestoredDatePreset = restoredPreset,
-                    RestoredDateFrom = restoredFrom,
-                    RestoredDateTo = restoredTo,
-                    RestoredOrder = restoredOrder,
-                    RestoredSelected = restoredSelected,
+                    LegacyRangePreset = legacyRangePreset,
+                    LegacyRangeFrom = legacyRangeFrom,
+                    LegacyRangeTo = legacyRangeTo,
+                    LegacyRangeSummary = legacyRangeSummary,
+                    LegacyRangeOrder = legacyRangeOrder,
+                    LegacyPartialPreset = legacyPartialPreset,
+                    LegacyPartialFrom = legacyPartialFrom,
+                    LegacyPartialTo = legacyPartialTo,
+                    LegacyPartialOrder = legacyPartialOrder,
+                    LegacyFallbackPreset = legacyFallbackPreset,
+                    LegacyFallbackFrom = legacyFallbackFrom,
+                    LegacyFallbackTo = legacyFallbackTo,
+                    LegacyFallbackOrder = legacyFallbackOrder,
+                    LegacyUnknownFieldPreserved = legacyUnknownFieldPreserved,
                 };
             }
             catch (Exception ex)
@@ -3470,7 +3462,10 @@ public partial class App : Application
                 win.SetSearchQuery("", persist: false);
                 bool dateChanged = win.SetManualDateRangeForSmoke("2026-07-14", "2026-07-16");
                 List<string> createdDateMatches = win.FilteredFileNamesForSmoke(10);
-                win.SetManualDateRangeForSmoke(null, null);
+                string datePreset = win.DatePresetForSmoke;
+                string dateSummary = win.DateFilterSummaryForSmoke;
+                bool dateCleared = win.ClearManualDateRangeForSmoke();
+                string clearedDatePreset = win.DatePresetForSmoke;
 
                 bool folderAdded = await win.AddFoldersToCurrentSetForSmokeAsync([folderB]);
                 List<string> currentFolderSet = win.CurrentFolderSetForSmoke;
@@ -3485,7 +3480,12 @@ public partial class App : Application
                     && SameNameOrder(emptyTokenMatches, andMatches)
                     && negativeMatches.Count == 0
                     && pathMatches.Count == 0;
-                bool dateOk = dateChanged && SameNameOrder(createdDateMatches, ["prompt-only.png"]);
+                bool dateOk = dateChanged
+                    && SameNameOrder(createdDateMatches, ["prompt-only.png"])
+                    && string.Equals(datePreset, "manual", StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(dateSummary, "Manual: 2026-07-14 – 2026-07-16", StringComparison.Ordinal)
+                    && dateCleared
+                    && string.Equals(clearedDatePreset, "none", StringComparison.OrdinalIgnoreCase);
                 bool folderOk = folderAdded
                     && currentFolderSet.Count == 2
                     && currentFolderSet.Contains(folderA, StringComparer.OrdinalIgnoreCase)
@@ -7005,6 +7005,35 @@ public partial class App : Application
         }
     }
 
+    private static void WriteLegacyDateFilterState(string path, string preset, string? from, string? to)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        var state = new Dictionary<string, object?>
+        {
+            ["Version"] = 2,
+            ["DatePreset"] = preset,
+            ["DateFrom"] = from,
+            ["DateTo"] = to,
+            ["futureDateMarker"] = "preserve-me",
+        };
+        File.WriteAllText(path, JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
+    private static bool PersistedStateHasStringProperty(string path, string propertyName, string expectedValue)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            return document.RootElement.TryGetProperty(propertyName, out JsonElement value)
+                && value.ValueKind == JsonValueKind.String
+                && string.Equals(value.GetString(), expectedValue, StringComparison.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private static int ReadFavoriteLevel(string favoritesPath, string selectedPath)
     {
         try
@@ -7277,6 +7306,7 @@ public partial class App : Application
             string path = Path.Combine(target, input.Name);
             WriteSmokePng(path, 128, 96, input.Color);
             File.SetLastWriteTime(path, input.ModifiedLocal);
+            File.SetCreationTime(path, input.ModifiedLocal);
         }
 
         DateTime sevenFrom = today.AddDays(-6);
@@ -8635,6 +8665,20 @@ public partial class App : Application
         public string? RestoredDateTo { get; init; }
         public List<string> RestoredOrder { get; init; } = [];
         public string? RestoredSelected { get; init; }
+        public string? LegacyRangePreset { get; init; }
+        public string? LegacyRangeFrom { get; init; }
+        public string? LegacyRangeTo { get; init; }
+        public string? LegacyRangeSummary { get; init; }
+        public List<string> LegacyRangeOrder { get; init; } = [];
+        public string? LegacyPartialPreset { get; init; }
+        public string? LegacyPartialFrom { get; init; }
+        public string? LegacyPartialTo { get; init; }
+        public List<string> LegacyPartialOrder { get; init; } = [];
+        public string? LegacyFallbackPreset { get; init; }
+        public string? LegacyFallbackFrom { get; init; }
+        public string? LegacyFallbackTo { get; init; }
+        public List<string> LegacyFallbackOrder { get; init; } = [];
+        public bool LegacyUnknownFieldPreserved { get; init; }
     }
 
     private sealed class P1ASmokeResult

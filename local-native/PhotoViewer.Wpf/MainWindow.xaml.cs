@@ -62,12 +62,8 @@ public partial class MainWindow : Window
     private const string SortCreatedOldestValue = "created-oldest";
     private const string SortNameValue = "name";
     private const string SortRandomValue = "random";
-    // Legacy state tokens are read only; the sidebar exposes manual From/To only.
+    // Runtime state is manual From/To only. These names are accepted only while migrating old files.
     private const string DatePresetNoneValue = "none";
-    private const string DatePresetTodayValue = "today";
-    private const string DatePreset7DaysValue = "7d";
-    private const string DatePreset30DaysValue = "30d";
-    private const string DatePresetThisYearValue = "this-year";
     private const string DatePresetManualValue = "manual";
     private const string ModalMetadataPromptTab = "prompt";
     private const string ModalMetadataNegativeTab = "negative";
@@ -117,6 +113,7 @@ public partial class MainWindow : Window
     private bool _syncingSelection;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
+    private bool _dateFilterMigrationPending;
     private bool _settingSearchQuery;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
@@ -250,6 +247,8 @@ public partial class MainWindow : Window
         RefreshPreviewTabs();
         SetPhase(landing: true);
         _initializing = false;
+        if (_dateFilterMigrationPending)
+            SaveState();
     }
 
     private static System.ComponentModel.ICollectionView BuildGroupedView(ObservableCollection<Tile> source)
@@ -4807,27 +4806,43 @@ public partial class MainWindow : Window
     {
         return preset?.Trim().ToLowerInvariant() switch
         {
-            DatePresetTodayValue => DatePresetTodayValue,
-            DatePreset7DaysValue or "last7" or "last-7" => DatePreset7DaysValue,
-            DatePreset30DaysValue or "last30" or "last-30" => DatePreset30DaysValue,
-            DatePresetThisYearValue or "year" => DatePresetThisYearValue,
             DatePresetManualValue or "range" => DatePresetManualValue,
             "clear" or "" or null => DatePresetNoneValue,
             _ => DatePresetNoneValue,
         };
     }
 
-    private static (DateTime? From, DateTime? To) DateRangeForPreset(string preset)
+    private static bool TryGetLegacyDateRange(string? preset, out DateTime? from, out DateTime? to)
     {
         DateTime today = DateTime.Today;
-        return NormalizeDatePreset(preset) switch
+        switch (preset?.Trim().ToLowerInvariant())
         {
-            DatePresetTodayValue => (today, today),
-            DatePreset7DaysValue => (today.AddDays(-6), today),
-            DatePreset30DaysValue => (today.AddDays(-29), today),
-            DatePresetThisYearValue => (new DateTime(today.Year, 1, 1), today),
-            _ => (null, null),
-        };
+            case "today":
+                from = today;
+                to = today;
+                return true;
+            case "7d":
+            case "last7":
+            case "last-7":
+                from = today.AddDays(-6);
+                to = today;
+                return true;
+            case "30d":
+            case "last30":
+            case "last-30":
+                from = today.AddDays(-29);
+                to = today;
+                return true;
+            case "this-year":
+            case "year":
+                from = new DateTime(today.Year, 1, 1);
+                to = today;
+                return true;
+            default:
+                from = null;
+                to = null;
+                return false;
+        }
     }
 
     private static string? FormatStateDate(DateTime? date)
@@ -4839,42 +4854,6 @@ public partial class MainWindow : Window
             return parsed.Date;
 
         return null;
-    }
-
-    private static string DatePresetLabel(string preset)
-    {
-        return NormalizeDatePreset(preset) switch
-        {
-            DatePresetTodayValue => "Today",
-            DatePreset7DaysValue => "7d",
-            DatePreset30DaysValue => "30d",
-            DatePresetThisYearValue => "This year",
-            DatePresetManualValue => "Manual",
-            _ => "Clear",
-        };
-    }
-
-    private bool SetDatePreset(string preset)
-    {
-        string previousPreset = _datePreset;
-        string normalized = NormalizeDatePreset(preset);
-        DateTime? previousFrom = _dateFromLocal;
-        DateTime? previousTo = _dateToLocal;
-        _datePreset = normalized;
-        (_dateFromLocal, _dateToLocal) = DateRangeForPreset(normalized);
-        bool changed = !string.Equals(previousPreset, normalized, StringComparison.Ordinal)
-            || !SameDate(previousFrom, _dateFromLocal)
-            || !SameDate(previousTo, _dateToLocal);
-        SyncDateControls();
-        UpdateDateFilterSummary();
-
-        if (changed && !_initializing)
-        {
-            ApplyFilters();
-            SaveState();
-        }
-
-        return changed;
     }
 
     private bool SetManualDateRange(DateTime? from, DateTime? to)
@@ -4909,25 +4888,25 @@ public partial class MainWindow : Window
 
     private void RestoreDateFilter(ViewerState state)
     {
-        _datePreset = NormalizeDatePreset(state.DatePreset);
-        if (string.Equals(_datePreset, DatePresetManualValue, StringComparison.Ordinal))
+        DateTime? persistedFrom = ParseStateDate(state.DateFrom);
+        DateTime? persistedTo = ParseStateDate(state.DateTo);
+        if (TryGetLegacyDateRange(state.DatePreset, out DateTime? legacyFrom, out DateTime? legacyTo))
         {
-            _dateFromLocal = ParseStateDate(state.DateFrom);
-            _dateToLocal = ParseStateDate(state.DateTo);
-            if (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
-                _datePreset = DatePresetNoneValue;
-        }
-        else if (string.Equals(_datePreset, DatePresetNoneValue, StringComparison.Ordinal))
-        {
-            _dateFromLocal = null;
-            _dateToLocal = null;
+            // Preserve an old saved range exactly. Only range-less legacy tokens are resolved once,
+            // then immediately saved as a fixed manual range so they never move with the calendar again.
+            bool hasSavedRangeValue = persistedFrom.HasValue || persistedTo.HasValue;
+            _dateFromLocal = hasSavedRangeValue ? persistedFrom : legacyFrom;
+            _dateToLocal = hasSavedRangeValue ? persistedTo : legacyTo;
+            _datePreset = DatePresetManualValue;
+            _dateFilterMigrationPending = true;
         }
         else
         {
-            _dateFromLocal = ParseStateDate(state.DateFrom);
-            _dateToLocal = ParseStateDate(state.DateTo);
-            if (!_dateFromLocal.HasValue && !_dateToLocal.HasValue)
-                (_dateFromLocal, _dateToLocal) = DateRangeForPreset(_datePreset);
+            _dateFromLocal = persistedFrom;
+            _dateToLocal = persistedTo;
+            _datePreset = _dateFromLocal.HasValue || _dateToLocal.HasValue
+                ? DatePresetManualValue
+                : DatePresetNoneValue;
         }
 
         SyncDateControls();
@@ -4964,7 +4943,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        DateFilterSummary.Text = $"{DatePresetLabel(_datePreset)}: {FormatStateDate(_dateFromLocal) ?? "..."} to {FormatStateDate(_dateToLocal) ?? "..."}";
+        DateFilterSummary.Text = $"Manual: {FormatStateDate(_dateFromLocal) ?? "..."} – {FormatStateDate(_dateToLocal) ?? "..."}";
     }
 
     private static bool IsZoomModifierActive()
@@ -6366,7 +6345,7 @@ public partial class MainWindow : Window
                 AspectMode = _aspectMode,
                 SortBy = _sortBy,
                 RandomSortSeed = _randomSortSeed,
-                DatePreset = _datePreset,
+                DatePreset = _dateFromLocal.HasValue || _dateToLocal.HasValue ? DatePresetManualValue : DatePresetNoneValue,
                 DateFrom = FormatStateDate(_dateFromLocal),
                 DateTo = FormatStateDate(_dateToLocal),
                 ShowFavoritesOnly = FavoriteOnlyFilter?.IsChecked == true,
@@ -7135,6 +7114,7 @@ public partial class MainWindow : Window
     public string DatePresetForSmoke => _datePreset;
     public string? DateFromForSmoke => FormatStateDate(_dateFromLocal);
     public string? DateToForSmoke => FormatStateDate(_dateToLocal);
+    public string DateFilterSummaryForSmoke => DateFilterSummary.Text;
     public bool ShowFavoritesOnlyForSmoke => FavoriteOnlyFilter?.IsChecked == true;
     public bool ShowUnfavoriteOnlyForSmoke => UnfavoriteOnlyFilter?.IsChecked == true;
     public List<int> FavoriteFilterLevelsForSmoke => _favoriteFilterLevels.OrderBy(static level => level).ToList();
@@ -7239,7 +7219,7 @@ public partial class MainWindow : Window
     public bool SetSortByForSmoke(string sortBy) => SetSortBy(sortBy);
     public bool ReshuffleRandomSortForSmoke() => ReshuffleRandomSort();
     public string RandomSortSeedForSmoke => _randomSortSeed;
-    public bool SetDatePresetForSmoke(string preset) => SetDatePreset(preset);
+    public bool ClearManualDateRangeForSmoke() => SetManualDateRange(null, null);
     public bool SetManualDateRangeForSmoke(string? from, string? to) => SetManualDateRange(ParseStateDate(from), ParseStateDate(to));
     public bool SetFavoriteFilterLevelsForSmoke(params int[] levels) => SetFavoriteFilterLevels(levels);
     public void SetShowUnseenDotsForSmoke(bool enabled)

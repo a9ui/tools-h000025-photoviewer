@@ -9,6 +9,9 @@ $targets = @($browserFiles.FullName) + @(
     (Join-Path $repoRoot 'src\app\page.tsx'),
     (Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\MainWindow.xaml')
 )
+$runtimeTargets = @(
+    (Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\MainWindow.xaml.cs')
+)
 
 $forbidden = [ordered]@{
     'retired Quick Search control' = '(?i)quick\s*search'
@@ -34,6 +37,27 @@ foreach ($target in $targets) {
     }
 }
 
+$runtimeForbidden = [ordered]@{
+    'retired relative-date runtime preset API' = '(?i)(DatePresetTodayValue|DatePreset7DaysValue|DatePreset30DaysValue|DatePresetThisYearValue|DateRangeForPreset|SetDatePresetForSmoke)'
+    'runtime state must not write an unchecked preset token' = 'DatePreset\s*=\s*_datePreset'
+}
+foreach ($target in $runtimeTargets) {
+    if (-not (Test-Path -LiteralPath $target)) {
+        throw "Required runtime source is missing: $target"
+    }
+    foreach ($rule in $runtimeForbidden.GetEnumerator()) {
+        $matches = Select-String -LiteralPath $target -Pattern $rule.Value -AllMatches
+        foreach ($match in $matches) {
+            $findings += [pscustomobject]@{
+                Rule = $rule.Key
+                File = [IO.Path]::GetRelativePath($repoRoot, $target)
+                Line = $match.LineNumber
+                Text = $match.Line.Trim()
+            }
+        }
+    }
+}
+
 if ($findings.Count -gt 0) {
     $findings | Format-Table -AutoSize | Out-String | Write-Host
     throw 'Retired PhotoViewer UI semantics were reintroduced.'
@@ -41,7 +65,7 @@ if ($findings.Count -gt 0) {
 
 [pscustomobject]@{
     ok = $true
-    filesChecked = $targets.Count
+    filesChecked = $targets.Count + $runtimeTargets.Count
     rules = $forbidden.Keys
-    message = 'Quick Search, relative-date presets, and Favorite threshold labels are absent from live Browser/WPF UI sources.'
+    message = 'Quick Search, relative-date controls, and Favorite threshold labels are absent from live Browser/WPF UI; runtime has no active relative-date preset API or unchecked preset writer.'
 } | ConvertTo-Json -Depth 4
