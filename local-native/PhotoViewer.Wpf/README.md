@@ -33,6 +33,7 @@ implementation. The normative current behavior is documented in
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
 - `--shot --perf-log <path>` load timing capture for WPF performance evidence
+- `--shot-width <px> --shot-height <px>` exact content viewport capture; `--folders-collapsed`, `--show-unseen-dots`, and `--clear-selection` reproduce Browser comparison states
 - `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
 - `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
@@ -899,6 +900,12 @@ These files explain the early shell only and are not the current source of truth
 
 Current visual/product truth is the live Browser contract plus the real WPF
 `--shot` output described in `../../docs/wpf-product-spec.md`.
+
+`scripts/verify-wpf-visual-layout.ps1` renders Landing, Viewer, Settings,
+Folders collapsed, and Unseen dots at exact 1280x820 and 1024x700 content
+viewports. The audit pairs the 1280x820 outputs with the matching live Browser
+references; WPF Landing exposes the same App Settings entry, and a cleared
+selection shows only the empty preview guidance rather than stale actions.
 
 Recursive scan does not descend into nested junctions, symbolic links, or
 other reparse-point directories. The scan-boundary verifier proves that only

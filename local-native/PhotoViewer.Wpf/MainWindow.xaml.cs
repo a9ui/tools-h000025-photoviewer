@@ -2695,6 +2695,8 @@ public partial class MainWindow : Window
 
     private void UpdatePreview(Tile t)
     {
+        RightPreviewContent.Visibility = Visibility.Visible;
+        RightPreviewEmptyState.Visibility = Visibility.Collapsed;
         var watch = Stopwatch.StartNew();
         bool hasRealFile = t.IsRealFile;
         Visibility generatedMetadataVisibility = hasRealFile ? Visibility.Collapsed : Visibility.Visible;
@@ -4881,6 +4883,8 @@ public partial class MainWindow : Window
         PreviewModelText.Text = "-";
         PreviewDateText.Text = "-";
         PreviewPromptText.Text = "";
+        RightPreviewContent.Visibility = Visibility.Collapsed;
+        RightPreviewEmptyState.Visibility = Visibility.Visible;
         FavoriteLevelText.Text = "0";
         ModalFavoriteLevelText.Text = "0";
         SyncSelectionActionSurface();
@@ -8176,7 +8180,9 @@ public partial class MainWindow : Window
             && !string.IsNullOrWhiteSpace(System.Windows.Automation.AutomationProperties.GetHelpText(PreviewImageDragSurface));
     public bool RightPreviewEmptyForSmoke
         => string.Equals(PreviewFileName.Text, "No matching image", StringComparison.Ordinal)
-            && PreviewBitmap.Visibility == Visibility.Collapsed;
+            && PreviewBitmap.Visibility == Visibility.Collapsed
+            && RightPreviewContent.Visibility == Visibility.Collapsed
+            && RightPreviewEmptyState.Visibility == Visibility.Visible;
     public bool BulkDeleteButtonAccessibleForSmoke
         => BulkDeleteButton.IsEnabled
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(BulkDeleteButton), "Move selected images to Recycle Bin", StringComparison.Ordinal);
@@ -8872,6 +8878,8 @@ public partial class MainWindow : Window
         SaveState();
         return true;
     }
+
+    public void ClearSelectionForSmoke() => SetSelection([], null);
 
     public async Task<PreviewDecodeSmokeSnapshot> SelectPreviewForSmokeAsync(string fileName)
     {

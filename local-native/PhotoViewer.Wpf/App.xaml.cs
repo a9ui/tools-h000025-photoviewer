@@ -1456,18 +1456,20 @@ public partial class App : Application
     /// <summary>Render the main window offscreen to a PNG and exit (UI smoke evidence).</summary>
     private void CaptureShot(string path)
     {
+        var args = Environment.GetCommandLineArgs();
+        int shotWidth = Math.Clamp(ArgInt(args, "--shot-width", 1280), 900, 3840);
+        int shotHeight = Math.Clamp(ArgInt(args, "--shot-height", 820), 560, 2160);
         var win = new MainWindow
         {
             WindowStartupLocation = WindowStartupLocation.Manual,
             Left = -20000,
             Top = -20000,
-            Width = 1280,
-            Height = 820,
+            Width = shotWidth,
+            Height = shotHeight,
         };
         win.Show();
         win.SuppressStatePersistence();
 
-        var args = Environment.GetCommandLineArgs();
         int sIdx = Array.IndexOf(args, "--screen");
         string screen = sIdx >= 0 && sIdx + 1 < args.Length ? args[sIdx + 1]
             : args.Contains("--modal") ? "modal" : "viewer";
@@ -1488,6 +1490,12 @@ public partial class App : Application
                 await win.WaitForPreviewPngMetadataForSmokeAsync(win.SelectedFileNameForSmoke!);
 
             win.ShowScreen(screen);
+            if (args.Contains("--clear-selection"))
+                win.ClearSelectionForSmoke();
+            if (args.Contains("--folders-collapsed") && win.FoldersSectionExpandedForSmoke)
+                win.ToggleFoldersSectionForSmoke();
+            if (args.Contains("--show-unseen-dots"))
+                win.SetShowUnseenDotsForSmoke(true);
             if (args.Contains("--show-app-settings"))
                 win.OpenAppSettingsForSmoke();
             if (args.Contains("--show-folder-drop-affordance"))
@@ -1508,9 +1516,13 @@ public partial class App : Application
             }
 
             var root = (FrameworkElement)win.Content;
-            int w = (int)Math.Ceiling(root.ActualWidth);
-            int h = (int)Math.Ceiling(root.ActualHeight);
-            var rtb = new RenderTargetBitmap(w, h, 96, 96, PixelFormats.Pbgra32);
+            // Windows clamps an offscreen HWND to the current monitor work area.
+            // Arrange the content at the requested audit viewport so visual
+            // comparisons do not silently inherit the host desktop height.
+            root.Measure(new Size(shotWidth, shotHeight));
+            root.Arrange(new Rect(0, 0, shotWidth, shotHeight));
+            root.UpdateLayout();
+            var rtb = new RenderTargetBitmap(shotWidth, shotHeight, 96, 96, PixelFormats.Pbgra32);
             rtb.Render(root);
 
             var encoder = new PngBitmapEncoder();

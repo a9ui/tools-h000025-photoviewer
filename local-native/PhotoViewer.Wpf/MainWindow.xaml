@@ -368,7 +368,7 @@
             <TextBlock Text="Preview" Foreground="{StaticResource TextTertiary}" FontSize="11" VerticalAlignment="Center" Margin="10,0,0,0"/>
           </DockPanel>
 
-          <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+          <ScrollViewer x:Name="RightPreviewContent" Grid.Row="1" VerticalScrollBarVisibility="Auto">
             <StackPanel Margin="14">
               <!-- image -->
               <Border x:Name="PreviewImageDragSurface" CornerRadius="12" ClipToBounds="True" Cursor="Hand" MouseLeftButtonUp="PreviewImage_Click"
@@ -488,6 +488,13 @@
               </Border>
             </StackPanel>
           </ScrollViewer>
+          <Grid x:Name="RightPreviewEmptyState" Grid.Row="1" Visibility="Collapsed" Background="{StaticResource BgSecondary}" Panel.ZIndex="2"
+                AutomationProperties.Name="No image selected">
+            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center" Margin="20">
+              <TextBlock Text="Click an image to open preview." Foreground="{StaticResource TextSecondary}" FontSize="12.5" HorizontalAlignment="Center"/>
+              <TextBlock Text="Use Ctrl/Shift for multi-select." Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="0,6,0,0" HorizontalAlignment="Center"/>
+            </StackPanel>
+          </Grid>
         </Grid>
       </Border>
     </Grid>
@@ -565,6 +572,16 @@
           <RadialGradientBrush><GradientStop Color="#14A855F7" Offset="0"/><GradientStop Color="#00A855F7" Offset="1"/></RadialGradientBrush>
         </Rectangle.Fill>
       </Rectangle>
+
+      <Button x:Name="LandingAppSettingsButton" Style="{StaticResource GhostButton}"
+              HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0" Height="36" Padding="12,0"
+              Click="OpenAppSettings_Click" ToolTip="App Settings" AutomationProperties.Name="App settings">
+        <StackPanel Orientation="Horizontal">
+          <Path Data="M12,8 a4,4 0 1 0 0,8 a4,4 0 1 0 0,-8 M12,2 v3 M12,19 v3 M2,12 h3 M19,12 h3 M4.9,4.9 l2.1,2.1 M17,17 l2.1,2.1 M19.1,4.9 l-2.1,2.1 M7,17 l-2.1,2.1"
+                Stroke="{StaticResource TextSecondary}" StrokeThickness="1.5" Stretch="Uniform" Width="15" Height="15" Margin="0,0,7,0"/>
+          <TextBlock Text="Settings" Foreground="{StaticResource TextSecondary}" VerticalAlignment="Center"/>
+        </StackPanel>
+      </Button>
 
       <StackPanel Width="760" VerticalAlignment="Center" HorizontalAlignment="Center">
         <TextBlock Text="PhotoViewer" FontSize="52" FontWeight="Bold" HorizontalAlignment="Center" Foreground="{StaticResource LogoBrush}"/>
