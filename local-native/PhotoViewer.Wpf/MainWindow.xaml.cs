@@ -886,14 +886,18 @@ public partial class MainWindow : Window
     private static bool TryReadFavoriteValue(JsonElement value, out int level)
     {
         level = 0;
-        if (value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out int numeric))
-            level = numeric;
+        if (value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out double numeric) && double.IsFinite(numeric))
+            level = (int)Math.Clamp(Math.Truncate(numeric), 0, 5);
         else if (value.ValueKind == JsonValueKind.String && int.TryParse(value.GetString(), NumberStyles.Integer, CultureInfo.InvariantCulture, out int parsed))
-            level = parsed;
+            level = Math.Clamp(parsed, 0, 5);
+        else if (value.ValueKind == JsonValueKind.True)
+            level = 1;
+        else if (value.ValueKind is JsonValueKind.False or JsonValueKind.Null)
+            level = 0;
         else
             return false;
 
-        return level is >= 0 and <= 5;
+        return true;
     }
 
     private static string NormalizeFavoritePath(string path)
@@ -3377,28 +3381,36 @@ public partial class MainWindow : Window
 
     private void RebuildGridWindow(int requestedStartIndex, int requestedCount)
     {
-        _gridTiles.Clear();
-        if (_tiles.Count == 0 || requestedCount <= 0)
+        bool wasSyncingSelection = _syncingSelection;
+        _syncingSelection = true;
+        try
         {
-            _gridStartIndex = 0;
+            _gridTiles.Clear();
+            if (_tiles.Count == 0 || requestedCount <= 0)
+            {
+                _gridStartIndex = 0;
+                if (LastLoadMetrics is not null)
+                    UpdateGridMetrics(LastLoadMetrics);
+                return;
+            }
+
+            int target = Math.Min(_tiles.Count, Math.Min(MaxGridRealizationCount, requestedCount));
+            int maxStart = Math.Max(0, _tiles.Count - target);
+            _gridStartIndex = Math.Clamp(requestedStartIndex, 0, maxStart);
+            int end = Math.Min(_tiles.Count, _gridStartIndex + target);
+            for (int i = _gridStartIndex; i < end; i++)
+                _gridTiles.Add(_tiles[i]);
+
+            if (!_initializing && _gridTiles.Any(static tile => tile.Thumbnail is null))
+                _ = LoadThumbnailsAsync(_loadCts?.Token ?? CancellationToken.None);
+
             if (LastLoadMetrics is not null)
                 UpdateGridMetrics(LastLoadMetrics);
-            SynchronizeSelectionControls();
-            return;
         }
-
-        int target = Math.Min(_tiles.Count, Math.Min(MaxGridRealizationCount, requestedCount));
-        int maxStart = Math.Max(0, _tiles.Count - target);
-        _gridStartIndex = Math.Clamp(requestedStartIndex, 0, maxStart);
-        int end = Math.Min(_tiles.Count, _gridStartIndex + target);
-        for (int i = _gridStartIndex; i < end; i++)
-            _gridTiles.Add(_tiles[i]);
-
-        if (!_initializing && _gridTiles.Any(static tile => tile.Thumbnail is null))
-            _ = LoadThumbnailsAsync(_loadCts?.Token ?? CancellationToken.None);
-
-        if (LastLoadMetrics is not null)
-            UpdateGridMetrics(LastLoadMetrics);
+        finally
+        {
+            _syncingSelection = wasSyncingSelection;
+        }
 
         SynchronizeSelectionControls();
     }
@@ -5065,7 +5077,7 @@ public partial class MainWindow : Window
                     malformed = true;
                     return false;
                 }
-                state.ExtensionData = CloneExtensionData(latest?.ExtensionData ?? _stateExtensionData);
+                state.ExtensionData = CloneExtensionData(latest is null ? _stateExtensionData : latest.ExtensionData);
                 string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
                 return TryWriteAtomicText(path, json);
             });
@@ -5122,16 +5134,32 @@ public partial class MainWindow : Window
         if (root.HasValue && root.Value.ValueKind == JsonValueKind.Object)
         {
             var element = root.Value;
+            if (element.TryGetProperty("version", out var versionElement)
+                && (versionElement.ValueKind != JsonValueKind.Number
+                    || !versionElement.TryGetInt32(out int version)
+                    || version != 1))
+                throw new JsonException("version must be 1");
             if (element.TryGetProperty("lastFolderSet", out var lastFolderSetElement))
             {
                 if (lastFolderSetElement.ValueKind is not (JsonValueKind.Array or JsonValueKind.String))
                     throw new JsonException("lastFolderSet must be an array or string");
+                if (lastFolderSetElement.ValueKind == JsonValueKind.Array
+                    && lastFolderSetElement.EnumerateArray().Any(static item => item.ValueKind != JsonValueKind.String))
+                    throw new JsonException("lastFolderSet array entries must be strings");
                 lastFolderSet = NormalizeFolderSet(lastFolderSetElement);
             }
             if (element.TryGetProperty("recentFolderSets", out var recentFolderSetsElement))
             {
                 if (recentFolderSetsElement.ValueKind != JsonValueKind.Array)
                     throw new JsonException("recentFolderSets must be an array");
+                foreach (var folderSetElement in recentFolderSetsElement.EnumerateArray())
+                {
+                    if (folderSetElement.ValueKind is not (JsonValueKind.Array or JsonValueKind.String))
+                        throw new JsonException("recentFolderSets entries must be arrays or strings");
+                    if (folderSetElement.ValueKind == JsonValueKind.Array
+                        && folderSetElement.EnumerateArray().Any(static item => item.ValueKind != JsonValueKind.String))
+                        throw new JsonException("recentFolderSets nested entries must be strings");
+                }
                 recentFolderSets = NormalizeRecentFolderSets(recentFolderSetsElement);
             }
             if (element.TryGetProperty("updatedAtUtc", out var updatedAtElement) &&

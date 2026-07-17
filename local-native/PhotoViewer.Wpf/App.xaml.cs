@@ -1011,6 +1011,22 @@ public partial class App : Application
                 await reload.LoadFolderAsync(folder);
                 bool stateReloaded = reload.ConfirmBeforeDeleteForSmoke == false && reload.FavoriteStoreCountForSmoke >= 2 && File.Exists(state);
                 reload.Close();
+                File.WriteAllText(favorites, JsonSerializer.Serialize(new Dictionary<string, object?>
+                {
+                    [Path.Combine(folder, "item-0400.png")] = true,
+                    [Path.Combine(folder, "item-0401.png")] = 9,
+                }));
+                File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1 }));
+                var compatibility = HiddenWindow(); compatibility.Show();
+                await compatibility.LoadFolderAsync(folder);
+                bool legacyBooleanSelected = compatibility.SelectFileNameForSmoke("item-0400.png")
+                    && string.Equals(compatibility.SelectedFileNameForSmoke, "item-0400.png", StringComparison.OrdinalIgnoreCase)
+                    && compatibility.SelectedFavoriteLevelForSmoke == 1;
+                bool clampedNumberSelected = compatibility.SelectFileNameForSmoke("item-0401.png")
+                    && string.Equals(compatibility.SelectedFileNameForSmoke, "item-0401.png", StringComparison.OrdinalIgnoreCase)
+                    && compatibility.SelectedFavoriteLevelForSmoke == 5;
+                bool favoriteLegacyCompatibility = legacyBooleanSelected && clampedNumberSelected;
+                compatibility.Close();
                 var safety = HiddenWindow(); safety.Show();
                 await safety.LoadFolderAsync(folder);
                 File.WriteAllText(state, JsonSerializer.Serialize(new { Version = 1, futureState = new { keep = true } }));
@@ -1019,6 +1035,10 @@ public partial class App : Application
                 File.WriteAllText(recent, JsonSerializer.Serialize(new { version = 1, lastFolderSet = Array.Empty<string>(), recentFolderSets = Array.Empty<string[]>(), updatedAtUtc = DateTimeOffset.UtcNow.ToString("O"), futureRecent = new { keep = true } }));
                 safety.FlushStateForSmoke();
                 bool recentUnknownPreserved = File.ReadAllText(recent).Contains("futureRecent", StringComparison.Ordinal);
+                File.WriteAllText(recent, JsonSerializer.Serialize(new { version = 2, futureRecentVersion = true }));
+                string futureRecentBefore = File.ReadAllText(recent);
+                safety.FlushStateForSmoke();
+                bool recentFutureVersionProtected = File.ReadAllText(recent) == futureRecentBefore;
                 File.WriteAllText(favorites, "{\"broken\":{}}");
                 string favoriteMalformedBefore = File.ReadAllText(favorites);
                 safety.SelectFileNameForSmoke("item-0300.png");
@@ -1047,8 +1067,8 @@ public partial class App : Application
                 futureStateWindow.Close();
                 watch.Stop();
                 ok = catalog == fixtureCount && grid <= win.GridMaxRealizationCountForSmoke && listProbe.ListMode && listProbe.Recycling && listProbe.Bounded && favoriteLevels
-                    && favoriteMerged && seenMerged && stateUnknownPreserved && stateExternalUnknownPreserved && recentUnknownPreserved && favoriteMalformedProtected && seenMalformedProtected && stateMalformedProtected && futureStateProtected && lockProbe.ConcurrentMerged && lockProbe.StaleRecovered && lockProbe.MalformedLockProtected && dotsDisplayOnly && foldersCollapsed && anchorStable && deleted && stateReloaded && enhancementPassive;
-                result = new { ok, message = ok ? "P0D integrated 5000-image gate passed" : "P0D gate failed", folder, fixtureCount, catalog, grid, maxGrid = win.GridMaxRealizationCountForSmoke, listProbe, favoriteLevels, favoriteMerged, seenMerged, stateUnknownPreserved, stateExternalUnknownPreserved, recentUnknownPreserved, favoriteMalformedProtected, seenMalformedProtected, stateMalformedProtected, futureStateProtected, lockProbe, dotsDisplayOnly, foldersCollapsed, anchor, drift300, drift80, drift200, deleted, stateReloaded, enhancementPassive, jobs, jobsHashBefore, jobsHashAfter, workingSet, elapsedMs = watch.ElapsedMilliseconds, metrics };
+                    && favoriteMerged && favoriteLegacyCompatibility && seenMerged && stateUnknownPreserved && stateExternalUnknownPreserved && recentUnknownPreserved && recentFutureVersionProtected && favoriteMalformedProtected && seenMalformedProtected && stateMalformedProtected && futureStateProtected && lockProbe.ConcurrentMerged && lockProbe.StaleRecovered && lockProbe.MalformedLockProtected && dotsDisplayOnly && foldersCollapsed && anchorStable && deleted && stateReloaded && enhancementPassive;
+                result = new { ok, message = ok ? "P0D integrated 5000-image gate passed" : "P0D gate failed", folder, fixtureCount, catalog, grid, maxGrid = win.GridMaxRealizationCountForSmoke, listProbe, favoriteLevels, favoriteMerged, favoriteLegacyCompatibility, seenMerged, stateUnknownPreserved, stateExternalUnknownPreserved, recentUnknownPreserved, recentFutureVersionProtected, favoriteMalformedProtected, seenMalformedProtected, stateMalformedProtected, futureStateProtected, lockProbe, dotsDisplayOnly, foldersCollapsed, anchor, drift300, drift80, drift200, deleted, stateReloaded, enhancementPassive, jobs, jobsHashBefore, jobsHashAfter, workingSet, elapsedMs = watch.ElapsedMilliseconds, metrics };
             }
             catch (Exception ex) { result = new { ok = false, message = ex.ToString(), folder, fixtureCount }; }
             finally
