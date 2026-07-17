@@ -52,6 +52,9 @@ function ViewerApp() {
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
   const [lastDirSet, setLastDirSet] = useState('');
   const [pasteFolders, setPasteFolders] = useState('');
+  const [scanNotice, setScanNotice] = useState('');
+  const openFolderSetRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusAfterScanCancelRef = useRef(false);
   const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
   const selectedCount = selectedIds.length;
   const cancelBulkDelete = useCallback(() => {
@@ -226,12 +229,26 @@ function ViewerApp() {
   ) => {
     const targetDir = formatDirSet(parseDirSet(overrideDir ?? dirPath));
     if (!targetDir) return;
+    setScanNotice('');
     startScan({
       full: Boolean(event?.shiftKey),
       dir: targetDir,
       onComplete: rememberRecentDir,
     });
   }, [dirPath, rememberRecentDir, startScan]);
+
+  const handleCancelScan = useCallback(() => {
+    if (phase !== 'scanning') return;
+    restoreFocusAfterScanCancelRef.current = true;
+    setScanNotice('Scan cancelled. Folder selection preserved.');
+    cancelScan();
+  }, [cancelScan, phase]);
+
+  useEffect(() => {
+    if (phase !== 'landing' || !restoreFocusAfterScanCancelRef.current) return;
+    restoreFocusAfterScanCancelRef.current = false;
+    openFolderSetRef.current?.focus();
+  }, [phase]);
 
   const handleBrowseFolders = useCallback(async () => {
     try {
@@ -387,6 +404,7 @@ function ViewerApp() {
               Add folder
             </button>
             <button
+              ref={openFolderSetRef}
               className="scan-btn"
               onClick={(event) => handleStartScan(event)}
               disabled={phase === 'scanning' || selectedFolders.length === 0}
@@ -487,8 +505,16 @@ function ViewerApp() {
           />
         )}
 
+        {phase === 'landing' && scanNotice && (
+          <div className="progress-container">
+            <div className="progress-waiting" role="status" aria-live="polite" aria-atomic="true">
+              {scanNotice}
+            </div>
+          </div>
+        )}
+
         {phase === 'scanning' && scanProgress && (
-          <ScanProgressStatus progress={scanProgress} onCancel={cancelScan} />
+          <ScanProgressStatus progress={scanProgress} onCancel={handleCancelScan} />
         )}
         </div>
         <SettingsModal />
