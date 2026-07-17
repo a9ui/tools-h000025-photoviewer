@@ -230,7 +230,7 @@ used by zoom shortcut and wheel paths:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
 ```
 
-P0B creates a temporary 1,201-image fixture. It proves that the complete catalog is searchable and modal-addressable beyond the old 1,200 boundary while Grid stays bounded, List uses recycling virtualization, and 200-reset Grid zoom leaves List thumbnails unchanged:
+P0B creates a temporary offscreen 1,201-image fixture. It proves that the complete catalog is searchable and modal-addressable beyond the old 1,200 boundary while Grid stays bounded, List uses recycling virtualization, and Grid captures the actual ScrollViewer center-near card before 200→300→80→200 zoom. The smoke reports anchor identity and pixel drift (target ≤8px), plus sidebar/right-panel invariance; List thumbnail size remains unchanged.
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0b-smoke "$env:TEMP\photoviewer-wpf-p0b-smoke.json"

@@ -139,6 +139,9 @@ public partial class MainWindow : Window
     private readonly HashSet<int> _favoriteFilterLevels = [];
     private bool _showUnseenDots;
     private bool _foldersSectionExpanded = true;
+    private bool _restoringGridZoomAnchor;
+    private string? _lastGridZoomAnchorPath;
+    private double _lastGridZoomAnchorDrift;
     private double _modalZoom = 1;
     private bool _modalFlipped;
     private double _modalPanX;
@@ -3404,7 +3407,20 @@ public partial class MainWindow : Window
     // ─────────── Size slider ───────────
     private void SizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
+        if (_restoringGridZoomAnchor)
+            return;
+
+        if (RowsList?.Visibility == Visibility.Visible)
+        {
+            _restoringGridZoomAnchor = true;
+            try { SizeSlider.Value = e.OldValue; }
+            finally { _restoringGridZoomAnchor = false; }
+            return;
+        }
+
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
         ApplyCardLayoutToAllTiles();
+        RestoreGridZoomAnchorAfterLayout(anchor);
         if (!_initializing)
             SaveState();
     }
@@ -3429,7 +3445,88 @@ public partial class MainWindow : Window
 
     private void SetCardWidth(double value)
     {
+        if (RowsList?.Visibility == Visibility.Visible)
+            return;
         SizeSlider.Value = Math.Clamp(value, SizeSlider.Minimum, SizeSlider.Maximum);
+    }
+
+    private GridZoomAnchor? CaptureGridZoomAnchor()
+    {
+        if (CardsList?.Visibility != Visibility.Visible)
+            return null;
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(CardsList);
+        if (viewer is null || viewer.ViewportHeight <= 0)
+            return null;
+
+        GridZoomAnchor? best = null;
+        GridZoomAnchor? previous = null;
+        double center = viewer.ViewportHeight / 2;
+        foreach (var item in FindVisualDescendants<FrameworkElement>(CardsList))
+        {
+            if (item.DataContext is not Tile tile || !tile.IsRealFile || item.ActualHeight <= 0)
+                continue;
+            try
+            {
+                Point top = item.TransformToAncestor(viewer).Transform(new Point(0, 0));
+                double distance = Math.Abs((top.Y + item.ActualHeight / 2) - center);
+                if (best is null || distance < best.Value.CenterDistance)
+                    best = new GridZoomAnchor(tile.Path, top.Y, distance);
+                if (!string.IsNullOrWhiteSpace(_lastGridZoomAnchorPath) && string.Equals(tile.Path, _lastGridZoomAnchorPath, StringComparison.OrdinalIgnoreCase))
+                    previous = new GridZoomAnchor(tile.Path, top.Y, distance);
+            }
+            catch (InvalidOperationException)
+            {
+                // The visual can be recycled while a scroll/layout pass is in flight.
+            }
+        }
+        return previous ?? best;
+    }
+
+    private void RestoreGridZoomAnchorAfterLayout(GridZoomAnchor? anchor)
+    {
+        if (anchor is null)
+            return;
+        _lastGridZoomAnchorPath = anchor.Value.Path;
+        Dispatcher.BeginInvoke(() =>
+        {
+            ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(CardsList);
+            FrameworkElement? item = FindVisualDescendants<FrameworkElement>(CardsList)
+                .FirstOrDefault(element => element.DataContext is Tile tile && string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
+            if (viewer is null || item is null)
+                return;
+            try
+            {
+                double before = item.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
+                double requested = Math.Clamp(viewer.VerticalOffset + (before - anchor.Value.ViewportY), 0, Math.Max(0, viewer.ExtentHeight - viewer.ViewportHeight));
+                viewer.ScrollToVerticalOffset(requested);
+                Dispatcher.BeginInvoke(() =>
+                {
+                    FrameworkElement? settled = FindVisualDescendants<FrameworkElement>(CardsList)
+                        .FirstOrDefault(element => element.DataContext is Tile tile && string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
+                    if (settled is null) return;
+                    double actual = settled.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
+                    _lastGridZoomAnchorDrift = Math.Abs(actual - anchor.Value.ViewportY);
+                }, DispatcherPriority.Render);
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }, DispatcherPriority.Render);
+    }
+
+    private static T? FindVisualDescendant<T>(DependencyObject root) where T : DependencyObject
+        => FindVisualDescendants<T>(root).FirstOrDefault();
+
+    private static IEnumerable<T> FindVisualDescendants<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (int index = 0; index < VisualTreeHelper.GetChildrenCount(root); index++)
+        {
+            DependencyObject child = VisualTreeHelper.GetChild(root, index);
+            if (child is T typed)
+                yield return typed;
+            foreach (T nested in FindVisualDescendants<T>(child))
+                yield return nested;
+        }
     }
 
     private void ApplyCardLayoutToAllTiles()
@@ -3818,6 +3915,7 @@ public partial class MainWindow : Window
         if (CardsList is null || RowsList is null) return;
         CardsList.Visibility = Visibility.Visible;
         RowsList.Visibility = Visibility.Collapsed;
+        SizeSlider.IsEnabled = true;
     }
 
     private void ModeList_Checked(object sender, RoutedEventArgs e)
@@ -3827,6 +3925,7 @@ public partial class MainWindow : Window
             RowsList.SelectedIndex = CardsList.SelectedIndex;
         CardsList.Visibility = Visibility.Collapsed;
         RowsList.Visibility = Visibility.Visible;
+        SizeSlider.IsEnabled = false;
     }
 
     // ─────────── Landing / scan ───────────
@@ -4868,9 +4967,24 @@ public partial class MainWindow : Window
     public double ListThumbnailSizeForSmoke => _allTiles.FirstOrDefault()?.ListThumbnailSize ?? 0;
     public bool ListUsesRecyclingVirtualizationForSmoke
         => VirtualizingPanel.GetIsVirtualizing(RowsList) && VirtualizingPanel.GetVirtualizationMode(RowsList) == VirtualizationMode.Recycling;
+    public double SidebarWidthForSmoke => Sidebar.ActualWidth;
+    public double RightPanelWidthForSmoke => RightPanel.ActualWidth;
+    public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
+    public double LastGridZoomAnchorDriftForSmoke => _lastGridZoomAnchorDrift;
     public string? GridViewportAnchorForSmoke => _gridTiles.Count == 0 ? null : _gridTiles[_gridTiles.Count / 2].FileName;
+    public string? CaptureGridViewportAnchorForSmoke() => Path.GetFileName(CaptureGridZoomAnchor()?.Path);
     public bool GridContainsFileForSmoke(string? fileName)
         => !string.IsNullOrWhiteSpace(fileName) && _gridTiles.Any(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+    public async Task<bool> ScrollGridToMiddleForSmokeAsync()
+    {
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(CardsList);
+        if (viewer is null || viewer.ExtentHeight <= viewer.ViewportHeight)
+            return false;
+        viewer.ScrollToVerticalOffset(Math.Max(0, (viewer.ExtentHeight - viewer.ViewportHeight) / 2));
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        return true;
+    }
     public string DisplayStyleForSmoke => _displayStyle;
     public string AspectModeForSmoke => _aspectMode;
     public string SortByForSmoke => _sortBy;
@@ -4934,6 +5048,11 @@ public partial class MainWindow : Window
         double before = SizeSlider.Value;
         SetCardWidth(value);
         return Math.Abs(before - SizeSlider.Value) > 0.01;
+    }
+    public async Task WaitForGridZoomAnchorForSmokeAsync()
+    {
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
     }
     public bool ZoomWheelForSmoke(int delta)
     {
@@ -5612,6 +5731,8 @@ public readonly record struct ImageMetadataLoadMetrics(IReadOnlyDictionary<strin
 }
 
 public readonly record struct ThumbnailLoadMetrics(int Total, int Workers, int Completed, long ElapsedMs);
+
+internal readonly record struct GridZoomAnchor(string Path, double ViewportY, double CenterDistance);
 
 internal readonly record struct DecodedThumbnail(Tile Tile, BitmapSource? Thumbnail);
 

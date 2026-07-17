@@ -939,20 +939,35 @@ public partial class App : Application
                 bool modal = win.OpenModalForSmoke();
                 win.CloseModalForSmoke();
                 win.SetSearchQuery("", persist: false);
-                string? anchor = win.GridViewportAnchorForSmoke;
+                for (int index = 0; index < 4; index++)
+                    win.RealizeNextGridBatchForSmoke();
+                bool scrolledToMiddle = await win.ScrollGridToMiddleForSmokeAsync();
+                string? anchor = win.CaptureGridViewportAnchorForSmoke();
+                double sidebarBefore = win.SidebarWidthForSmoke;
+                double rightBefore = win.RightPanelWidthForSmoke;
                 double listThumbBefore = win.ListThumbnailSizeForSmoke;
                 bool zoom300 = win.SetGridZoomForSmoke(300);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
                 bool anchorAt300 = win.GridContainsFileForSmoke(anchor);
+                double drift300 = win.LastGridZoomAnchorDriftForSmoke;
+                bool identity300 = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), anchor, StringComparison.OrdinalIgnoreCase);
                 bool zoom80 = win.SetGridZoomForSmoke(80);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
                 bool anchorAt80 = win.GridContainsFileForSmoke(anchor);
+                double drift80 = win.LastGridZoomAnchorDriftForSmoke;
+                bool identity80 = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), anchor, StringComparison.OrdinalIgnoreCase);
                 bool reset = win.ZoomResetForSmoke() && Math.Abs(win.CardWidthForSmoke - 200) < 0.01;
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                double drift200 = win.LastGridZoomAnchorDriftForSmoke;
+                bool identity200 = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), anchor, StringComparison.OrdinalIgnoreCase);
+                bool panelsStable = Math.Abs(sidebarBefore - win.SidebarWidthForSmoke) < 0.01 && Math.Abs(rightBefore - win.RightPanelWidthForSmoke) < 0.01;
                 bool listMode = win.SetListModeForSmoke();
                 double listThumbAfter = win.ListThumbnailSizeForSmoke;
                 bool listVirtualized = win.ListUsesRecyclingVirtualizationForSmoke;
                 LoadMetrics? metrics = win.LastLoadMetrics;
                 ok = total == fixtureCount && realized <= maxRealized && selected && modal && zoom300 && zoom80 && reset
-                    && anchorAt300 && anchorAt80 && listMode && listVirtualized && Math.Abs(listThumbBefore - listThumbAfter) < 0.01;
-                result = new { ok, message = ok ? "P0B catalog, bounded realization, zoom anchor, and list virtualization passed" : "P0B smoke failed", folder, fixtureCount, total, realized, maxRealized, selected, modal, anchor, zoom300, anchorAt300, zoom80, anchorAt80, reset, listMode, listVirtualized, listThumbBefore, listThumbAfter, scanMs = metrics?.ScanMs, materializeMs = metrics?.MaterializeMs, thumbnailMs = metrics?.ThumbnailMs, totalMs = metrics?.TotalMs, gridDeferred = metrics?.GridDeferredItems };
+                    && scrolledToMiddle && anchorAt300 && anchorAt80 && identity300 && identity80 && identity200 && drift300 <= 8 && drift80 <= 8 && drift200 <= 8 && panelsStable && listMode && listVirtualized && Math.Abs(listThumbBefore - listThumbAfter) < 0.01;
+                result = new { ok, message = ok ? "P0B catalog, viewport zoom anchor, and list virtualization passed" : "P0B smoke failed", folder, fixtureCount, total, realized, maxRealized, selected, modal, scrolledToMiddle, anchor, zoom300, anchorAt300, identity300, drift300, zoom80, anchorAt80, identity80, drift80, reset, identity200, drift200, panelsStable, sidebarBefore, rightBefore, listMode, listVirtualized, listThumbBefore, listThumbAfter, scanMs = metrics?.ScanMs, materializeMs = metrics?.MaterializeMs, thumbnailMs = metrics?.ThumbnailMs, totalMs = metrics?.TotalMs, gridDeferred = metrics?.GridDeferredItems };
             }
             catch (Exception ex)
             {
