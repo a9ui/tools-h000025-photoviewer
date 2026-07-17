@@ -7391,6 +7391,18 @@ public partial class MainWindow : Window
     }
     public bool FocusDiagnosticsForSmoke() => CopyDiagnosticsButton.Focus();
     public bool FocusAppSettingsDoneForSmoke() => AppSettingsDoneButton.Focus();
+    public ExplorerRevealSmokeSnapshot ShowSelectedInFolderForSmoke()
+    {
+        ProcessStartInfo? captured = null;
+        Func<ProcessStartInfo, bool> previous = _explorerLauncher;
+        _explorerLauncher = info => { captured = info; return true; };
+        try
+        {
+            bool launched = ShowSelectedInFolder();
+            return new ExplorerRevealSmokeSnapshot(launched, captured?.FileName ?? "", captured?.ArgumentList.ToList() ?? [], DiagnosticsSurfaceContractForSmoke);
+        }
+        finally { _explorerLauncher = previous; }
+    }
     public bool SettingsFocusTrapConfiguredForSmoke
         => KeyboardNavigation.GetTabNavigation(AppSettingsDialogSurface) == KeyboardNavigationMode.Cycle;
     public bool DeleteFocusTrapConfiguredForSmoke
@@ -8725,6 +8737,8 @@ public sealed record DiagnosticsSmokeSnapshot(
     string Status,
     bool SurfaceContract,
     bool SettingsFocused);
+
+public sealed record ExplorerRevealSmokeSnapshot(bool Launched, string FileName, List<string> Arguments, bool AutomationReady);
 
 public sealed record ModalMetadataSmokeSnapshot(
     bool ModalVisible,
