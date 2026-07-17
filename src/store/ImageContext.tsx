@@ -28,6 +28,7 @@ export type ViewMode = 'grid' | 'list';
 export type AspectMode = 'original' | 'square' | 'portrait';
 export type DisplayStyle = 'standard' | 'compact' | 'poster';
 export type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
+export type SearchErrorKind = 'transient' | 'session-expired';
 
 export interface ViewSettings {
   viewMode: ViewMode;
@@ -206,6 +207,13 @@ function withIndexToken(url: string, indexToken: string | null) {
   return `${url}${url.includes('?') ? '&' : '?'}indexToken=${encodeURIComponent(indexToken)}`;
 }
 
+class SearchRequestError extends Error {
+  constructor(message: string, readonly kind: SearchErrorKind) {
+    super(message);
+    this.name = 'SearchRequestError';
+  }
+}
+
 type ScanEventStage = 'preparing' | 'scanning' | 'complete';
 
 function normalizeScanEventProgress(data: Record<string, unknown>) {
@@ -247,8 +255,10 @@ interface Ctx {
   searchTotal: number;
   isSearching: boolean;
   searchError: string | null;
+  searchErrorKind: SearchErrorKind | null;
   ensureSearchRange: (startIndex: number, endIndex: number) => void;
   retrySearch: () => void;
+  rescanExpiredSearchSession: () => void;
   dismissSearchError: () => void;
 
   // Favorites
@@ -344,6 +354,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [searchTotal, setSearchTotal] = useState(0);
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
+  const [searchErrorKind, setSearchErrorKind] = useState<SearchErrorKind | null>(null);
 
   const [favorites, setFavorites] = useState<Record<string, number>>({});
   const [showFavOnlyState, setShowFavOnlyState] = useState(false);
@@ -911,7 +922,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
     pendingPagesRef.current.add(pageKey);
     setIsSearching(true);
-    if (generation === searchGenerationRef.current) setSearchError(null);
+    if (generation === searchGenerationRef.current) {
+      setSearchError(null);
+      setSearchErrorKind(null);
+    }
     const startedAt = performance.now();
     const abortController = new AbortController();
     pendingSearchControllersRef.current.set(pageKey, abortController);
@@ -934,7 +948,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         const message = errorData && typeof errorData.error === 'string'
           ? errorData.error
           : `Search request failed (${res.status}).`;
-        throw new Error(message);
+        throw new SearchRequestError(message, res.status === 410 ? 'session-expired' : 'transient');
       }
       if (!data || !Array.isArray((data as SearchResponse).results)
         || !Number.isFinite((data as SearchResponse).total)) {
@@ -1000,7 +1014,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const message = e instanceof Error && e.message
         ? e.message
         : 'Search failed. Please retry.';
+      const kind = e instanceof SearchRequestError ? e.kind : 'transient';
       setSearchError(message);
+      setSearchErrorKind(kind);
       console.error('Search failed', e);
     } finally {
       pendingSearchControllersRef.current.delete(pageKey);
@@ -1041,6 +1057,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     pendingPagesRef.current = new Set();
     lastFailedSearchPageRef.current = null;
     setSearchError(null);
+    setSearchErrorKind(null);
     if (!preserveCurrentResults) {
       searchTotalRef.current = 0;
       searchResultsRef.current = [];
@@ -1083,10 +1100,12 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [doSearchPage, getSearchPageKey, isSearchPageComplete, searchResults.length, searchTotal]);
 
   const retrySearch = useCallback(() => {
+    if (searchErrorKind === 'session-expired') return;
     const meta = searchMetaRef.current;
     const generation = searchGenerationRef.current;
     const page = lastFailedSearchPageRef.current ?? 0;
     setSearchError(null);
+    setSearchErrorKind(null);
     void doSearchPage(
       meta.query,
       page,
@@ -1099,10 +1118,11 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       meta.indexToken,
       generation,
     );
-  }, [doSearchPage]);
+  }, [doSearchPage, searchErrorKind]);
 
   const dismissSearchError = useCallback(() => {
     setSearchError(null);
+    setSearchErrorKind(null);
   }, []);
 
   const setSearchQuery = useCallback((q: string) => {
@@ -1313,6 +1333,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const dismissScanError = useCallback(() => {
     setScanError(null);
   }, []);
+
+  const rescanExpiredSearchSession = useCallback(() => {
+    if (searchErrorKind !== 'session-expired' || !dirPath.trim()) return;
+    setSearchError(null);
+    setSearchErrorKind(null);
+    startScan({ dir: dirPath });
+  }, [dirPath, searchErrorKind, startScan]);
 
   // ── Delete ──
   const deleteImage = useCallback(async (id: string): Promise<boolean> => {
@@ -1621,7 +1648,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     <ImageContext.Provider value={{
       phase, setPhase, dirPath, setDirPath, indexToken, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
-      isSearching, searchError, ensureSearchRange, retrySearch, dismissSearchError,
+      isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,
       cycleFavoriteLevel, decreaseFavoriteLevel, clearFavorite,

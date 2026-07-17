@@ -103,26 +103,33 @@ function PreviewTabsProbe() {
 function SearchProbe() {
   const {
     phase,
+    dirPath,
     setPhase,
     setDirPath,
     setSearchQuery,
     searchResults,
     searchError,
+    searchErrorKind,
     retrySearch,
+    rescanExpiredSearchSession,
   } = useImageStore();
   return (
     <div>
       <output aria-label="search phase">{phase}</output>
+      <output aria-label="search directory">{dirPath}</output>
       <output aria-label="search result ids">
         {searchResults.filter((image): image is ImageFile => Boolean(image)).map((image) => image.id).join(',')}
       </output>
       <output aria-label="search error state">{searchError ?? ''}</output>
+      <output aria-label="search error kind">{searchErrorKind ?? ''}</output>
       <button type="button" onClick={() => {
         setDirPath('C:/images');
         setPhase('viewer');
       }}>Load initial search</button>
       <button type="button" onClick={() => setSearchQuery('next query')}>Run failing search</button>
+      <button type="button" onClick={() => setSearchQuery('newer query')}>Run newer search</button>
       <button type="button" onClick={retrySearch}>Retry current search</button>
+      <button type="button" onClick={rescanExpiredSearchSession}>Rescan expired session</button>
     </div>
   );
 }
@@ -805,7 +812,9 @@ describe('ImageProvider search recovery', () => {
             json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }),
           } as Response;
         }
-        if (searchCalls === 2) throw new Error('Search service temporarily unavailable');
+        if (searchCalls === 2) {
+          return new Response(JSON.stringify({ error: 'Search service temporarily unavailable' }), { status: 500 });
+        }
         return {
           ok: true,
           json: async () => ({ results: [nextImage], total: 1, page: 0, totalPages: 1 }),
@@ -830,6 +839,7 @@ describe('ImageProvider search recovery', () => {
     await waitFor(() => {
       expect(screen.getByRole('status', { name: 'search error state' }))
         .toHaveTextContent('Search service temporarily unavailable');
+      expect(screen.getByRole('status', { name: 'search error kind' })).toHaveTextContent('transient');
     });
     expect(screen.getByRole('status', { name: 'search result ids' }))
       .toHaveTextContent(previewProbeImage.id);
@@ -839,6 +849,91 @@ describe('ImageProvider search recovery', () => {
       expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(nextImage.id);
       expect(screen.getByRole('status', { name: 'search error state' })).toHaveTextContent('');
     });
+  });
+
+  it('classifies a 410 as an expired session, retains results, and rescans the same folder set', async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    let searchCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/search')) {
+        searchCalls += 1;
+        if (searchCalls === 1) {
+          return { ok: true, json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }) } as Response;
+        }
+        if (searchCalls === 2) {
+          return new Response(JSON.stringify({ error: 'This viewer session expired. Scan the folder set again to refresh it.' }), { status: 410 });
+        }
+        return { ok: true, json: async () => ({ results: [secondPreviewProbeImage], total: 1, page: 0, totalPages: 1 }) } as Response;
+      }
+      return { ok: true, json: async () => ({ favorites: {}, jobs: [] }) } as Response;
+    }));
+
+    render(
+      <ImageProvider>
+        <SearchProbe />
+      </ImageProvider>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Load initial search' }));
+    await screen.findByText(previewProbeImage.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Run failing search' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search error kind' })).toHaveTextContent('session-expired');
+      expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(previewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'search directory' })).toHaveTextContent('C:/images');
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rescan expired session' }));
+    expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('scanning');
+    expect(MockEventSource.instances[0].url).toContain('dir=C%3A%2Fimages');
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 1, total: 1, newFiles: 0, stage: 'complete', indexToken: 'idx_refreshed' }),
+      } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('viewer');
+      expect(screen.getByRole('status', { name: 'search error state' })).toHaveTextContent('');
+      expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(secondPreviewProbeImage.id);
+    });
+  });
+
+  it('discards a stale 410 when a newer search generation succeeds', async () => {
+    let resolveExpired!: (response: Response) => void;
+    let searchCalls = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (!String(input).includes('/api/search')) {
+        return { ok: true, json: async () => ({ favorites: {}, jobs: [] }) } as Response;
+      }
+      searchCalls += 1;
+      if (searchCalls === 1) {
+        return { ok: true, json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }) } as Response;
+      }
+      if (searchCalls === 2) {
+        return new Promise<Response>((resolve) => { resolveExpired = resolve; });
+      }
+      return { ok: true, json: async () => ({ results: [secondPreviewProbeImage], total: 1, page: 0, totalPages: 1 }) } as Response;
+    }));
+    render(
+      <ImageProvider>
+        <SearchProbe />
+      </ImageProvider>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Load initial search' }));
+    await screen.findByText(previewProbeImage.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Run failing search' }));
+    await waitFor(() => expect(searchCalls).toBe(2));
+    fireEvent.click(screen.getByRole('button', { name: 'Run newer search' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(secondPreviewProbeImage.id));
+
+    await act(async () => {
+      resolveExpired(new Response(JSON.stringify({ error: 'This viewer session expired.' }), { status: 410 }));
+    });
+    expect(screen.getByRole('status', { name: 'search error kind' })).toHaveTextContent('');
+    expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(secondPreviewProbeImage.id);
   });
 });
 

@@ -150,7 +150,7 @@ function getZoomAnchorIndex({
 
 export default function ImageGrid() {
   const {
-    searchQuery, searchResults, searchTotal, isSearching, searchError, ensureSearchRange, retrySearch, dismissSearchError,
+    searchQuery, searchResults, searchTotal, isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
     selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
     closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
@@ -1084,7 +1084,8 @@ export default function ImageGrid() {
           subject="search"
           message={searchError}
           canRetry
-          onRetry={retrySearch}
+          recoveryAction={searchErrorKind === 'session-expired' ? 'rescan' : 'retry'}
+          onRetry={searchErrorKind === 'session-expired' ? rescanExpiredSearchSession : retrySearch}
           onDismiss={dismissSearchError}
         />
       </div>
@@ -1377,7 +1378,8 @@ export default function ImageGrid() {
           subject="search"
           message={searchError}
           canRetry
-          onRetry={retrySearch}
+          recoveryAction={searchErrorKind === 'session-expired' ? 'rescan' : 'retry'}
+          onRetry={searchErrorKind === 'session-expired' ? rescanExpiredSearchSession : retrySearch}
           onDismiss={dismissSearchError}
         />
       )}

@@ -6,6 +6,7 @@ interface ScanErrorNoticeProps {
   onRetry: () => void;
   onDismiss: () => void;
   subject?: 'scan' | 'search';
+  recoveryAction?: 'retry' | 'rescan';
 }
 
 export function ScanErrorNotice({
@@ -14,20 +15,26 @@ export function ScanErrorNotice({
   onRetry,
   onDismiss,
   subject = 'scan',
+  recoveryAction = 'retry',
 }: ScanErrorNoticeProps) {
   const isSearch = subject === 'search';
-  const label = isSearch ? 'Search' : 'Scan';
-  const retryLabel = isSearch ? 'Retry search' : 'Retry scan';
-  const retryAriaLabel = isSearch
+  const isSessionExpired = recoveryAction === 'rescan';
+  const label = isSessionExpired ? 'Session expired' : isSearch ? 'Search' : 'Scan';
+  const retryLabel = isSessionExpired ? 'Rescan folder set' : isSearch ? 'Retry search' : 'Retry scan';
+  const retryAriaLabel = isSessionExpired
+    ? 'Rescan the current folder set to refresh the viewer session'
+    : isSearch
     ? 'Retry the current search'
     : 'Retry scan with the current folder set';
-  const disabledRetryAriaLabel = isSearch
+  const disabledRetryAriaLabel = isSessionExpired
+    ? 'Rescan is unavailable because no folder set is selected'
+    : isSearch
     ? 'Retry search is unavailable'
     : 'Retry scan is unavailable because no folder set is selected';
 
   return (
     <div className="landing-error scan-error-notice" role="alert">
-      <span>{label} error: {message}</span>
+      <span>{isSessionExpired ? `${label}:` : `${label} error:`} {message}</span>
       <div className="scan-error-actions">
         <button
           className="sidebar-link"

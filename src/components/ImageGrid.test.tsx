@@ -44,6 +44,7 @@ const decreaseFavoriteLevel = vi.fn();
 const markImageSeen = vi.fn();
 const requestRevealImage = vi.fn();
 const retrySearch = vi.fn();
+const rescanExpiredSearchSession = vi.fn();
 const dismissSearchError = vi.fn();
 
 function createStore(
@@ -145,6 +146,25 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(screen.queryByText(/no images match/i)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Retry the current search" }));
     expect(retrySearch).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses Rescan rather than Retry for an expired index session while retaining the gallery', async () => {
+    vi.mocked(useImageStore).mockReturnValue({
+      ...createStore(),
+      searchError: 'This viewer session expired. Scan the folder set again to refresh it.',
+      searchErrorKind: 'session-expired',
+      retrySearch,
+      rescanExpiredSearchSession,
+      dismissSearchError,
+    });
+    const user = userEvent.setup();
+    renderGrid();
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Session expired: This viewer session expired.');
+    expect(screen.getByRole('button', { name: /select first\.png/i })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Rescan the current folder set to refresh the viewer session' }));
+    expect(rescanExpiredSearchSession).toHaveBeenCalledTimes(1);
+    expect(retrySearch).not.toHaveBeenCalled();
   });
 
   it("reaches the first card by keyboard, selects with Space, and opens with Enter", async () => {
