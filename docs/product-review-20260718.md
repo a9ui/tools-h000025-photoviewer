@@ -86,7 +86,7 @@ WPF版は「作りかけのUI shell」段階を脱し、Browser契約のP0/P1を
 
 ### P2-A WPF native操作完成
 
-Prompt tag→searchは、dedupe chip、keyboard、focus、reload、isolationまで完了した。残りはExplorerへのnative FileDrop drag-out。
+Prompt tag→searchとExplorerへのnative FileDrop drag-outは、keyboard/focus/Automation、selection order、path guard、state/data isolationまでfocused verifier付きで完了した。現行P2 ledger上の実装残はなく、次は統合/visual/stressで再現する欠陥だけを修正する。
 
 ### P2-B Browser deep correctness
 
