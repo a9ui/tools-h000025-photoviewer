@@ -7393,17 +7393,72 @@ public partial class MainWindow : Window
     public bool FocusDiagnosticsForSmoke() => CopyDiagnosticsButton.Focus();
     public bool FocusAppSettingsDoneForSmoke() => AppSettingsDoneButton.Focus();
     public ExplorerRevealSmokeSnapshot ShowSelectedInFolderForSmoke()
+        => ActivateExplorerRevealForSmoke("right-preview", "success");
+
+    public ExplorerRevealSmokeSnapshot ActivateExplorerRevealForSmoke(string surface, string launcherBehavior)
     {
         ProcessStartInfo? captured = null;
         Func<ProcessStartInfo, bool> previous = _explorerLauncher;
-        _explorerLauncher = info => { captured = info; return true; };
+        _explorerLauncher = info =>
+        {
+            captured = info;
+            return launcherBehavior switch
+            {
+                "success" => true,
+                "failure" => false,
+                "throw" => throw new InvalidOperationException("injected explorer failure with private fixture path"),
+                _ => throw new ArgumentOutOfRangeException(nameof(launcherBehavior)),
+            };
+        };
         try
         {
-            bool launched = ShowSelectedInFolder();
-            return new ExplorerRevealSmokeSnapshot(launched, captured?.FileName ?? "", captured?.ArgumentList.ToList() ?? [], DiagnosticsSurfaceContractForSmoke);
+            Button button = string.Equals(surface, "modal", StringComparison.OrdinalIgnoreCase)
+                ? ModalRevealButton
+                : RightPreviewRevealButton;
+            if (ReferenceEquals(button, ModalRevealButton) && Modal.Visibility != Visibility.Visible)
+                OpenModal();
+            bool focused = button.Focus();
+            button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            bool launched = captured is not null
+                && string.Equals(_deleteStatus, "Opened Explorer with the selected source.", StringComparison.Ordinal);
+            return new ExplorerRevealSmokeSnapshot(
+                launched,
+                captured?.FileName ?? "",
+                captured?.ArgumentList.ToList() ?? [],
+                captured?.Arguments ?? "",
+                captured?.UseShellExecute ?? false,
+                ExplorerRevealSurfaceContractForSmoke,
+                focused && button.IsKeyboardFocused,
+                _deleteStatus,
+                ReferenceEquals(button, ModalRevealButton) ? "modal" : "right-preview");
         }
         finally { _explorerLauncher = previous; }
     }
+
+    public ExplorerRevealValidationSnapshot ValidateExplorerRevealPathForSmoke(
+        string path,
+        bool includeInCatalog,
+        bool isRealFile = true)
+    {
+        var tile = new Tile { Path = path, FileName = Path.GetFileName(path), IsRealFile = isRealFile };
+        if (includeInCatalog)
+            _allTiles.Add(tile);
+        try
+        {
+            bool accepted = TryValidateFileDropTile(tile, out string canonical, out string reason);
+            return new ExplorerRevealValidationSnapshot(accepted, canonical, reason);
+        }
+        finally
+        {
+            _allTiles.Remove(tile);
+        }
+    }
+
+    public bool ExplorerRevealSurfaceContractForSmoke
+        => string.Equals(AutomationProperties.GetName(RightPreviewRevealButton), "Show selected source in folder", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(ModalRevealButton), "Show selected source in folder", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(RightPreviewRevealButton.ToolTip?.ToString())
+            && !string.IsNullOrWhiteSpace(ModalRevealButton.ToolTip?.ToString());
     public bool SettingsFocusTrapConfiguredForSmoke
         => KeyboardNavigation.GetTabNavigation(AppSettingsDialogSurface) == KeyboardNavigationMode.Cycle;
     public bool DeleteFocusTrapConfiguredForSmoke
@@ -8739,7 +8794,18 @@ public sealed record DiagnosticsSmokeSnapshot(
     bool SurfaceContract,
     bool SettingsFocused);
 
-public sealed record ExplorerRevealSmokeSnapshot(bool Launched, string FileName, List<string> Arguments, bool AutomationReady);
+public sealed record ExplorerRevealSmokeSnapshot(
+    bool Launched,
+    string FileName,
+    List<string> Arguments,
+    string ArgumentsText,
+    bool UseShellExecute,
+    bool AutomationReady,
+    bool Focused,
+    string Status,
+    string Surface);
+
+public sealed record ExplorerRevealValidationSnapshot(bool Accepted, string CanonicalPath, string Reason);
 
 public sealed record ModalMetadataSmokeSnapshot(
     bool ModalVisible,

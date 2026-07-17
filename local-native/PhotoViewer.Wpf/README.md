@@ -45,6 +45,7 @@ implementation. The normative current behavior is documented in
 - `--preview-tab-reorder-smoke <path>` drag/keyboard reorder, middle-close, focus/Automation, and reload-order smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--png-metadata-smoke <path>` lazy active-preview and read-only modal Prompt / Negative / Settings tab plus PNG `parameters` metadata smoke
+- `--explorer-reveal-smoke <path>` temp-only injected Explorer `/select,` action, guard, focus, and isolation smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
@@ -66,6 +67,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
 - `scripts/verify-wpf-prompt-tag-search.ps1` temp-only Prompt chip/search/focus/persistence/isolation verifier
 - `scripts/verify-wpf-file-drag-out.ps1` temp-only threshold/payload/path-guard/selection/isolation verifier without invoking an OS drag
+- `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier

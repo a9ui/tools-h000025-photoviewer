@@ -157,6 +157,13 @@ public partial class App : Application
             return;
         }
 
+        int explorerRevealSmokeIdx = Array.IndexOf(e.Args, "--explorer-reveal-smoke");
+        if (explorerRevealSmokeIdx >= 0 && explorerRevealSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureExplorerRevealSmoke(e.Args[explorerRevealSmokeIdx + 1]);
+            return;
+        }
+
         int folderDragInSmokeIdx = Array.IndexOf(e.Args, "--folder-drag-in-smoke");
         if (folderDragInSmokeIdx >= 0 && folderDragInSmokeIdx + 1 < e.Args.Length)
         {
@@ -7197,6 +7204,169 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureExplorerRevealSmoke(string resultPath)
+    {
+        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-explorer-reveal-" + Guid.NewGuid().ToString("N"));
+        string folder = Path.Combine(smokeRoot, "Unicode 雪 images with spaces");
+        string outsideFolder = Path.Combine(smokeRoot, "outside active root");
+        string validName = "O'Brien 「quote safe」 image.png";
+        string validPath = Path.Combine(folder, validName);
+        string otherPath = Path.Combine(folder, "other.png");
+        string missingPath = Path.Combine(folder, "missing source.png");
+        string unsupportedPath = Path.Combine(folder, "unsupported source.txt");
+        string outsidePath = Path.Combine(outsideFolder, "outside.png");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhancement-jobs.json");
+        string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
+        string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
+        string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
+        string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
+        string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+
+        try
+        {
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(outsideFolder);
+            WriteSmokePng(validPath, 96, 64, Color.FromRgb(64, 132, 220));
+            WriteSmokePng(otherPath, 64, 96, Color.FromRgb(166, 94, 210));
+            WriteSmokePng(outsidePath, 48, 48, Color.FromRgb(210, 120, 70));
+            File.WriteAllText(unsupportedPath, "not an image");
+            File.WriteAllText(jobsPath, "{\"jobs\":[]}");
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+            Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        }
+        catch (Exception ex)
+        {
+            WriteExplorerRevealSmokeResult(resultPath, new ExplorerRevealSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot });
+            Shutdown(1);
+            return;
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        win.Dispatcher.InvokeAsync(async () =>
+        {
+            ExplorerRevealSmokeResult result;
+            try
+            {
+                await win.LoadFolderAsync(folder);
+                bool selected = win.SelectFileNameForSmoke(validName);
+                bool modalOpened = win.OpenModalForSmoke();
+                win.FlushStateForSmoke();
+
+                var sourceBefore = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [validPath] = FileFingerprint(validPath),
+                    [otherPath] = FileFingerprint(otherPath),
+                    [unsupportedPath] = FileFingerprint(unsupportedPath),
+                    [outsidePath] = FileFingerprint(outsidePath),
+                };
+                string stateBefore = FileFingerprint(statePath);
+                string favoritesBefore = FileFingerprint(favoritesPath);
+                string seenBefore = FileFingerprint(seenPath);
+                string recentBefore = FileFingerprint(recentPath);
+                string jobsBefore = FileFingerprint(jobsPath);
+
+                ExplorerRevealSmokeSnapshot rightPreview = win.ActivateExplorerRevealForSmoke("right-preview", "success");
+                ExplorerRevealSmokeSnapshot modal = win.ActivateExplorerRevealForSmoke("modal", "success");
+                ExplorerRevealSmokeSnapshot launcherFailure = win.ActivateExplorerRevealForSmoke("right-preview", "failure");
+                ExplorerRevealSmokeSnapshot launcherException = win.ActivateExplorerRevealForSmoke("modal", "throw");
+                ExplorerRevealValidationSnapshot outside = win.ValidateExplorerRevealPathForSmoke(outsidePath, includeInCatalog: true);
+                ExplorerRevealValidationSnapshot catalogAbsent = win.ValidateExplorerRevealPathForSmoke(otherPath, includeInCatalog: false);
+                ExplorerRevealValidationSnapshot missing = win.ValidateExplorerRevealPathForSmoke(missingPath, includeInCatalog: true);
+                ExplorerRevealValidationSnapshot unsupported = win.ValidateExplorerRevealPathForSmoke(unsupportedPath, includeInCatalog: true);
+
+                string canonical = Path.GetFullPath(validPath);
+                string expectedArgument = $"/select,{canonical}";
+                bool rightValid = rightPreview.Launched
+                    && string.Equals(rightPreview.FileName, "explorer.exe", StringComparison.OrdinalIgnoreCase)
+                    && rightPreview.Arguments.SequenceEqual([expectedArgument], StringComparer.Ordinal)
+                    && string.IsNullOrEmpty(rightPreview.ArgumentsText)
+                    && rightPreview.UseShellExecute
+                    && rightPreview.AutomationReady && rightPreview.Focused
+                    && string.Equals(rightPreview.Surface, "right-preview", StringComparison.Ordinal);
+                bool modalValid = modal.Launched
+                    && string.Equals(modal.FileName, "explorer.exe", StringComparison.OrdinalIgnoreCase)
+                    && modal.Arguments.SequenceEqual([expectedArgument], StringComparer.Ordinal)
+                    && string.IsNullOrEmpty(modal.ArgumentsText)
+                    && modal.UseShellExecute
+                    && modal.AutomationReady && modal.Focused
+                    && string.Equals(modal.Surface, "modal", StringComparison.Ordinal);
+                bool genericErrors = !launcherFailure.Launched && !launcherException.Launched
+                    && string.Equals(launcherFailure.Status, "Show in folder could not start Explorer. Try again.", StringComparison.Ordinal)
+                    && string.Equals(launcherException.Status, launcherFailure.Status, StringComparison.Ordinal)
+                    && !launcherFailure.Status.Contains(smokeRoot, StringComparison.OrdinalIgnoreCase)
+                    && !launcherException.Status.Contains(validName, StringComparison.OrdinalIgnoreCase);
+                bool rejections = !outside.Accepted && outside.Reason.Contains("outside", StringComparison.OrdinalIgnoreCase)
+                    && !catalogAbsent.Accepted && catalogAbsent.Reason.Contains("catalog", StringComparison.OrdinalIgnoreCase)
+                    && !missing.Accepted && missing.Reason.Contains("no longer exists", StringComparison.OrdinalIgnoreCase)
+                    && !unsupported.Accepted && unsupported.Reason.Contains("unsupported", StringComparison.OrdinalIgnoreCase);
+                bool sourceUntouched = sourceBefore.All(pair => string.Equals(pair.Value, FileFingerprint(pair.Key), StringComparison.Ordinal));
+                bool mutableStateUntouched = string.Equals(stateBefore, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(seenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool passive = win.EnhancementJobsReadForSmoke == 0 && win.EnhancedCandidateCountForSmoke == 0;
+                bool quoteSafeFixture = validName.Contains('\'')
+                    && validPath.Contains(' ')
+                    && validPath.Any(static value => value > 127);
+                bool ok = selected && modalOpened && rightValid && modalValid && genericErrors && rejections
+                    && sourceUntouched && mutableStateUntouched && passive && quoteSafeFixture;
+
+                result = new ExplorerRevealSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "guarded Explorer reveal passed both action surfaces, ArgumentList quoting, rejection, accessibility, and no-side-effect checks without starting Explorer"
+                        : "Explorer reveal smoke did not meet the guarded action contract",
+                    SmokeRoot = smokeRoot,
+                    ValidPath = canonical,
+                    ExpectedArgument = expectedArgument,
+                    Selected = selected,
+                    ModalOpened = modalOpened,
+                    QuoteSafeFixture = quoteSafeFixture,
+                    RightPreview = rightPreview,
+                    Modal = modal,
+                    LauncherFailure = launcherFailure,
+                    LauncherException = launcherException,
+                    OutsideActiveRoot = outside,
+                    CatalogAbsent = catalogAbsent,
+                    Missing = missing,
+                    Unsupported = unsupported,
+                    GenericErrors = genericErrors,
+                    SourceUntouched = sourceUntouched,
+                    MutableStateUntouched = mutableStateUntouched,
+                    Passive = passive,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new ExplorerRevealSmokeResult { Message = ex.Message, SmokeRoot = smokeRoot, ValidPath = validPath };
+            }
+            finally
+            {
+                win.Close();
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+            }
+
+            WriteExplorerRevealSmokeResult(resultPath, result);
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(result.Ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureFolderDragInSmoke(string resultPath)
     {
         string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-folder-drag-in-" + Guid.NewGuid().ToString("N"));
@@ -8410,6 +8580,12 @@ public partial class App : Application
         File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
     }
 
+    private static void WriteExplorerRevealSmokeResult(string path, ExplorerRevealSmokeResult result)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
+        File.WriteAllText(path, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+    }
+
     private static void WriteFolderDragInSmokeResult(string path, FolderDragInSmokeResult result)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(path))!);
@@ -8684,6 +8860,30 @@ public partial class App : Application
         public bool MutableStateUntouched { get; init; }
         public int EnhancementJobsRead { get; init; }
         public int EnhancementCandidates { get; init; }
+    }
+
+    private sealed class ExplorerRevealSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "";
+        public string? SmokeRoot { get; init; }
+        public string? ValidPath { get; init; }
+        public string? ExpectedArgument { get; init; }
+        public bool Selected { get; init; }
+        public bool ModalOpened { get; init; }
+        public bool QuoteSafeFixture { get; init; }
+        public ExplorerRevealSmokeSnapshot? RightPreview { get; init; }
+        public ExplorerRevealSmokeSnapshot? Modal { get; init; }
+        public ExplorerRevealSmokeSnapshot? LauncherFailure { get; init; }
+        public ExplorerRevealSmokeSnapshot? LauncherException { get; init; }
+        public ExplorerRevealValidationSnapshot? OutsideActiveRoot { get; init; }
+        public ExplorerRevealValidationSnapshot? CatalogAbsent { get; init; }
+        public ExplorerRevealValidationSnapshot? Missing { get; init; }
+        public ExplorerRevealValidationSnapshot? Unsupported { get; init; }
+        public bool GenericErrors { get; init; }
+        public bool SourceUntouched { get; init; }
+        public bool MutableStateUntouched { get; init; }
+        public bool Passive { get; init; }
     }
 
     private sealed class FolderDragInSmokeResult

@@ -152,7 +152,7 @@ Browser 側の根拠:
 | Ctrl/Shift 複数選択 | `ADOPT` | P1 | Extended selection、range/toggle、Grid/List 同期。 `MainWindow.xaml.cs:1898-1980` | range、toggle、background clear、primary の fixture を維持 |
 | Bulk Favorite | `ADD` | P2 | 複数選択件数はあるが一括 favorite UI なし | 全選択へ同一 level 設定。部分失敗を隠さず共有 JSON を一回でcommit |
 | Drag out | `NATIVE-EXTENSION` | P2 | Grid/List/right previewからguarded FileDrop Copy。`verify-wpf-file-drag-out.ps1` | system threshold、selection order、canonical/root/catalog/type/existence guard、state/data isolationを維持 |
-| Show in folder | `NATIVE-EXTENSION` | P2 | Right Preview / Modalからguarded Explorer select | Browser Openの意味は変更しない。 |
+| Show in folder | `NATIVE-EXTENSION` | P2 | Right Preview / Modalからguarded Explorer select。unicode/space/apostrophe path、exact ArgumentList、focus/Automation、generic failure、state/source isolationを`verify-wpf-explorer-reveal.ps1`で固定 | Browser Openの意味は変更しない。 |
 | Folder drag-in | `NATIVE-EXTENSION` | P1 | Landing/Viewer Explorer FileDrop accepts only canonical existing folders, case-insensitive dedupes and appends by reference. `verify-wpf-folder-drag-in.ps1` | no file copy/move, landing draft update, viewer rescan, rejection/status/a11y and temp-store isolation |
 
 ### 3.4 Right preview、tabs、modal、Delete
