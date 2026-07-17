@@ -15,6 +15,8 @@ const BUILD_ID_FILE = path.join(ROOT, '.next', 'BUILD_ID');
 const NEXT_BIN = require.resolve('next/dist/bin/next', { paths: [ROOT] });
 const START_PORT = 3000;
 const MAX_PORT = 3999;
+const SERVER_HOST = '127.0.0.1';
+const OPEN_BROWSER = process.env.PVU_NO_OPEN !== '1';
 const COMFY_ROOT = process.env.PVU_COMFY_ROOT || 'C:\\AI\\ComfyUI';
 const COMFY_HOST = process.env.PVU_COMFY_HOST || '127.0.0.1';
 const COMFY_PORT = Number(process.env.PVU_COMFY_PORT || 8188);
@@ -104,8 +106,42 @@ function findAvailablePort(port) {
     server.once('listening', () => {
       server.close(() => resolve(port));
     });
+    // Probe the wildcard socket so a listener on either IPv4 or IPv6 reserves
+    // the port. The real Next server is still started on loopback only.
     server.listen(port);
   });
+}
+
+function readRuntimeProvenance(port) {
+  const buildId = fs.readFileSync(BUILD_ID_FILE, 'utf8').trim();
+  const buildCompletedAtUtc = fs.statSync(BUILD_ID_FILE).mtime.toISOString();
+  const revisionResult = spawnSync('git', ['rev-parse', 'HEAD'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const sourceRevision = revisionResult.status === 0
+    ? revisionResult.stdout.trim()
+    : 'unknown';
+  const dirtyResult = spawnSync('git', ['status', '--porcelain'], {
+    cwd: ROOT,
+    encoding: 'utf8',
+    windowsHide: true,
+  });
+  const sourceDirty = dirtyResult.status !== 0 || dirtyResult.stdout.trim().length > 0;
+
+  return {
+    product: 'PhotoViewer',
+    projectRoot: ROOT,
+    sourceRevision,
+    sourceDirty,
+    buildId,
+    buildCompletedAtUtc,
+    serverHost: SERVER_HOST,
+    serverPort: port,
+    launcherPid: process.pid,
+    serverStartedAtUtc: new Date().toISOString(),
+  };
 }
 
 function isPortListening(port, host = '127.0.0.1') {
@@ -300,7 +336,9 @@ async function main() {
 
   await startManagedComfy();
 
-  const url = `http://localhost:${port}`;
+  const url = `http://${SERVER_HOST}:${port}`;
+  const provenance = readRuntimeProvenance(port);
+  console.log(`[Photoviewer] Runtime provenance ${JSON.stringify(provenance)}`);
   console.log(`[Photoviewer] Starting production server on ${url} ...`);
 
   let browserOpened = false;
@@ -309,16 +347,27 @@ async function main() {
     path.join(__dirname, 'serve_with_parent_watch.js'),
     String(process.pid),
     String(port),
+    SERVER_HOST,
   ], {
     cwd: ROOT,
     stdio: ['ignore', 'pipe', 'pipe'],
     windowsHide: true,
+    env: {
+      ...process.env,
+      PVU_BUILD_ID: provenance.buildId,
+      PVU_BUILD_COMPLETED_AT_UTC: provenance.buildCompletedAtUtc,
+      PVU_SOURCE_REVISION: provenance.sourceRevision,
+      PVU_SOURCE_DIRTY: provenance.sourceDirty ? '1' : '0',
+      PVU_SERVER_HOST: provenance.serverHost,
+      PVU_SERVER_PORT: String(provenance.serverPort),
+      PVU_SERVER_STARTED_AT_UTC: provenance.serverStartedAtUtc,
+    },
   });
   serverChild = child;
 
   const onData = (data) => {
     process.stdout.write(data);
-    if (!browserOpened && /ready|started server|localhost/i.test(data.toString())) {
+    if (OPEN_BROWSER && !browserOpened && /ready|started server|localhost/i.test(data.toString())) {
       browserOpened = true;
       openBrowser(url);
     }
@@ -327,13 +376,13 @@ async function main() {
   child.stdout.on('data', onData);
   child.stderr.on('data', (data) => {
     process.stderr.write(data);
-    if (!browserOpened && /ready|started server|localhost/i.test(data.toString())) {
+    if (OPEN_BROWSER && !browserOpened && /ready|started server|localhost/i.test(data.toString())) {
       browserOpened = true;
       openBrowser(url);
     }
   });
 
-  setTimeout(() => {
+  if (OPEN_BROWSER) setTimeout(() => {
     if (!browserOpened) {
       browserOpened = true;
       console.log('[Photoviewer] Server ready signal not detected, opening browser anyway...');

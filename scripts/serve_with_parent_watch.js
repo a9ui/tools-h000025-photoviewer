@@ -12,6 +12,7 @@ const WATCHDOG_SCRIPT = path.join(__dirname, 'kill_when_parent_exits.js');
 const NEXT_BIN = require.resolve('next/dist/bin/next', { paths: [ROOT] });
 const parentPid = Number(process.argv[2]);
 const port = process.argv[3];
+const host = process.argv[4] || '127.0.0.1';
 let serverChild = null;
 let cleanedUp = false;
 
@@ -66,11 +67,24 @@ if (!port) {
   process.exit(1);
 }
 
-serverChild = spawn(process.execPath, [NEXT_BIN, 'start', '-p', String(port)], {
+if (host !== '127.0.0.1' && host !== '::1') {
+  console.error(`[Photoviewer] Refusing non-loopback production host: ${host}`);
+  process.exit(1);
+}
+
+serverChild = spawn(process.execPath, [
+  NEXT_BIN,
+  'start',
+  '--hostname',
+  host,
+  '--port',
+  String(port),
+], {
   cwd: ROOT,
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,
 });
+safeWrite(process.stdout, `[Photoviewer] Server process ${serverChild.pid} requested loopback bind ${host}:${port}.\n`);
 
 const watchdog = spawn(process.execPath, [
   WATCHDOG_SCRIPT,
