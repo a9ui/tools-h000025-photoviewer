@@ -476,8 +476,13 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
-        if (!scanAccessFailures.IsEmpty || !scanBoundarySkips.IsEmpty || unavailableFolderSet.Count > 0)
-            ReportScanTraversalWarnings(scanAccessFailures.Count, scanBoundarySkips.Count, unavailableFolderSet.Count);
+        string scanTraversalWarning = BuildScanWarning(
+            scanAccessFailures.Count,
+            scanBoundarySkips.Count,
+            unavailableFolderSet.Count,
+            decodeFailureCount: 0);
+        if (!string.IsNullOrWhiteSpace(scanTraversalWarning))
+            SetStatusToast(scanTraversalWarning);
 
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
         if (files.Count > 0)
@@ -501,7 +506,13 @@ public partial class MainWindow : Window
             if (!IsCurrentLoad(generation, cts))
                 return;
             if (metadata.DecodeFailures > 0)
-                SetStatusToast($"{metadata.DecodeFailures:N0} image file(s) could not be decoded. They remain listed; refresh after fixing the files.");
+            {
+                SetStatusToast(BuildScanWarning(
+                    scanAccessFailures.Count,
+                    scanBoundarySkips.Count,
+                    unavailableFolderSet.Count,
+                    metadata.DecodeFailures));
+            }
         }
 
         if (!IsCurrentLoad(generation, cts))
@@ -699,6 +710,13 @@ public partial class MainWindow : Window
 
     private void ReportScanTraversalWarnings(int accessFailureCount, int boundarySkipCount, int unavailableRootCount)
     {
+        string warning = BuildScanWarning(accessFailureCount, boundarySkipCount, unavailableRootCount, decodeFailureCount: 0);
+        if (!string.IsNullOrWhiteSpace(warning))
+            SetStatusToast(warning);
+    }
+
+    private static string BuildScanWarning(int accessFailureCount, int boundarySkipCount, int unavailableRootCount, int decodeFailureCount)
+    {
         var messages = new List<string>();
         if (unavailableRootCount > 0)
             messages.Add($"{unavailableRootCount:N0} selected root(s) were unavailable and skipped. The folder set was kept so Refresh can retry them.");
@@ -706,7 +724,9 @@ public partial class MainWindow : Window
             messages.Add($"Some folders could not be scanned. {accessFailureCount:N0} location(s) became unavailable or access was denied; fix access and refresh the folder.");
         if (boundarySkipCount > 0)
             messages.Add($"{boundarySkipCount:N0} junction or symbolic-link location(s) were not followed outside the selected folder tree.");
-        SetStatusToast(string.Join(" ", messages));
+        if (decodeFailureCount > 0)
+            messages.Add($"{decodeFailureCount:N0} image file(s) could not be decoded. They remain listed; refresh after fixing the files.");
+        return string.Join(" ", messages);
     }
 
     private int AppendLandingFolders(IEnumerable<string> folders)
@@ -8014,6 +8034,8 @@ public partial class MainWindow : Window
 
     public string? SelectedPathForSmoke => SelectedTile()?.Path;
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
+    public static string BuildScanWarningForSmoke(int accessFailureCount, int boundarySkipCount, int unavailableRootCount, int decodeFailureCount)
+        => BuildScanWarning(accessFailureCount, boundarySkipCount, unavailableRootCount, decodeFailureCount);
     public static List<string> SupportedImageExtensionsForSmoke
         => SupportedImageExtensions.OrderBy(static extension => extension, StringComparer.OrdinalIgnoreCase).ToList();
     public string SearchQueryForSmoke => SearchInput.Text;

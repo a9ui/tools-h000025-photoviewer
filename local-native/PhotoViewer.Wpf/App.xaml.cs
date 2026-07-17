@@ -304,6 +304,13 @@ public partial class App : Application
             return;
         }
 
+        int pathRobustnessSmokeIdx = Array.IndexOf(e.Args, "--path-robustness-smoke");
+        if (pathRobustnessSmokeIdx >= 0 && pathRobustnessSmokeIdx + 1 < e.Args.Length)
+        {
+            CapturePathRobustnessSmoke(e.Args[pathRobustnessSmokeIdx + 1]);
+            return;
+        }
+
         int favoriteFilterSmokeIdx = Array.IndexOf(e.Args, "--favorite-filter-smoke");
         if (favoriteFilterSmokeIdx >= 0 && favoriteFilterSmokeIdx + 1 < e.Args.Length)
         {
@@ -7230,6 +7237,289 @@ public partial class App : Application
             Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
             File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
             try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CapturePathRobustnessSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string statePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH")
+            ?? throw new InvalidOperationException("automation state path was not configured");
+        string favoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH")
+            ?? throw new InvalidOperationException("automation favorites path was not configured");
+        string seenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH")
+            ?? throw new InvalidOperationException("automation seen path was not configured");
+        string recentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH")
+            ?? throw new InvalidOperationException("automation recent path was not configured");
+        string jobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH")
+            ?? throw new InvalidOperationException("automation jobs path was not configured");
+        string smokeRoot = Path.GetDirectoryName(Path.GetFullPath(statePath))
+            ?? throw new InvalidOperationException("automation root was unavailable");
+        string root = Path.Combine(smokeRoot, "sources", "日本語 雪 😀 images with spaces and O'Brien");
+        string secondRoot = Path.Combine(smokeRoot, "sources", "Second CASE Root");
+        string missingRoot = Path.Combine(smokeRoot, "sources", "temporarily unavailable root");
+        string protectedRoot = Path.Combine(smokeRoot, "protected source root");
+        string longFolder = root;
+        for (int index = 1; index <= 4; index++)
+            longFolder = Path.Combine(longFolder, $"segment-{index}-{new string('x', 52)}");
+
+        string unicodeName = "雪 😀 portrait's final.PNG";
+        string longName = "customer's 日本語 long-path image.png";
+        string readOnlyName = "read only image.png";
+        string lockedName = "temporarily locked image.png";
+        string corruptName = "corrupt but listed image.png";
+        string disappearingName = "disappears before refresh.png";
+        string secondName = "SECOND-root MixedCase.JpG";
+        string unicodePath = Path.Combine(root, unicodeName);
+        string longPath = Path.Combine(longFolder, longName);
+        string readOnlyPath = Path.Combine(root, readOnlyName);
+        string lockedPath = Path.Combine(root, lockedName);
+        string corruptPath = Path.Combine(root, corruptName);
+        string disappearingPath = Path.Combine(root, disappearingName);
+        string secondPath = Path.Combine(secondRoot, secondName);
+        string protectedPath = Path.Combine(protectedRoot, "protected.png");
+        FileStream? exclusiveLock = null;
+
+        try
+        {
+            Directory.CreateDirectory(longFolder);
+            Directory.CreateDirectory(secondRoot);
+            Directory.CreateDirectory(protectedRoot);
+            Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+            WriteSmokePng(unicodePath, 96, 72, Color.FromRgb(64, 132, 220));
+            WriteSmokePng(longPath, 112, 84, Color.FromRgb(90, 172, 130));
+            WriteSmokePng(readOnlyPath, 80, 60, Color.FromRgb(196, 112, 82));
+            WriteSmokePng(lockedPath, 88, 66, Color.FromRgb(146, 102, 204));
+            WriteSmokePng(disappearingPath, 72, 54, Color.FromRgb(205, 92, 140));
+            WriteSmokePng(secondPath, 104, 78, Color.FromRgb(84, 166, 205));
+            WriteSmokePng(protectedPath, 64, 48, Color.FromRgb(220, 82, 96));
+            File.WriteAllText(corruptPath, "not an image; must remain recoverable");
+            File.SetAttributes(readOnlyPath, File.GetAttributes(readOnlyPath) | FileAttributes.ReadOnly);
+            File.WriteAllText(statePath, "{\"Version\":2,\"pathRobustnessMarker\":\"preserve\"}");
+            File.WriteAllText(favoritesPath, "{}");
+            File.WriteAllText(seenPath, "{}");
+            File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\",\"pathRecentMarker\":\"preserve\"}");
+            File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+        }
+        catch (Exception ex)
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(new { ok = false, message = ex.ToString(), smokeRoot, longPath }));
+            Shutdown(1);
+            return;
+        }
+
+        var sourceBefore = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+        {
+            [unicodePath] = FileFingerprint(unicodePath),
+            [longPath] = FileFingerprint(longPath),
+            [readOnlyPath] = FileFingerprint(readOnlyPath),
+            [lockedPath] = FileFingerprint(lockedPath),
+            [corruptPath] = FileFingerprint(corruptPath),
+            [secondPath] = FileFingerprint(secondPath),
+            [protectedPath] = FileFingerprint(protectedPath),
+        };
+        string favoritesBefore = FileFingerprint(favoritesPath);
+        string jobsBefore = FileFingerprint(jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.Show();
+        window.Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            var recycleCalls = new List<string>();
+            try
+            {
+                exclusiveLock = new FileStream(lockedPath, FileMode.Open, FileAccess.ReadWrite, FileShare.None);
+                string caseVariantRoot = root.ToUpperInvariant();
+                string[] requestedRoots = [root, caseVariantRoot, secondRoot, missingRoot];
+                await window.LoadFolderSetAsync(requestedRoots);
+
+                List<string> initialCatalog = window.AllFileNamesForSmoke;
+                bool longPathOverLegacyLimit = longPath.Length > 260;
+                bool scanComplete = initialCatalog.Count == 7
+                    && new[] { unicodeName, longName, readOnlyName, lockedName, corruptName, disappearingName, secondName }
+                        .All(name => initialCatalog.Contains(name, StringComparer.OrdinalIgnoreCase));
+                bool caseDeduped = window.CurrentFolderSetForSmoke.Count == 3
+                    && window.CurrentFolderSetForSmoke.SequenceEqual([root, secondRoot, missingRoot], StringComparer.OrdinalIgnoreCase);
+                string initialStatus = window.DeleteStatusForSmoke;
+                bool mixedWarningsVisible = initialStatus.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                    && initialStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
+                string warningProbe = PhotoViewer.Wpf.MainWindow.BuildScanWarningForSmoke(
+                    accessFailureCount: 2,
+                    boundarySkipCount: 3,
+                    unavailableRootCount: 1,
+                    decodeFailureCount: 4);
+                bool allWarningKindsRetained = warningProbe.Contains("selected root", StringComparison.OrdinalIgnoreCase)
+                    && warningProbe.Contains("folders could not be scanned", StringComparison.OrdinalIgnoreCase)
+                    && warningProbe.Contains("junction or symbolic-link", StringComparison.OrdinalIgnoreCase)
+                    && warningProbe.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
+
+                window.SetSearchQuery("雪 😀", persist: false);
+                bool unicodeSearch = window.FilteredFileNamesForSmoke().SequenceEqual([unicodeName], StringComparer.OrdinalIgnoreCase);
+                window.SetSearchQuery("customer's 日本語", persist: false);
+                bool longPathSearch = window.FilteredFileNamesForSmoke().SequenceEqual([longName], StringComparer.OrdinalIgnoreCase);
+                window.SetSearchQuery("mixedcase.jpg", persist: false);
+                bool caseInsensitiveSearch = window.FilteredFileNamesForSmoke().SequenceEqual([secondName], StringComparer.OrdinalIgnoreCase);
+                window.SetSearchQuery("", persist: false);
+
+                PreviewDecodeSmokeSnapshot unicodePreview = await window.SelectPreviewForSmokeAsync(unicodeName);
+                PreviewDecodeSmokeSnapshot longPreview = await window.SelectPreviewForSmokeAsync(longName);
+                PreviewDecodeSmokeSnapshot lockedPreview = await window.SelectPreviewForSmokeAsync(lockedName);
+                PreviewDecodeSmokeSnapshot corruptPreview = await window.SelectPreviewForSmokeAsync(corruptName);
+                bool validPreviews = unicodePreview.StableLatestSelection && longPreview.StableLatestSelection;
+                bool lockedRecoverable = lockedPreview.Selected && lockedPreview.DeferredDecodeApplied
+                    && !lockedPreview.PreviewSourcePresent && window.PreviewPlaceholderVisibleForSmoke;
+                bool corruptRecoverable = corruptPreview.Selected && corruptPreview.DeferredDecodeApplied
+                    && !corruptPreview.PreviewSourcePresent && window.PreviewPlaceholderVisibleForSmoke;
+
+                bool longSelected = window.SelectFileNameForSmoke(longName);
+                bool tabOpened = window.OpenSelectedPreviewTabForSmoke()
+                    && window.PreviewTabNamesForSmoke.Contains(longName, StringComparer.OrdinalIgnoreCase);
+                bool modalOpened = window.OpenModalForSmoke();
+                bool modalDecoded = await window.WaitForModalFullDecodeForSmokeAsync();
+                ExplorerRevealSmokeSnapshot explorer = window.ActivateExplorerRevealForSmoke("modal", "success");
+                FileDragOutSmokeSnapshot fileDrop = window.BuildFileDropPayloadForSmoke(longName, originWasSelected: false);
+                string expectedExplorerArgument = $"/select,{Path.GetFullPath(longPath)}";
+                bool explorerSafe = explorer.Launched
+                    && explorer.Arguments.SequenceEqual([expectedExplorerArgument], StringComparer.Ordinal)
+                    && string.IsNullOrEmpty(explorer.ArgumentsText);
+                bool fileDropSafe = fileDrop.Built && fileDrop.FileDropFormatPresent
+                    && fileDrop.Paths.SequenceEqual([Path.GetFullPath(longPath)], StringComparer.OrdinalIgnoreCase);
+                bool modalAndTabSafe = longSelected && tabOpened && modalOpened && modalDecoded
+                    && string.Equals(window.ModalDisplayPathForSmoke, longPath, StringComparison.OrdinalIgnoreCase);
+                window.CloseModalForSmoke();
+
+                FolderDropSmokeSnapshot folderDrop = await window.DropFoldersForSmokeAsync([secondRoot.ToUpperInvariant(), missingRoot], landing: false);
+                bool folderDropSafe = folderDrop.Accepted && folderDrop.AddedCount == 0 && folderDrop.RejectedCount == 1
+                    && window.CurrentFolderSetForSmoke.SequenceEqual([root, secondRoot, missingRoot], StringComparer.OrdinalIgnoreCase);
+
+                bool disappearingPrepared = window.SelectFileNameForSmoke(disappearingName)
+                    && window.OpenSelectedPreviewTabForSmoke()
+                    && window.TogglePreviewTabPinForSmoke(disappearingName)
+                    && window.OpenModalForSmoke();
+                exclusiveLock.Dispose();
+                exclusiveLock = null;
+                File.Delete(disappearingPath);
+                await window.RefreshActiveFolderForSmokeAsync();
+                await Task.Delay(150);
+                bool disappearedReconciled = disappearingPrepared
+                    && !window.AllFileNamesForSmoke.Contains(disappearingName, StringComparer.OrdinalIgnoreCase)
+                    && !window.PreviewTabNamesForSmoke.Contains(disappearingName, StringComparer.OrdinalIgnoreCase)
+                    && !string.Equals(window.ModalDisplayPathForSmoke, disappearingPath, StringComparison.OrdinalIgnoreCase);
+                PreviewDecodeSmokeSnapshot unlockedPreview = await window.SelectPreviewForSmokeAsync(lockedName);
+                bool lockRecovery = unlockedPreview.StableLatestSelection;
+                string refreshedStatus = window.DeleteStatusForSmoke;
+                bool refreshedMixedWarningsVisible = refreshedStatus.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                    && refreshedStatus.Contains("could not be decoded", StringComparison.OrdinalIgnoreCase);
+
+                window.SetProtectedDeleteRootsForSmoke(secondRoot);
+                window.SetRecycleBinDeleteBackendForSmoke(path =>
+                {
+                    recycleCalls.Add(path);
+                    return RecycleBinDeleteResult.Success;
+                });
+                window.SetConfirmBeforeDeleteForSmoke(false);
+                bool protectedSelected = window.SelectFileNameForSmoke(secondName);
+                bool protectedBlocked = protectedSelected && !window.RequestDeleteSelectedForSmoke() && recycleCalls.Count == 0;
+                window.SetProtectedDeleteRootsForSmoke(protectedRoot);
+                bool readOnlySelected = window.SelectFileNameForSmoke(readOnlyName);
+                bool fakeRecycleAccepted = readOnlySelected && window.RequestDeleteSelectedForSmoke()
+                    && recycleCalls.Count == 1
+                    && string.Equals(recycleCalls[0], readOnlyPath, StringComparison.OrdinalIgnoreCase)
+                    && File.Exists(readOnlyPath)
+                    && !window.AllFileNamesForSmoke.Contains(readOnlyName, StringComparer.OrdinalIgnoreCase);
+
+                bool sourceUntouched = sourceBefore.All(pair => string.Equals(pair.Value, FileFingerprint(pair.Key), StringComparison.Ordinal));
+                bool readOnlyPreserved = (File.GetAttributes(readOnlyPath) & FileAttributes.ReadOnly) != 0;
+                bool passive = string.Equals(favoritesBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal)
+                    && window.EnhancementJobsReadForSmoke == 0
+                    && window.EnhancedCandidateCountForSmoke == 0;
+                bool missingStayedMissing = !Directory.Exists(missingRoot);
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(Path.GetFullPath(smokeRoot) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase));
+
+                ok = longPathOverLegacyLimit && scanComplete && caseDeduped && mixedWarningsVisible && allWarningKindsRetained
+                    && unicodeSearch && longPathSearch && caseInsensitiveSearch
+                    && validPreviews && lockedRecoverable && corruptRecoverable
+                    && modalAndTabSafe && explorerSafe && fileDropSafe && folderDropSafe
+                    && disappearedReconciled && lockRecovery && refreshedMixedWarningsVisible
+                    && protectedBlocked && fakeRecycleAccepted
+                    && sourceUntouched && readOnlyPreserved && passive && missingStayedMissing && isolated;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "WPF path handling remained exact and recoverable across Unicode, long paths, locks, corruption, missing roots, shell payloads, and fake recycle"
+                        : "WPF path robustness contract failed",
+                    smokeRoot,
+                    longPath,
+                    longPathLength = longPath.Length,
+                    longPathOverLegacyLimit,
+                    scanComplete,
+                    caseDeduped,
+                    mixedWarningsVisible,
+                    initialStatus,
+                    allWarningKindsRetained,
+                    warningProbe,
+                    unicodeSearch,
+                    longPathSearch,
+                    caseInsensitiveSearch,
+                    validPreviews,
+                    lockedRecoverable,
+                    corruptRecoverable,
+                    modalAndTabSafe,
+                    explorerSafe,
+                    expectedExplorerArgument,
+                    explorer,
+                    fileDropSafe,
+                    fileDrop,
+                    folderDropSafe,
+                    folderDrop,
+                    disappearedReconciled,
+                    lockRecovery,
+                    refreshedMixedWarningsVisible,
+                    refreshedStatus,
+                    protectedBlocked,
+                    fakeRecycleAccepted,
+                    recycleCalls,
+                    sourceUntouched,
+                    readOnlyPreserved,
+                    passive,
+                    missingStayedMissing,
+                    isolated,
+                    initialCatalog,
+                    finalCatalog = window.AllFileNamesForSmoke,
+                    unicodePreview,
+                    longPreview,
+                    lockedPreview,
+                    corruptPreview,
+                    unlockedPreview,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot, longPath, recycleCalls };
+            }
+            finally
+            {
+                try { exclusiveLock?.Dispose(); } catch { }
+                try { if (window.IsLoaded) window.Close(); } catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try
+            {
+                foreach (string file in Directory.Exists(smokeRoot) ? Directory.EnumerateFiles(smokeRoot, "*", SearchOption.AllDirectories) : [])
+                    File.SetAttributes(file, FileAttributes.Normal);
+                if (Directory.Exists(smokeRoot))
+                    Directory.Delete(smokeRoot, recursive: true);
+            }
+            catch { }
             Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
