@@ -92,6 +92,7 @@ public partial class MainWindow : Window
     private readonly Dictionary<string, int> _favorites = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _favoriteDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _seenDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
@@ -180,6 +181,7 @@ public partial class MainWindow : Window
     private bool _modalShowingEnhanced;
     private bool _confirmBeforeDelete = true;
     private Tile? _pendingDeleteTile;
+    private DeleteSnapshot? _pendingBulkDeleteSnapshot;
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
     private Func<string, string> _resolveFinalPath = ResolveFinalPathCore;
     private string _deleteStatus = "";
@@ -1319,6 +1321,7 @@ public partial class MainWindow : Window
     private void LoadSeenState()
     {
         _seenPaths.Clear();
+        _seenDirtyPaths.Clear();
         _seenWriteBlocked = false;
 
         if (!string.IsNullOrWhiteSpace(SeenPathOverride))
@@ -1399,7 +1402,14 @@ public partial class MainWindow : Window
                 malformed = true;
                 return false;
             }
-            merged.UnionWith(_seenPaths);
+            IEnumerable<string> dirtyKeys = _seenDirtyPaths.Count > 0 ? _seenDirtyPaths : _seenPaths;
+            foreach (string key in dirtyKeys)
+            {
+                if (_seenPaths.Contains(key))
+                    merged.Add(key);
+                else
+                    merged.Remove(key);
+            }
             var ordered = merged
                 .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
                 .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase);
@@ -1416,7 +1426,9 @@ public partial class MainWindow : Window
             ReportPersistenceRefusal("Seen state", path, malformed);
             return false;
         }
+        _seenPaths.Clear();
         _seenPaths.UnionWith(mergedResult);
+        _seenDirtyPaths.Clear();
         return true;
     }
 
@@ -1428,11 +1440,13 @@ public partial class MainWindow : Window
         string key = NormalizeFavoritePath(tile.Path);
         bool wasUnseen = tile.Unseen;
         bool hadSeen = _seenPaths.Contains(key);
+        bool wasDirty = _seenDirtyPaths.Contains(key);
 
         if (hadSeen && !wasUnseen)
             return true;
 
         _seenPaths.Add(key);
+        _seenDirtyPaths.Add(key);
         tile.Unseen = false;
         tile.ShowUnseenDot = false;
 
@@ -1440,6 +1454,8 @@ public partial class MainWindow : Window
         {
             if (!hadSeen)
                 _seenPaths.Remove(key);
+            if (!wasDirty)
+                _seenDirtyPaths.Remove(key);
             tile.Unseen = wasUnseen;
             return false;
         }
@@ -5302,6 +5318,8 @@ public partial class MainWindow : Window
 
     private void DeleteSelected_Click(object sender, RoutedEventArgs e) => RequestDeleteSelected();
 
+    private void BulkDeleteSelected_Click(object sender, RoutedEventArgs e) => RequestBulkDeleteSelected();
+
     private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
     {
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
@@ -5338,21 +5356,49 @@ public partial class MainWindow : Window
 
         if (_confirmBeforeDelete)
         {
-            _deleteFocusBeforeDialog = Keyboard.FocusedElement;
             _pendingDeleteTile = tile;
-            DeleteConfirmationText.Text = $"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.";
-            DoNotAskAgainCheckBox.IsChecked = false;
-            DeleteConfirmationDialog.Visibility = Visibility.Visible;
-            Dispatcher.BeginInvoke(DeleteCancelButton.Focus, DispatcherPriority.Input);
+            _pendingBulkDeleteSnapshot = null;
+            ShowDeleteConfirmation($"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.", "Move selected image to Recycle Bin");
             return true;
         }
 
         return ExecuteDelete(tile);
     }
 
+    private bool RequestBulkDeleteSelected()
+    {
+        List<Tile> selected = SelectedTiles().Where(static tile => tile.IsRealFile).ToList();
+        if (selected.Count <= 1)
+            return RequestDeleteSelected();
+
+        var snapshot = new DeleteSnapshot(selected, _tiles.ToList());
+        if (_confirmBeforeDelete)
+        {
+            _pendingDeleteTile = null;
+            _pendingBulkDeleteSnapshot = snapshot;
+            ShowDeleteConfirmation(
+                $"{selected.Count:N0} selected images\nEach source will be moved independently to the Windows Recycle Bin. Failed images will remain available.",
+                $"Move {selected.Count:N0} selected images to Recycle Bin");
+            return true;
+        }
+
+        return ExecuteBulkDelete(snapshot);
+    }
+
+    private void ShowDeleteConfirmation(string message, string confirmAutomationName)
+    {
+        _deleteFocusBeforeDialog = Keyboard.FocusedElement;
+        DeleteConfirmationText.Text = message;
+        System.Windows.Automation.AutomationProperties.SetName(DeleteConfirmButton, confirmAutomationName);
+        DoNotAskAgainCheckBox.IsChecked = false;
+        DeleteConfirmationDialog.Visibility = Visibility.Visible;
+        Dispatcher.BeginInvoke(DeleteCancelButton.Focus, DispatcherPriority.Input);
+    }
+
     private void DeleteCancel_Click(object sender, RoutedEventArgs e)
     {
         _pendingDeleteTile = null;
+        _pendingBulkDeleteSnapshot = null;
         DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
         SetDeleteStatus("Move to Recycle Bin cancelled.");
         RestoreOverlayFocus(_deleteFocusBeforeDialog);
@@ -5361,14 +5407,18 @@ public partial class MainWindow : Window
     private void DeleteConfirm_Click(object sender, RoutedEventArgs e)
     {
         Tile? tile = _pendingDeleteTile;
+        DeleteSnapshot? bulkSnapshot = _pendingBulkDeleteSnapshot;
         _pendingDeleteTile = null;
+        _pendingBulkDeleteSnapshot = null;
         DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
         if (DoNotAskAgainCheckBox.IsChecked == true)
         {
             _confirmBeforeDelete = false;
             SaveState();
         }
-        if (tile is not null)
+        if (bulkSnapshot is not null)
+            ExecuteBulkDelete(bulkSnapshot);
+        else if (tile is not null)
             ExecuteDelete(tile);
         RestoreOverlayFocus(_deleteFocusBeforeDialog);
     }
@@ -5415,6 +5465,116 @@ public partial class MainWindow : Window
         SaveState();
         return true;
     }
+
+    private bool ExecuteBulkDelete(DeleteSnapshot snapshot)
+    {
+        var succeeded = new List<Tile>();
+        var failed = new List<(Tile Tile, string Reason)>();
+        foreach (Tile tile in snapshot.Targets)
+        {
+            if (!TryValidateDelete(tile, out string reason))
+            {
+                failed.Add((tile, reason));
+                continue;
+            }
+
+            RecycleBinDeleteResult result = _recycleBinDelete(tile.Path);
+            if (result.Succeeded)
+                succeeded.Add(tile);
+            else
+                failed.Add((tile, string.IsNullOrWhiteSpace(result.Reason) ? "Recycle Bin rejected the source" : result.Reason));
+        }
+
+        if (succeeded.Count == 0)
+        {
+            string reason = failed.FirstOrDefault().Reason ?? "No source could be moved";
+            SetStatusToast($"No selected images were moved to Recycle Bin. {failed.Count:N0} failed; they remain selected. {reason}");
+            return false;
+        }
+
+        RemoveDeletedTilesFromState(succeeded);
+        ApplyFilters(selectFirst: false);
+
+        var remainingSelected = snapshot.Targets
+            .Where(tile => !succeeded.Contains(tile) && _tiles.Contains(tile))
+            .ToList();
+        Tile? neighbor = FindBulkDeleteNeighbor(snapshot.FilteredOrder, snapshot.Targets);
+        if (neighbor is not null)
+        {
+            if (!remainingSelected.Contains(neighbor))
+                remainingSelected.Add(neighbor);
+            SetSelection(remainingSelected, neighbor);
+        }
+        else if (remainingSelected.Count > 0)
+        {
+            SetSelection(remainingSelected, remainingSelected[^1]);
+        }
+        else
+        {
+            SelectTile(null);
+            CloseModal();
+        }
+
+        bool favoritesSaved = SaveFavorites();
+        bool seenSaved = SaveSeenState();
+        SaveState();
+        if (failed.Count == 0 && favoritesSaved && seenSaved)
+        {
+            SetStatusToast($"Moved {succeeded.Count:N0} selected images to Recycle Bin.");
+        }
+        else
+        {
+            string persistence = favoritesSaved && seenSaved ? "" : " Local metadata could not be saved; retry after fixing local access.";
+            string firstReason = failed.Count > 0 ? $" {failed[0].Reason}" : "";
+            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}{persistence}");
+        }
+        return true;
+    }
+
+    private void RemoveDeletedTilesFromState(IEnumerable<Tile> deletedTiles)
+    {
+        var deletedPaths = new HashSet<string>(deletedTiles.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (Tile tile in deletedTiles)
+        {
+            string key = NormalizeFavoritePath(tile.Path);
+            _allTiles.Remove(tile);
+            _selectedPaths.Remove(tile.Path);
+            _favorites.Remove(key);
+            _favoriteDirtyPaths.Add(key);
+            _seenPaths.Remove(key);
+            _seenDirtyPaths.Add(key);
+            _pinnedPreviewPaths.Remove(key);
+        }
+
+        foreach (PreviewTabView tab in _previewTabs.Where(tab => deletedPaths.Contains(tab.Path)).ToList())
+            _previewTabs.Remove(tab);
+        _closedPreviewTabs.RemoveAll(tile => deletedPaths.Contains(tile.Path));
+        if (_activePreviewTabPath is not null && deletedPaths.Contains(_activePreviewTabPath))
+            _activePreviewTabPath = null;
+        if (_hoverPreviewTabPath is not null && deletedPaths.Contains(_hoverPreviewTabPath))
+            HidePreviewTabHover();
+        _primarySelectedPath = null;
+        RefreshPreviewTabs();
+    }
+
+    private Tile? FindBulkDeleteNeighbor(IReadOnlyList<Tile> priorFilteredOrder, IReadOnlyList<Tile> targets)
+    {
+        int lastDeletedIndex = Enumerable.Range(0, priorFilteredOrder.Count)
+            .Where(index => targets.Contains(priorFilteredOrder[index]))
+            .DefaultIfEmpty(-1)
+            .Max();
+        if (lastDeletedIndex >= 0)
+        {
+            Tile? next = priorFilteredOrder.Skip(lastDeletedIndex + 1).FirstOrDefault(_tiles.Contains);
+            if (next is not null)
+                return next;
+            return priorFilteredOrder.Take(lastDeletedIndex).Reverse().FirstOrDefault(_tiles.Contains);
+        }
+
+        return _tiles.FirstOrDefault();
+    }
+
+    private sealed record DeleteSnapshot(IReadOnlyList<Tile> Targets, IReadOnlyList<Tile> FilteredOrder);
 
     private bool TryValidateDelete(Tile tile, out string reason)
     {
@@ -6223,6 +6383,7 @@ public partial class MainWindow : Window
         SaveState();
     }
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
+    public bool RequestBulkDeleteSelectedForSmoke() => RequestBulkDeleteSelected();
     public void CancelDeleteForSmoke() => DeleteCancel_Click(this, new RoutedEventArgs());
     public void ConfirmDeleteForSmoke(bool doNotAskAgain)
     {
@@ -6271,6 +6432,12 @@ public partial class MainWindow : Window
     public int FilteredCountForSmoke => _tiles.Count;
     public int SelectedCountForSmoke => SelectedTiles().Count;
     public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
+    public bool RightPreviewEmptyForSmoke
+        => string.Equals(PreviewFileName.Text, "No matching image", StringComparison.Ordinal)
+            && PreviewBitmap.Visibility == Visibility.Collapsed;
+    public bool BulkDeleteButtonAccessibleForSmoke
+        => BulkDeleteButton.IsEnabled
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(BulkDeleteButton), "Move selected images to Recycle Bin", StringComparison.Ordinal);
     public int CardsSelectedCountForSmoke => CardsList.SelectedItems.Count;
     public int RowsSelectedCountForSmoke => RowsList.SelectedItems.Count;
     public bool MultiSelectionEnabledForSmoke => CardsList.SelectionMode == SelectionMode.Extended && RowsList.SelectionMode == SelectionMode.Extended;

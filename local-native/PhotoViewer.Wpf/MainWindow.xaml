@@ -344,7 +344,7 @@
               </Border>
 
               <Border x:Name="BulkFavoritePanel" Visibility="Collapsed" CornerRadius="10"
-                      AutomationProperties.Name="Bulk favorite actions"
+                      AutomationProperties.Name="Bulk selection actions"
                       Background="{StaticResource BgTertiary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1"
                       Padding="12,10" Margin="0,0,0,14">
                 <StackPanel>
@@ -367,6 +367,8 @@
                     <Button Style="{StaticResource GhostButton}" Content="Increase all" Click="FavoriteIncrease_Click"
                             ToolTip="Increase favorite level for selected images" AutomationProperties.Name="Increase favorite level for selected images" Margin="4,0,0,0"/>
                   </UniformGrid>
+                  <Button x:Name="BulkDeleteButton" Style="{StaticResource DangerButton}" Content="Move selected to Recycle Bin" Click="BulkDeleteSelected_Click"
+                          ToolTip="Move every selected source image to the Windows Recycle Bin" AutomationProperties.Name="Move selected images to Recycle Bin" Margin="0,8,0,0"/>
                 </StackPanel>
               </Border>
 
