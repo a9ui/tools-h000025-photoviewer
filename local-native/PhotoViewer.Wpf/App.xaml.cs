@@ -73,6 +73,13 @@ public partial class App : Application
             return;
         }
 
+        int windowWorkAreaSmokeIdx = Array.IndexOf(e.Args, "--window-work-area-smoke");
+        if (windowWorkAreaSmokeIdx >= 0 && windowWorkAreaSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureWindowWorkAreaSmoke(e.Args[windowWorkAreaSmokeIdx + 1]);
+            return;
+        }
+
         int shotIdx = Array.IndexOf(e.Args, "--shot");
         if (shotIdx >= 0 && shotIdx + 1 < e.Args.Length)
         {
@@ -491,6 +498,83 @@ public partial class App : Application
         File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         Environment.ExitCode = ok ? 0 : 1;
         Shutdown(Environment.ExitCode);
+    }
+
+    private void CaptureWindowWorkAreaSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.Show();
+        window.Dispatcher.InvokeAsync(() =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                static bool SameRect(Rect left, Rect right)
+                    => Math.Abs(left.Left - right.Left) < 0.01
+                        && Math.Abs(left.Top - right.Top) < 0.01
+                        && Math.Abs(left.Width - right.Width) < 0.01
+                        && Math.Abs(left.Height - right.Height) < 0.01;
+
+                // Keep the injected secondary work area inside the CI desktop's
+                // physical bounds so Windows does not clamp an intentionally
+                // nonexistent monitor. Its offset/size still differs from the
+                // primary work area and proves the provider is authoritative.
+                var initial = new Rect(180, 100, 940, 570);
+                var secondMonitorWorkArea = new Rect(80, 40, 1120, 600);
+                window.Left = initial.Left;
+                window.Top = initial.Top;
+                window.Width = initial.Width;
+                window.Height = initial.Height;
+                initial = window.WindowBoundsForSmoke;
+                window.SetCurrentMonitorWorkAreaForSmoke(secondMonitorWorkArea);
+                window.ToggleMaximizeForSmoke();
+                Rect maximized = window.WindowBoundsForSmoke;
+                bool usedCurrentMonitor = window.FakeMaximizedForSmoke && SameRect(maximized, secondMonitorWorkArea);
+                window.ToggleMaximizeForSmoke();
+                Rect restored = window.WindowBoundsForSmoke;
+                bool restoredExactly = !window.FakeMaximizedForSmoke && SameRect(restored, initial);
+
+                window.SetThrowingMonitorWorkAreaForSmoke();
+                window.ToggleMaximizeForSmoke();
+                Rect fallback = window.WindowBoundsForSmoke;
+                bool safeFallback = window.FakeMaximizedForSmoke && SameRect(fallback, SystemParameters.WorkArea);
+                window.ToggleMaximizeForSmoke();
+                bool fallbackRestored = !window.FakeMaximizedForSmoke && SameRect(window.WindowBoundsForSmoke, initial);
+                ok = usedCurrentMonitor && restoredExactly && safeFallback && fallbackRestored;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "fake maximize used the current monitor work area, restored exact bounds, and retained a safe fallback"
+                        : "window work-area contract failed",
+                    initial,
+                    secondMonitorWorkArea,
+                    maximized,
+                    restored,
+                    fallback,
+                    usedCurrentMonitor,
+                    restoredExactly,
+                    safeFallback,
+                    fallbackRestored,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message };
+            }
+            finally
+            {
+                try { window.ResetCurrentMonitorWorkAreaForSmoke(); } catch { }
+                try { window.Close(); } catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private static void ConfigureAutomationStorage(IReadOnlyList<string> args)

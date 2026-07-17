@@ -107,6 +107,7 @@ public partial class MainWindow : Window
     private string? _enhancementReadError;
     private Rect _restoreBounds;
     private bool _fakeMaximized;
+    private Func<Rect> _currentMonitorWorkArea = null!;
     private bool _initializing = true;
     private bool _suppressStateSave;
     private bool _favoritesWriteBlocked;
@@ -228,6 +229,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        _currentMonitorWorkArea = ResolveCurrentMonitorWorkArea;
         _searchFilterTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(SearchFilterDebounceMilliseconds),
@@ -7700,7 +7702,7 @@ public partial class MainWindow : Window
         else
         {
             _restoreBounds = new Rect(Left, Top, Width, Height);
-            var wa = SystemParameters.WorkArea;
+            Rect wa = ResolveSafeCurrentMonitorWorkArea();
             Left = wa.Left;
             Top = wa.Top;
             Width = wa.Width;
@@ -7709,7 +7711,80 @@ public partial class MainWindow : Window
         }
     }
 
+    private Rect ResolveSafeCurrentMonitorWorkArea()
+    {
+        try
+        {
+            Rect area = _currentMonitorWorkArea();
+            if (!area.IsEmpty
+                && double.IsFinite(area.Left) && double.IsFinite(area.Top)
+                && double.IsFinite(area.Width) && double.IsFinite(area.Height)
+                && area.Width > 0 && area.Height > 0)
+                return area;
+        }
+        catch
+        {
+            // Fall through to WPF's primary work area if monitor discovery is
+            // unavailable. Maximize remains non-destructive and reversible.
+        }
+        return SystemParameters.WorkArea;
+    }
+
+    private Rect ResolveCurrentMonitorWorkArea()
+    {
+        nint windowHandle = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (windowHandle == 0)
+            return SystemParameters.WorkArea;
+        nint monitor = MonitorFromWindow(windowHandle, MonitorDefaultToNearest);
+        if (monitor == 0)
+            return SystemParameters.WorkArea;
+
+        var info = new NativeMonitorInfo { Size = (uint)Marshal.SizeOf<NativeMonitorInfo>() };
+        if (!GetMonitorInfo(monitor, ref info))
+            return SystemParameters.WorkArea;
+
+        Matrix fromDevice = PresentationSource.FromVisual(this)?.CompositionTarget?.TransformFromDevice
+            ?? Matrix.Identity;
+        Point topLeft = fromDevice.Transform(new Point(info.WorkArea.Left, info.WorkArea.Top));
+        Point bottomRight = fromDevice.Transform(new Point(info.WorkArea.Right, info.WorkArea.Bottom));
+        return new Rect(topLeft, bottomRight);
+    }
+
+    private const uint MonitorDefaultToNearest = 2;
+
+    [DllImport("user32.dll")]
+    private static extern nint MonitorFromWindow(nint windowHandle, uint flags);
+
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GetMonitorInfo(nint monitor, ref NativeMonitorInfo info);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeMonitorInfo
+    {
+        public uint Size;
+        public NativeRect MonitorArea;
+        public NativeRect WorkArea;
+        public uint Flags;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeRect
+    {
+        public int Left;
+        public int Top;
+        public int Right;
+        public int Bottom;
+    }
+
     private void Close_Click(object sender, RoutedEventArgs e) => Close();
+
+    public Rect WindowBoundsForSmoke => new(Left, Top, Width, Height);
+    public bool FakeMaximizedForSmoke => _fakeMaximized;
+    public void SetCurrentMonitorWorkAreaForSmoke(Rect area) => _currentMonitorWorkArea = () => area;
+    public void SetThrowingMonitorWorkAreaForSmoke() => _currentMonitorWorkArea = () => throw new InvalidOperationException("injected monitor lookup failure");
+    public void ResetCurrentMonitorWorkAreaForSmoke() => _currentMonitorWorkArea = ResolveCurrentMonitorWorkArea;
+    public void ToggleMaximizeForSmoke() => Maximize_Click(this, new RoutedEventArgs());
 
     public string? SelectedPathForSmoke => SelectedTile()?.Path;
     public string? SelectedFileNameForSmoke => SelectedTile()?.FileName;
