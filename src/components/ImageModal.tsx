@@ -4,6 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useImageStore } from '../store/ImageContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
+import { useDialogFocus } from '../lib/useDialogFocus';
 import { buildImageIndexById, removeImageSlot } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
@@ -197,6 +198,10 @@ export default function ImageModal() {
   const previousSelectedIndexRef = useRef<number | null>(null);
   const favoriteFeedbackTimer = useRef<number | null>(null);
   const enhancedDisplayChoiceRef = useRef<Record<string, boolean>>({});
+  const modalBodyRef = useRef<HTMLDivElement>(null);
+  const modalCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const previousSelectedIndex = previousSelectedIndexRef.current;
@@ -332,6 +337,18 @@ export default function ImageModal() {
     setFlipped(false);
     setChromeHidden(false);
   }, [requestRevealImage, searchResults, selectedIndex, setModalImageIds, setSelectedIndex]);
+
+  useDialogFocus({
+    open: selectedIndex !== null,
+    dialogRef: modalBodyRef,
+    initialFocusRef: modalCloseButtonRef,
+  });
+  useDialogFocus({
+    open: showConfirmDelete,
+    dialogRef: confirmPanelRef,
+    initialFocusRef: confirmCancelButtonRef,
+    onEscape: () => setShowConfirmDelete(false),
+  });
 
   const img = selectedIndex !== null ? searchResults[selectedIndex] : null;
   const modalEdgeRatio = clampModalEdgeRatio(view.modalEdgeRatio);
@@ -841,7 +858,7 @@ export default function ImageModal() {
     return (
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
-        <div className="modal-body" role="dialog" aria-modal="true" aria-label="Image preview loading">
+        <div ref={modalBodyRef} className="modal-body" role="dialog" aria-modal="true" aria-label="Image preview loading" tabIndex={-1}>
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">Loading...</span>
@@ -879,7 +896,7 @@ export default function ImageModal() {
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
 
-        <div className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`}>
+        <div ref={modalBodyRef} className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`} tabIndex={-1}>
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
@@ -992,7 +1009,7 @@ export default function ImageModal() {
               >
                 {sidebarCollapsed ? '<' : '>'}
               </button>
-              <button className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
+              <button ref={modalCloseButtonRef} className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
             </div>
           </div>
 
@@ -1163,7 +1180,7 @@ export default function ImageModal() {
       {showConfirmDelete && (
         <div className="confirm-overlay">
           <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowConfirmDelete(false)} />
-          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title">
+          <div ref={confirmPanelRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title" tabIndex={-1}>
             <h3 id="image-delete-title">Move this image to Recycle Bin?</h3>
             <p>{img.filename}</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
@@ -1175,7 +1192,7 @@ export default function ImageModal() {
               <span>Do not ask again</span>
             </label>
             <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setShowConfirmDelete(false)}>Cancel</button>
+              <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => setShowConfirmDelete(false)}>Cancel</button>
               <button className="btn-danger" onClick={() => void handleDelete()} disabled={isDeleting}>
                 {isDeleting ? 'Moving...' : 'Move to Recycle Bin'}
               </button>

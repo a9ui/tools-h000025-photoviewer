@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageProvider, useImageStore } from '../store/ImageContext';
 import SearchBar from '../components/SearchBar';
 import ImageGrid from '../components/ImageGrid';
@@ -14,6 +14,7 @@ import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import { sharedRecentToLocalMemory } from '../lib/recentFolders';
+import { useDialogFocus } from '../lib/useDialogFocus';
 import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
 
 function ViewerApp() {
@@ -28,11 +29,19 @@ function ViewerApp() {
 
   const [browseError, setBrowseError] = useState('');
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const bulkDeleteConfirmRef = useRef<HTMLDivElement>(null);
+  const bulkDeleteCancelRef = useRef<HTMLButtonElement>(null);
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
   const [lastDirSet, setLastDirSet] = useState('');
   const [pasteFolders, setPasteFolders] = useState('');
   const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
   const selectedCount = selectedIds.length;
+  useDialogFocus({
+    open: showBulkDeleteConfirm,
+    dialogRef: bulkDeleteConfirmRef,
+    initialFocusRef: bulkDeleteCancelRef,
+    onEscape: () => setShowBulkDeleteConfirm(false),
+  });
   const scanProgressTotal = Math.max(0, scanProgress?.total ?? 0);
   const scanProgressProcessed = Math.max(0, scanProgress?.processed ?? 0);
   const scanProgressPercent = scanProgressTotal > 0
@@ -496,7 +505,7 @@ function ViewerApp() {
       {showBulkDeleteConfirm && (
         <div className="confirm-overlay">
           <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowBulkDeleteConfirm(false)} />
-          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title">
+          <div ref={bulkDeleteConfirmRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title" tabIndex={-1}>
             <h3 id="bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
@@ -508,7 +517,7 @@ function ViewerApp() {
               <span>Do not ask again</span>
             </label>
             <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</button>
+              <button ref={bulkDeleteCancelRef} className="btn-cancel" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</button>
               <button
                 className="btn-danger"
                 onClick={async () => {

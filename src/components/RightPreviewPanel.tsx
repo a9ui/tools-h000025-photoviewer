@@ -4,6 +4,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
+import { useDialogFocus } from '../lib/useDialogFocus';
 
 function formatDateTime(value?: number): string {
   if (!value) return '-';
@@ -29,10 +30,19 @@ export default function RightPreviewPanel() {
   } = useImageStore();
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
   const [bulkMessage, setBulkMessage] = useState('');
   const [enhanceMessage, setEnhanceMessage] = useState('');
   const [showDetails, setShowDetails] = useState(false);
   const selectedCount = selectedIds.length;
+
+  useDialogFocus({
+    open: confirmBulkDelete,
+    dialogRef: confirmPanelRef,
+    initialFocusRef: confirmCancelButtonRef,
+    onEscape: () => setConfirmBulkDelete(false),
+  });
 
   const [panelWidth, setPanelWidth] = useState(view.rightPanelWidth ?? 320);
   const isResizing = useRef(false);
@@ -239,7 +249,7 @@ export default function RightPreviewPanel() {
       {confirmBulkDelete && (
         <div className="confirm-overlay">
           <div className="confirm-backdrop" aria-hidden="true" onClick={() => setConfirmBulkDelete(false)} />
-          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="preview-bulk-delete-title">
+          <div ref={confirmPanelRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="preview-bulk-delete-title" tabIndex={-1}>
             <h3 id="preview-bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
@@ -251,7 +261,7 @@ export default function RightPreviewPanel() {
               <span>Do not ask again</span>
             </label>
             <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setConfirmBulkDelete(false)}>Cancel</button>
+              <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => setConfirmBulkDelete(false)}>Cancel</button>
               <button className="btn-danger" onClick={() => void executeBulkDelete()}>Move to Recycle Bin</button>
             </div>
           </div>
