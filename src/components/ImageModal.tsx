@@ -10,6 +10,8 @@ import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMe
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
 import CachedImage from './CachedImage';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
+import { MetadataTabList, type MetadataTab } from './MetadataTabList';
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 
 type PointerGesture = {
   mode: 'pan' | 'swipe';
@@ -173,7 +175,7 @@ export default function ImageModal() {
   } = useImageStore();
 
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'prompt' | 'negative' | 'settings'>('prompt');
+  const [sidebarTab, setSidebarTab] = useState<MetadataTab>('prompt');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [copied, setCopied] = useState(false);
   const [flipped, setFlipped] = useState(false);
@@ -1002,12 +1004,16 @@ export default function ImageModal() {
                 {isDeleting ? '...' : 'D'}
               </button>
               <button
-                className="modal-icon-btn"
+                className="modal-icon-btn modal-metadata-toggle"
                 onClick={() => setSidebarCollapsed((prev) => !prev)}
                 title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                 aria-label={sidebarCollapsed ? 'Show metadata sidebar' : 'Hide metadata sidebar'}
+                aria-expanded={!sidebarCollapsed}
+                aria-controls="modal-metadata-sidebar"
               >
-                {sidebarCollapsed ? '<' : '>'}
+                {sidebarCollapsed
+                  ? <ChevronLeft size={16} aria-hidden="true" />
+                  : <ChevronRight size={16} aria-hidden="true" />}
               </button>
               <button ref={modalCloseButtonRef} className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
             </div>
@@ -1080,14 +1086,19 @@ export default function ImageModal() {
             )}
           </div>
 
-          <aside className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}>
-            <div className="sidebar-tabs">
-              <button className={`sidebar-tab ${sidebarTab === 'prompt' ? 'active' : ''}`} onClick={() => setSidebarTab('prompt')}>Prompt</button>
-              <button className={`sidebar-tab ${sidebarTab === 'negative' ? 'active' : ''}`} onClick={() => setSidebarTab('negative')}>Negative</button>
-              <button className={`sidebar-tab ${sidebarTab === 'settings' ? 'active' : ''}`} onClick={() => setSidebarTab('settings')}>Settings</button>
-            </div>
+          <aside id="modal-metadata-sidebar" className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}>
+            <MetadataTabList
+              activeTab={sidebarTab}
+              onActiveTabChange={setSidebarTab}
+              panelId="modal-metadata-panel"
+            />
 
             <div className="sidebar-content">
+              <div
+                id="modal-metadata-panel"
+                role="tabpanel"
+                aria-labelledby={`modal-metadata-panel-tab-${sidebarTab}`}
+              >
               {sidebarTab === 'prompt' && (
                 <div className="meta-section">
                   <div className="meta-header">
@@ -1129,6 +1140,7 @@ export default function ImageModal() {
                   <code className="meta-code">{settingsRaw || 'No settings metadata.'}</code>
                 </div>
               )}
+              </div>
 
               <div className="meta-section png-metadata-section">
                 <div className="meta-header">

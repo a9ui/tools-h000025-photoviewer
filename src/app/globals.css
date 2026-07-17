@@ -2285,6 +2285,9 @@ a { color: inherit; text-decoration: none; }
   color: var(--accent-light);
   border-bottom-color: var(--accent);
 }
+.sidebar-tab:focus-visible {
+  outline-offset: -2px;
+}
 
 .sidebar-content {
   flex: 1;
@@ -2618,7 +2621,8 @@ a { color: inherit; text-decoration: none; }
     width: 100%;
   }
   .image-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 0.5rem; }
-  .modal-sidebar { display: none; }
+  .modal-sidebar,
+  .modal-metadata-toggle { display: none; }
   .modal-topbar {
     flex-direction: column;
     align-items: stretch;
