@@ -5629,7 +5629,8 @@ public partial class MainWindow : Window
         }
         catch (Exception ex)
         {
-            return Fail($"canonical path failed ({ex.Message})", out reason);
+            Trace.TraceWarning($"Explorer source canonicalization failed: {ex.GetType().Name}");
+            return Fail("canonical path could not be resolved", out reason);
         }
 
         List<string> activeRoots = _currentFolderSet.Count > 0 ? _currentFolderSet : _currentFolder is null ? [] : [_currentFolder];
