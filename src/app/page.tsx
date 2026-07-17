@@ -22,6 +22,11 @@ import {
   sharedRecentToLocalMemory,
 } from '../lib/recentFolders';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import {
+  formatBulkRecycleProgress,
+  recycleImagesSequentially,
+  snapshotBulkRecycleTargets,
+} from '../lib/bulkRecycle';
 import { FolderOpen, RefreshCw, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
@@ -29,7 +34,7 @@ function ViewerApp() {
     phase, dirPath, setDirPath, startScan, scanProgress, scanError, dismissScanError,
     searchTotal, searchResults, totalIndexed, searchQuery,
     setPhase, view, setView,
-    selectedIds, clearSelection, deleteImage,
+    selectedIds, deleteImage,
     cycleFavoriteLevel, decreaseFavoriteLevel, selectedIndex,
     keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview,
     favorites, showFavOnly, showUnfavOnly, favoriteFilterLevels, showEnhancedOnly, enhancedSourceIds,
@@ -39,16 +44,26 @@ function ViewerApp() {
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
   const bulkDeleteConfirmRef = useRef<HTMLDivElement>(null);
   const bulkDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const bulkDeleteReturnFocusRef = useRef<HTMLButtonElement>(null);
+  const bulkDeleteActiveRef = useRef(false);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<string[]>([]);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteMessage, setBulkDeleteMessage] = useState('');
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
   const [lastDirSet, setLastDirSet] = useState('');
   const [pasteFolders, setPasteFolders] = useState('');
   const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
   const selectedCount = selectedIds.length;
+  const cancelBulkDelete = useCallback(() => {
+    if (bulkDeleteActiveRef.current) return;
+    setShowBulkDeleteConfirm(false);
+    setBulkDeleteTargets([]);
+  }, []);
   useDialogFocus({
     open: showBulkDeleteConfirm,
     dialogRef: bulkDeleteConfirmRef,
     initialFocusRef: bulkDeleteCancelRef,
-    onEscape: () => setShowBulkDeleteConfirm(false),
+    onEscape: cancelBulkDelete,
   });
   const loadedResultCounts = useMemo(() => getLoadedResultCounts({
     searchResults,
@@ -261,14 +276,36 @@ function ViewerApp() {
     }
   }, [decreaseFavoriteLevel, selectedCount, selectedIds]);
 
-  const deleteSelected = useCallback(async () => {
-    if (selectedCount === 0) return;
-    const targets = [...selectedIds];
-    for (const id of targets) {
-      await deleteImage(id);
+  const deleteSelected = useCallback(async (requestedTargets: readonly string[]) => {
+    if (bulkDeleteActiveRef.current) return;
+    const targets = snapshotBulkRecycleTargets(requestedTargets);
+    if (targets.length === 0) return;
+
+    bulkDeleteActiveRef.current = true;
+    setIsBulkDeleting(true);
+    setShowBulkDeleteConfirm(false);
+    setBulkDeleteMessage(`Moving 0/${targets.length} image(s) to Recycle Bin.`);
+    try {
+      const result = await recycleImagesSequentially(targets, deleteImage, (progress) => {
+        setBulkDeleteMessage(formatBulkRecycleProgress(progress));
+      });
+      setBulkDeleteMessage(formatBulkRecycleProgress(result));
+    } finally {
+      bulkDeleteActiveRef.current = false;
+      setIsBulkDeleting(false);
+      setBulkDeleteTargets([]);
+      window.requestAnimationFrame(() => bulkDeleteReturnFocusRef.current?.focus());
     }
-    clearSelection();
-  }, [clearSelection, deleteImage, selectedCount, selectedIds]);
+  }, [deleteImage]);
+
+  const requestBulkDelete = useCallback(() => {
+    if (bulkDeleteActiveRef.current) return;
+    const targets = snapshotBulkRecycleTargets(selectedIds);
+    if (targets.length === 0) return;
+    setBulkDeleteTargets(targets);
+    if (confirmBeforeDelete) setShowBulkDeleteConfirm(true);
+    else void deleteSelected(targets);
+  }, [confirmBeforeDelete, deleteSelected, selectedIds]);
 
   useEffect(() => {
     if (phase !== 'viewer') return;
@@ -280,8 +317,7 @@ function ViewerApp() {
 
       if (event.key === keyBindings.deleteImage) {
         event.preventDefault();
-        if (confirmBeforeDelete) setShowBulkDeleteConfirm(true);
-        else void deleteSelected();
+        requestBulkDelete();
         return;
       }
       if (event.key.toLowerCase() === keyBindings.toggleFavorite.toLowerCase()) {
@@ -298,14 +334,13 @@ function ViewerApp() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
-    confirmBeforeDelete,
-    deleteSelected,
     keyBindings.decreaseFavorite,
     keyBindings.deleteImage,
     keyBindings.toggleFavorite,
     lowerSelectedFavorite,
     markSelectedAsFavorite,
     phase,
+    requestBulkDelete,
     selectedCount,
     selectedIndex,
   ]);
@@ -454,6 +489,7 @@ function ViewerApp() {
       <div className="viewer">
         <header className="viewer-header">
           <button
+            ref={bulkDeleteReturnFocusRef}
             className="icon-btn sidebar-toggle-btn"
             onClick={() => setView({ sidebarOpen: !view.sidebarOpen })}
             title={view.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
@@ -495,6 +531,18 @@ function ViewerApp() {
           </button>
         </header>
 
+        {bulkDeleteMessage && (
+          <div
+            className="bulk-message viewer-bulk-message"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-busy={isBulkDeleting}
+          >
+            {bulkDeleteMessage}
+          </div>
+        )}
+
         <div className="viewer-body">
           <Sidebar />
           <main className="viewer-main">
@@ -510,10 +558,10 @@ function ViewerApp() {
 
       {showBulkDeleteConfirm && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowBulkDeleteConfirm(false)} />
+          <div className="confirm-backdrop" aria-hidden="true" onClick={cancelBulkDelete} />
           <div ref={bulkDeleteConfirmRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title" tabIndex={-1}>
             <h3 id="bulk-delete-title">Move selected images to Recycle Bin?</h3>
-            <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
+            <p>{bulkDeleteTargets.length} image(s) will be moved to Recycle Bin.</p>
             <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
               <input
                 type="checkbox"
@@ -523,15 +571,13 @@ function ViewerApp() {
               <span>Do not ask again</span>
             </label>
             <div className="confirm-actions">
-              <button ref={bulkDeleteCancelRef} className="btn-cancel" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</button>
+              <button ref={bulkDeleteCancelRef} className="btn-cancel" onClick={cancelBulkDelete}>Cancel</button>
               <button
                 className="btn-danger"
-                onClick={async () => {
-                  setShowBulkDeleteConfirm(false);
-                  await deleteSelected();
-                }}
+                onClick={() => void deleteSelected(bulkDeleteTargets)}
+                disabled={isBulkDeleting || bulkDeleteTargets.length === 0}
               >
-                Move to Recycle Bin
+                {isBulkDeleting ? 'Moving...' : 'Move to Recycle Bin'}
               </button>
             </div>
           </div>
