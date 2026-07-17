@@ -22,6 +22,9 @@ function PreferencesProbe() {
       <button type="button" onClick={() => setView({ showUnseenMarkers: !view.showUnseenMarkers })}>
         Toggle unseen markers
       </button>
+      <button type="button" onClick={() => setView({ foldersExpanded: !view.foldersExpanded })}>
+        Toggle folders
+      </button>
     </div>
   );
 }
@@ -157,6 +160,7 @@ describe('ImageProvider browser UI preferences', () => {
         thumbSize: 200,
         sidebarOpen: false,
         showUnseenMarkers: true,
+        foldersExpanded: true,
       });
     });
 
@@ -166,7 +170,60 @@ describe('ImageProvider browser UI preferences', () => {
         thumbSize: 200,
         sidebarOpen: false,
         showUnseenMarkers: true,
+        foldersExpanded: true,
       });
+    });
+  });
+
+  it('defaults an older or malformed folders collapse preference to expanded and normalizes it', async () => {
+    localStorage.setItem('pvu_view', JSON.stringify({
+      thumbSize: 200,
+      foldersExpanded: 'collapsed',
+    }));
+
+    render(
+      <ImageProvider>
+        <PreferencesProbe />
+      </ImageProvider>
+    );
+
+    await waitFor(() => {
+      const renderedView = JSON.parse(
+        screen.getByRole('status', { name: 'view settings' }).textContent || '{}'
+      );
+      expect(renderedView.foldersExpanded).toBe(true);
+    });
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_view') || '{}').foldersExpanded).toBe(true);
+    });
+  });
+
+  it('persists folders collapse into pvu_view for a subsequent reload', async () => {
+    const user = userEvent.setup();
+
+    const view = render(
+      <ImageProvider>
+        <PreferencesProbe />
+      </ImageProvider>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Toggle folders' }));
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_view') || '{}').foldersExpanded).toBe(false);
+    });
+    view.unmount();
+
+    render(
+      <ImageProvider>
+        <PreferencesProbe />
+      </ImageProvider>
+    );
+
+    await waitFor(() => {
+      const renderedView = JSON.parse(
+        screen.getByRole('status', { name: 'view settings' }).textContent || '{}'
+      );
+      expect(renderedView.foldersExpanded).toBe(false);
     });
   });
 

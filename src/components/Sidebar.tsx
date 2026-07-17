@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
 import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
@@ -45,7 +45,9 @@ export default function Sidebar() {
   const [lastSelectedFolderKey, setLastSelectedFolderKey] = useState<string | null>(null);
   const [addingFolder, setAddingFolder] = useState(false);
   const [folderActionError, setFolderActionError] = useState('');
-  const [foldersExpanded, setFoldersExpanded] = useState(true);
+  const foldersToggleRef = useRef<HTMLButtonElement>(null);
+  const foldersContentRef = useRef<HTMLDivElement>(null);
+  const foldersExpanded = view.foldersExpanded;
 
   const hiddenFolderSet = useMemo(() => new Set(view.hiddenFolders), [view.hiddenFolders]);
   const selectedFolderSet = useMemo(() => new Set(selectedFolderKeys), [selectedFolderKeys]);
@@ -209,6 +211,13 @@ export default function Sidebar() {
     });
   };
 
+  const toggleFoldersExpanded = () => {
+    const focusedChild = foldersExpanded
+      && Boolean(foldersContentRef.current?.contains(document.activeElement));
+    if (focusedChild) foldersToggleRef.current?.focus();
+    setView({ foldersExpanded: !foldersExpanded });
+  };
+
   const addFolderFromSidebar = async () => {
     if (addingFolder) return;
     setAddingFolder(true);
@@ -351,11 +360,12 @@ export default function Sidebar() {
 
       <div className="sidebar-section">
         <button
+          ref={foldersToggleRef}
           type="button"
           className="sidebar-section-header sidebar-section-toggle"
           aria-expanded={foldersExpanded}
           aria-controls="sidebar-folders-content"
-          onClick={() => setFoldersExpanded((expanded) => !expanded)}
+          onClick={toggleFoldersExpanded}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M3 4h18M3 12h18M3 20h18" />
@@ -366,7 +376,7 @@ export default function Sidebar() {
           </svg>
         </button>
 
-        <div id="sidebar-folders-content" hidden={!foldersExpanded}>
+        <div ref={foldersContentRef} id="sidebar-folders-content" hidden={!foldersExpanded}>
             {loadingFolders && <p className="sidebar-meta">Loading folder list...</p>}
 
             {!loadingFolders && folderBuckets.length === 0 && (

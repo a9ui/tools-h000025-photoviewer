@@ -1,5 +1,5 @@
 import React from 'react';
-import { render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import Sidebar from './Sidebar';
@@ -21,6 +21,7 @@ function createStore(options: {
   searchResults?: Array<{ id: string } | null>;
   showFavOnly?: boolean;
   favorites?: Record<string, number>;
+  foldersExpanded?: boolean;
 } = {}) {
   return {
     view: {
@@ -41,6 +42,7 @@ function createStore(options: {
       dateTo: '',
       hiddenFolders: options.hiddenFolders ?? [],
       showUnseenMarkers: false,
+      foldersExpanded: options.foldersExpanded ?? true,
     },
     setView,
     setSearchQuery: vi.fn(),
@@ -122,7 +124,7 @@ describe('Sidebar favorite level controls', () => {
 
   it('collapses and restores the Folders section from its heading', async () => {
     const user = userEvent.setup();
-    render(<Sidebar />);
+    const { rerender } = render(<Sidebar />);
 
     const foldersToggle = screen.getByRole('button', { name: 'Folders' });
     const emptyFoldersMessage = screen.getByText('No folders found under this root.');
@@ -130,12 +132,34 @@ describe('Sidebar favorite level controls', () => {
     expect(emptyFoldersMessage).toBeVisible();
 
     await user.click(foldersToggle);
+    expect(setView).toHaveBeenCalledWith({ foldersExpanded: false });
+    vi.mocked(useImageStore).mockReturnValue(createStore({ foldersExpanded: false }));
+    rerender(<Sidebar />);
     expect(foldersToggle).toHaveAttribute('aria-expanded', 'false');
     expect(emptyFoldersMessage).not.toBeVisible();
 
     await user.click(foldersToggle);
+    expect(setView).toHaveBeenCalledWith({ foldersExpanded: true });
+    vi.mocked(useImageStore).mockReturnValue(createStore({ foldersExpanded: true }));
+    rerender(<Sidebar />);
     expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
     expect(emptyFoldersMessage).toBeVisible();
+  });
+
+  it('returns focus to the folders heading before collapsing its focused child', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      json: () => Promise.resolve({ folders: [{ key: 'alpha', label: 'Alpha', count: 12 }] }),
+    })));
+    vi.mocked(useImageStore).mockReturnValue(createStore({ dirPath: 'C:/images' }));
+    render(<Sidebar />);
+
+    const foldersToggle = screen.getByRole('button', { name: 'Folders' });
+    const child = await screen.findByRole('button', { name: 'Select folder Alpha, 12 images' });
+    child.focus();
+    fireEvent.click(foldersToggle);
+
+    expect(foldersToggle).toHaveFocus();
+    expect(setView).toHaveBeenCalledWith({ foldersExpanded: false });
   });
 });
 
@@ -175,7 +199,7 @@ describe('Sidebar folder controls', () => {
 
   it('keeps folder sorting and collapse controls semantically stateful by keyboard', async () => {
     const user = userEvent.setup();
-    render(<Sidebar />);
+    const { rerender } = render(<Sidebar />);
 
     const foldersToggle = screen.getByRole('button', { name: 'Folders' });
     const selectAlpha = await screen.findByRole('button', { name: 'Select folder Alpha, 12 images' });
@@ -184,10 +208,16 @@ describe('Sidebar folder controls', () => {
 
     foldersToggle.focus();
     await user.keyboard(' ');
+    expect(setView).toHaveBeenCalledWith({ foldersExpanded: false });
+    vi.mocked(useImageStore).mockReturnValue(createStore({ dirPath: 'C:/images', foldersExpanded: false }));
+    rerender(<Sidebar />);
     expect(foldersToggle).toHaveAttribute('aria-expanded', 'false');
     expect(selectAlpha).not.toBeVisible();
 
     await user.keyboard('{Enter}');
+    expect(setView).toHaveBeenCalledWith({ foldersExpanded: true });
+    vi.mocked(useImageStore).mockReturnValue(createStore({ dirPath: 'C:/images', foldersExpanded: true }));
+    rerender(<Sidebar />);
     expect(foldersToggle).toHaveAttribute('aria-expanded', 'true');
     expect(selectAlpha).toBeVisible();
     expect(screen.getByRole('button', { name: 'Sort folders A to Z' })).toHaveAttribute('aria-pressed', 'true');

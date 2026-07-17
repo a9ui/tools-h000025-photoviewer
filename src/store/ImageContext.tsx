@@ -41,6 +41,7 @@ export interface ViewSettings {
   dateTo: string;
   hiddenFolders: string[];
   showUnseenMarkers: boolean;
+  foldersExpanded: boolean;
 }
 
 const DEFAULT_VIEW: ViewSettings = {
@@ -61,6 +62,7 @@ const DEFAULT_VIEW: ViewSettings = {
   dateTo: '',
   hiddenFolders: [],
   showUnseenMarkers: DEFAULT_SHOW_UNSEEN_MARKERS,
+  foldersExpanded: true,
 };
 
 const SCROLL_MEMORY_FLUSH_DELAY_MS = 500;
@@ -76,12 +78,18 @@ function normalizeStoredView(value: unknown): ViewSettings {
     return { ...DEFAULT_VIEW };
   }
 
+  const stored = value as Partial<ViewSettings>;
   return {
     ...DEFAULT_VIEW,
-    ...(value as Partial<ViewSettings>),
+    ...stored,
     // `columns` belonged to an older UI. The current UI is size-driven and
     // has no way to change or clear a persisted fixed-column value.
     columns: 0,
+    // Older snapshots predate this field. An invalid value must not collapse
+    // the only folder-management surface after reload.
+    foldersExpanded: typeof stored.foldersExpanded === 'boolean'
+      ? stored.foldersExpanded
+      : DEFAULT_VIEW.foldersExpanded,
   };
 }
 
