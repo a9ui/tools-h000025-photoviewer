@@ -64,6 +64,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
+- `scripts/verify-wpf-product.ps1` aggregate every focused WPF verifier (`-SkipStress` for the short loop)
 - `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
 - `--bulk-recycle-smoke <path>` temp-only cancel/partial-failure/neighbor/empty Recycle workflow smoke
 

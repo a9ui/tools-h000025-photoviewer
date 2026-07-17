@@ -538,6 +538,8 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
+全WPF verifierは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。日常の短い回帰では`-SkipStress`を使い、closeoutでは20,000件stressを省略しない。新しい`verify-wpf-*.ps1`は自動検出されるため、focused verifierだけを一括gateから漏らさない。
+
 | Area | Command |
 | --- | --- |
 | Retired UI regression guard | `powershell -File scripts/verify-ui-regression-guard.ps1` |
