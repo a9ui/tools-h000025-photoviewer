@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useId, useRef, useCallback } from 'react';
 import { useImageStore } from '../store/ImageContext';
 
 interface TagEntry { tag: string; count: number; }
@@ -25,6 +25,7 @@ export default function SearchBar() {
   const [committedTags, setCommittedTags] = useState<string[]>(() => parseQueryTags(searchQuery));
   const [inputToken, setInputToken] = useState('');
   const [tags, setTags] = useState<TagEntry[]>([]);
+  const [isLoadingTags, setIsLoadingTags] = useState(true);
   const [suggestions, setSuggestions] = useState<TagEntry[]>([]);
   const [showDropdown, setShowDropdown] = useState(false);
   const [selectedIdx, setSelectedIdx] = useState(-1);
@@ -34,6 +35,8 @@ export default function SearchBar() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const lastSentQueryRef = useRef(searchQuery);
+  const suggestionListboxId = useId();
+  const suggestionStatusId = useId();
 
   const composedQuery = [...committedTags, inputToken.trim()].filter(Boolean).join(', ');
 
@@ -48,12 +51,19 @@ export default function SearchBar() {
   }, [searchQuery]);
 
   useEffect(() => {
+    let isCurrent = true;
     fetch('/api/tags')
       .then((r) => r.json())
       .then((data) => {
-        if (data.tags) setTags(data.tags);
+        if (isCurrent && data.tags) setTags(data.tags);
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => {
+        if (isCurrent) setIsLoadingTags(false);
+      });
+    return () => {
+      isCurrent = false;
+    };
   }, []);
 
   useEffect(() => {
@@ -132,12 +142,14 @@ export default function SearchBar() {
   }, []);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (suggestions.length > 0 && showDropdown) {
+    if (suggestions.length > 0) {
       if (e.key === 'ArrowDown') {
         e.preventDefault();
+        setShowDropdown(true);
         setSelectedIdx((prev) => Math.min(prev + 1, suggestions.length - 1));
       } else if (e.key === 'ArrowUp') {
         e.preventDefault();
+        setShowDropdown(true);
         setSelectedIdx((prev) => Math.max(prev - 1, -1));
       } else if (e.key === 'Enter' && selectedIdx >= 0) {
         e.preventDefault();
@@ -148,7 +160,9 @@ export default function SearchBar() {
         addTag(suggestions[selectedIdx].tag);
         return;
       } else if (e.key === 'Escape') {
+        e.preventDefault();
         setShowDropdown(false);
+        setSelectedIdx(-1);
         return;
       }
     }
@@ -180,10 +194,22 @@ export default function SearchBar() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
+  const isSuggestionListOpen = showDropdown && suggestions.length > 0;
+  const activeSuggestionId = isSuggestionListOpen && selectedIdx >= 0
+    ? `${suggestionListboxId}-option-${selectedIdx}`
+    : undefined;
+  const suggestionStatus = inputToken.trim()
+    ? isLoadingTags
+      ? 'Loading tag suggestions.'
+      : suggestions.length > 0
+        ? `${suggestions.length} tag suggestions available. Use the up and down arrow keys to review them.`
+        : 'No tag suggestions available.'
+    : '';
+
   return (
     <div className="search-bar-wrapper">
       <div className="search-bar">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg aria-hidden="true" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="11" cy="11" r="8" />
           <line x1="21" y1="21" x2="16.65" y2="16.65" />
         </svg>
@@ -218,7 +244,13 @@ export default function SearchBar() {
               }}
             >
               <span className="search-chip-label">{tag}</span>
-              <button className="search-chip-remove" onClick={() => removeTag(tag)} title={`Remove ${tag}`}>
+              <button
+                className="search-chip-remove"
+                type="button"
+                onClick={() => removeTag(tag)}
+                title={`Remove ${tag}`}
+                aria-label={`Remove tag ${tag}`}
+              >
                 x
               </button>
             </span>
@@ -228,11 +260,19 @@ export default function SearchBar() {
             ref={inputRef}
             type="text"
             className="search-input"
+            role="combobox"
+            aria-label="Search tags"
+            aria-autocomplete="list"
+            aria-expanded={isSuggestionListOpen}
+            aria-controls={isSuggestionListOpen ? suggestionListboxId : undefined}
+            aria-activedescendant={activeSuggestionId}
+            aria-describedby={suggestionStatusId}
             placeholder={committedTags.length === 0 ? 'Search tags. Use comma or Enter to add.' : 'Add another tag...'}
             value={inputToken}
             onChange={(e) => {
               setInputToken(e.target.value);
               setShowDropdown(true);
+              setSelectedIdx(-1);
             }}
             onFocus={() => {
               if (suggestions.length > 0) setShowDropdown(true);
@@ -244,14 +284,16 @@ export default function SearchBar() {
         {composedQuery && (
           <button
             className="search-clear"
+            type="button"
             onClick={() => {
               setCommittedTags([]);
               setInputToken('');
               setShowDropdown(false);
             }}
             title="Clear search"
+            aria-label="Clear all search tags"
           >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
             </svg>
@@ -259,12 +301,27 @@ export default function SearchBar() {
         )}
       </div>
 
-      {showDropdown && suggestions.length > 0 && (
-        <div className="search-dropdown" ref={dropdownRef}>
+      <div id={suggestionStatusId} className="search-suggestion-status" role="status" aria-live="polite">
+        {suggestionStatus}
+      </div>
+
+      {isSuggestionListOpen && (
+        <div
+          id={suggestionListboxId}
+          className="search-dropdown"
+          ref={dropdownRef}
+          role="listbox"
+          aria-label="Tag suggestions"
+        >
           {suggestions.map((s, i) => (
             <button
+              id={`${suggestionListboxId}-option-${i}`}
               key={s.tag}
               className={`search-suggestion ${i === selectedIdx ? 'selected' : ''}`}
+              type="button"
+              role="option"
+              aria-selected={i === selectedIdx}
+              tabIndex={-1}
               onMouseDown={(e) => {
                 e.preventDefault();
                 addTag(s.tag);
@@ -280,4 +337,3 @@ export default function SearchBar() {
     </div>
   );
 }
-
