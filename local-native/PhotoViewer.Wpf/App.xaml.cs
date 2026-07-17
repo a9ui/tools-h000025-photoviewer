@@ -5552,6 +5552,7 @@ public partial class App : Application
                 bool ok = selected
                     && modalVisibleBeforeClose
                     && Math.Abs(initial.Zoom - 1) < 0.0001
+                    && initial.ZoomLabel != "100%"
                     && !initial.Flipped
                     && flipped
                     && afterFlip.Flipped
@@ -5563,10 +5564,11 @@ public partial class App : Application
                     && reset
                     && Math.Abs(afterReset.Zoom - 1) < 0.0001
                     && !afterReset.Flipped
-                    && afterReset.ZoomLabel == "100%"
+                    && afterReset.ZoomLabel == initial.ZoomLabel
                     && movedNext
                     && !string.Equals(startPath, nextPath, StringComparison.OrdinalIgnoreCase)
                     && Math.Abs(afterNavigation.Zoom - 1) < 0.0001
+                    && afterNavigation.ZoomLabel == initial.ZoomLabel
                     && !afterNavigation.Flipped
                     && closed
                     && !win.ModalVisibleForSmoke

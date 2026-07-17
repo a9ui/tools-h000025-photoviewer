@@ -184,6 +184,8 @@ public partial class MainWindow : Window
     private string? _lastGridZoomAnchorPath;
     private double _lastGridZoomAnchorDrift;
     private double _modalZoom = 1;
+    private double _modalFitScale = 1;
+    private bool _modalFitUpdateQueued;
     private bool _modalFlipped;
     private double _modalPanX;
     private double _modalPanY;
@@ -245,6 +247,7 @@ public partial class MainWindow : Window
         Closed += (_, _) => CancelPreviewTabHoverDecode();
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
+        SizeChanged += (_, _) => ScheduleModalFitUpdate();
         RefreshLandingFolderSetUi();
         RefreshPreviewTabs();
         SetPhase(landing: true);
@@ -5515,6 +5518,9 @@ public partial class MainWindow : Window
         ModalArtGlow.Fill = t.ArtGlow;
         SetModalMetadataSidebarVisible(false);
         Modal.Visibility = Visibility.Visible;
+        Modal.UpdateLayout();
+        UpdateModalFit();
+        ScheduleModalFitUpdate();
         if (opening)
             SetModalChromeVisible(true, showFeedback: false);
         SyncModalMetadataSidebar();
@@ -5629,6 +5635,7 @@ public partial class MainWindow : Window
         ModalMetadataSidebar.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
         ModalMetadataSidebarToggleButton.ToolTip = visible ? "Hide metadata sidebar" : "Show metadata sidebar";
         ModalMetadataSidebarToggleLabel.Text = visible ? ">" : "<";
+        ScheduleModalFitUpdate();
     }
 
     private void CloseModal()
@@ -5661,7 +5668,11 @@ public partial class MainWindow : Window
 
     private void ToggleModalFlip_Click(object sender, RoutedEventArgs e) => ToggleModalFlip();
 
-    private void ResetModalTransform_Click(object sender, RoutedEventArgs e) => ResetModalTransform(_modalTransformPath, showFeedback: true);
+    private void ModalOneToOne_Click(object sender, RoutedEventArgs e)
+    {
+        if (_modalFitScale > 0)
+            SetModalZoom(1 / _modalFitScale);
+    }
 
     private bool ToggleModalFlip()
     {
@@ -5706,6 +5717,7 @@ public partial class MainWindow : Window
         _modalPanY = 0;
         _modalTransformPath = path;
         UpdateModalTransform();
+        ScheduleModalFitUpdate();
         if (showFeedback && changed)
             ShowModalInteractionFeedback("Zoom reset");
         return changed;
@@ -5764,7 +5776,40 @@ public partial class MainWindow : Window
         }
 
         if (ModalZoomLabel is not null)
-            ModalZoomLabel.Text = $"{Math.Round(_modalZoom * 100):0}%";
+            ModalZoomLabel.Text = $"{Math.Round(_modalFitScale * _modalZoom * 100):0}%";
+    }
+
+    private void ScheduleModalFitUpdate()
+    {
+        if (_modalFitUpdateQueued || Modal.Visibility != Visibility.Visible)
+            return;
+        _modalFitUpdateQueued = true;
+        Dispatcher.BeginInvoke(() =>
+        {
+            _modalFitUpdateQueued = false;
+            UpdateModalFit();
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void UpdateModalFit()
+    {
+        if (Modal.Visibility != Visibility.Visible || SelectedTile() is not Tile tile)
+            return;
+        double sourceWidth = tile.ImagePixelWidth > 0 ? tile.ImagePixelWidth : ModalBitmap.Source?.Width ?? 440;
+        double sourceHeight = tile.ImagePixelHeight > 0 ? tile.ImagePixelHeight : ModalBitmap.Source?.Height ?? 640;
+        double oldEffectiveScale = _modalFitScale * _modalZoom;
+        bool preserveUserZoom = Math.Abs(_modalZoom - 1) > 0.0001;
+        double metadataWidth = ModalMetadataSidebar.Visibility == Visibility.Visible ? ModalMetadataSidebar.Width + ModalMetadataSidebar.Margin.Right + 84 : 0;
+        double availableWidth = Math.Max(240, Modal.ActualWidth - 144 - metadataWidth - 32);
+        double availableHeight = Math.Max(240, Modal.ActualHeight - ModalTopBar.ActualHeight - 64);
+        _modalFitScale = Math.Min(1, Math.Min(availableWidth / sourceWidth, availableHeight / sourceHeight));
+        ModalImage.Width = Math.Max(1, sourceWidth * _modalFitScale);
+        ModalImage.Height = Math.Max(1, sourceHeight * _modalFitScale);
+        ModalMetadataSidebar.MaxHeight = availableHeight;
+        if (preserveUserZoom)
+            _modalZoom = Math.Clamp(oldEffectiveScale / _modalFitScale, ModalZoomMin, ModalZoomMax);
+        ClampModalPan();
+        UpdateModalTransform();
     }
 
     private bool TryHandleModalTransformKey(KeyEventArgs e)

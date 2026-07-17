@@ -744,14 +744,14 @@
             <TextBlock x:Name="ModalFavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontSize="11" FontWeight="Bold" Margin="4,0,0,0"/>
           </StackPanel>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Reset zoom (0)" AutomationProperties.Name="Reset image zoom" Width="42" Height="38" Click="ResetModalTransform_Click">
+        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Show image at 1:1 pixels" AutomationProperties.Name="Show image at 1 to 1 pixels" Width="42" Height="38" Click="ModalOneToOne_Click">
           <TextBlock Text="1:1" Foreground="{StaticResource TextSecondary}" FontSize="12"/>
         </Button>
       </DockPanel>
 
       <!-- image area -->
       <Grid Grid.Row="1" Margin="0,0,0,16">
-        <Border x:Name="ModalImage" Width="440" Height="640" CornerRadius="6" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center"
+        <Border x:Name="ModalImage" CornerRadius="6" ClipToBounds="True" HorizontalAlignment="Center" VerticalAlignment="Center"
                 MouseLeftButtonDown="ModalImage_MouseLeftButtonDown" MouseMove="ModalImage_MouseMove"
                 MouseLeftButtonUp="ModalImage_MouseLeftButtonUp" LostMouseCapture="ModalImage_LostMouseCapture">
           <Border.Effect><DropShadowEffect BlurRadius="40" ShadowDepth="0" Opacity="0.6" Color="Black"/></Border.Effect>
@@ -768,12 +768,12 @@
           </Grid>
         </Border>
 
-        <Button x:Name="ModalPreviousButton" HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Previous image (Left arrow)" Background="Transparent" Click="ModalPrevious_Click" AutomationProperties.Name="Previous image edge zone" AutomationProperties.HelpText="Navigate to the previous image. The sequence wraps at the first image.">
+        <Button x:Name="ModalPreviousButton" HorizontalAlignment="Left" Width="72" Style="{StaticResource IconButton}" ToolTip="Previous image (Left arrow)" Background="Transparent" Click="ModalPrevious_Click" AutomationProperties.Name="Previous image edge zone" AutomationProperties.HelpText="Navigate to the previous image. The sequence wraps at the first image.">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M15,18 l-6,-6 l6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>
         </Button>
-        <Button x:Name="ModalNextButton" HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" Height="640" ToolTip="Next image (Right arrow)" Background="Transparent" Click="ModalNext_Click" AutomationProperties.Name="Next image edge zone" AutomationProperties.HelpText="Navigate to the next image. The sequence wraps at the last image.">
+        <Button x:Name="ModalNextButton" HorizontalAlignment="Right" Width="72" Style="{StaticResource IconButton}" ToolTip="Next image (Right arrow)" Background="Transparent" Click="ModalNext_Click" AutomationProperties.Name="Next image edge zone" AutomationProperties.HelpText="Navigate to the next image. The sequence wraps at the first image.">
           <Border Width="44" Height="44" CornerRadius="999" Background="#14FFFFFF" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1">
             <Path Data="M9,18 l6,-6 l-6,-6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="18" Height="18"/>
           </Border>
