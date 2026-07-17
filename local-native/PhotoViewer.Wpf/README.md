@@ -113,9 +113,14 @@ Fast direct launch from the project root uses the Release executable instead of
 .\start_wpf.bat
 ```
 
-The normal launcher compares WPF source/project timestamps with the Release
-executable and rebuilds automatically when the executable is missing or stale;
-an unchanged build starts directly. To force a rebuild before launch:
+The normal launcher accepts a Release executable only when its adjacent
+`PhotoViewer.Wpf.exe.launch.json` binds the executable hash to this exact repo
+root, project/target path, git revision, and WPF source-content fingerprint.
+Missing/unproven output, another worktree/revision, source drift, or executable
+tampering rebuilds before launch. `bin`, `obj`, and transient root-level
+`*_wpftmp.csproj` build output never enters the source fingerprint. A successful
+build records provenance atomically; build or provenance failure exits without
+launching the old executable. To force a rebuild before launch:
 
 ```powershell
 $env:PHOTOVIEWER_WPF_REBUILD = "1"
@@ -674,6 +679,11 @@ direct Release executable launch. The script builds
 only when that target is missing or when `PHOTOVIEWER_WPF_REBUILD=1` is set.
 The old development route remains available with
 `PHOTOVIEWER_WPF_DOTNET_RUN=1`.
+
+The direct route is .NET-only and inherits the project-root working directory;
+it does not start or require Node, localhost, or the Browser server. It also
+does not kill an existing WPF process: simultaneous instances continue through
+the application's bounded shared-state locks.
 
 The dedicated `--startup-smoke` route records shell readiness timing without
 writing user state. It is intended for comparing process wall time for

@@ -641,12 +641,14 @@ Accessibility:
 | Delete decode/Refresh race / tombstone lifetime | `powershell -File scripts/verify-wpf-delete-race.ps1` |
 | Folder bucket selection/persistence | `powershell -File scripts/verify-wpf-folder-buckets.ps1` |
 | Exact visual viewports / Browser comparison states | `powershell -File scripts/verify-wpf-visual-layout.ps1 -EvidenceDir <path>` |
+| Direct launcher provenance / fail-closed rebuild | `powershell -File scripts/verify-wpf-launcher-freshness.ps1` |
 
 Reload soakのmemory correctness gateは、warm-up直後と終了時のforced-GC managed heap差が128 MiB以内、終了working set差が512 MiB以内、peak working set差が768 MiB以内であることを要求する。Windows/WPFのworking setにはnative allocator、WIC/render cache、OS trim timingが含まれ、短い24-cycleの回帰直線だけでは保持中の資源と後から解放されるcacheを区別できない。そのため`WorkingSetPlateauObserved`、tail slope/decrease、post-warm slope、managed差を含む全sampleは結果へ残すが、plateau観測単独はcorrectness gateにしない。実リークはforced-GC後のmanaged上限とworking-set絶対envelopeで停止させ、長期傾向は40-cycle以上の結果を比較して判断する。
 
 共通pass条件:
 
 - Release build 0 error。
+- `start_wpf.bat`はproject rootをworking directoryにし、Release exe hashをrepo root、project/target path、git revision、WPF source fingerprintへ結び付けたatomic provenanceが一致する時だけdirect launchする。missing/invalid/wrong-worktree/wrong-revision/source drift/target改変はbuildへ戻り、build/provenance失敗時は旧binaryを起動しない。Node/localhostへ依存せず、既存WPF processをkillしない。
 - disposable fixture以外をDeleteしない。
 - source count、catalog count、filtered order、selection、previewが期待通り。
 - existing state/cacheを削除しない。

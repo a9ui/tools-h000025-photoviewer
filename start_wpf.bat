@@ -57,4 +57,6 @@ exit /b %EXIT_CODE%
 :build_target
 echo [PhotoViewer WPF] Building direct %CONFIG% launch target...
 dotnet build "%PROJECT%" -c %CONFIG% --nologo
+if errorlevel 1 exit /b %ERRORLEVEL%
+powershell -NoProfile -ExecutionPolicy Bypass -File ".\scripts\check-wpf-launch-target.ps1" -ProjectPath "%PROJECT%" -TargetPath "%TARGET%" -Record
 exit /b %ERRORLEVEL%
