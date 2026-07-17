@@ -11,6 +11,8 @@ interface HoverPreviewState {
   top: number;
 }
 
+type PreviewTabDropPosition = 'before' | 'after';
+
 export default function BottomPreviewTabs() {
   const {
     previewTabIds,
@@ -21,12 +23,15 @@ export default function BottomPreviewTabs() {
     setActivePreviewId,
     setSelectedIndex,
     closePreviewTab,
+    reorderPreviewTab,
     togglePinPreviewTab,
     closedPreviewTabCount,
     restoreLastClosedPreview,
   } = useImageStore();
 
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: PreviewTabDropPosition } | null>(null);
   const [focusedTabId, setFocusedTabId] = useState<string | null>(
     () => activePreviewId ?? previewTabIds[0] ?? null
   );
@@ -116,6 +121,30 @@ export default function BottomPreviewTabs() {
     tabRefs.current[nextId]?.focus();
   };
 
+  const reorderFromDrop = (id: string, targetId: string, position: PreviewTabDropPosition) => {
+    const sourceIndex = previewTabIds.indexOf(id);
+    const targetIndex = previewTabIds.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
+    let destinationIndex = position === 'before' ? targetIndex : targetIndex + 1;
+    if (sourceIndex < destinationIndex) destinationIndex -= 1;
+    reorderPreviewTab(id, destinationIndex);
+  };
+
+  const moveTabWithKeyboard = (id: string, direction: 'previous' | 'next') => {
+    const sourceIndex = previewTabIds.indexOf(id);
+    if (sourceIndex < 0) return;
+    const destinationIndex = sourceIndex + (direction === 'previous' ? -1 : 1);
+    if (destinationIndex < 0 || destinationIndex >= previewTabIds.length) return;
+    reorderPreviewTab(id, destinationIndex);
+    setFocusedTabId(id);
+    window.requestAnimationFrame(() => tabRefs.current[id]?.focus());
+  };
+
+  const getDropPosition = (event: React.DragEvent<HTMLDivElement>): PreviewTabDropPosition => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+  };
+
   return (
     <div className="bottom-preview-tabs">
       {closedPreviewTabCount > 0 && (
@@ -152,7 +181,13 @@ export default function BottomPreviewTabs() {
             closePreviewTab(id);
           };
           const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
-            if (event.key === 'ArrowRight') {
+            if (event.altKey && event.shiftKey && event.key === 'ArrowRight') {
+              event.preventDefault();
+              moveTabWithKeyboard(id, 'next');
+            } else if (event.altKey && event.shiftKey && event.key === 'ArrowLeft') {
+              event.preventDefault();
+              moveTabWithKeyboard(id, 'previous');
+            } else if (event.key === 'ArrowRight') {
               event.preventDefault();
               moveTabFocus(id, 'next');
             } else if (event.key === 'ArrowLeft') {
@@ -173,7 +208,37 @@ export default function BottomPreviewTabs() {
           return (
             <div
               key={id}
-              className={`bottom-preview-tab ${isActive ? 'active' : ''}`}
+              data-testid={`bottom-preview-tab-${id}`}
+              data-preview-tab-id={id}
+              className={`bottom-preview-tab ${isActive ? 'active' : ''} ${draggedTabId === id ? 'is-dragging' : ''} ${dropTarget?.id === id ? `is-drop-${dropTarget.position}` : ''}`}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', id);
+                setDraggedTabId(id);
+                setDropTarget(null);
+              }}
+              onDragOver={(event) => {
+                if (!draggedTabId || draggedTabId === id) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTarget({
+                  id,
+                  position: getDropPosition(event),
+                });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = draggedTabId || event.dataTransfer.getData('text/plain');
+                const position = dropTarget?.id === id ? dropTarget.position : getDropPosition(event);
+                if (sourceId) reorderFromDrop(sourceId, id, position);
+                setDraggedTabId(null);
+                setDropTarget(null);
+              }}
+              onDragEnd={() => {
+                setDraggedTabId(null);
+                setDropTarget(null);
+              }}
               onMouseEnter={(event) => showHoverPreview(event, id)}
               onMouseMove={(event) => showHoverPreview(event, id)}
               onMouseLeave={() => setHoverPreview((prev) => (prev?.id === id ? null : prev))}
@@ -185,12 +250,15 @@ export default function BottomPreviewTabs() {
                 role="tab"
                 aria-selected={isActive}
                 aria-label={`Open preview ${label}`}
+                aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+                aria-posinset={previewTabIds.indexOf(id) + 1}
+                aria-setsize={previewTabIds.length}
                 tabIndex={focusedTabId === id ? 0 : -1}
                 onClick={openFullView}
                 onAuxClick={closeByMiddleClick}
                 onFocus={() => setFocusedTabId(id)}
                 onKeyDown={onTabKeyDown}
-                title={label}
+                title={`${label} — drag to reorder, or Alt+Shift+Left/Right`}
               >
                 <span className="bottom-preview-tab-label">{label}</span>
               </button>

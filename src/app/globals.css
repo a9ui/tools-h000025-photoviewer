@@ -1715,6 +1715,24 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-tertiary);
   background: transparent;
 }
+.bottom-preview-tab.is-dragging {
+  opacity: 0.5;
+}
+.bottom-preview-tab.is-drop-before::before,
+.bottom-preview-tab.is-drop-after::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  width: 2px;
+  border-radius: 999px;
+  background: #818cf8;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.28);
+  z-index: 2;
+  pointer-events: none;
+}
+.bottom-preview-tab.is-drop-before::before { left: -1px; }
+.bottom-preview-tab.is-drop-after::after { right: -1px; }
 .bottom-preview-tab-main {
   min-width: 0;
   height: 100%;

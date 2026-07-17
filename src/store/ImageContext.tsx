@@ -80,6 +80,18 @@ const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
 const MAX_CLOSED_PREVIEW_TABS = 30;
 
+export function reorderPreviewTabIds(tabIds: string[], id: string, destinationIndex: number): string[] {
+  if (!id || !Number.isInteger(destinationIndex)) return tabIds;
+  if (new Set(tabIds).size !== tabIds.length) return tabIds;
+  const sourceIndex = tabIds.indexOf(id);
+  if (sourceIndex < 0 || destinationIndex < 0 || destinationIndex >= tabIds.length) return tabIds;
+  if (sourceIndex === destinationIndex) return tabIds;
+
+  const next = tabIds.filter((tabId) => tabId !== id);
+  next.splice(destinationIndex, 0, id);
+  return next;
+}
+
 function normalizeStoredView(value: unknown): ViewSettings {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return { ...DEFAULT_VIEW };
@@ -279,6 +291,7 @@ interface Ctx {
   openPreviewTab: (image: ImageFile, options?: { makeActive?: boolean; pin?: boolean }) => void;
   setActivePreviewId: (id: string | null) => void;
   closePreviewTab: (id: string) => void;
+  reorderPreviewTab: (id: string, destinationIndex: number) => void;
   togglePinPreviewTab: (id: string) => void;
   closedPreviewTabCount: number;
   restoreLastClosedPreview: () => void;
@@ -1490,6 +1503,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
+  const reorderPreviewTab = useCallback((id: string, destinationIndex: number) => {
+    setPreviewTabIds((previous) => {
+      const next = reorderPreviewTabIds(previous, id, destinationIndex);
+      if (next === previous) return previous;
+      previewTabsUserModifiedRef.current = true;
+      return next;
+    });
+  }, []);
+
   const closePreviewTab = useCallback((id: string) => {
     previewTabsUserModifiedRef.current = true;
     const existing = previewById[id];
@@ -1608,7 +1630,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       selectedIndex, setSelectedIndex,
       modalImageIds, setModalImageIds, openModalAtImage,
       selectedIds, selectImage, clearSelection,
-      previewTabIds, activePreviewId, previewById, showPreviewImage, openPreviewTab, setActivePreviewId, closePreviewTab, closeAllPreviews,
+      previewTabIds, activePreviewId, previewById, showPreviewImage, openPreviewTab, setActivePreviewId, closePreviewTab, reorderPreviewTab, closeAllPreviews,
       seenImageIds, markImageSeen, revealImageId, requestRevealImage, consumeRevealImage,
       pinnedPreviewIds, togglePinPreviewTab, closedPreviewTabCount: closedPreviewStack.length, restoreLastClosedPreview,
       keyBindings, setKeyBindings, confirmBeforeDelete, setConfirmBeforeDelete, showSettings, setShowSettings,

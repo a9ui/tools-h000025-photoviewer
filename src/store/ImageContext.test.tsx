@@ -2,7 +2,7 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { ImageProvider, useImageStore } from './ImageContext';
+import { ImageProvider, reorderPreviewTabIds, useImageStore } from './ImageContext';
 import type { ImageFile } from '../lib/types';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 
@@ -68,15 +68,34 @@ const previewProbeImage: ImageFile = {
   mtime: 1,
 };
 
+const secondPreviewProbeImage: ImageFile = {
+  ...previewProbeImage,
+  id: 'C:/images/preview-probe-second.png',
+  filename: 'preview-probe-second.png',
+  absolutePath: 'C:/images/preview-probe-second.png',
+  fileUrl: '/api/image?preview-probe-second',
+  displayUrl: '/api/image?preview-probe-second&display=1',
+  fullUrl: '/api/image?preview-probe-second&full=1',
+};
+
 function PreviewTabsProbe() {
-  const { previewTabIds, activePreviewId, closedPreviewTabCount, openPreviewTab, closePreviewTab } = useImageStore();
+  const {
+    previewTabIds, activePreviewId, pinnedPreviewIds, closedPreviewTabCount,
+    openPreviewTab, closePreviewTab, reorderPreviewTab, togglePinPreviewTab,
+  } = useImageStore();
   return (
     <div>
       <output aria-label="preview tabs">{previewTabIds.join(',')}</output>
       <output aria-label="active preview tab">{activePreviewId ?? ''}</output>
+      <output aria-label="pinned preview tabs">{pinnedPreviewIds.join(',')}</output>
       <output aria-label="closed preview tabs">{closedPreviewTabCount}</output>
       <button type="button" onClick={() => openPreviewTab(previewProbeImage)}>Open preview tab</button>
+      <button type="button" onClick={() => openPreviewTab(secondPreviewProbeImage)}>Open second preview tab</button>
       <button type="button" onClick={() => closePreviewTab(previewProbeImage.id)}>Close preview tab</button>
+      <button type="button" onClick={() => togglePinPreviewTab(secondPreviewProbeImage.id)}>Pin second preview tab</button>
+      <button type="button" onClick={() => reorderPreviewTab(previewProbeImage.id, 1)}>Move first preview tab after second</button>
+      <button type="button" onClick={() => reorderPreviewTab(previewProbeImage.id, 1)}>Repeat current preview order</button>
+      <button type="button" onClick={() => reorderPreviewTab('C:/images/not-open.png', 0)}>Try invalid preview reorder</button>
     </div>
   );
 }
@@ -606,6 +625,75 @@ describe('ImageProvider preview tab persistence', () => {
     });
   });
 
+  it('reorders tabs without changing active or pinned state, and persists the resulting order', async () => {
+    const user = userEvent.setup();
+    render(
+      <ImageProvider>
+        <PreviewTabsProbe />
+      </ImageProvider>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Open preview tab' }));
+    await user.click(screen.getByRole('button', { name: 'Open second preview tab' }));
+    await user.click(screen.getByRole('button', { name: 'Pin second preview tab' }));
+    await user.click(screen.getByRole('button', { name: 'Move first preview tab after second' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'preview tabs' }))
+        .toHaveTextContent(`${secondPreviewProbeImage.id},${previewProbeImage.id}`);
+      expect(screen.getByRole('status', { name: 'active preview tab' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'pinned preview tabs' })).toHaveTextContent(secondPreviewProbeImage.id);
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+        version: 1,
+        tabIds: [secondPreviewProbeImage.id, previewProbeImage.id],
+        activeId: secondPreviewProbeImage.id,
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Repeat current preview order' }));
+    await user.click(screen.getByRole('button', { name: 'Try invalid preview reorder' }));
+    expect(screen.getByRole('status', { name: 'preview tabs' }))
+      .toHaveTextContent(`${secondPreviewProbeImage.id},${previewProbeImage.id}`);
+  });
+
+  it('restores a persisted reordered preview-tab snapshot in the same order after a scan', async () => {
+    localStorage.setItem('pvu_preview_tabs', JSON.stringify({
+      version: 1,
+      tabIds: [secondPreviewProbeImage.id, previewProbeImage.id],
+      activeId: secondPreviewProbeImage.id,
+    }));
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/search')) {
+        return {
+          ok: true,
+          json: async () => ({ results: [previewProbeImage, secondPreviewProbeImage], total: 2, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return { ok: true, json: async () => ({ favorites: {}, jobs: [] }) } as Response;
+    }));
+    render(
+      <ImageProvider>
+        <ScanProbe />
+        <PreviewTabsProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 2, total: 2, newFiles: 2, stage: 'complete' }),
+      } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'preview tabs' }))
+        .toHaveTextContent(`${secondPreviewProbeImage.id},${previewProbeImage.id}`);
+      expect(screen.getByRole('status', { name: 'active preview tab' })).toHaveTextContent(secondPreviewProbeImage.id);
+    });
+  });
+
   it('keeps a focused Restore control after closing the final preview tab and restores it', async () => {
     const user = userEvent.setup();
     render(
@@ -681,6 +769,18 @@ describe('ImageProvider preview tab persistence', () => {
         activeId: previewProbeImage.id,
       });
     });
+  });
+});
+
+describe('reorderPreviewTabIds', () => {
+  it('preserves the original list for invalid, duplicate, and no-op reorder requests', () => {
+    const valid = [previewProbeImage.id, secondPreviewProbeImage.id];
+    const duplicate = [previewProbeImage.id, previewProbeImage.id];
+
+    expect(reorderPreviewTabIds(valid, previewProbeImage.id, 0)).toBe(valid);
+    expect(reorderPreviewTabIds(valid, 'C:/images/not-open.png', 0)).toBe(valid);
+    expect(reorderPreviewTabIds(valid, previewProbeImage.id, -1)).toBe(valid);
+    expect(reorderPreviewTabIds(duplicate, previewProbeImage.id, 1)).toBe(duplicate);
   });
 });
 

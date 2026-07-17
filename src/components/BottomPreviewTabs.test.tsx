@@ -35,6 +35,7 @@ const secondImage: ImageFile = {
 const setActivePreviewId = vi.fn();
 const setSelectedIndex = vi.fn();
 const closePreviewTab = vi.fn();
+const reorderPreviewTab = vi.fn();
 const togglePinPreviewTab = vi.fn();
 const restoreLastClosedPreview = vi.fn();
 
@@ -52,6 +53,7 @@ function createStore(options: { activeId?: string | null; pinnedIds?: string[] }
     setActivePreviewId,
     setSelectedIndex,
     closePreviewTab,
+    reorderPreviewTab,
     togglePinPreviewTab,
     restoreLastClosedPreview,
   } as unknown as ReturnType<typeof useImageStore>;
@@ -126,6 +128,43 @@ describe('BottomPreviewTabs', () => {
     expect(firstTab).toHaveFocus();
     fireEvent.keyDown(firstTab, { key: 'End' });
     expect(secondTab).toHaveFocus();
+  });
+
+  it('reorders with the documented Alt+Shift+Arrow chord without changing active state', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({ pinnedIds: [secondImage.id] }));
+    render(<BottomPreviewTabs />);
+    const firstTab = screen.getByRole('tab', { name: /open preview first\.png/i });
+
+    fireEvent.keyDown(firstTab, { key: 'ArrowRight', altKey: true, shiftKey: true });
+
+    expect(reorderPreviewTab).toHaveBeenCalledWith(firstImage.id, 1);
+    expect(setActivePreviewId).not.toHaveBeenCalled();
+    expect(firstTab).toHaveAttribute('aria-keyshortcuts', 'Alt+Shift+ArrowLeft Alt+Shift+ArrowRight');
+  });
+
+  it('shows a before-or-after drop marker and dispatches a pointer reorder', () => {
+    render(<BottomPreviewTabs />);
+    const firstTab = screen.getByRole('tab', { name: /open preview first\.png/i });
+    const secondTab = screen.getByRole('tab', { name: /open preview second\.png/i });
+    const firstSurface = screen.getByTestId(`bottom-preview-tab-${firstImage.id}`);
+    const secondSurface = screen.getByTestId(`bottom-preview-tab-${secondImage.id}`);
+    Object.defineProperty(secondSurface, 'getBoundingClientRect', {
+      value: () => ({ left: 0, width: 100 }),
+    });
+    const dataTransfer = {
+      effectAllowed: '',
+      dropEffect: '',
+      setData: vi.fn(),
+      getData: vi.fn(() => firstImage.id),
+    };
+
+    fireEvent.dragStart(firstSurface, { dataTransfer });
+    fireEvent.dragOver(secondSurface, { dataTransfer, clientX: 80 });
+    expect(secondSurface).toHaveClass('is-drop-after');
+    fireEvent.drop(secondSurface, { dataTransfer, clientX: 80 });
+
+    expect(reorderPreviewTab).toHaveBeenCalledWith(firstImage.id, 1);
+    expect(setActivePreviewId).not.toHaveBeenCalled();
   });
 
   it('keeps pin and close as independently reachable sibling controls', () => {
