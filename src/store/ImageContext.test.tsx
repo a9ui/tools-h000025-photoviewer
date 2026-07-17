@@ -237,17 +237,17 @@ describe('ImageProvider browser UI preferences', () => {
   });
 
   it('persists favorites as a three-way change against the hydrated server base', async () => {
-    let putBody: unknown;
+    const putBodies: unknown[] = [];
     vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes('/api/favorites') && (!init?.method || init.method === 'GET')) {
         return {
           ok: true,
-          json: async () => ({ favorites: { 'same-key': 3, external: 4 } }),
+          json: async () => ({ favorites: { 'same-key': 3 } }),
         } as Response;
       }
       if (url.includes('/api/favorites') && init?.method === 'PUT') {
-        putBody = JSON.parse(String(init.body));
+        putBodies.push(JSON.parse(String(init.body)));
         return {
           ok: true,
           json: async () => ({ favorites: { external: 4 } }),
@@ -271,9 +271,20 @@ describe('ImageProvider browser UI preferences', () => {
     await user.click(screen.getByRole('button', { name: 'Toggle same key before hydration' }));
 
     await waitFor(() => {
-      expect(putBody).toEqual({
+      expect(putBodies[0]).toEqual({
+        favorites: {},
+        baseFavorites: { 'same-key': 3 },
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"external":4');
+    });
+
+    await waitFor(() => {
+      expect(putBodies[1]).toEqual({
         favorites: { external: 4 },
-        baseFavorites: { 'same-key': 3, external: 4 },
+        baseFavorites: { external: 4 },
       });
     });
   });

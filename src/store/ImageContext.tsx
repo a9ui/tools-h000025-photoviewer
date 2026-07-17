@@ -116,6 +116,30 @@ function mergeFavorites(
   return merged;
 }
 
+function reconcileFavoriteWriteResponse(
+  serverFavorites: Record<string, number>,
+  requestSnapshot: Record<string, number>,
+  currentFavorites: Record<string, number>,
+) {
+  const reconciled = { ...serverFavorites };
+  const candidateIds = new Set([...Object.keys(requestSnapshot), ...Object.keys(currentFavorites)]);
+  for (const id of candidateIds) {
+    const requestedLevel = requestSnapshot[id] ?? 0;
+    const currentLevel = currentFavorites[id] ?? 0;
+    if (requestedLevel === currentLevel) continue;
+    if (currentLevel > 0) reconciled[id] = currentLevel;
+    else delete reconciled[id];
+  }
+
+  const currentIds = Object.keys(currentFavorites);
+  const reconciledIds = Object.keys(reconciled);
+  if (currentIds.length === reconciledIds.length
+    && currentIds.every((id) => currentFavorites[id] === reconciled[id])) {
+    return currentFavorites;
+  }
+  return reconciled;
+}
+
 function writeJsonLocalStorage(key: string, value: unknown) {
   try {
     localStorage.setItem(key, JSON.stringify(value));
@@ -441,7 +465,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         .then(async (response) => {
           if (!response.ok) return;
           const data = await response.json();
-          favoriteServerBaseRef.current = normalizeFavorites(data?.favorites);
+          const serverFavorites = normalizeFavorites(data?.favorites);
+          favoriteServerBaseRef.current = serverFavorites;
+          setFavorites((currentFavorites) => reconcileFavoriteWriteResponse(
+            serverFavorites,
+            snapshot,
+            currentFavorites,
+          ));
         })
         .catch(() => {});
     }, FAVORITES_FLUSH_DELAY_MS);
