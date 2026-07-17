@@ -16,6 +16,12 @@ import {
   toggleFavoriteFilterLevel as toggleFavoriteFilterLevelValue,
   type FavoriteFilterLevel,
 } from '../lib/browserUiPreferences';
+import {
+  PREVIEW_TAB_STORAGE_KEY,
+  normalizePersistedPreviewTabs,
+  serializePersistedPreviewTabs,
+  type PersistedPreviewTabs,
+} from '../lib/previewTabPersistence';
 
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
@@ -342,6 +348,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
   const [favoritesHydrated, setFavoritesHydrated] = useState(false);
   const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false);
+  const [previewTabsPersistenceReady, setPreviewTabsPersistenceReady] = useState(false);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const scrollMemoryRef = useRef<Record<string, number>>({});
@@ -379,6 +386,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const searchGenerationRef = useRef(0);
   const searchResultsRef = useRef<Array<ImageFile | null>>([]);
   const searchTotalRef = useRef(0);
+  const pendingPreviewTabsRestoreRef = useRef<PersistedPreviewTabs | null>(null);
+  const previewTabsHadStoredValueRef = useRef(false);
+  const previewTabsUserModifiedRef = useRef(false);
   const loadedPagesRef = useRef<Set<string>>(new Set());
   const pendingPagesRef = useRef<Set<string>>(new Set());
   const pendingSearchControllersRef = useRef<Map<string, AbortController>>(new Map());
@@ -487,6 +497,24 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore */ }
     try {
+      const storedPreviewTabs = localStorage.getItem(PREVIEW_TAB_STORAGE_KEY);
+      if (storedPreviewTabs) {
+        previewTabsHadStoredValueRef.current = true;
+        const restored = normalizePersistedPreviewTabs(JSON.parse(storedPreviewTabs));
+        if (restored.tabIds.length > 0) {
+          pendingPreviewTabsRestoreRef.current = restored;
+        } else {
+          setPreviewTabsPersistenceReady(true);
+        }
+      } else {
+        setPreviewTabsPersistenceReady(true);
+      }
+    } catch {
+      // A malformed snapshot intentionally restores no tabs. It is safe to
+      // replace only after the user next changes the preview tab state.
+      setPreviewTabsPersistenceReady(true);
+    }
+    try {
       const perf = localStorage.getItem('pvu_perf_enabled');
       if (perf === '1') setPerfEnabledState(true);
     } catch { /* ignore */ }
@@ -580,6 +608,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('pvu_pinned_tabs', JSON.stringify(pinnedPreviewIds));
     } catch { /* ignore */ }
   }, [pinnedPreviewIds]);
+
+  useEffect(() => {
+    if (!previewTabsHadStoredValueRef.current && !previewTabsUserModifiedRef.current) return;
+    if (!previewTabsPersistenceReady && !previewTabsUserModifiedRef.current) return;
+    writeJsonLocalStorage(
+      PREVIEW_TAB_STORAGE_KEY,
+      serializePersistedPreviewTabs(previewTabIds, activePreviewId),
+    );
+  }, [activePreviewId, previewTabIds, previewTabsPersistenceReady]);
 
   useEffect(() => {
     try {
@@ -1011,6 +1048,53 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     favoritesRef.current = favorites;
   }, [favorites]);
 
+  // A saved preview tab only becomes live once it is present in the current
+  // search index. This avoids resurrecting paths from an earlier scan and does
+  // not open the modal or start any enhancement work.
+  useEffect(() => {
+    const persisted = pendingPreviewTabsRestoreRef.current;
+    if (!persisted) return;
+
+    const byId = new Map<string, ImageFile>();
+    for (const image of searchResults) {
+      if (image) byId.set(image.id, image);
+    }
+    const restoredIds = persisted.tabIds.filter((id) => byId.has(id));
+
+    if (restoredIds.length > 0) {
+      setPreviewById((current) => {
+        const next = { ...current };
+        for (const id of restoredIds) {
+          const image = byId.get(id);
+          if (image) next[id] = image;
+        }
+        return next;
+      });
+      setPreviewTabIds((current) => {
+        const next = [
+          ...restoredIds,
+          ...current.filter((id) => !restoredIds.includes(id)),
+        ];
+        return next.length === current.length && next.every((id, index) => id === current[index])
+          ? current
+          : next;
+      });
+      setActivePreviewIdState((current) => {
+        if (persisted.activeId && byId.has(persisted.activeId)) return persisted.activeId;
+        if (current) return current;
+        return restoredIds[0] ?? null;
+      });
+    }
+
+    const currentSearchIsComplete = searchTotal > 0
+      && searchResults.length === searchTotal
+      && searchResults.every(Boolean);
+    if (currentSearchIsComplete) {
+      pendingPreviewTabsRestoreRef.current = null;
+      setPreviewTabsPersistenceReady(true);
+    }
+  }, [searchResults, searchTotal]);
+
   useEffect(() => {
     const byId = new Map<string, ImageFile>();
     for (const image of searchResults) {
@@ -1225,6 +1309,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setActivePreviewId = useCallback((id: string | null) => {
+    previewTabsUserModifiedRef.current = true;
     setActivePreviewIdState(id);
   }, []);
 
@@ -1291,6 +1376,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     options?: { makeActive?: boolean; pin?: boolean }
   ) => {
     const { makeActive = true, pin = false } = options || {};
+    previewTabsUserModifiedRef.current = true;
     setPreviewById((prev) => ({ ...prev, [image.id]: image }));
     setPreviewTabIds((prev) => (prev.includes(image.id) ? prev : [...prev, image.id]));
     if (makeActive) {
@@ -1308,6 +1394,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closePreviewTab = useCallback((id: string) => {
+    previewTabsUserModifiedRef.current = true;
     const existing = previewById[id];
     if (existing) {
       setClosedPreviewById((prev) => ({ ...prev, [id]: existing }));
@@ -1337,6 +1424,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       const fromCache = closedPreviewById[id];
       const image = fromSearch ?? fromCache;
       if (image) {
+        previewTabsUserModifiedRef.current = true;
         setPreviewById((current) => ({ ...current, [id]: image }));
         setPreviewTabIds((current) => (current.includes(id) ? current : [id, ...current]));
         setActivePreviewIdState(id);
@@ -1351,6 +1439,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const closeAllPreviews = useCallback(() => {
+    previewTabsUserModifiedRef.current = true;
     setActivePreviewIdState(null);
     setSelectedIds([]);
     setSelectionAnchorId(null);

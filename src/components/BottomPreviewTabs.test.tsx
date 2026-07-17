@@ -38,10 +38,10 @@ const closePreviewTab = vi.fn();
 const togglePinPreviewTab = vi.fn();
 const restoreLastClosedPreview = vi.fn();
 
-function createStore(options: { activeId?: string; pinnedIds?: string[] } = {}) {
+function createStore(options: { activeId?: string | null; pinnedIds?: string[] } = {}) {
   return {
     previewTabIds: [firstImage.id, secondImage.id],
-    activePreviewId: options.activeId ?? firstImage.id,
+    activePreviewId: options.activeId === undefined ? firstImage.id : options.activeId,
     previewById: {
       [firstImage.id]: firstImage,
       [secondImage.id]: secondImage,
@@ -62,6 +62,16 @@ beforeEach(() => {
 });
 
 describe('BottomPreviewTabs', () => {
+  it('keeps the first tab keyboard reachable while a restored active id is unavailable', () => {
+    vi.mocked(useImageStore).mockReturnValue(createStore({ activeId: null }));
+    render(<BottomPreviewTabs />);
+
+    expect(screen.getByRole('tab', { name: /open preview first\.png/i }))
+      .toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: /open preview second\.png/i }))
+      .toHaveAttribute('tabindex', '-1');
+  });
+
   it('uses a roving tab stop and activates the focused preview with keyboard', () => {
     render(<BottomPreviewTabs />);
 

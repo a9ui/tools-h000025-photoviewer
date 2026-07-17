@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ImageProvider, useImageStore } from './ImageContext';
+import type { ImageFile } from '../lib/types';
 
 function PreferencesProbe() {
   const {
@@ -50,6 +51,30 @@ function SeenProbe() {
     <div>
       <output aria-label="seen state">{JSON.stringify(seenImageIds)}</output>
       <button type="button" onClick={() => markImageSeen('browser-explicit.png')}>Mark seen</button>
+    </div>
+  );
+}
+
+const previewProbeImage: ImageFile = {
+  id: 'C:/images/preview-probe.png',
+  filename: 'preview-probe.png',
+  absolutePath: 'C:/images/preview-probe.png',
+  fileUrl: '/api/image?preview-probe',
+  displayUrl: '/api/image?preview-probe&display=1',
+  fullUrl: '/api/image?preview-probe&full=1',
+  metadata: null,
+  createdAt: 1,
+  mtime: 1,
+};
+
+function PreviewTabsProbe() {
+  const { previewTabIds, activePreviewId, openPreviewTab, closePreviewTab } = useImageStore();
+  return (
+    <div>
+      <output aria-label="preview tabs">{previewTabIds.join(',')}</output>
+      <output aria-label="active preview tab">{activePreviewId ?? ''}</output>
+      <button type="button" onClick={() => openPreviewTab(previewProbeImage)}>Open preview tab</button>
+      <button type="button" onClick={() => closePreviewTab(previewProbeImage.id)}>Close preview tab</button>
     </div>
   );
 }
@@ -509,6 +534,93 @@ describe('ImageProvider browser UI preferences', () => {
       expect(putBodies[1]).toEqual({
         favorites: { external: 4 },
         baseFavorites: { external: 4 },
+      });
+    });
+  });
+});
+
+describe('ImageProvider preview tab persistence', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ favorites: {}, jobs: [] }),
+    }) as Response));
+  });
+
+  it('persists the open tab order and active tab after a user opens or closes a tab', async () => {
+    const user = userEvent.setup();
+    render(
+      <ImageProvider>
+        <PreviewTabsProbe />
+      </ImageProvider>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Open preview tab' }));
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+        version: 1,
+        tabIds: [previewProbeImage.id],
+        activeId: previewProbeImage.id,
+      });
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Close preview tab' }));
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+        version: 1,
+        tabIds: [],
+        activeId: null,
+      });
+    });
+  });
+
+  it('restores only tabs found in the current scan and safely falls back from a missing active tab', async () => {
+    localStorage.setItem('pvu_preview_tabs', JSON.stringify({
+      version: 1,
+      tabIds: [previewProbeImage.id, 'C:/images/no-longer-indexed.png'],
+      activeId: 'C:/images/no-longer-indexed.png',
+    }));
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/search')) {
+        return {
+          ok: true,
+          json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ favorites: {}, jobs: [] }),
+      } as Response;
+    }));
+
+    render(
+      <ImageProvider>
+        <ScanProbe />
+        <PreviewTabsProbe />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 1, total: 1, newFiles: 1, stage: 'complete' }),
+      } as MessageEvent);
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'preview tabs' }))
+        .toHaveTextContent(previewProbeImage.id);
+      expect(screen.getByRole('status', { name: 'active preview tab' }))
+        .toHaveTextContent(previewProbeImage.id);
+    });
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+        version: 1,
+        tabIds: [previewProbeImage.id],
+        activeId: previewProbeImage.id,
       });
     });
   });
