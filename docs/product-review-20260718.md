@@ -86,8 +86,7 @@ WPF版は「作りかけのUI shell」段階を脱し、Browser契約のP0/P1を
 
 ### P2-A WPF native操作完成
 
-1. prompt tag→search。
-2. Explorerへのnative FileDrop drag-out。
+Prompt tag→searchは、dedupe chip、keyboard、focus、reload、isolationまで完了した。残りはExplorerへのnative FileDrop drag-out。
 
 ### P2-B Browser deep correctness
 

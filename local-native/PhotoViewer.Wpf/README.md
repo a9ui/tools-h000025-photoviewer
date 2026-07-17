@@ -23,7 +23,7 @@ implementation. The normative current behavior is documented in
 - guarded Windows Recycle Bin-only source Delete with confirmation and adjacent-image continuation
 - resizable/persisted right preview panel and multi-selection actions
 - preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, and cancellable hover decode
-- modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata, and Original/Enhanced display
+- modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata Prompt chips that append to search, and Original/Enhanced display
 - refresh active folder
 - open the selected real image with the OS default app
 - versioned, normalized, unknown-field-preserving WPF state written through a bounded process lock and atomic replace
@@ -60,6 +60,7 @@ implementation. The normative current behavior is documented in
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
 - `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
 - `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
+- `scripts/verify-wpf-prompt-tag-search.ps1` temp-only Prompt chip/search/focus/persistence/isolation verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
