@@ -1,11 +1,8 @@
 import { defineConfig, devices } from '@playwright/test';
+import { resolvePlaywrightTarget } from './scripts/playwright_config';
 
 const isCI = !!process.env.CI;
-const requestedPort = Number(process.env.PLAYWRIGHT_PORT ?? 3000);
-const testPort = Number.isInteger(requestedPort) && requestedPort >= 1 && requestedPort <= 65_535
-  ? requestedPort
-  : 3000;
-const testUrl = `http://127.0.0.1:${testPort}`;
+const target = resolvePlaywrightTarget(process.env);
 
 export default defineConfig({
   testDir: './e2e',
@@ -13,7 +10,7 @@ export default defineConfig({
   retries: isCI ? 2 : 0,
   reporter: [['html', { open: 'never' }], ['list']],
   use: {
-    baseURL: process.env.PLAYWRIGHT_BASE_URL ?? testUrl,
+    baseURL: target.baseURL,
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
     video: 'retain-on-failure'
@@ -24,10 +21,10 @@ export default defineConfig({
       use: { ...devices['Desktop Chrome'] }
     }
   ],
-  webServer: {
-    command: `corepack pnpm dev --hostname 127.0.0.1 --port ${testPort}`,
-    url: testUrl,
-    reuseExistingServer: !isCI,
+  webServer: target.startServer ? {
+    command: `corepack pnpm dev --hostname 127.0.0.1 --port ${target.port}`,
+    url: target.baseURL,
+    reuseExistingServer: target.reuseExistingServer,
     timeout: 120_000
-  }
+  } : undefined
 });
