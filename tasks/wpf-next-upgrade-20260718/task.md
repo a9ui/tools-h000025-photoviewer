@@ -25,7 +25,8 @@ next p95 was 186-204 ms, Favorite p95 was 233-251 ms, and the 15 ms dispatcher
 heartbeat stalled for 442-460 ms. Paired small controls remained at 5-6 ms,
 29-31 ms, and 38-53 ms respectively. All exactness/isolation checks were green.
 
-This is now a confirmed P1, not an unverified candidate. Production persistence
+The code-ready actor/state-machine handoff is in `writer-design.md`. This is now
+a confirmed P1, not an unverified candidate. Production persistence
 remains synchronous and correctness-first until the generation-aware writer,
 external-writer/lock/refusal tests, close drain, reopen proof, and derived
 50/65/110 ms thresholds are green.

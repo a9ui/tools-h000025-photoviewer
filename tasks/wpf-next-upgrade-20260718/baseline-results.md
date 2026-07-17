@@ -27,6 +27,13 @@ Runtime: .NET 8.0.28, Windows 10.0.26200, x64, 28 logical processors.
 Large seeds were exactly 100,000 entries: Favorite 2,900,099 bytes and Seen
 3,200,099 bytes. The timed Seen store started at 3,700,237 bytes in every run.
 
+For scale only, a final read-only count of the untouched user stores reported
+28,792 Favorite entries / 2,784,842 bytes and 3 Seen entries / 345 bytes. No
+path or value was copied into the verifier. The synthetic gate therefore
+matches the real Favorite byte scale while deliberately stressing a higher key
+count; it is evidence of the synchronous algorithmic boundary, not a claim that
+the user's exact file was mutated or timed.
+
 | Run | Profile | Modal next p50 / p95 / max ms | Favorite p50 / p95 / max ms | 15 ms heartbeat max gap ms |
 | ---: | --- | ---: | ---: | ---: |
 | 1 | small | 4.356 / 5.939 / 6.560 | 23.803 / 30.553 / 42.820 | 52.651 |
