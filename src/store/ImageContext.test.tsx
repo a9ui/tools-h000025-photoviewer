@@ -31,6 +31,64 @@ function PreferencesProbe() {
   );
 }
 
+function RapidPreferencesProbe() {
+  const {
+    favoriteFilterLevels,
+    toggleFavoriteFilterLevel,
+    clearFavoriteFilterLevels,
+    showFavOnly,
+    setShowFavOnly,
+    showUnfavOnly,
+    setShowUnfavOnly,
+    view,
+    setView,
+  } = useImageStore();
+
+  return (
+    <div>
+      <output aria-label="rapid favorite levels">
+        {favoriteFilterLevels.length === 0 ? 'All' : favoriteFilterLevels.join(',')}
+      </output>
+      <output aria-label="rapid favorite mode">
+        {showFavOnly ? 'favorites' : showUnfavOnly ? 'unfavorites' : 'off'}
+      </output>
+      <output aria-label="rapid view settings">{JSON.stringify(view)}</output>
+      <button type="button" onClick={() => {
+        ([1, 2, 3, 4, 5] as const).forEach(toggleFavoriteFilterLevel);
+        clearFavoriteFilterLevels();
+      }}>
+        Churn favorite levels to All
+      </button>
+      <button type="button" onClick={() => {
+        ([1, 2, 3, 4, 5] as const).forEach(toggleFavoriteFilterLevel);
+        clearFavoriteFilterLevels();
+        toggleFavoriteFilterLevel(2);
+        toggleFavoriteFilterLevel(5);
+        setShowUnfavOnly(true);
+        setShowFavOnly(true);
+        setView({ viewMode: 'list' });
+        setView({ viewMode: 'grid' });
+        setView({ viewMode: 'list' });
+        setView({ sidebarOpen: false });
+        setView({ sidebarOpen: true });
+        setView({ sidebarOpen: false });
+        setView({ foldersExpanded: true });
+        setView({ foldersExpanded: false });
+        setView({ thumbSize: 140 });
+        setView({ thumbSize: 640 });
+        setView({ thumbSize: 260 });
+        setView({ rightPanelWidth: 260 });
+        setView({ rightPanelWidth: 560 });
+        setView({ rightPanelWidth: 420 });
+        setView({ showUnseenMarkers: false });
+        setView({ showUnseenMarkers: true });
+      }}>
+        Apply rapid final preferences
+      </button>
+    </div>
+  );
+}
+
 function FavoritesProbe() {
   const { favorites, cycleFavoriteLevel, toggleFavorite, setFavoriteLevels, adjustFavoriteLevels } = useImageStore();
   return (
@@ -189,17 +247,22 @@ function SearchProbe() {
     dirPath,
     setPhase,
     setDirPath,
+    searchQuery,
     setSearchQuery,
     searchResults,
     searchError,
     searchErrorKind,
     retrySearch,
     rescanExpiredSearchSession,
+    view,
+    setView,
   } = useImageStore();
   return (
     <div>
       <output aria-label="search phase">{phase}</output>
       <output aria-label="search directory">{dirPath}</output>
+      <output aria-label="search query">{searchQuery}</output>
+      <output aria-label="search sort">{view.sortBy}</output>
       <output aria-label="search result ids">
         {searchResults.filter((image): image is ImageFile => Boolean(image)).map((image) => image.id).join(',')}
       </output>
@@ -211,6 +274,12 @@ function SearchProbe() {
       }}>Load initial search</button>
       <button type="button" onClick={() => setSearchQuery('next query')}>Run failing search</button>
       <button type="button" onClick={() => setSearchQuery('newer query')}>Run newer search</button>
+      <button type="button" onClick={() => {
+        setSearchQuery('r');
+        setSearchQuery('ra');
+        setSearchQuery('rapid final');
+        setView({ sortBy: 'name' });
+      }}>Churn query then change sort</button>
       <button type="button" onClick={retrySearch}>Retry current search</button>
       <button type="button" onClick={rescanExpiredSearchSession}>Rescan expired session</button>
     </div>
@@ -479,6 +548,46 @@ describe('ImageProvider browser UI preferences', () => {
     await waitFor(() => {
       expect(JSON.parse(localStorage.getItem('pvu_fav_levels') || '[]')).toEqual([4, 5]);
     });
+  });
+
+  it('keeps the final rapid filter and view state without persisting an older snapshot', async () => {
+    const user = userEvent.setup();
+    render(
+      <ImageProvider>
+        <RapidPreferencesProbe />
+      </ImageProvider>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Churn favorite levels to All' }));
+    expect(screen.getByRole('status', { name: 'rapid favorite levels' })).toHaveTextContent('All');
+    expect(screen.getByRole('status', { name: 'rapid favorite mode' })).toHaveTextContent('favorites');
+
+    await user.click(screen.getByRole('button', { name: 'Apply rapid final preferences' }));
+    expect(screen.getByRole('status', { name: 'rapid favorite levels' })).toHaveTextContent('2,5');
+    expect(screen.getByRole('status', { name: 'rapid favorite mode' })).toHaveTextContent('favorites');
+    expect(JSON.parse(screen.getByRole('status', { name: 'rapid view settings' }).textContent || '{}'))
+      .toMatchObject({
+        viewMode: 'list',
+        sidebarOpen: false,
+        foldersExpanded: false,
+        thumbSize: 260,
+        rightPanelWidth: 420,
+        showUnseenMarkers: true,
+      });
+
+    await waitFor(() => {
+      expect(localStorage.getItem('pvu_fav_only')).toBe('1');
+      expect(localStorage.getItem('pvu_unfav_only')).toBe('0');
+      expect(JSON.parse(localStorage.getItem('pvu_fav_levels') || '[]')).toEqual([2, 5]);
+      expect(JSON.parse(localStorage.getItem('pvu_view') || '{}')).toMatchObject({
+        viewMode: 'list',
+        sidebarOpen: false,
+        foldersExpanded: false,
+        thumbSize: 260,
+        rightPanelWidth: 420,
+        showUnseenMarkers: true,
+      });
+    }, { timeout: 1000 });
   });
 
   it('defaults unseen markers off and persists an explicit setting change', async () => {
@@ -1608,6 +1717,54 @@ describe('reorderPreviewTabIds', () => {
 describe('ImageProvider search recovery', () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it('coalesces query churn and never lets its old timer restore a stale sort', async () => {
+    const searchUrls: string[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/search')) {
+        searchUrls.push(url);
+        const params = new URL(url, 'http://127.0.0.1').searchParams;
+        const isFinalQuery = params.get('q') === 'rapid final';
+        const image = isFinalQuery && params.get('sortBy') === 'name'
+          ? secondPreviewProbeImage
+          : isFinalQuery
+            ? thirdPreviewProbeImage
+            : previewProbeImage;
+        return {
+          ok: true,
+          json: async () => ({ results: [image], total: 1, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+    render(<ImageProvider><SearchProbe /></ImageProvider>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Load initial search' }));
+    await screen.findByText(previewProbeImage.id);
+    fireEvent.click(screen.getByRole('button', { name: 'Churn query then change sort' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search query' })).toHaveTextContent('rapid final');
+      expect(screen.getByRole('status', { name: 'search sort' })).toHaveTextContent('name');
+      expect(screen.getByRole('status', { name: 'search result ids' }))
+        .toHaveTextContent(secondPreviewProbeImage.id);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 250));
+
+    const finalQueryUrls = searchUrls.filter((url) => url.includes('q=rapid%20final'));
+    expect(finalQueryUrls).toHaveLength(1);
+    expect(finalQueryUrls[0]).toContain('sortBy=name');
+    expect(screen.getByRole('status', { name: 'search result ids' }))
+      .toHaveTextContent(secondPreviewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'search result ids' }))
+      .not.toHaveTextContent(thirdPreviewProbeImage.id);
   });
 
   it('keeps the last successful result set visible after a current search fails and retries it', async () => {

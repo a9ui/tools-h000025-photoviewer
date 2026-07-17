@@ -1822,16 +1822,30 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     searchQueryRef.current = q;
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(() => {
+      debounceRef.current = undefined;
       resetSearch(q, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
       void doSearchPage(q, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
     }, 150);
   }, [dirPath, doSearchPage, indexToken, resetSearch, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders]);
 
   useEffect(() => {
+    // A sort/date/folder/session change searches immediately with the latest
+    // query. Cancel an older query timer so its captured options cannot run
+    // later and roll the search window back to stale settings.
+    if (debounceRef.current) {
+      clearTimeout(debounceRef.current);
+      debounceRef.current = undefined;
+    }
     if (phase !== 'viewer') return;
     const query = searchQueryRef.current;
     resetSearch(query, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
     void doSearchPage(query, 0, view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken);
+    return () => {
+      if (debounceRef.current) {
+        clearTimeout(debounceRef.current);
+        debounceRef.current = undefined;
+      }
+    };
   }, [view.sortBy, view.randomSeed, view.dateFrom, view.dateTo, view.hiddenFolders, dirPath, indexToken, phase, doSearchPage, resetSearch]);
 
   useEffect(() => {

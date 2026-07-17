@@ -278,6 +278,43 @@ describe('SettingsModal runtime diagnostics', () => {
     expect(screen.getByText('new-build')).toBeVisible();
   });
 
+  it('keeps only the newest runtime result through repeated open-close churn', async () => {
+    const pending: Array<{
+      resolve: (response: Response) => void;
+      signal?: AbortSignal;
+    }> = [];
+    vi.stubGlobal('fetch', vi.fn((_input: RequestInfo | URL, init?: RequestInit) => (
+      new Promise<Response>((resolve) => {
+        pending.push({ resolve, signal: init?.signal ?? undefined });
+      })
+    )));
+    const { rerender } = render(<SettingsModal />);
+    await waitFor(() => expect(pending).toHaveLength(1));
+
+    for (let cycle = 0; cycle < 3; cycle += 1) {
+      mockSettingsStore(false);
+      rerender(<SettingsModal />);
+      expect(pending[cycle].signal?.aborted).toBe(true);
+      mockSettingsStore(true);
+      rerender(<SettingsModal />);
+      await waitFor(() => expect(pending).toHaveLength(cycle + 2));
+    }
+
+    await act(async () => {
+      pending[3].resolve(runtimeResponse({ ...validRuntimePayload, buildId: 'rapid-final-build' }));
+    });
+    expect(await screen.findByText('rapid-final-build')).toBeVisible();
+
+    await act(async () => {
+      pending[2].resolve(runtimeResponse({ ...validRuntimePayload, buildId: 'stale-build-3' }));
+      pending[1].resolve(runtimeResponse({ ...validRuntimePayload, buildId: 'stale-build-2' }));
+      pending[0].resolve(runtimeResponse({ ...validRuntimePayload, buildId: 'stale-build-1' }));
+      await Promise.resolve();
+    });
+    expect(screen.getByText('rapid-final-build')).toBeVisible();
+    expect(screen.queryByText(/stale-build-/)).not.toBeInTheDocument();
+  });
+
   it('aborts the runtime request when the Settings component unmounts', async () => {
     let requestSignal: AbortSignal | undefined;
     let resolveRequest!: (response: Response) => void;
