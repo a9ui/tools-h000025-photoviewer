@@ -1,10 +1,12 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { execFile } from 'child_process';
-import path from 'path';
-import fs from 'fs';
-import { isSupportedImagePath } from '@/lib/imageFormats';
+import { NextRequest, NextResponse } from "next/server";
+import { execFile } from "child_process";
+import path from "path";
+import fs from "fs";
+import { isSupportedImagePath } from "@/lib/imageFormats";
+import { getIndex } from "@/lib/indexer";
+import { findActiveIndexedImagePath } from "@/lib/activeImagePath";
 
-export const dynamic = 'force-dynamic';
+export const dynamic = "force-dynamic";
 
 /**
  * POST /api/open?path=ABSOLUTE_PATH
@@ -12,39 +14,82 @@ export const dynamic = 'force-dynamic';
  * Opens a file in the OS default application (e.g. Windows Photo Viewer).
  * Uses `start ""` on Windows.
  */
-export async function POST(request: NextRequest) {
-  const filePath = request.nextUrl.searchParams.get('path');
+export interface OpenRouteDependencies {
+  platform: NodeJS.Platform;
+  getIndexedPaths: () => string[];
+  exists: (filePath: string) => boolean;
+  isSupportedImage: (filePath: string) => boolean;
+  openFile: (filePath: string) => Promise<void>;
+}
 
-  if (!filePath) {
-    return NextResponse.json({ error: 'Missing path' }, { status: 400 });
-  }
+function openWithDefaultApplication(filePath: string): Promise<void> {
+  return new Promise<void>((resolve, reject) => {
+    const command =
+      process.platform === "win32"
+        ? "cmd.exe"
+        : process.platform === "darwin"
+          ? "open"
+          : "xdg-open";
+    const args =
+      process.platform === "win32" ? ["/c", "start", "", filePath] : [filePath];
 
-  const resolved = path.resolve(filePath);
-
-  if (!fs.existsSync(resolved)) {
-    return NextResponse.json({ error: 'File not found' }, { status: 404 });
-  }
-
-  if (!isSupportedImagePath(resolved)) {
-    return NextResponse.json({ error: 'Unsupported image type' }, { status: 415 });
-  }
-
-  return new Promise<Response>((resolve) => {
-    const command = process.platform === 'win32'
-      ? 'cmd.exe'
-      : process.platform === 'darwin'
-        ? 'open'
-        : 'xdg-open';
-    const args = process.platform === 'win32'
-      ? ['/c', 'start', '', resolved]
-      : [resolved];
-
-    execFile(command, args, { windowsHide: true }, (err) => {
-      if (err) {
-        resolve(NextResponse.json({ error: String(err) }, { status: 500 }));
-      } else {
-        resolve(NextResponse.json({ success: true }));
-      }
+    execFile(command, args, { windowsHide: true }, (error) => {
+      if (error) reject(error);
+      else resolve();
     });
   });
 }
+
+const defaultDependencies: OpenRouteDependencies = {
+  platform: process.platform,
+  getIndexedPaths: () => getIndex().map((image) => image.absolutePath),
+  exists: fs.existsSync,
+  isSupportedImage: isSupportedImagePath,
+  openFile: openWithDefaultApplication,
+};
+
+export function createOpenHandler(
+  dependencies: OpenRouteDependencies = defaultDependencies,
+) {
+  return async function openImage(request: NextRequest) {
+    const filePath = request.nextUrl.searchParams.get("path");
+
+    if (!filePath) {
+      return NextResponse.json({ error: "Missing path" }, { status: 400 });
+    }
+
+    const indexedPath = findActiveIndexedImagePath(
+      filePath,
+      dependencies.getIndexedPaths(),
+      dependencies.platform,
+    );
+    if (!indexedPath) {
+      return NextResponse.json(
+        { error: "Image is not in the active index" },
+        { status: 403 },
+      );
+    }
+
+    const resolved = path.resolve(indexedPath);
+
+    if (!dependencies.exists(resolved)) {
+      return NextResponse.json({ error: "File not found" }, { status: 404 });
+    }
+
+    if (!dependencies.isSupportedImage(resolved)) {
+      return NextResponse.json(
+        { error: "Unsupported image type" },
+        { status: 415 },
+      );
+    }
+
+    try {
+      await dependencies.openFile(resolved);
+      return NextResponse.json({ success: true });
+    } catch (error) {
+      return NextResponse.json({ error: String(error) }, { status: 500 });
+    }
+  };
+}
+
+export const POST = createOpenHandler();

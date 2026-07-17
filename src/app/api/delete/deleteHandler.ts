@@ -1,5 +1,9 @@
-import path from 'path';
-import { NextRequest, NextResponse } from 'next/server';
+import path from "path";
+import { NextRequest, NextResponse } from "next/server";
+import {
+  canonicalImagePathKey,
+  findActiveIndexedImagePath,
+} from "@/lib/activeImagePath";
 
 export interface DeleteRouteDependencies {
   platform: NodeJS.Platform;
@@ -15,7 +19,7 @@ export interface DeleteRouteDependencies {
 }
 
 function pathApi(platform: NodeJS.Platform) {
-  return platform === 'win32' ? path.win32 : path.posix;
+  return platform === "win32" ? path.win32 : path.posix;
 }
 
 /**
@@ -23,33 +27,33 @@ function pathApi(platform: NodeJS.Platform) {
  * filesystem/catalog mutations, and use this canonical key only for comparisons.
  */
 export function canonicalPathKey(filePath: string, platform: NodeJS.Platform) {
-  const resolved = pathApi(platform).resolve(filePath);
-  return platform === 'win32' ? resolved.toLowerCase() : resolved;
+  return canonicalImagePathKey(filePath, platform);
 }
 
 export function isPathInsideDirectory(
   parent: string,
   child: string,
-  platform: NodeJS.Platform
+  platform: NodeJS.Platform,
 ) {
   const api = pathApi(platform);
   const relative = api.relative(
     canonicalPathKey(parent, platform),
-    canonicalPathKey(child, platform)
+    canonicalPathKey(child, platform),
   );
-  return relative === '' || (
-    relative !== '..' &&
-    !relative.startsWith(`..${api.sep}`) &&
-    !api.isAbsolute(relative)
+  return (
+    relative === "" ||
+    (relative !== ".." &&
+      !relative.startsWith(`..${api.sep}`) &&
+      !api.isAbsolute(relative))
   );
 }
 
 export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
   return async function deleteImage(request: NextRequest) {
-    const requestedPath = request.nextUrl.searchParams.get('path');
+    const requestedPath = request.nextUrl.searchParams.get("path");
 
     if (!requestedPath) {
-      return NextResponse.json({ error: 'Missing path' }, { status: 400 });
+      return NextResponse.json({ error: "Missing path" }, { status: 400 });
     }
 
     const { platform } = dependencies;
@@ -60,19 +64,20 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
     // real-path check below also blocks symlink/junction aliases into the repo.
     if (isPathInsideDirectory(projectRoot, resolvedRequest, platform)) {
       return NextResponse.json(
-        { error: 'Cannot delete files inside the project directory' },
-        { status: 403 }
+        { error: "Cannot delete files inside the project directory" },
+        { status: 403 },
       );
     }
 
-    const requestedKey = canonicalPathKey(resolvedRequest, platform);
-    const indexedPath = dependencies.getIndexedPaths().find(
-      (candidate) => canonicalPathKey(candidate, platform) === requestedKey
+    const indexedPath = findActiveIndexedImagePath(
+      resolvedRequest,
+      dependencies.getIndexedPaths(),
+      platform,
     );
     if (!indexedPath) {
       return NextResponse.json(
-        { error: 'Can only delete images from the active index' },
-        { status: 403 }
+        { error: "Can only delete images from the active index" },
+        { status: 403 },
       );
     }
 
@@ -80,11 +85,14 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
     // leave a stale in-memory or on-disk catalog entry after deletion.
     const targetPath = pathApi(platform).resolve(indexedPath);
     if (!dependencies.exists(targetPath)) {
-      return NextResponse.json({ error: 'File not found' }, { status: 404 });
+      return NextResponse.json({ error: "File not found" }, { status: 404 });
     }
 
     if (!dependencies.isSupportedImagePath(targetPath)) {
-      return NextResponse.json({ error: 'Unsupported image type' }, { status: 415 });
+      return NextResponse.json(
+        { error: "Unsupported image type" },
+        { status: 415 },
+      );
     }
 
     try {
@@ -92,8 +100,8 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
       const realTargetPath = dependencies.realPath(targetPath);
       if (isPathInsideDirectory(realProjectRoot, realTargetPath, platform)) {
         return NextResponse.json(
-          { error: 'Cannot delete files inside the project directory' },
-          { status: 403 }
+          { error: "Cannot delete files inside the project directory" },
+          { status: 403 },
         );
       }
 
@@ -108,10 +116,16 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
       // detected reparse-point swap from deleting a different source.
       const finalRealProjectRoot = dependencies.realPath(projectRoot);
       const finalRealTargetPath = dependencies.realPath(targetPath);
-      if (isPathInsideDirectory(finalRealProjectRoot, finalRealTargetPath, platform)) {
+      if (
+        isPathInsideDirectory(
+          finalRealProjectRoot,
+          finalRealTargetPath,
+          platform,
+        )
+      ) {
         return NextResponse.json(
-          { error: 'Cannot delete files inside the project directory' },
-          { status: 403 }
+          { error: "Cannot delete files inside the project directory" },
+          { status: 403 },
         );
       }
       if (
@@ -119,8 +133,8 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
         canonicalPathKey(realTargetPath, platform)
       ) {
         return NextResponse.json(
-          { error: 'Delete target changed before recycle operation' },
-          { status: 409 }
+          { error: "Delete target changed before recycle operation" },
+          { status: 409 },
         );
       }
 
@@ -135,7 +149,7 @@ export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
         // Derived cache cleanup is best-effort; visible images can regenerate it.
       }
 
-      return NextResponse.json({ success: true, deletedTo: 'recycle-bin' });
+      return NextResponse.json({ success: true, deletedTo: "recycle-bin" });
     } catch (error) {
       return NextResponse.json({ error: String(error) }, { status: 500 });
     }
