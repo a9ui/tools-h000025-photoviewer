@@ -31,7 +31,7 @@ import { FolderOpen, RefreshCw, Settings, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
   const {
-    phase, dirPath, setDirPath, startScan, scanProgress, scanError, dismissScanError,
+    phase, dirPath, setDirPath, startScan, cancelScan, scanProgress, scanError, dismissScanError,
     searchTotal, searchResults, totalIndexed, searchQuery,
     setPhase, view, setView,
     selectedIds, deleteImage,
@@ -488,7 +488,7 @@ function ViewerApp() {
         )}
 
         {phase === 'scanning' && scanProgress && (
-          <ScanProgressStatus progress={scanProgress} />
+          <ScanProgressStatus progress={scanProgress} onCancel={cancelScan} />
         )}
         </div>
         <SettingsModal />

@@ -1,9 +1,32 @@
 import React from 'react';
 import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { describe, expect, it, vi } from 'vitest';
 import { ScanProgressStatus, getScanProgressPresentation } from './ScanProgressStatus';
 
 describe('ScanProgressStatus', () => {
+  it('offers an explicit cancel action only when the parent supplies the active scan callback', async () => {
+    const user = userEvent.setup();
+    const onCancel = vi.fn();
+    const { rerender } = render(<ScanProgressStatus progress={{
+      processed: 4,
+      total: 10,
+      newFiles: 1,
+      stage: 'scanning',
+    }} onCancel={onCancel} />);
+
+    await user.click(screen.getByRole('button', { name: 'Cancel scan' }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+
+    rerender(<ScanProgressStatus progress={{
+      processed: 4,
+      total: 10,
+      newFiles: 1,
+      stage: 'scanning',
+    }} />);
+    expect(screen.queryByRole('button', { name: 'Cancel scan' })).not.toBeInTheDocument();
+  });
+
   it('exposes preparing progress with determinate values', () => {
     render(<ScanProgressStatus progress={{
       processed: 0,

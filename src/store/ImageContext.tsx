@@ -542,6 +542,7 @@ interface Ctx {
 
   // Actions
   startScan: (options?: { full?: boolean; dir?: string; onComplete?: (dir: string) => void }) => void;
+  cancelScan: () => void;
   deleteImage: (id: string) => Promise<boolean>;
   openExternal: (id: string) => void;
   totalIndexed: number;
@@ -557,6 +558,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [scanProgress, setScanProgress] = useState<{ processed: number; total: number; newFiles: number; stage?: 'preparing' | 'scanning' | 'complete'; message?: string } | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const scanRunRef = useRef(0);
+  const activeScanRunRef = useRef<{ runId: number; cancelTransport: () => void } | null>(null);
 
   const [searchQuery, setSearchQueryRaw] = useState('');
   const [searchResults, setSearchResults] = useState<Array<ImageFile | null>>([]);
@@ -1948,9 +1950,29 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, [searchResults]);
 
   // ── Scan ──
+  const cancelActiveScan = useCallback((resetUi: boolean) => {
+    const activeRun = activeScanRunRef.current;
+    if (!activeRun) return false;
+    activeRun.cancelTransport();
+    if (resetUi) {
+      setScanProgress(null);
+      setScanError(null);
+      setPhase('landing');
+    }
+    return true;
+  }, []);
+
+  const cancelScan = useCallback(() => {
+    cancelActiveScan(true);
+  }, [cancelActiveScan]);
+
+  useEffect(() => () => {
+    cancelActiveScan(false);
+  }, [cancelActiveScan]);
+
   const startScan = useCallback((options: { full?: boolean; dir?: string; onComplete?: (dir: string) => void } = {}) => {
     const scanDir = formatDirSet(parseDirSet(options.dir ?? dirPath));
-    if (!scanDir || phase === 'scanning') return;
+    if (!scanDir || phase === 'scanning' || activeScanRunRef.current) return;
     if (scanDir !== dirPath) setDirPath(scanDir);
     setIndexToken(null);
     setScanError(null);
@@ -1971,13 +1993,26 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const es = new EventSource(`/api/scan?${params.toString()}`);
     let settled = false;
     const isCurrentRun = () => scanRunRef.current === scanRunId;
-    const failScan = (message: string) => {
-      if (settled || !isCurrentRun()) return;
+    const settleScanTransport = () => {
+      if (settled) return false;
       settled = true;
+      if (activeScanRunRef.current?.runId === scanRunId) {
+        activeScanRunRef.current = null;
+      }
+      es.close();
+      return true;
+    };
+    const cancelTransport = () => {
+      if (settled) return;
+      if (isCurrentRun()) scanRunRef.current = scanRunId + 1;
+      settleScanTransport();
+    };
+    activeScanRunRef.current = { runId: scanRunId, cancelTransport };
+    const failScan = (message: string) => {
+      if (!isCurrentRun() || !settleScanTransport()) return;
       console.error('Scan error', message);
       setScanError(message);
       setScanProgress(null);
-      es.close();
       setPhase('landing');
     };
     es.onmessage = (event) => {
@@ -2014,7 +2049,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           failScan('The scan stream returned invalid completion data.');
           return;
         }
-        settled = true;
+        if (!settleScanTransport()) return;
         setScanProgress({
           ...progress,
         });
@@ -2022,7 +2057,6 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         setIndexToken(typeof eventData.indexToken === 'string' && eventData.indexToken.trim()
           ? eventData.indexToken
           : null);
-        es.close();
         options.onComplete?.(scanDir);
         setPhase('viewer');
       } else if (type === 'error') {
@@ -2417,7 +2451,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       view, setView,
       setSearchScrollPosition, getSearchScrollPosition,
       perfEnabled, setPerfEnabled, perfStats,
-      startScan, deleteImage, openExternal,
+      startScan, cancelScan, deleteImage, openExternal,
       totalIndexed, setTotalIndexed,
     }}>
       {children}

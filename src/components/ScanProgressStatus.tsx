@@ -60,7 +60,13 @@ export function getScanProgressPresentation(progress: ScanProgressState): ScanPr
   };
 }
 
-export function ScanProgressStatus({ progress }: { progress: ScanProgressState }) {
+export function ScanProgressStatus({
+  progress,
+  onCancel,
+}: {
+  progress: ScanProgressState;
+  onCancel?: () => void;
+}) {
   const presentation = getScanProgressPresentation(progress);
 
   return (
@@ -89,6 +95,13 @@ export function ScanProgressStatus({ progress }: { progress: ScanProgressState }
       <div className="progress-waiting" role="status" aria-live="polite" aria-atomic="true">
         {presentation.statusText}
       </div>
+      {onCancel && (
+        <div className="progress-actions">
+          <button type="button" className="browse-btn progress-cancel-btn" onClick={onCancel}>
+            Cancel scan
+          </button>
+        </div>
+      )}
       {presentation.isError && (
         <div className="landing-error" role="alert">
           Scan error: {presentation.message}

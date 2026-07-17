@@ -29,9 +29,10 @@ vi.mock('@/lib/thumbnailCache', () => ({
 
 import { GET } from './route';
 
-function scanRequest(dir: string, accept?: string) {
+function scanRequest(dir: string, accept?: string, signal?: AbortSignal) {
   return new NextRequest(`http://127.0.0.1/api/scan?dir=${encodeURIComponent(dir)}`, {
     headers: accept ? { accept } : undefined,
+    signal,
   });
 }
 
@@ -82,5 +83,31 @@ describe('GET /api/scan lifecycle', () => {
       if (retry.status !== 200) throw new Error('scan reservation was not released');
       await retry.body?.cancel();
     });
+  });
+
+  it('aborts on request disconnect, publishes no partial index, and releases the folder set', async () => {
+    const signals: AbortSignal[] = [];
+    mocks.scanDirectory.mockImplementation((_root: string, _progress: unknown, options: { signal?: AbortSignal }) => (
+      new Promise((_resolve, reject) => {
+        if (!options.signal) throw new Error('Expected a scan abort signal.');
+        signals.push(options.signal);
+        options.signal.addEventListener('abort', () => reject(new mocks.MockScanAbortedError()), { once: true });
+      })
+    ));
+    const requestAbort = new AbortController();
+    const first = await GET(scanRequest('C:/Pictures/Cancelable', undefined, requestAbort.signal));
+
+    requestAbort.abort();
+
+    await vi.waitFor(() => {
+      expect(signals[0]?.aborted).toBe(true);
+    });
+    await vi.waitFor(async () => {
+      const retry = await GET(scanRequest('c:/pictures/cancelable'));
+      if (retry.status !== 200) throw new Error('scan reservation was not released');
+      await retry.body?.cancel();
+    });
+    expect(mocks.setIndex).not.toHaveBeenCalled();
+    await first.body?.cancel().catch(() => {});
   });
 });

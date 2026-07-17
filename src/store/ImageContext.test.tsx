@@ -426,8 +426,11 @@ class MockEventSource {
   }
 }
 
-function ScanProbe() {
-  const { phase, dirPath, indexToken, searchResults, scanProgress, scanError, startScan, dismissScanError } = useImageStore();
+function ScanProbe({ onComplete }: { onComplete?: (dir: string) => void } = {}) {
+  const {
+    phase, dirPath, indexToken, searchResults, scanProgress, scanError,
+    startScan, cancelScan, dismissScanError,
+  } = useImageStore();
   return (
     <div>
       <output aria-label="scan phase">{phase}</output>
@@ -437,8 +440,9 @@ function ScanProbe() {
       <output aria-label="scan first image url">{searchResults[0]?.fileUrl ?? ''}</output>
       <output aria-label="scan progress">{scanProgress ? 'active' : 'none'}</output>
       <output aria-label="scan processed">{scanProgress?.processed ?? ''}</output>
-      <button type="button" onClick={() => startScan({ dir: 'C:/images' })}>Start test scan</button>
+      <button type="button" onClick={() => startScan({ dir: 'C:/images', onComplete })}>Start test scan</button>
       <button type="button" onClick={() => startScan({ dir: '' })}>Start empty scan</button>
+      <button type="button" onClick={cancelScan}>Cancel test scan</button>
       <button type="button" onClick={dismissScanError}>Dismiss scan error</button>
     </div>
   );
@@ -2189,6 +2193,79 @@ describe('ImageProvider scan failures', () => {
     expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('scanning');
     expect(screen.getByRole('status', { name: 'scan processed' })).toHaveTextContent('1');
     expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+  });
+
+  it('cancels the active scan idempotently, ignores every delayed event, and can immediately rescan', () => {
+    const onComplete = vi.fn();
+    render(
+      <ImageProvider>
+        <ScanProbe onComplete={onComplete} />
+      </ImageProvider>
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const cancelledSource = MockEventSource.instances[0];
+    act(() => {
+      cancelledSource.onmessage?.({
+        data: JSON.stringify({ type: 'progress', processed: 3, total: 10, newFiles: 1, stage: 'scanning' }),
+      } as MessageEvent);
+    });
+    expect(screen.getByRole('status', { name: 'scan processed' })).toHaveTextContent('3');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel test scan' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel test scan' }));
+
+    expect(cancelledSource.close).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('landing');
+    expect(screen.getByRole('status', { name: 'scan directory' })).toHaveTextContent('C:/images');
+    expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
+    expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+    expect(screen.getByRole('status', { name: 'scan index token' })).toHaveTextContent('');
+
+    act(() => {
+      cancelledSource.onmessage?.({
+        data: JSON.stringify({ type: 'progress', processed: 9, total: 10, newFiles: 8, stage: 'scanning' }),
+      } as MessageEvent);
+      cancelledSource.onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 10, total: 10, newFiles: 9, stage: 'complete', indexToken: 'stale-token' }),
+      } as MessageEvent);
+      cancelledSource.onmessage?.({
+        data: JSON.stringify({ type: 'error', message: 'stale error' }),
+      } as MessageEvent);
+      cancelledSource.onerror?.(new Event('error'));
+    });
+
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('landing');
+    expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('none');
+    expect(screen.getByRole('status', { name: 'scan error' })).toHaveTextContent('');
+    expect(screen.getByRole('status', { name: 'scan index token' })).toHaveTextContent('');
+    expect(onComplete).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(screen.getByRole('status', { name: 'scan phase' })).toHaveTextContent('scanning');
+    expect(screen.getByRole('status', { name: 'scan progress' })).toHaveTextContent('active');
+  });
+
+  it('closes the active scan transport during provider unmount without accepting delayed events', () => {
+    const view = render(
+      <ImageProvider>
+        <ScanProbe />
+      </ImageProvider>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Start test scan' }));
+    const source = MockEventSource.instances[0];
+
+    view.unmount();
+    expect(source.close).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      source.onmessage?.({
+        data: JSON.stringify({ type: 'complete', processed: 1, total: 1, newFiles: 1, stage: 'complete', indexToken: 'late-token' }),
+      } as MessageEvent);
+      source.onerror?.(new Event('error'));
+    });
+    expect(console.error).not.toHaveBeenCalled();
   });
 
   it('does not start a scan for an empty directory', () => {
