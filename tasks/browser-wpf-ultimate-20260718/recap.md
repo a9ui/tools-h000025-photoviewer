@@ -4,7 +4,7 @@
 
 Browser版を製品挙動の正本として再定義し、その契約をWPFへP0〜P2まで適用した。実装、正規仕様、focused verifier、20,000画像stress、同一process reload soak、Browser production runtime、Browser/WPF共有state競合を同じbranchで検証した。
 
-このmilestoneで最終検証した実装headは`7a39ab711bd6020b9c6d8a9243236ba2967098f3`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`だった。
+このmilestoneで最終検証した実装headは`6352c71`、branchは`codex/wpf-ultimate-p0-20260718`。開始時の`origin/main` / user rootは`626b7dd5416f3619ae59fc66d47e79acd1a74fd5`だった。
 
 Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement write ownership、cache quota/eviction、installer/signing/public packagingはこの判定へ含めない。公開、deployment、user port 3000のrestart、user state/cache削除は実施していない。
 
@@ -17,6 +17,7 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 3. `docs/wpf-product-spec.md`
 4. `docs/browser-to-wpf-parity-plan.md`
 5. `docs/product-review-20260718.md`
+6. `docs/product-quality-review-framework.md`
 
 正本上の重要な意味:
 
@@ -52,6 +53,8 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 - WPF launcherをmtime判定からprovenance判定へ変更した。repo root、project/target path、git HEAD、source fingerprint、exe SHA256の一致を要求し、missing/unproven/tampered/wrong-root/wrong-revisionはbuildし直す。
 - WPF launcherはBrowser、Node、localhost、port 3000、既存WPF processを所有・停止しない。
 - scan後のexistence snapshotからcatalog materializeまでにsourceが消えるTOCTOUを再現し、想定内のIO/access/path/security failureだけを画像単位でskipするよう修正した。survivor件数、selection、Preview tab、Modal、state、既存persistence警告を同時に整合する。
+- Modalの`Open externally`は起動直前にcatalog/root/type/existence/canonical pathを再検証する。未関連付け、ShellExecute拒否、Win32/IO/access/path failureはapp crashへせずgeneric Retry statusへ変換し、selection/Modal/focus/dataを維持する。
+- 通常WPF launcherはapp exit 0でconsoleを即終了し、非0またはproject missingだけ診断pauseを残す。provenance、引数、元exit codeは維持する。
 
 ## Final verification
 
@@ -68,11 +71,12 @@ Viewer coreは現行Browser契約のP0〜P2を満たす。P3のWPF Enhancement w
 ### WPF
 
 - `dotnet build -c Release --no-restore`: 0 warnings / 0 errors。
-- `verify-wpf-product.ps1 -IncludeReloadSoak`: **43 / 43 PASS**、237,432 ms、`SkipStress=false`。
-- 20,000 stress: catalog 20,000 / filtered 20,000 / silent truncate 0、Grid 96 / maximum 384、List 19、load 9,765 ms、tail search 361 ms、heartbeat 16、source 20,000、Enhancement reads/candidates 0。
+- `verify-wpf-product.ps1 -IncludeReloadSoak`: **44 / 44 PASS**、274,163 ms、`SkipStress=false`。
+- 20,000 stress: catalog 20,000 / filtered 20,000 / silent truncate 0、Grid 96 / maximum 384、List 22、load 11,362 ms、tail search 348 ms、heartbeat 18、source 20,000、Enhancement reads/candidates 0。
 - oversized decode: 256x16,384 sourceをGrid 35x2,240、Preview 112x7,168、Modal 175x11,200へ制限。peak working-set growth 16.9 MiB、latest selection勝利。
 - scan materialization race: existence snapshot直後に1 sourceを削除してもcrashせず、survivor 2件、warning、selection/Modal、state、shared stores、residue 0を保持。
-- reload soak: 1,000画像 x 2 folders、24 cycles、explicit cancel 8、supersede 16、stale completion 0、preview/modal 24/24、CTS 73/73、managed growth 12,145,240 bytes、final working-set growth 66,543,616 bytes、stores/source byte-identical。
+- external open: success、launcher false、Win32/IO/access/path failure、起動直前source消失を全てfocused verifierでPASS。source/state/Favorite/Seen/Recent/jobs byte-identical、Enhancement 0。
+- reload soak: 1,000画像 x 2 folders、24 cycles、explicit cancel 8、supersede 16、stale completion 0、preview/modal 24/24、CTS 73/73、managed growth 11,304,144 bytes、final working-set growth 53,010,432 bytes、stores/source byte-identical。
 - Delete raceの初回false negativeは、正しいModal root focusに対して旧testがClose button固定を要求したoracle不整合。正本へ合わせ、focused 3/3、関連4 gates、最終aggregateでPASS。
 - cross-runtime Favorite/Seen writer 20 iterations: 40 favorite + 40 seen entries、valid JSON、residue 0、HTTP/port不使用。
 - cross-runtime recent writer 20 iterations: Browser/WPF/third writerのhistory merge、unknown field保持、residue 0、HTTP/port不使用。
@@ -105,8 +109,25 @@ user root checkoutは`main` / `626b7dd...`、既存の`M next-env.d.ts`だけを
 - SQLite item #34は、isolated launcherのloopback実装/証拠はgreenだが、実port 3000 adoptionが未承認なので`queued`のままにする。
 - installer、code signing、auto-update、public distributionは未実装。これはviewer coreのP0〜P2完成判定とは別。
 
+## Quality scorecard
+
+`docs/product-quality-review-framework.md`の8軸を、最終implementation `6352c71`のBrowser/WPF aggregate、fault injection、cross-runtime、runtime/launcher、visual evidenceへ適用した。
+
+| Axis | Score / 5 | 根拠 |
+| --- | ---: | --- |
+| データ非破壊 | 5 | actual crash、複数writer、Recycle/Refresh/decode race、malformed/future/lock、hash/residue 0 |
+| 操作正確性 | 4 | Browser 421 tests、WPF 44 gates、rapid/filter/bulk/modal/zoom/neighbor exact |
+| 退行耐性 | 4 | focused verifier、aggregate、UI guard、runtime provenance、仕様/test map |
+| 大規模性能 | 4 | 5,000/20,000 exact catalog、bounded Grid/List/decode、24/40-cycle soak |
+| 失敗回復 | 5 | scan TOCTOU、decode mutation、Delete/Refresh、crash lock、external-open fault injection |
+| Accessibility | 4 | dialog focus trap/return、keyboard、Automation、live status。実screen reader/high contrast反復は未実施 |
+| 起動終了品質 | 4 | Browser loopback/exact child、WPF exact provenance、close flush、success no-pause。installerはprivate-local scope外 |
+| Browser意味一致 | 4 | authoritative contract、parity ledger、cross-runtime、同一state visual。継続differential運用は次段 |
+
+加重総合は**4.35 / 5.00**。hard no-go 0、既知P0/P1 0、全軸4以上のため、公開/配布を含まない**Private-local commercial-ready core**に該当する。これは一般販売package、installer/signing、public securityを完成扱いする判定ではない。
+
 ## Next bounded milestones
 
 1. user rootへintegrated branchを安全採用し、明示承認の上でport 3000をrestartしてloopback/current revisionを確認する。
-2. userが選んだdisposable real-library copyで、さらに長いWPF reload/performance soakと実操作playtestを行う。
-3. 必要ならP3としてWPF Enhancement write ownership、cache quota/eviction、packagingを別milestoneで設計する。
+2. 最優先の未証明P1候補として、2.8MiB超のFavorite/Seen shared JSONをUI threadで全量read/sort/writeする操作stallをtemp-onlyで測定し、RED後だけsingle-flight background merge + close drainを設計する。
+3. 次点はBulk Recycleの同期Shell callをheartbeat/cancel/partial-result付きで測定し、その後にscan enumeration/metadata中のpolite progressを改善する。P3 Enhancement ownership、cache quota、packagingは別境界のままにする。
