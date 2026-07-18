@@ -27,11 +27,11 @@ try {
         'enumerationImmediateIsolation',
         'enumerationLateIgnored',
         'baselinePublished',
-        'metadataPhase',
-        'metadataCancelAccepted',
-        'metadataCancelUi',
-        'metadataCancelIsolation',
-        'newerCompletedBeforeLateCanceledTask',
+        'publicationPhase',
+        'publicationCancelAccepted',
+        'publicationCancelUi',
+        'publicationCancelIsolation',
+        'publicationLateIgnored',
         'newerRunWon',
         'unavailableSupersessionPhase',
         'unavailableIntentReturnedBeforeDelayedValid',
@@ -49,7 +49,7 @@ try {
         'loadCtsBalanced'
     )
     $failed = @($required | Where-Object { $smoke.$_ -ne $true })
-    if ($smoke.ok -ne $true -or $failed.Count -gt 0 -or $smoke.enumerationCancelMs -ge 100 -or $smoke.metadataCancelMs -ge 100) {
+    if ($smoke.ok -ne $true -or $failed.Count -gt 0 -or $smoke.enumerationCancelMs -ge 100 -or $smoke.publicationCancelMs -ge 100) {
         throw "scan cancel contract failed ($($failed -join ', ')): $(Get-Content -Raw -LiteralPath $result)"
     }
 

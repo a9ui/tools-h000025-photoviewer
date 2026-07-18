@@ -6,6 +6,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Globalization;
 using System.IO;
+using System.Net.Http;
 using System.Reflection;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -25,6 +26,10 @@ namespace PhotoViewer.Wpf;
 
 public partial class MainWindow : Window
 {
+    private static readonly HttpClient ModalEnhancementHttpClient = new()
+    {
+        Timeout = TimeSpan.FromSeconds(5),
+    };
     private static readonly HashSet<string> SupportedImageExtensions = new(StringComparer.OrdinalIgnoreCase)
     {
         ".png", ".jpg", ".jpeg", ".webp", ".avif", ".bmp", ".gif", ".tif", ".tiff",
@@ -41,9 +46,7 @@ public partial class MainWindow : Window
     private const int DecodeLongEdgeMultiplier = 8;
     private const int SearchFilterDebounceMilliseconds = 150;
     private const int SearchStateSaveDebounceMilliseconds = 300;
-    private const int InitialGridRealizationCount = 96;
-    private const int GridRealizationBatchSize = 96;
-    private const int MaxGridRealizationCount = 384;
+    private const int MaxVirtualizedContainerSmokeCount = 512;
     private const int MaxRecentFolderSets = 12;
     private const int PersistenceLockTimeoutMilliseconds = 2_000;
     private const int PersistenceLockRetryMilliseconds = 25;
@@ -85,7 +88,6 @@ public partial class MainWindow : Window
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
     private readonly ResettableObservableCollection<Tile> _tiles = new();
-    private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly ObservableCollection<string> _landingFolderSet = new();
     private readonly ObservableCollection<FolderBucketView> _folderBucketViews = new();
     private readonly ObservableCollection<RecentFolderSetView> _recentFolderSetViews = new();
@@ -104,7 +106,12 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _restoredPreviewTabPaths = [];
-    private int _gridStartIndex;
+    private readonly SemaphoreSlim _thumbnailDecodeGate = new(MaxThumbnailDecodeWorkers, MaxThumbnailDecodeWorkers);
+    private readonly ConcurrentDictionary<string, byte> _thumbnailLoadsInFlight = new(StringComparer.OrdinalIgnoreCase);
+    private readonly ConcurrentDictionary<string, byte> _thumbnailDecodeFailures = new(StringComparer.OrdinalIgnoreCase);
+    private CancellationTokenSource? _thumbnailViewportCts;
+    private VirtualizingWrapPanel? _galleryVirtualizingPanel;
+    private int _thumbnailBrowserCacheHits;
     private int _lastInitialUnseenCount;
     private int _enhancementJobsRead;
     private int _enhancedCandidateCount;
@@ -146,7 +153,6 @@ public partial class MainWindow : Window
     private long _selectionVisualSyncGeneration;
     private long _queuedGridSelectionVisualSyncGeneration = -1;
     private long _queuedListSelectionVisualSyncGeneration = -1;
-    private long _gridSelectionScrollSuppressionGeneration = -1;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
     private bool _dateFilterMigrationPending;
@@ -183,6 +189,18 @@ public partial class MainWindow : Window
     private bool _modalChromeVisible = true;
     private long _modalSingleClickGeneration;
     private readonly DispatcherTimer _modalFeedbackTimer;
+    private readonly DispatcherTimer _modalEnhancementPollTimer;
+    private bool _modalEnhancementPolling;
+    private bool _modalEnhancementRequestPending;
+    private string? _modalEnhancementJobId;
+    private string? _modalEnhancementJobStatus;
+    private int _modalEnhancementProgress;
+    private string? _modalEnhancementError;
+    private long _modalEnhancementGeneration;
+    private Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> _modalEnhancementSender
+        = static (request, token) => ModalEnhancementHttpClient.SendAsync(request, token);
+    private Func<bool>? _confirmLargeEnhancementForSmoke;
+    private Func<bool>? _confirmEnhancedOutputDeleteForSmoke;
     private CancellationTokenSource? _loadCts;
     private long _loadGeneration;
     private bool _scanCancelable;
@@ -302,6 +320,11 @@ public partial class MainWindow : Window
             if (ModalInteractionFeedback is not null)
                 ModalInteractionFeedback.Visibility = Visibility.Collapsed;
         };
+        _modalEnhancementPollTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromSeconds(1),
+        };
+        _modalEnhancementPollTimer.Tick += ModalEnhancementPollTimer_Tick;
         LandingFolderSetList.ItemsSource = _landingFolderSet;
         SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
@@ -312,18 +335,24 @@ public partial class MainWindow : Window
         _tiles.Clear();
         ApplyCardLayoutToAllTiles();
 
-        CardsList.ItemsSource = BuildGroupedView(_gridTiles);
-        RowsList.ItemsSource = BuildGroupedView(_tiles);
-        CardsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(CardsList_ScrollChanged));
+        ConfigureGalleryItemsSources();
+        RowsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(RowsList_ScrollChanged));
         ApplyFilters(selectFirst: false);
 
         Loaded += (_, _) =>
         {
+            AttachGalleryVirtualizationPanel();
             if (CardsList.Items.Count > 0)
                 CardsList.SelectedIndex = 0;
         };
         Closing += MainWindow_Closing;
-        Closed += (_, _) => CancelPreviewTabHoverDecode();
+        Closed += (_, _) =>
+        {
+            CancelPreviewTabHoverDecode();
+            CancelThumbnailViewportLoading();
+            _modalEnhancementPollTimer.Stop();
+            _modalEnhancementGeneration++;
+        };
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
         SizeChanged += (_, _) => ScheduleModalFitUpdate();
@@ -335,11 +364,227 @@ public partial class MainWindow : Window
             SaveState();
     }
 
-    private static System.ComponentModel.ICollectionView BuildGroupedView(ObservableCollection<Tile> source)
+    private static System.ComponentModel.ICollectionView BuildGalleryView(ObservableCollection<Tile> source, bool groupByDate)
     {
         var cvs = new CollectionViewSource { Source = source };
-        cvs.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Tile.Group)));
+        if (groupByDate)
+            cvs.GroupDescriptions.Add(new PropertyGroupDescription(nameof(Tile.Group)));
         return cvs.View;
+    }
+
+    private bool UsesDateGrouping
+        => _sortBy is SortCreatedNewestValue or SortCreatedOldestValue;
+
+    private void ConfigureGalleryItemsSources()
+    {
+        bool grouped = UsesDateGrouping;
+        bool previousSync = _syncingSelection;
+        _syncingSelection = true;
+        try
+        {
+            ItemsPanelTemplate cardPanel = (ItemsPanelTemplate)FindResource(
+                grouped ? "GroupedVirtualizedCardItemsPanel" : "VirtualizedCardItemsPanel");
+            if (!ReferenceEquals(CardsList.ItemsPanel, cardPanel))
+                CardsList.ItemsPanel = cardPanel;
+            // The grid always owns the complete filtered catalog. Date sections
+            // are drawn by the same virtualizing panel, so grouping never turns
+            // into a capped secondary collection or a 100k-container layout.
+            if (!ReferenceEquals(CardsList.ItemsSource, _tiles))
+                CardsList.ItemsSource = _tiles;
+            ConfigureRowsItemsSource(forceGroupedView: RowsList.Visibility == Visibility.Visible);
+        }
+        finally
+        {
+            _syncingSelection = previousSync;
+        }
+
+        Dispatcher.BeginInvoke(AttachGalleryVirtualizationPanel, DispatcherPriority.Loaded);
+    }
+
+    private void ConfigureRowsItemsSource(bool forceGroupedView)
+    {
+        // Group construction in WPF's stock ListBox walks the complete view.
+        // Keep the hidden List surface cheap; build its Created groups only when
+        // the user actually switches to List mode.
+        RowsList.ItemsSource = forceGroupedView && UsesDateGrouping
+            ? BuildGalleryView(_tiles, groupByDate: true)
+            : _tiles;
+    }
+
+    private void AttachGalleryVirtualizationPanel()
+    {
+        VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+        if (ReferenceEquals(panel, _galleryVirtualizingPanel))
+            return;
+
+        if (_galleryVirtualizingPanel is not null)
+            _galleryVirtualizingPanel.RealizedRangeChanged -= GalleryVirtualizingPanel_RealizedRangeChanged;
+        _galleryVirtualizingPanel = panel;
+        if (_galleryVirtualizingPanel is null)
+            return;
+
+        _galleryVirtualizingPanel.RealizedRangeChanged += GalleryVirtualizingPanel_RealizedRangeChanged;
+        ScheduleThumbnailViewportRange(
+            _galleryVirtualizingPanel.FirstVisibleIndex,
+            _galleryVirtualizingPanel.LastVisibleIndex,
+            _galleryVirtualizingPanel.FirstRealizedIndex,
+            _galleryVirtualizingPanel.LastRealizedIndex);
+    }
+
+    private void GalleryVirtualizingPanel_RealizedRangeChanged(
+        object? sender,
+        VirtualizingWrapPanelRangeChangedEventArgs e)
+    {
+        ScheduleThumbnailViewportRange(
+            e.FirstVisibleIndex,
+            e.LastVisibleIndex,
+            e.FirstRealizedIndex,
+            e.LastRealizedIndex);
+    }
+
+    private void ScheduleThumbnailViewportRange(
+        int firstVisibleIndex,
+        int lastVisibleIndex,
+        int firstRealizedIndex,
+        int lastRealizedIndex)
+    {
+        if (_tiles.Count == 0)
+            return;
+
+        int firstVisible = Math.Clamp(firstVisibleIndex, 0, _tiles.Count - 1);
+        int lastVisible = Math.Clamp(lastVisibleIndex, firstVisible, _tiles.Count - 1);
+        int firstRealized = Math.Clamp(firstRealizedIndex, 0, _tiles.Count - 1);
+        int lastRealized = Math.Clamp(lastRealizedIndex, firstRealized, _tiles.Count - 1);
+        if (firstVisibleIndex < 0 || lastVisibleIndex < firstVisibleIndex)
+        {
+            firstVisible = firstRealized;
+            lastVisible = lastRealized;
+        }
+
+        var candidates = new List<Tile>(Math.Max(0, lastRealized - firstRealized + 1));
+        var added = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        for (int index = firstVisible; index <= lastVisible; index++)
+        {
+            Tile tile = _tiles[index];
+            if (tile.IsRealFile && tile.Thumbnail is null && added.Add(tile.Path))
+                candidates.Add(tile);
+        }
+        for (int index = firstRealized; index <= lastRealized; index++)
+        {
+            Tile tile = _tiles[index];
+            if (tile.IsRealFile && tile.Thumbnail is null && added.Add(tile.Path))
+                candidates.Add(tile);
+        }
+
+        if (candidates.Count == 0)
+            return;
+
+        ScheduleThumbnailCandidates(candidates);
+    }
+
+    private void ScheduleThumbnailCandidates(IReadOnlyList<Tile> candidates)
+    {
+        if (candidates.Count == 0)
+            return;
+
+        CancelThumbnailViewportLoading();
+        CancellationTokenSource cts = _loadCts is { } loadCts
+            ? CancellationTokenSource.CreateLinkedTokenSource(loadCts.Token)
+            : new CancellationTokenSource();
+        _thumbnailViewportCts = cts;
+        _ = LoadThumbnailViewportAsync(candidates, _loadGeneration, cts);
+    }
+
+    private void RowsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (RowsList.Visibility == Visibility.Visible)
+            ScheduleListThumbnailViewport();
+    }
+
+    private void ScheduleListThumbnailViewport()
+    {
+        if (RowsList.Visibility != Visibility.Visible)
+            return;
+
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(RowsList);
+        if (viewer is null)
+            return;
+
+        var candidates = new List<(Tile Tile, bool Visible, double Distance)>();
+        foreach (ListBoxItem item in FindVisualDescendants<ListBoxItem>(RowsList))
+        {
+            if (item.DataContext is not Tile { IsRealFile: true, Thumbnail: null } tile)
+                continue;
+            try
+            {
+                double top = item.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
+                double bottom = top + item.ActualHeight;
+                bool visible = bottom >= 0 && top <= viewer.ViewportHeight;
+                double distance = Math.Abs(((top + bottom) / 2) - (viewer.ViewportHeight / 2));
+                candidates.Add((tile, visible, distance));
+            }
+            catch (InvalidOperationException)
+            {
+            }
+        }
+
+        ScheduleThumbnailCandidates(candidates
+            .OrderByDescending(static candidate => candidate.Visible)
+            .ThenBy(static candidate => candidate.Distance)
+            .Select(static candidate => candidate.Tile)
+            .DistinctBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase)
+            .ToList());
+    }
+
+    private async Task LoadThumbnailViewportAsync(
+        IReadOnlyList<Tile> candidates,
+        long generation,
+        CancellationTokenSource cts)
+    {
+        try
+        {
+            await LoadThumbnailCandidatesAsync(candidates, generation, cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+        }
+        finally
+        {
+            bool wasCurrent = ReferenceEquals(_thumbnailViewportCts, cts);
+            if (wasCurrent)
+                _thumbnailViewportCts = null;
+            cts.Dispose();
+            if (wasCurrent && candidates.Any(tile =>
+                    tile.Thumbnail is null && !_thumbnailDecodeFailures.ContainsKey(tile.Path)))
+                _ = RetryCurrentThumbnailViewportAsync(generation);
+        }
+    }
+
+    private async Task RetryCurrentThumbnailViewportAsync(long generation)
+    {
+        await Task.Delay(120);
+        if (generation != _loadGeneration
+            || _thumbnailViewportCts is not null
+            || _galleryVirtualizingPanel is not { } panel)
+        {
+            return;
+        }
+
+        if (RowsList.Visibility == Visibility.Visible)
+            ScheduleListThumbnailViewport();
+        else
+            ScheduleThumbnailViewportRange(
+                panel.FirstVisibleIndex,
+                panel.LastVisibleIndex,
+                panel.FirstRealizedIndex,
+                panel.LastRealizedIndex);
+    }
+
+    private void CancelThumbnailViewportLoading()
+    {
+        CancellationTokenSource? cts = _thumbnailViewportCts;
+        _thumbnailViewportCts = null;
+        cts?.Cancel();
     }
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
@@ -504,6 +749,16 @@ public partial class MainWindow : Window
 
     private sealed record DroppedFolderSet(List<string> Folders, int RejectedCount, string RejectionReason);
 
+    private sealed record ModalEnhancementJobSnapshot(
+        string Id,
+        string SourcePath,
+        string Status,
+        int Progress,
+        string? OutputPath,
+        string? ErrorMessage);
+
+    private sealed record EnhancementApiResponse(bool Ok, int StatusCode, JsonElement? Payload, string Error);
+
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
 
     private async Task ChooseAndLoadFolderAsync()
@@ -534,6 +789,9 @@ public partial class MainWindow : Window
         _previewMs = 0;
         _previewDeferredDecodeCount = 0;
         _previewDeferredDecodeMs = 0;
+        CancelThumbnailViewportLoading();
+        _thumbnailDecodeFailures.Clear();
+        _thumbnailBrowserCacheHits = 0;
         // A fresh enumeration is allowed to discover a newly-created file at a
         // path recycled by an earlier operation. Only recycles that happen
         // after this load starts can invalidate this load's captured file list.
@@ -602,9 +860,27 @@ public partial class MainWindow : Window
                     if (enumerationDelayForSmokeMs > 0)
                         Thread.Sleep(enumerationDelayForSmokeMs);
                     cts.Token.ThrowIfCancellationRequested();
-                    return existingFolderSet
-                        .SelectMany(folder => EnumerateImageFiles(folder, scanAccessFailures, scanBoundarySkips, cts.Token))
-                        .Distinct(StringComparer.OrdinalIgnoreCase)
+                    var discovered = new ConcurrentDictionary<string, byte>(StringComparer.OrdinalIgnoreCase);
+                    int rootWorkers = Math.Max(1, Math.Min(4, existingFolderSet.Count));
+                    Parallel.ForEach(
+                        existingFolderSet,
+                        new ParallelOptions
+                        {
+                            CancellationToken = cts.Token,
+                            MaxDegreeOfParallelism = rootWorkers,
+                        },
+                        folder =>
+                        {
+                            foreach (string path in EnumerateImageFiles(
+                                folder,
+                                scanAccessFailures,
+                                scanBoundarySkips,
+                                cts.Token))
+                            {
+                                discovered.TryAdd(path, 0);
+                            }
+                        });
+                    return discovered.Keys
                         .Select(path => new FileInfo(path))
                         .OrderByDescending(file => file.LastWriteTimeUtc)
                         .ToList();
@@ -627,37 +903,13 @@ public partial class MainWindow : Window
         if (!string.IsNullOrWhiteSpace(scanTraversalWarning))
             SetStatusToast(scanTraversalWarning);
 
+        // The complete file identity/order is the first usable product.  PNG
+        // prompt extraction and bitmap dimension probes are intentionally not
+        // on the critical path: on a 100k catalog they used to keep Landing
+        // visible for many seconds after enumeration had already completed.
+        // Metadata is streamed into the published tiles below while the user
+        // can already scroll to any position in the catalog.
         ImageMetadataLoadMetrics metadata = ImageMetadataLoadMetrics.Empty;
-        if (files.Count > 0)
-        {
-            _loadPhase = "metadata";
-            ScanPercent.Text = "";
-            ScanLabel.Text = $"Reading metadata for {files.Count:N0} images...";
-            try
-            {
-                metadata = await Task.Run(() =>
-                {
-                    if (metadataDelayForSmokeMs > 0)
-                        Thread.Sleep(metadataDelayForSmokeMs);
-                    cts.Token.ThrowIfCancellationRequested();
-                    return ReadImageMetadata(files, cts.Token);
-                }, cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                return;
-            }
-            if (!IsCurrentLoad(generation, cts))
-                return;
-            if (metadata.DecodeFailures > 0)
-            {
-                SetStatusToast(BuildScanWarning(
-                    scanAccessFailures.Count,
-                    scanBoundarySkips.Count,
-                    unavailableFolderSet.Count,
-                    metadata.DecodeFailures));
-            }
-        }
 
         if (!IsCurrentLoad(generation, cts))
             return;
@@ -681,10 +933,7 @@ public partial class MainWindow : Window
         string? selectedPathAfterConcurrentRecycle = _sourceRecycleGeneration > sourceRecycleGenerationAtStart
             ? SelectedTile()?.Path
             : null;
-        _scanCancelable = false;
         _loadPhase = "publishing";
-        CancelScanButton.Visibility = Visibility.Collapsed;
-        CancelScanButton.IsEnabled = false;
         ScanBar.Value = 0;
         ScanPercent.Text = "0%";
         ScanLabel.Text = $"Preparing 0 / {files.Count:N0} catalog entries";
@@ -696,6 +945,7 @@ public partial class MainWindow : Window
         long folderBucketViewMs = 0;
         long initialFilterMs = 0;
         long catalogStatsMs = 0;
+        long catalogReadyMs = 0;
         Tile? restoredActivePreviewTile = null;
         Tile? concurrentRecycleSelectionTile = null;
         bool previousSuppress = _suppressStateSave;
@@ -721,6 +971,11 @@ public partial class MainWindow : Window
                 LoadSeenState();
             LoadEnhancedState();
             double width = SizeSlider?.Value ?? 190;
+            IReadOnlyDictionary<string, ImageDimensions> emptyDimensions =
+                new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase);
+            IReadOnlyDictionary<string, string> emptyPrompts =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            var folderBucketCache = new Dictionary<string, FolderBucketIdentity>(StringComparer.OrdinalIgnoreCase);
             Action? beforeMaterialize = _beforeMaterializeFilesForSmoke;
             _beforeMaterializeFilesForSmoke = null;
             beforeMaterialize?.Invoke();
@@ -734,7 +989,13 @@ public partial class MainWindow : Window
                     // background existence snapshot. FileInfo access is guarded,
                     // and a second background snapshot immediately before commit
                     // removes paths that disappeared during preparation.
-                    preparedTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts, requestedFolderSet));
+                    preparedTiles.Add(MakeFileTile(
+                        file,
+                        width,
+                        emptyDimensions,
+                        emptyPrompts,
+                        requestedFolderSet,
+                        folderBucketCache));
                 }
                 catch (Exception ex) when (ex is IOException
                     or UnauthorizedAccessException
@@ -880,6 +1141,7 @@ public partial class MainWindow : Window
         }
 
         SetPhase(landing: false);
+        catalogReadyMs = totalWatch.ElapsedMilliseconds;
         if (concurrentRecycleSelectionTile is not null)
             _restoredSelectedPath = concurrentRecycleSelectionTile.Path;
         else if (restoredActivePreviewTile is not null)
@@ -893,7 +1155,42 @@ public partial class MainWindow : Window
         if (commitRecent)
             CommitSharedRecentFolderSet(_currentFolderSet);
 
-        var thumbnails = await LoadThumbnailsAsync(cts.Token);
+        _loadPhase = "background-metadata";
+        Task<ImageMetadataLoadMetrics> metadataTask = LoadImageMetadataProgressivelyAsync(
+            _allTiles.ToList(),
+            generation,
+            cts,
+            metadataDelayForSmokeMs);
+        Task<ThumbnailLoadMetrics> thumbnailTask = LoadThumbnailsAsync(cts.Token);
+
+        try
+        {
+            metadata = await metadataTask;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        if (!IsCurrentLoad(generation, cts))
+            return;
+        if (metadata.DecodeFailures > 0)
+        {
+            ReportScanPublicationWarning(BuildScanWarning(
+                scanAccessFailures.Count,
+                scanBoundarySkips.Count,
+                unavailableFolderSet.Count,
+                metadata.DecodeFailures));
+        }
+
+        ThumbnailLoadMetrics thumbnails;
+        try
+        {
+            thumbnails = await thumbnailTask;
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
         if (!IsCurrentLoad(generation, cts))
             return;
         totalWatch.Stop();
@@ -918,6 +1215,7 @@ public partial class MainWindow : Window
         LastLoadMetrics.FolderBucketViewMs = folderBucketViewMs;
         LastLoadMetrics.InitialFilterMs = initialFilterMs;
         LastLoadMetrics.CatalogStatsMs = catalogStatsMs;
+        LastLoadMetrics.CatalogReadyMs = catalogReadyMs;
         UpdateGridMetrics(LastLoadMetrics);
         FinishCurrentLoad(generation, cts);
         }
@@ -1249,101 +1547,73 @@ public partial class MainWindow : Window
 
     private async Task<ThumbnailLoadMetrics> LoadThumbnailsAsync(CancellationToken token)
     {
+        List<Tile> snapshot;
+        if (_galleryVirtualizingPanel is { FirstRealizedIndex: >= 0 } panel)
+        {
+            int first = Math.Clamp(panel.FirstRealizedIndex, 0, Math.Max(0, _tiles.Count - 1));
+            int last = Math.Clamp(panel.LastRealizedIndex, first, Math.Max(first, _tiles.Count - 1));
+            snapshot = _tiles.Skip(first).Take(last - first + 1)
+                .Where(static tile => tile.IsRealFile && tile.Thumbnail is null)
+                .ToList();
+        }
+        else
+        {
+            // The first layout pass has not reported its range yet. Prime one
+            // viewport-sized slice; the range event immediately supersedes it
+            // if the user jumps elsewhere.
+            snapshot = _tiles.Take(64)
+                .Where(static tile => tile.IsRealFile && tile.Thumbnail is null)
+                .ToList();
+        }
+
+        return await LoadThumbnailCandidatesAsync(snapshot, _loadGeneration, token);
+    }
+
+    private async Task<ThumbnailLoadMetrics> LoadThumbnailCandidatesAsync(
+        IReadOnlyList<Tile> candidates,
+        long generation,
+        CancellationToken token)
+    {
         var watch = Stopwatch.StartNew();
-        // Catalog entries stay lightweight; decode only the current bounded Grid window.
-        var snapshot = _gridTiles.Where(static tile => tile.IsRealFile && tile.Thumbnail is null).ToList();
-        int total = snapshot.Count;
+        int total = candidates.Count;
+        int completed = 0;
+        int workers = Math.Max(1, Math.Min(MaxThumbnailDecodeWorkers, total));
         if (total == 0)
             return new ThumbnailLoadMetrics(0, 0, 0, 0);
 
-        if (total < MinParallelThumbnailCount)
-            return await LoadThumbnailsSequentiallyAsync(snapshot, token);
-
-        int workers = Math.Max(1, Math.Min(Math.Min(MaxThumbnailDecodeWorkers, Environment.ProcessorCount), total));
-        int uiBatchSize = Math.Clamp(total / 48, 16, 48);
-        var decoded = new ConcurrentQueue<DecodedThumbnail>();
-        int done = 0;
-
         try
         {
-            await Parallel.ForEachAsync(
-                snapshot,
-                new ParallelOptions { CancellationToken = token, MaxDegreeOfParallelism = workers },
-                async (tile, itemToken) =>
+            Task[] loads = candidates.Select(async tile =>
+            {
+                if (tile.Thumbnail is not null
+                    || _thumbnailDecodeFailures.ContainsKey(tile.Path)
+                    || !_thumbnailLoadsInFlight.TryAdd(tile.Path, 0))
                 {
-                    BitmapSource? thumbnail = null;
+                    return;
+                }
+                try
+                {
+                    await _thumbnailDecodeGate.WaitAsync(token);
+                    BitmapSource? thumbnail;
                     try
                     {
                         int decodeWidth = (int)Math.Clamp(tile.CardWidth * 1.4, 180, 520);
-                        thumbnail = await Task.Run(() => LoadBitmap(tile.Path, decodeWidth), itemToken);
+                        thumbnail = await Task.Run(() => LoadThumbnailBitmap(tile, decodeWidth), token);
                     }
-                    catch (OperationCanceledException)
+                    finally
                     {
-                        throw;
-                    }
-                    catch
-                    {
-                        thumbnail = null;
+                        _thumbnailDecodeGate.Release();
                     }
 
-                    decoded.Enqueue(new DecodedThumbnail(tile, thumbnail));
-                    int completed = Interlocked.Increment(ref done);
-                    if (completed % uiBatchSize == 0 || completed == total)
-                    {
-                        await Dispatcher.InvokeAsync(
-                            () =>
-                            {
-                                DrainDecodedThumbnails(decoded);
-                                UpdateThumbnailProgress(completed, total);
-                            },
-                            DispatcherPriority.Background,
-                            itemToken);
-                    }
-                });
-        }
-        catch (OperationCanceledException)
-        {
-            watch.Stop();
-            return new ThumbnailLoadMetrics(total, workers, done, watch.ElapsedMilliseconds);
-        }
-        finally
-        {
-            watch.Stop();
-        }
+                    token.ThrowIfCancellationRequested();
+                    if (generation != _loadGeneration)
+                        return;
 
-        await Dispatcher.InvokeAsync(
-            () =>
-            {
-                DrainDecodedThumbnails(decoded);
-                UpdateThumbnailProgress(done, total);
-            },
-            DispatcherPriority.Background);
-
-        return new ThumbnailLoadMetrics(total, workers, done, watch.ElapsedMilliseconds);
-    }
-
-    private static void DrainDecodedThumbnails(ConcurrentQueue<DecodedThumbnail> decoded)
-    {
-        while (decoded.TryDequeue(out var item))
-            item.Tile.Thumbnail = item.Thumbnail;
-    }
-
-    private async Task<ThumbnailLoadMetrics> LoadThumbnailsSequentiallyAsync(IReadOnlyList<Tile> snapshot, CancellationToken token)
-    {
-        var watch = Stopwatch.StartNew();
-        int total = snapshot.Count;
-        int done = 0;
-
-        try
-        {
-            foreach (var tile in snapshot)
-            {
-                token.ThrowIfCancellationRequested();
-
-                try
-                {
-                    int decodeWidth = (int)Math.Clamp(tile.CardWidth * 1.4, 180, 520);
-                    tile.Thumbnail = await Task.Run(() => LoadBitmap(tile.Path, decodeWidth), token);
+                    if (thumbnail is null)
+                        _thumbnailDecodeFailures.TryAdd(tile.Path, 0);
+                    else
+                        tile.Thumbnail = thumbnail;
+                    Interlocked.Increment(ref completed);
                 }
                 catch (OperationCanceledException)
                 {
@@ -1351,24 +1621,83 @@ public partial class MainWindow : Window
                 }
                 catch
                 {
-                    tile.Thumbnail = null;
+                    _thumbnailDecodeFailures.TryAdd(tile.Path, 0);
+                    Interlocked.Increment(ref completed);
                 }
+                finally
+                {
+                    _thumbnailLoadsInFlight.TryRemove(tile.Path, out _);
+                }
+            }).ToArray();
 
-                done++;
-                UpdateThumbnailProgress(done, total);
-            }
+            await Task.WhenAll(loads);
         }
         catch (OperationCanceledException)
         {
-            watch.Stop();
-            return new ThumbnailLoadMetrics(total, Workers: 1, done, watch.ElapsedMilliseconds);
+            return new ThumbnailLoadMetrics(total, workers, completed, watch.ElapsedMilliseconds);
         }
         finally
         {
             watch.Stop();
         }
 
-        return new ThumbnailLoadMetrics(total, Workers: 1, done, watch.ElapsedMilliseconds);
+        UpdateThumbnailProgress(completed, total);
+        return new ThumbnailLoadMetrics(total, workers, completed, watch.ElapsedMilliseconds);
+    }
+
+    private BitmapSource? LoadThumbnailBitmap(Tile tile, int decodePixelWidth)
+    {
+        try
+        {
+            foreach (string cachePath in GetBrowserThumbnailCachePaths(tile))
+            {
+                if (!File.Exists(cachePath))
+                    continue;
+                BitmapSource? cached = LoadBitmap(cachePath, decodePixelWidth);
+                if (cached is not null)
+                {
+                    Interlocked.Increment(ref _thumbnailBrowserCacheHits);
+                    // The shared browser cache is immutable/versioned by source
+                    // mtime, so reading it never mutates user cache or source.
+                    return cached;
+                }
+            }
+        }
+        catch
+        {
+            // A missing/unsupported WebP codec or malformed cache entry must
+            // fall back to the source without deleting the browser cache.
+        }
+
+        return LoadBitmap(tile.Path, decodePixelWidth);
+    }
+
+    private static IReadOnlyList<string> GetBrowserThumbnailCachePaths(Tile tile)
+    {
+        DateTime modifiedUtc = tile.ModifiedUtc.Kind == DateTimeKind.Utc
+            ? tile.ModifiedUtc
+            : tile.ModifiedUtc.ToUniversalTime();
+        double preciseMilliseconds = (modifiedUtc.Ticks - DateTime.UnixEpoch.Ticks) / (double)TimeSpan.TicksPerMillisecond;
+        string preciseVersion = preciseMilliseconds.ToString("R", CultureInfo.InvariantCulture);
+        string integerVersion = new DateTimeOffset(modifiedUtc).ToUnixTimeMilliseconds().ToString(CultureInfo.InvariantCulture);
+        string resolvedPath = Path.GetFullPath(tile.Path);
+        string cacheRoot = Path.Combine(ResolveSharedProjectRoot(), ".cache", "thumbs");
+        var paths = new List<string>(2)
+        {
+            Path.Combine(cacheRoot, $"{Base64Url($"{resolvedPath}|{preciseVersion}")}.webp"),
+        };
+        if (!string.Equals(preciseVersion, integerVersion, StringComparison.Ordinal))
+            paths.Add(Path.Combine(cacheRoot, $"{Base64Url($"{resolvedPath}|{integerVersion}")}.webp"));
+        return paths;
+    }
+
+    private static string Base64Url(string key)
+    {
+        string base64Url = Convert.ToBase64String(Encoding.UTF8.GetBytes(key))
+            .TrimEnd('=')
+            .Replace('+', '-')
+            .Replace('/', '_');
+        return base64Url;
     }
 
     private void UpdateThumbnailProgress(int done, int total)
@@ -1514,14 +1843,21 @@ public partial class MainWindow : Window
         double width,
         IReadOnlyDictionary<string, ImageDimensions> dimensions,
         IReadOnlyDictionary<string, string> prompts,
-        IReadOnlyList<string> folderSet)
+        IReadOnlyList<string> folderSet,
+        IDictionary<string, FolderBucketIdentity> folderBucketCache)
     {
         var modified = file.LastWriteTime;
+        var created = file.CreationTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
         dimensions.TryGetValue(file.FullName, out var imageSize);
         prompts.TryGetValue(file.FullName, out string? indexedPrompt);
-        var folderBucket = ResolveFolderBucket(file.FullName, folderSet);
+        string folderBucketCacheKey = file.DirectoryName ?? file.FullName;
+        if (!folderBucketCache.TryGetValue(folderBucketCacheKey, out FolderBucketIdentity folderBucket))
+        {
+            folderBucket = ResolveFolderBucket(file.FullName, folderSet);
+            folderBucketCache[folderBucketCacheKey] = folderBucket;
+        }
         var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
@@ -1530,7 +1866,9 @@ public partial class MainWindow : Window
             Fav = FavoriteLevelForPath(file.FullName),
             Unseen = !SeenStateContains(file.FullName),
             ShowUnseenDot = _showUnseenDots && !SeenStateContains(file.FullName),
-            Group = FormatGroup(modified),
+            // Date sections are enabled only for Created sorts, so their label
+            // must use the same timestamp as the Created order/filter.
+            Group = FormatGroup(created),
             CardWidth = width,
             ModifiedUtc = file.LastWriteTimeUtc,
             CreatedUtc = file.CreationTimeUtc,
@@ -1629,10 +1967,7 @@ public partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(overridePath))
                 return Path.GetFullPath(overridePath);
 
-            var root = FindProjectRoot(Environment.CurrentDirectory)
-                ?? FindProjectRoot(AppContext.BaseDirectory)
-                ?? Environment.CurrentDirectory;
-            return Path.Combine(root, ".cache", "favorites.json");
+            return ProjectCachePath("favorites.json");
         }
     }
 
@@ -1651,6 +1986,72 @@ public partial class MainWindow : Window
         }
         catch
         {
+        }
+
+        return null;
+    }
+
+    /// <summary>
+    /// Resolve the checkout that owns the shared browser/WPF stores. A Codex
+    /// linked worktree has its own project.toml but its .git file points back
+    /// to the main checkout. Using the worktree-local .cache silently forks
+    /// favorites, seen state, recent folders, and enhancement history.
+    /// </summary>
+    private static string ResolveSharedProjectRoot()
+    {
+        foreach (string start in new[] { Environment.CurrentDirectory, AppContext.BaseDirectory })
+        {
+            string? projectRoot = FindProjectRoot(start);
+            if (projectRoot is null)
+                continue;
+
+            return ResolveMainCheckoutRoot(projectRoot) ?? projectRoot;
+        }
+
+        return Environment.CurrentDirectory;
+    }
+
+    private static string? ResolveMainCheckoutRoot(string projectRoot)
+    {
+        try
+        {
+            string dotGitPath = Path.Combine(projectRoot, ".git");
+            if (Directory.Exists(dotGitPath))
+                return projectRoot;
+            if (!File.Exists(dotGitPath))
+                return null;
+
+            string gitDirPointer = File.ReadLines(dotGitPath).FirstOrDefault()?.Trim() ?? "";
+            const string gitDirPrefix = "gitdir:";
+            if (!gitDirPointer.StartsWith(gitDirPrefix, StringComparison.OrdinalIgnoreCase))
+                return null;
+
+            string gitDirValue = gitDirPointer[gitDirPrefix.Length..].Trim();
+            string gitDir = Path.GetFullPath(Path.IsPathRooted(gitDirValue)
+                ? gitDirValue
+                : Path.Combine(projectRoot, gitDirValue));
+            string commonDirPath = Path.Combine(gitDir, "commondir");
+            if (!File.Exists(commonDirPath))
+                return null;
+
+            string commonDirValue = File.ReadLines(commonDirPath).FirstOrDefault()?.Trim() ?? "";
+            if (string.IsNullOrWhiteSpace(commonDirValue))
+                return null;
+            string commonGitDir = Path.GetFullPath(Path.IsPathRooted(commonDirValue)
+                ? commonDirValue
+                : Path.Combine(gitDir, commonDirValue));
+            string? candidate = Directory.GetParent(commonGitDir)?.FullName;
+            if (candidate is not null
+                && File.Exists(Path.Combine(candidate, "project.toml"))
+                && Directory.Exists(Path.Combine(candidate, "local-native")))
+            {
+                return candidate;
+            }
+        }
+        catch
+        {
+            // A malformed or unavailable git administration file must not
+            // prevent startup. The caller falls back to the current checkout.
         }
 
         return null;
@@ -2556,10 +2957,7 @@ public partial class MainWindow : Window
 
     private static string ProjectCachePath(string fileName)
     {
-        var root = FindProjectRoot(Environment.CurrentDirectory)
-            ?? FindProjectRoot(AppContext.BaseDirectory)
-            ?? Environment.CurrentDirectory;
-        return Path.Combine(root, ".cache", fileName);
+        return Path.Combine(ResolveSharedProjectRoot(), ".cache", fileName);
     }
 
     private void LoadSeenState()
@@ -3442,6 +3840,130 @@ public partial class MainWindow : Window
         }
     }
 
+    private async Task<ImageMetadataLoadMetrics> LoadImageMetadataProgressivelyAsync(
+        IReadOnlyList<Tile> tiles,
+        long generation,
+        CancellationTokenSource cts,
+        int initialDelayMilliseconds)
+    {
+        if (tiles.Count == 0)
+            return ImageMetadataLoadMetrics.Empty;
+
+        // Give the first visible thumbnail batch a short uncontended head
+        // start. Bulk metadata reads are lower priority than pixels currently
+        // on screen.
+        await Task.Delay(Math.Max(250, initialDelayMilliseconds), cts.Token);
+
+        var watch = Stopwatch.StartNew();
+        var dimensions = new ConcurrentDictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase);
+        var prompts = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        var decoded = new ConcurrentQueue<DecodedImageMetadata>();
+        int metadataWorkerBudget = tiles.Count >= 10_000 ? 2 : MaxMetadataReadWorkers;
+        int workers = Math.Max(1, Math.Min(Math.Min(metadataWorkerBudget, Environment.ProcessorCount), tiles.Count));
+        int completed = 0;
+        int decodeFailures = 0;
+        int uiBatchSize = Math.Clamp(tiles.Count / 128, 96, 512);
+
+        try
+        {
+            await Parallel.ForEachAsync(
+                tiles,
+                new ParallelOptions
+                {
+                    CancellationToken = cts.Token,
+                    MaxDegreeOfParallelism = workers,
+                },
+                async (tile, itemToken) =>
+                {
+                    itemToken.ThrowIfCancellationRequested();
+                    bool sizeRead = TryReadBitmapSize(tile.Path, out int width, out int height);
+                    if (!sizeRead)
+                        Interlocked.Increment(ref decodeFailures);
+                    var imageDimensions = new ImageDimensions(width, height);
+                    dimensions[tile.Path] = imageDimensions;
+
+                    PngParametersMetadata? pngMetadata = ReadPngParametersMetadata(tile.Path, itemToken);
+                    string prompt = pngMetadata?.Prompt ?? "";
+                    if (!string.IsNullOrWhiteSpace(prompt))
+                        prompts[tile.Path] = prompt;
+
+                    decoded.Enqueue(new DecodedImageMetadata(tile, imageDimensions, prompt));
+                    int done = Interlocked.Increment(ref completed);
+                    if (done % uiBatchSize == 0 || done == tiles.Count)
+                    {
+                        await Dispatcher.InvokeAsync(
+                            () =>
+                            {
+                                if (IsCurrentLoad(generation, cts))
+                                    DrainDecodedImageMetadata(decoded);
+                            },
+                            DispatcherPriority.Background,
+                            itemToken);
+                    }
+                });
+        }
+        finally
+        {
+            watch.Stop();
+        }
+
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                if (!IsCurrentLoad(generation, cts))
+                    return;
+
+                DrainDecodedImageMetadata(decoded);
+                // Prompt-only matches become available after the background
+                // index is complete. Filename/date/favorite filtering was
+                // already usable from the first published catalog frame.
+                if (!string.IsNullOrWhiteSpace(SearchInput.Text))
+                    ApplyFilters(selectFirst: false);
+            },
+            DispatcherPriority.Background,
+            cts.Token);
+
+        return new ImageMetadataLoadMetrics(
+            dimensions,
+            prompts,
+            workers,
+            completed,
+            watch.ElapsedMilliseconds,
+            decodeFailures);
+    }
+
+    private void DrainDecodedImageMetadata(ConcurrentQueue<DecodedImageMetadata> decoded)
+    {
+        string? selectedPath = SelectedTile()?.Path;
+        bool selectedMetadataArrived = false;
+        while (decoded.TryDequeue(out DecodedImageMetadata item))
+        {
+            item.Tile.ImagePixelWidth = item.Dimensions.Width;
+            item.Tile.ImagePixelHeight = item.Dimensions.Height;
+            item.Tile.Prompt = item.Prompt;
+            selectedMetadataArrived |= !string.IsNullOrWhiteSpace(selectedPath)
+                && string.Equals(item.Tile.Path, selectedPath, StringComparison.OrdinalIgnoreCase);
+        }
+
+        if (!selectedMetadataArrived
+            || SelectedTile() is not Tile selected
+            || !string.Equals(selected.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        // The catalog is intentionally published before full metadata. A file
+        // may be replaced after that first frame but before its metadata probe.
+        // Re-decode only the selected surfaces when that probe arrives so an
+        // early preview/modal cannot keep presenting the pre-Refresh bytes.
+        UpdatePreview(selected);
+        if (Modal.Visibility == Visibility.Visible
+            && string.Equals(_modalSourceTilePath, selected.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            OpenModal();
+        }
+    }
+
     private static ImageMetadataLoadMetrics ReadImageMetadata(IReadOnlyList<FileInfo> files, CancellationToken token)
     {
         if (files.Count == 0)
@@ -3642,7 +4164,7 @@ public partial class MainWindow : Window
         try
         {
             _syncingSelection = true;
-            List<Tile> cardSelections = _gridTiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
+            List<Tile> cardSelections = _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
             List<Tile> rowSelections = _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
             var cardsWatch = Stopwatch.StartNew();
             SynchronizeSelectionControl(CardsList, cardSelections);
@@ -3689,14 +4211,7 @@ public partial class MainWindow : Window
             return;
         }
 
-        var ensureGridWatch = Stopwatch.StartNew();
-        if (CardsList.Visibility == Visibility.Visible)
-        {
-            _gridSelectionScrollSuppressionGeneration = _selectionVisualSyncGeneration;
-            EnsureGridTileRealized(primary);
-        }
-        ensureGridWatch.Stop();
-        _lastEnsureGridSelectionMs = ensureGridWatch.ElapsedMilliseconds;
+        _lastEnsureGridSelectionMs = 0;
         var cardsScrollWatch = Stopwatch.StartNew();
         if (CardsList.Visibility == Visibility.Visible)
         {
@@ -3758,21 +4273,11 @@ public partial class MainWindow : Window
             if (_queuedGridSelectionVisualSyncGeneration == generation)
                 _queuedGridSelectionVisualSyncGeneration = -1;
 
-            // ScrollIntoView can post additional extent/offset notifications
-            // after the Render callback. Keep those synthetic notifications
-            // from shifting the bounded window until the dispatcher is idle;
-            // real user scrolling resumes immediately afterward.
-            Dispatcher.BeginInvoke(() =>
-            {
-                if (_gridSelectionScrollSuppressionGeneration == generation)
-                    _gridSelectionScrollSuppressionGeneration = -1;
-            }, DispatcherPriority.ApplicationIdle);
-
             if (generation != _selectionVisualSyncGeneration
                 || CardsList.Visibility != Visibility.Visible
                 || !_selectedPaths.Contains(path)
                 || !string.Equals(_primarySelectedPath, path, StringComparison.OrdinalIgnoreCase)
-                || !_gridTiles.Contains(tile))
+                || !_tiles.Contains(tile))
             {
                 return;
             }
@@ -5820,7 +6325,7 @@ public partial class MainWindow : Window
         preferred ??= previous is not null && filtered.Contains(previous) ? previous : null;
         preferred ??= SelectedTiles().LastOrDefault();
         preferred ??= selectFirst && _tiles.Count > 0 ? _tiles[0] : null;
-        RebuildGridTiles(preferred);
+        _galleryVirtualizingPanel?.InvalidateItemLayout();
         UpdateFolderStats();
 
         if (preferred is not null)
@@ -5863,124 +6368,6 @@ public partial class MainWindow : Window
 
         if (!string.Equals(_modalSourceTilePath, selected.Path, StringComparison.OrdinalIgnoreCase))
             OpenModal();
-    }
-
-    private void RebuildGridTiles(Tile? ensureTile = null)
-    {
-        if (_tiles.Count == 0)
-        {
-            RebuildGridWindow(0, 0);
-            return;
-        }
-
-        int target = Math.Min(_tiles.Count, InitialGridRealizationCount);
-        int startIndex = 0;
-
-        if (ensureTile is not null)
-        {
-            int index = _tiles.IndexOf(ensureTile);
-            if (index >= target)
-            {
-                target = Math.Min(_tiles.Count, MaxGridRealizationCount);
-                int maxStart = Math.Max(0, _tiles.Count - target);
-                startIndex = Math.Clamp(index - (target / 2), 0, maxStart);
-            }
-        }
-
-        RebuildGridWindow(startIndex, target);
-    }
-
-    private void EnsureGridTileRealized(Tile tile)
-    {
-        int index = _tiles.IndexOf(tile);
-        if (index < 0)
-            return;
-
-        int windowEnd = _gridStartIndex + _gridTiles.Count;
-        if (index >= _gridStartIndex && index < windowEnd)
-            return;
-
-        int target = Math.Min(_tiles.Count, MaxGridRealizationCount);
-        int maxStart = Math.Max(0, _tiles.Count - target);
-        int startIndex = Math.Clamp(index - (target / 2), 0, maxStart);
-        RebuildGridWindow(startIndex, target);
-    }
-
-    private void RealizeNextGridBatch()
-    {
-        if (_gridTiles.Count >= _tiles.Count)
-            return;
-
-        if (_gridTiles.Count < MaxGridRealizationCount)
-        {
-            RebuildGridWindow(_gridStartIndex, _gridTiles.Count + GridRealizationBatchSize);
-            return;
-        }
-
-        int maxStart = Math.Max(0, _tiles.Count - _gridTiles.Count);
-        if (_gridStartIndex >= maxStart)
-            return;
-
-        RebuildGridWindow(_gridStartIndex + GridRealizationBatchSize, _gridTiles.Count);
-    }
-
-    private void RealizePreviousGridBatch()
-    {
-        if (_gridStartIndex <= 0 || _gridTiles.Count == 0)
-            return;
-
-        RebuildGridWindow(_gridStartIndex - GridRealizationBatchSize, _gridTiles.Count);
-    }
-
-    private void RebuildGridWindow(int requestedStartIndex, int requestedCount)
-    {
-        bool wasSyncingSelection = _syncingSelection;
-        _syncingSelection = true;
-        try
-        {
-            _gridTiles.Clear();
-            if (_tiles.Count == 0 || requestedCount <= 0)
-            {
-                _gridStartIndex = 0;
-                if (LastLoadMetrics is not null)
-                    UpdateGridMetrics(LastLoadMetrics);
-                return;
-            }
-
-            int target = Math.Min(_tiles.Count, Math.Min(MaxGridRealizationCount, requestedCount));
-            int maxStart = Math.Max(0, _tiles.Count - target);
-            _gridStartIndex = Math.Clamp(requestedStartIndex, 0, maxStart);
-            int end = Math.Min(_tiles.Count, _gridStartIndex + target);
-            for (int i = _gridStartIndex; i < end; i++)
-                _gridTiles.Add(_tiles[i]);
-
-            if (!_initializing && _gridTiles.Any(static tile => tile.Thumbnail is null))
-                _ = LoadThumbnailsAsync(_loadCts?.Token ?? CancellationToken.None);
-
-            if (LastLoadMetrics is not null)
-                UpdateGridMetrics(LastLoadMetrics);
-        }
-        finally
-        {
-            _syncingSelection = wasSyncingSelection;
-        }
-
-        SynchronizeSelectionControls();
-    }
-
-    private void CardsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
-    {
-        if (CardsList.Visibility != Visibility.Visible
-            || _gridTiles.Count >= _tiles.Count
-            || _gridSelectionScrollSuppressionGeneration == _selectionVisualSyncGeneration)
-            return;
-
-        double remaining = e.ExtentHeight - (e.VerticalOffset + e.ViewportHeight);
-        double threshold = Math.Max(360, e.ViewportHeight * 0.75);
-        if (remaining <= threshold)
-            RealizeNextGridBatch();
-        else if (e.VerticalOffset <= threshold)
-            RealizePreviousGridBatch();
     }
 
     private static bool MatchesSearch(Tile tile, string query)
@@ -6137,14 +6524,18 @@ public partial class MainWindow : Window
 
     private void UpdateGridMetrics(LoadMetrics metrics)
     {
+        VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+        int realizedCount = panel?.RealizedItemCount ?? 0;
+        int windowStart = Math.Max(0, panel?.FirstRealizedIndex ?? 0);
+        int windowEnd = Math.Max(windowStart, (panel?.LastRealizedIndex ?? -1) + 1);
         metrics.GridTotalItems = _tiles.Count;
-        metrics.GridRealizedItems = _gridTiles.Count;
-        metrics.GridDeferredItems = Math.Max(0, _tiles.Count - _gridTiles.Count);
-        metrics.GridInitialRealizationLimit = InitialGridRealizationCount;
-        metrics.GridRealizationBatchSize = GridRealizationBatchSize;
-        metrics.GridMaxRealizationCount = MaxGridRealizationCount;
-        metrics.GridWindowStartIndex = _gridStartIndex;
-        metrics.GridWindowEndIndex = _gridStartIndex + _gridTiles.Count;
+        metrics.GridRealizedItems = realizedCount;
+        metrics.GridDeferredItems = Math.Max(0, _tiles.Count - realizedCount);
+        metrics.GridInitialRealizationLimit = MaxVirtualizedContainerSmokeCount;
+        metrics.GridRealizationBatchSize = 0;
+        metrics.GridMaxRealizationCount = MaxVirtualizedContainerSmokeCount;
+        metrics.GridWindowStartIndex = windowStart;
+        metrics.GridWindowEndIndex = windowEnd;
     }
 
     // ─────────── Size slider ───────────
@@ -6204,7 +6595,7 @@ public partial class MainWindow : Window
         GridZoomAnchor? best = null;
         GridZoomAnchor? previous = null;
         double center = viewer.ViewportHeight / 2;
-        foreach (var item in FindVisualDescendants<FrameworkElement>(CardsList))
+        foreach (ListBoxItem item in FindVisualDescendants<ListBoxItem>(CardsList))
         {
             if (item.DataContext is not Tile tile || !tile.IsRealFile || item.ActualHeight <= 0)
                 continue;
@@ -6232,6 +6623,20 @@ public partial class MainWindow : Window
         _lastGridZoomAnchorPath = anchor.Value.Path;
         Dispatcher.BeginInvoke(() =>
         {
+            VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+            Tile? anchorTile = _tiles.FirstOrDefault(tile => string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
+            int anchorIndex = anchorTile is null ? -1 : _tiles.IndexOf(anchorTile);
+            if (panel is not null && anchorIndex >= 0 && panel.RestoreItemViewportTop(anchorIndex, anchor.Value.ViewportY))
+            {
+                Dispatcher.BeginInvoke(() =>
+                {
+                    double actual = panel.GetItemViewportTop(anchorIndex);
+                    if (double.IsFinite(actual))
+                        _lastGridZoomAnchorDrift = Math.Abs(actual - anchor.Value.ViewportY);
+                }, DispatcherPriority.Render);
+                return;
+            }
+
             ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(CardsList);
             FrameworkElement? item = FindVisualDescendants<FrameworkElement>(CardsList)
                 .FirstOrDefault(element => element.DataContext is Tile tile && string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
@@ -6276,6 +6681,7 @@ public partial class MainWindow : Window
     {
         foreach (var tile in _allTiles)
             ApplyCardLayout(tile);
+        _galleryVirtualizingPanel?.InvalidateItemLayout();
     }
 
     private void ApplyCardLayout(Tile tile)
@@ -6294,6 +6700,7 @@ public partial class MainWindow : Window
         double aspectHeightFactor = AspectHeightFactor(tile);
         tile.CardWidth = width;
         tile.CardHeight = Math.Max(64, width * aspectHeightFactor);
+        tile.CardThumbnailStretch = _aspectMode == AspectOriginalValue ? Stretch.Uniform : Stretch.UniformToFill;
         tile.ListThumbnailWidth = listThumbnailBase;
         tile.ListThumbnailHeight = Math.Clamp(listThumbnailBase * aspectHeightFactor, 32, 120);
         tile.ListThumbnailSize = Math.Max(tile.ListThumbnailWidth, tile.ListThumbnailHeight);
@@ -6304,17 +6711,8 @@ public partial class MainWindow : Window
         return _aspectMode switch
         {
             AspectSquareValue => 1.0,
-            AspectPortraitValue => 1.5,
-            _ => OriginalAspectHeightFactor(tile),
+            _ => 1.5,
         };
-    }
-
-    private static double OriginalAspectHeightFactor(Tile tile)
-    {
-        if (tile.ImagePixelWidth > 0 && tile.ImagePixelHeight > 0)
-            return Math.Clamp((double)tile.ImagePixelHeight / tile.ImagePixelWidth, 0.65, 1.8);
-
-        return 1.5;
     }
 
     private static string NormalizeDisplayStyle(string? style)
@@ -6405,11 +6803,46 @@ public partial class MainWindow : Window
 
         if (changed && !_initializing)
         {
-            ApplyFilters();
+            ConfigureGalleryItemsSources();
+            // A sort change cannot alter filter membership. Reorder the already
+            // filtered Tile references directly instead of rebuilding 100k
+            // filter snapshots and evaluating every predicate again.
+            ApplyFilterResult(new FilterResult(SortTiles(_tiles, _sortBy, _randomSortSeed)), selectFirst: true);
             SaveState();
         }
 
         return changed;
+    }
+
+    private static List<Tile> SortTiles(IEnumerable<Tile> tiles, string sortBy, string randomSortSeed)
+    {
+        IEnumerable<Tile> ordered = sortBy switch
+        {
+            SortModifiedOldestValue => tiles
+                .OrderBy(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedNewestValue => tiles
+                .OrderByDescending(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortCreatedOldestValue => tiles
+                .OrderBy(static tile => tile.CreatedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortRandomValue => tiles
+                .OrderBy(tile => StableRandomSortKey(randomSortSeed, tile.Path))
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            SortNameValue => tiles
+                .OrderBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+            _ => tiles
+                .OrderByDescending(static tile => tile.ModifiedUtc)
+                .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
+                .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
+        };
+        return ordered.ToList();
     }
 
     private void SyncSortButtons()
@@ -6688,10 +7121,9 @@ public partial class MainWindow : Window
         Tile? selected = SelectedTile();
         CardsList.Visibility = Visibility.Visible;
         RowsList.Visibility = Visibility.Collapsed;
+        ConfigureRowsItemsSource(forceGroupedView: false);
         if (selected is not null)
         {
-            _gridSelectionScrollSuppressionGeneration = _selectionVisualSyncGeneration;
-            EnsureGridTileRealized(selected);
             SynchronizeSelectionControls();
             CardsList.ScrollIntoView(selected);
             QueueGridSelectionVisualSync(selected);
@@ -6707,6 +7139,7 @@ public partial class MainWindow : Window
         Tile? selected = SelectedTile();
         CardsList.Visibility = Visibility.Collapsed;
         RowsList.Visibility = Visibility.Visible;
+        ConfigureRowsItemsSource(forceGroupedView: true);
         SynchronizeSelectionControls();
         if (selected is not null)
         {
@@ -6714,6 +7147,7 @@ public partial class MainWindow : Window
             SelectRealizedContainer(RowsList, selected);
             QueueListSelectionVisualSync(selected);
         }
+        Dispatcher.BeginInvoke(ScheduleListThumbnailViewport, DispatcherPriority.Render);
         SizeSlider.IsEnabled = false;
     }
 
@@ -7239,11 +7673,12 @@ public partial class MainWindow : Window
     {
         if (SelectedTile() is not Tile t) return;
         bool opening = Modal.Visibility != Visibility.Visible;
+        bool sourceChanged = !string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase);
         if (opening)
             _modalFocusBeforeOverlay = Keyboard.FocusedElement;
         if (!string.Equals(_modalTransformPath, t.Path, StringComparison.OrdinalIgnoreCase))
             ResetModalTransform(t.Path);
-        if (!string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase))
+        if (sourceChanged)
         {
             _modalSourceTilePath = t.Path;
             _modalShowingEnhanced = false;
@@ -7270,7 +7705,8 @@ public partial class MainWindow : Window
         ModalArtGlow.Visibility = immediate is null ? Visibility.Visible : Visibility.Collapsed;
         ModalArtBase.Fill = t.ArtBase;
         ModalArtGlow.Fill = t.ArtGlow;
-        SetModalMetadataSidebarVisible(false);
+        if (opening)
+            SetModalMetadataSidebarVisible(false);
         Modal.Visibility = Visibility.Visible;
         if (opening)
             Dispatcher.BeginInvoke(Modal.Focus, DispatcherPriority.Input);
@@ -7293,6 +7729,9 @@ public partial class MainWindow : Window
             _ = LoadModalBitmapAsync(displayPath, t.Path, cts.Token, decodeCompletion);
         else
             decodeCompletion.TrySetResult(immediate is not null);
+
+        if (opening || sourceChanged)
+            BeginModalEnhancementRefresh(t.Path);
     }
 
     private bool TryGetModalEnhancedOutput(Tile tile, out string? outputPath)
@@ -7402,6 +7841,441 @@ public partial class MainWindow : Window
 
     private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal(restoreFocus: true);
 
+    private void ModalBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // Only a click whose hit target is the empty black surface closes the
+        // preview. Image clicks, edge zones, metadata, and toolbar controls
+        // retain their own interactions.
+        if (TryCloseModalFromBackdrop(e.OriginalSource))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private bool TryCloseModalFromBackdrop(object? hitTarget)
+    {
+        if (Modal.Visibility != Visibility.Visible
+            || (!ReferenceEquals(hitTarget, Modal) && !ReferenceEquals(hitTarget, ModalImageArea)))
+        {
+            return false;
+        }
+
+        CloseModal(restoreFocus: true);
+        return true;
+    }
+
+    private void ModalZoomOut_Click(object sender, RoutedEventArgs e)
+        => AdjustModalZoom(1 / ModalZoomKeyboardStep);
+
+    private void ModalZoomIn_Click(object sender, RoutedEventArgs e)
+        => AdjustModalZoom(ModalZoomKeyboardStep);
+
+    private void ModalFit_Click(object sender, RoutedEventArgs e)
+        => ResetModalTransform(_modalTransformPath, showFeedback: true);
+
+    private void BeginModalEnhancementRefresh(string sourcePath)
+    {
+        long generation = ++_modalEnhancementGeneration;
+        _modalEnhancementPollTimer.Stop();
+        _modalEnhancementJobId = null;
+        _modalEnhancementJobStatus = null;
+        _modalEnhancementProgress = 0;
+        _modalEnhancementError = null;
+        UpdateModalEnhancementActionControls();
+        _ = RefreshModalEnhancementStateAsync(sourcePath, generation, showUnavailableError: false);
+    }
+
+    private async void ModalEnhancementPollTimer_Tick(object? sender, EventArgs e)
+    {
+        if (_modalEnhancementPolling || Modal.Visibility != Visibility.Visible || SelectedTile() is not Tile tile)
+            return;
+
+        _modalEnhancementPolling = true;
+        try
+        {
+            await RefreshModalEnhancementStateAsync(tile.Path, _modalEnhancementGeneration, showUnavailableError: false);
+        }
+        finally
+        {
+            _modalEnhancementPolling = false;
+        }
+    }
+
+    private static Uri ResolveBrowserEnhancementBaseUri()
+    {
+        string configured = Environment.GetEnvironmentVariable("PHOTOVIEWER_BROWSER_BASE_URL") ?? "http://127.0.0.1:3000/";
+        if (Uri.TryCreate(configured, UriKind.Absolute, out Uri? uri)
+            && uri.IsLoopback
+            && (uri.Scheme == Uri.UriSchemeHttp || uri.Scheme == Uri.UriSchemeHttps))
+        {
+            return new Uri(uri.AbsoluteUri.TrimEnd('/') + "/", UriKind.Absolute);
+        }
+
+        return new Uri("http://127.0.0.1:3000/", UriKind.Absolute);
+    }
+
+    private async Task<EnhancementApiResponse> SendEnhancementApiAsync(
+        HttpMethod method,
+        string relativePath,
+        object? body = null,
+        CancellationToken token = default)
+    {
+        try
+        {
+            Uri endpoint = new(ResolveBrowserEnhancementBaseUri(), relativePath.TrimStart('/'));
+            using var request = new HttpRequestMessage(method, endpoint);
+            if (body is not null)
+            {
+                request.Content = new StringContent(
+                    JsonSerializer.Serialize(body),
+                    Encoding.UTF8,
+                    "application/json");
+            }
+
+            using HttpResponseMessage response = await _modalEnhancementSender(request, token);
+            string text = await response.Content.ReadAsStringAsync(token);
+            JsonElement? payload = null;
+            if (!string.IsNullOrWhiteSpace(text))
+            {
+                try
+                {
+                    using JsonDocument document = JsonDocument.Parse(text);
+                    payload = document.RootElement.Clone();
+                }
+                catch (JsonException)
+                {
+                }
+            }
+
+            string error = "";
+            if (!response.IsSuccessStatusCode)
+            {
+                error = payload is JsonElement root
+                    && TryGetStringProperty(root, "error", out string? apiError)
+                    ? apiError ?? "Enhancement request failed."
+                    : $"Enhancement request failed ({(int)response.StatusCode}).";
+            }
+            return new EnhancementApiResponse(response.IsSuccessStatusCode, (int)response.StatusCode, payload, error);
+        }
+        catch (OperationCanceledException)
+        {
+            return new EnhancementApiResponse(false, 0, null, "Enhancement request was canceled.");
+        }
+        catch (Exception ex) when (ex is HttpRequestException or IOException or InvalidOperationException)
+        {
+            return new EnhancementApiResponse(
+                false,
+                0,
+                null,
+                $"Browser AI engine is unavailable at {ResolveBrowserEnhancementBaseUri().GetLeftPart(UriPartial.Authority)}. Start the Browser PhotoViewer, then retry.");
+        }
+    }
+
+    private static ModalEnhancementJobSnapshot? ParseModalEnhancementJob(JsonElement job)
+    {
+        if (job.ValueKind != JsonValueKind.Object
+            || !TryGetStringProperty(job, "id", out string? id)
+            || !TryGetStringProperty(job, "status", out string? status))
+        {
+            return null;
+        }
+
+        TryGetStringProperty(job, "sourcePath", out string? sourcePath);
+        if (string.IsNullOrWhiteSpace(sourcePath))
+            TryGetStringProperty(job, "sourceId", out sourcePath);
+        TryGetStringProperty(job, "outputPath", out string? outputPath);
+        TryGetStringProperty(job, "errorMessage", out string? errorMessage);
+        int progress = job.TryGetProperty("progress", out JsonElement progressElement)
+            && progressElement.TryGetInt32(out int parsedProgress)
+            ? Math.Clamp(parsedProgress, 0, 100)
+            : 0;
+        return new ModalEnhancementJobSnapshot(id!, sourcePath ?? "", status!, progress, outputPath, errorMessage);
+    }
+
+    private static ModalEnhancementJobSnapshot? SelectModalEnhancementJob(JsonElement payload)
+    {
+        if (payload.ValueKind != JsonValueKind.Object
+            || !payload.TryGetProperty("jobs", out JsonElement jobs)
+            || jobs.ValueKind != JsonValueKind.Array)
+        {
+            return null;
+        }
+
+        List<ModalEnhancementJobSnapshot> parsed = jobs.EnumerateArray()
+            .Select(ParseModalEnhancementJob)
+            .Where(static job => job is not null)
+            .Cast<ModalEnhancementJobSnapshot>()
+            .ToList();
+        return parsed.FirstOrDefault(static job => job.Status is "queued" or "running")
+            ?? parsed.FirstOrDefault(static job => job.Status == "succeeded" && !string.IsNullOrWhiteSpace(job.OutputPath))
+            ?? parsed.FirstOrDefault();
+    }
+
+    private async Task RefreshModalEnhancementStateAsync(string sourcePath, long generation, bool showUnavailableError)
+    {
+        string encodedSource = Uri.EscapeDataString(sourcePath);
+        EnhancementApiResponse response = await SendEnhancementApiAsync(HttpMethod.Get, $"api/enhance/jobs?sourceId={encodedSource}");
+        if (generation != _modalEnhancementGeneration
+            || Modal.Visibility != Visibility.Visible
+            || SelectedTile() is not Tile tile
+            || !string.Equals(tile.Path, sourcePath, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        if (!response.Ok || response.Payload is not JsonElement payload)
+        {
+            if (showUnavailableError)
+                _modalEnhancementError = response.Error;
+            UpdateModalEnhancementActionControls();
+            return;
+        }
+
+        ApplyModalEnhancementJob(tile, SelectModalEnhancementJob(payload));
+    }
+
+    private bool IsCurrentModalEnhancementContext(Tile tile, string sourcePath, long generation)
+        => generation == _modalEnhancementGeneration
+            && Modal.Visibility == Visibility.Visible
+            && SelectedTile() is Tile selected
+            && ReferenceEquals(selected, tile)
+            && string.Equals(selected.Path, sourcePath, StringComparison.OrdinalIgnoreCase);
+
+    private void ApplyModalEnhancementJob(Tile tile, ModalEnhancementJobSnapshot? job)
+    {
+        // A filtered endpoint should only return jobs for the requested image,
+        // but keep the desktop client defensive: never attach another image's
+        // job/output to the currently selected tile.
+        if (job is not null
+            && !string.IsNullOrWhiteSpace(job.SourcePath)
+            && !string.Equals(job.SourcePath, tile.Path, StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
+        _modalEnhancementJobId = job?.Id;
+        _modalEnhancementJobStatus = job?.Status;
+        _modalEnhancementProgress = job?.Progress ?? 0;
+        _modalEnhancementError = job?.ErrorMessage;
+
+        if (job is { Status: "succeeded", OutputPath: not null }
+            && File.Exists(job.OutputPath))
+        {
+            string outputPath = Path.GetFullPath(job.OutputPath);
+            tile.Enhanced = true;
+            tile.EnhancedOutputPath = outputPath;
+            _enhancedOutputs[NormalizeFavoritePath(tile.Path)] = outputPath;
+            UpdateModalEnhancedControls(canShowEnhanced: true);
+        }
+
+        bool active = job?.Status is "queued" or "running";
+        if (active)
+            _modalEnhancementPollTimer.Start();
+        else
+            _modalEnhancementPollTimer.Stop();
+        UpdateModalEnhancementActionControls();
+    }
+
+    private void UpdateModalEnhancementActionControls()
+    {
+        if (ModalEnhanceButton is null)
+            return;
+
+        bool hasRealSource = SelectedTile() is { IsRealFile: true } tile && File.Exists(tile.Path);
+        bool active = _modalEnhancementJobStatus is "queued" or "running";
+        bool retryable = _modalEnhancementJobStatus is "failed" or "canceled";
+        bool hasDeletableOutput = _modalEnhancementJobStatus == "succeeded"
+            && !string.IsNullOrWhiteSpace(_modalEnhancementJobId)
+            && SelectedTile() is Tile selected
+            && TryGetModalEnhancedOutput(selected, out _);
+
+        ModalEnhanceButton.IsEnabled = hasRealSource && !_modalEnhancementRequestPending && !active;
+        ModalEnhanceButtonLabel.Text = _modalEnhancementRequestPending ? "Starting" : retryable ? "Retry AI" : "AI x2";
+        ModalEnhanceCancelButton.Visibility = active ? Visibility.Visible : Visibility.Collapsed;
+        ModalEnhanceCancelButton.IsEnabled = active && !_modalEnhancementRequestPending;
+        ModalEnhancedDeleteButton.Visibility = hasDeletableOutput ? Visibility.Visible : Visibility.Collapsed;
+        ModalEnhancedDeleteButton.IsEnabled = hasDeletableOutput && !_modalEnhancementRequestPending;
+
+        string status = _modalEnhancementRequestPending ? "AI: starting…"
+            : _modalEnhancementJobStatus == "queued" ? "AI: queued"
+            : _modalEnhancementJobStatus == "running" ? $"AI: {_modalEnhancementProgress}%"
+            : _modalEnhancementJobStatus == "succeeded" ? "AI: ready"
+            : _modalEnhancementJobStatus == "canceled" ? "AI: canceled"
+            : _modalEnhancementJobStatus == "failed" ? $"AI failed: {_modalEnhancementError ?? "unknown error"}"
+            : _modalEnhancementError ?? "";
+        ModalEnhancementStatusText.Text = status;
+        ModalEnhancementStatusText.Visibility = string.IsNullOrWhiteSpace(status) ? Visibility.Collapsed : Visibility.Visible;
+        ModalEnhancementStatusText.ToolTip = string.IsNullOrWhiteSpace(status) ? null : status;
+    }
+
+    private async void StartModalEnhancement_Click(object sender, RoutedEventArgs e)
+    {
+        if (_modalEnhancementRequestPending || SelectedTile() is not Tile { IsRealFile: true } tile || !File.Exists(tile.Path))
+            return;
+
+        long requestGeneration = _modalEnhancementGeneration;
+        string sourcePath = tile.Path;
+        string? requestJobId = _modalEnhancementJobId;
+        _modalEnhancementRequestPending = true;
+        _modalEnhancementError = null;
+        UpdateModalEnhancementActionControls();
+        try
+        {
+            bool retry = _modalEnhancementJobStatus is "failed" or "canceled"
+                && !string.IsNullOrWhiteSpace(requestJobId);
+            EnhancementApiResponse response = retry
+                ? await SendEnhancementApiAsync(HttpMethod.Post, $"api/enhance/jobs/{Uri.EscapeDataString(requestJobId!)}/retry")
+                : await SendEnhancementApiAsync(HttpMethod.Post, "api/enhance/jobs", new
+                {
+                    sourceId = sourcePath,
+                    presetId = "anime-sharp-x2",
+                    adapterId = "realesrgan-ncnn",
+                    scale = 2,
+                });
+
+            if (!IsCurrentModalEnhancementContext(tile, sourcePath, requestGeneration))
+                return;
+
+            bool needsConfirmation = response.StatusCode == 409
+                && response.Payload is JsonElement conflict
+                && TryGetStringProperty(conflict, "code", out string? code)
+                && string.Equals(code, "UPSCALE_REQUIRES_CONFIRMATION", StringComparison.Ordinal);
+            if (needsConfirmation)
+            {
+                bool confirmed = _confirmLargeEnhancementForSmoke?.Invoke() ?? MessageBox.Show(
+                        this,
+                        "This AI upscale is large and may take several minutes. Start it anyway?",
+                        "PhotoViewer AI enhancement",
+                        MessageBoxButton.YesNo,
+                        MessageBoxImage.Warning,
+                        MessageBoxResult.No) == MessageBoxResult.Yes;
+                if (confirmed)
+                {
+                    response = await SendEnhancementApiAsync(HttpMethod.Post, "api/enhance/jobs", new
+                    {
+                        sourceId = sourcePath,
+                        presetId = "anime-sharp-x2",
+                        adapterId = "realesrgan-ncnn",
+                        scale = 2,
+                        confirmLargeJob = true,
+                    });
+                    if (!IsCurrentModalEnhancementContext(tile, sourcePath, requestGeneration))
+                        return;
+                }
+            }
+
+            if (!response.Ok || response.Payload is not JsonElement payload
+                || !payload.TryGetProperty("job", out JsonElement jobElement))
+            {
+                _modalEnhancementError = response.Error;
+                SetStatusToast(response.Error);
+                return;
+            }
+
+            ApplyModalEnhancementJob(tile, ParseModalEnhancementJob(jobElement));
+            ShowModalInteractionFeedback("AI enhancement started");
+        }
+        finally
+        {
+            _modalEnhancementRequestPending = false;
+            UpdateModalEnhancementActionControls();
+        }
+    }
+
+    private async void CancelModalEnhancement_Click(object sender, RoutedEventArgs e)
+    {
+        if (_modalEnhancementRequestPending
+            || string.IsNullOrWhiteSpace(_modalEnhancementJobId)
+            || SelectedTile() is not Tile tile)
+        {
+            return;
+        }
+
+        long requestGeneration = _modalEnhancementGeneration;
+        string sourcePath = tile.Path;
+        string requestJobId = _modalEnhancementJobId;
+        _modalEnhancementRequestPending = true;
+        UpdateModalEnhancementActionControls();
+        try
+        {
+            EnhancementApiResponse response = await SendEnhancementApiAsync(
+                HttpMethod.Post,
+                $"api/enhance/jobs/{Uri.EscapeDataString(requestJobId)}/cancel");
+            if (!IsCurrentModalEnhancementContext(tile, sourcePath, requestGeneration))
+                return;
+            if (!response.Ok || response.Payload is not JsonElement payload
+                || !payload.TryGetProperty("job", out JsonElement jobElement))
+            {
+                _modalEnhancementError = response.Error;
+                SetStatusToast(response.Error);
+                return;
+            }
+            ApplyModalEnhancementJob(tile, ParseModalEnhancementJob(jobElement));
+            ShowModalInteractionFeedback("AI enhancement canceled");
+        }
+        finally
+        {
+            _modalEnhancementRequestPending = false;
+            UpdateModalEnhancementActionControls();
+        }
+    }
+
+    private async void DeleteModalEnhancedOutput_Click(object sender, RoutedEventArgs e)
+    {
+        if (_modalEnhancementRequestPending
+            || string.IsNullOrWhiteSpace(_modalEnhancementJobId)
+            || SelectedTile() is not Tile tile)
+        {
+            return;
+        }
+
+        bool confirmed = _confirmEnhancedOutputDeleteForSmoke?.Invoke() ?? MessageBox.Show(
+                this,
+                "Delete only this enhanced output? The original image will be kept.",
+                "Delete enhanced output",
+                MessageBoxButton.YesNo,
+                MessageBoxImage.Warning,
+                MessageBoxResult.No) == MessageBoxResult.Yes;
+        if (!confirmed)
+            return;
+
+        long requestGeneration = _modalEnhancementGeneration;
+        string sourcePath = tile.Path;
+        string requestJobId = _modalEnhancementJobId;
+        _modalEnhancementRequestPending = true;
+        UpdateModalEnhancementActionControls();
+        try
+        {
+            EnhancementApiResponse response = await SendEnhancementApiAsync(
+                HttpMethod.Delete,
+                $"api/enhance/jobs/{Uri.EscapeDataString(requestJobId)}/output");
+            if (!IsCurrentModalEnhancementContext(tile, sourcePath, requestGeneration))
+                return;
+            if (!response.Ok)
+            {
+                _modalEnhancementError = response.Error;
+                SetStatusToast(response.Error);
+                return;
+            }
+
+            _modalShowingEnhanced = false;
+            tile.Enhanced = false;
+            tile.EnhancedOutputPath = null;
+            _enhancedOutputs.Remove(NormalizeFavoritePath(tile.Path));
+            _modalEnhancementJobId = null;
+            _modalEnhancementJobStatus = null;
+            _modalEnhancementProgress = 0;
+            _modalEnhancementError = null;
+            OpenModal();
+            ShowModalInteractionFeedback("Enhanced output deleted; original kept");
+        }
+        finally
+        {
+            _modalEnhancementRequestPending = false;
+            UpdateModalEnhancementActionControls();
+        }
+    }
+
     private void ToggleModalMetadataSidebar_Click(object sender, RoutedEventArgs e)
         => SetModalMetadataSidebarVisible(ModalMetadataSidebar.Visibility != Visibility.Visible);
 
@@ -7444,11 +8318,19 @@ public partial class MainWindow : Window
         CancelPendingModalSingleClick();
         EndModalPointerGesture();
         _modalCts?.Cancel();
+        _modalEnhancementPollTimer.Stop();
+        _modalEnhancementGeneration++;
         Modal.Visibility = Visibility.Collapsed;
         _modalShowingEnhanced = false;
         _modalSourceTilePath = null;
         _modalDisplayPath = null;
+        _modalEnhancementRequestPending = false;
+        _modalEnhancementJobId = null;
+        _modalEnhancementJobStatus = null;
+        _modalEnhancementProgress = 0;
+        _modalEnhancementError = null;
         UpdateModalEnhancedControls(false);
+        UpdateModalEnhancementActionControls();
         SetModalChromeVisible(true, showFeedback: false);
         _modalFeedbackTimer.Stop();
         ModalInteractionFeedback.Visibility = Visibility.Collapsed;
@@ -9285,6 +10167,12 @@ public partial class MainWindow : Window
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public static string ResolveSharedProjectRootForSmoke(string start)
+    {
+        string fullStart = Path.GetFullPath(start);
+        string projectRoot = FindProjectRoot(fullStart) ?? fullStart;
+        return ResolveMainCheckoutRoot(projectRoot) ?? projectRoot;
+    }
     public int CatalogCountForSmoke => _allTiles.Count;
     public List<string> AllFileNamesForSmoke => _allTiles.Select(static tile => tile.FileName).ToList();
     public string DeleteStatusForSmoke => _deleteStatus;
@@ -9681,6 +10569,34 @@ public partial class MainWindow : Window
         return RowsList.Visibility == Visibility.Visible;
     }
 
+    public bool ScrollListThumbnailProbeForSmoke(int index)
+    {
+        if (RowsList.Visibility != Visibility.Visible || index < 0 || index >= _tiles.Count)
+            return false;
+        Tile tile = _tiles[index];
+        tile.Thumbnail = null;
+        _thumbnailDecodeFailures.TryRemove(tile.Path, out _);
+        RowsList.ScrollIntoView(tile);
+        Dispatcher.BeginInvoke(ScheduleListThumbnailViewport, DispatcherPriority.Render);
+        return true;
+    }
+
+    public async Task<bool> WaitForListThumbnailProbeForSmokeAsync(int index, int timeoutMilliseconds = 3_000)
+    {
+        if (index < 0 || index >= _tiles.Count)
+            return false;
+        Tile tile = _tiles[index];
+        var watch = Stopwatch.StartNew();
+        while (watch.ElapsedMilliseconds < timeoutMilliseconds)
+        {
+            await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+            if (tile.Thumbnail is not null)
+                return true;
+            await Task.Delay(20);
+        }
+        return tile.Thumbnail is not null;
+    }
+
     public bool SetGridModeForSmoke()
     {
         ModeGrid.IsChecked = true;
@@ -9699,7 +10615,7 @@ public partial class MainWindow : Window
             && string.Equals(canonicalPath, tile.Path, StringComparison.OrdinalIgnoreCase)
             && _selectedPaths.Contains(tile.Path)
             && string.Equals(_primarySelectedPath, tile.Path, StringComparison.OrdinalIgnoreCase);
-        bool gridWindowContains = tile is not null && _gridTiles.Contains(tile);
+        bool gridWindowContains = tile is not null && _tiles.Contains(tile);
         bool selectedItemsContains = tile is not null && CardsList.SelectedItems.Contains(tile);
         ListBoxItem? container = tile is null
             ? null
@@ -9811,10 +10727,28 @@ public partial class MainWindow : Window
     public int VisibleUnseenDotCountForSmoke => _allTiles.Count(static tile => tile.ShowUnseenDot);
     public bool FoldersSectionExpandedForSmoke => _foldersSectionExpanded && FoldersSectionContent.Visibility == Visibility.Visible;
     public int LastInitialUnseenCountForSmoke => _lastInitialUnseenCount;
-    public int GridRealizedCountForSmoke => _gridTiles.Count;
-    public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - _gridTiles.Count);
-    public int GridWindowStartIndexForSmoke => _gridStartIndex;
-    public int GridWindowEndIndexForSmoke => _gridStartIndex + _gridTiles.Count;
+    public int GridRealizedCountForSmoke
+        => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.RealizedItemCount ?? 0;
+    public int ThumbnailBrowserCacheHitsForSmoke => _thumbnailBrowserCacheHits;
+    public static IReadOnlyList<string> BrowserThumbnailCachePathsForSmoke(string path, DateTime modifiedUtc)
+        => GetBrowserThumbnailCachePaths(new Tile { Path = Path.GetFullPath(path), ModifiedUtc = modifiedUtc });
+    public int GridItemsSourceCountForSmoke => CardsList.Items.Count;
+    public bool GridUsesFullExtentVirtualizationForSmoke
+        => ReferenceEquals(CardsList.ItemsSource, _tiles)
+            && FindVisualDescendant<VirtualizingWrapPanel>(CardsList) is not null;
+    public double GridExtentHeightForSmoke
+        => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.ExtentHeight ?? 0;
+    public double GridViewportHeightForSmoke
+        => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.ViewportHeight ?? 0;
+    public int GridFirstVisibleIndexForSmoke
+        => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.FirstVisibleIndex ?? -1;
+    public int GridLastVisibleIndexForSmoke
+        => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.LastVisibleIndex ?? -1;
+    public int GridDeferredCountForSmoke => Math.Max(0, _tiles.Count - GridRealizedCountForSmoke);
+    public int GridWindowStartIndexForSmoke
+        => Math.Max(0, FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.FirstRealizedIndex ?? 0);
+    public int GridWindowEndIndexForSmoke
+        => Math.Max(GridWindowStartIndexForSmoke, (FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.LastRealizedIndex ?? -1) + 1);
     public bool FocusSearchInputForSmoke() => SearchInput.Focus();
     public bool SearchWatermarkVisibleForSmoke => SearchWatermark.Visibility == Visibility.Visible;
     public bool SearchAutomationHelpTextForSmoke => string.Equals(
@@ -9847,7 +10781,7 @@ public partial class MainWindow : Window
         OnPreviewKeyDown(args);
         return args.Handled;
     }
-    public int GridMaxRealizationCountForSmoke => MaxGridRealizationCount;
+    public int GridMaxRealizationCountForSmoke => MaxVirtualizedContainerSmokeCount;
     public double CardWidthForSmoke => SizeSlider.Value;
     public double ListThumbnailSizeForSmoke => _allTiles.FirstOrDefault()?.ListThumbnailSize ?? 0;
     public bool ListUsesRecyclingVirtualizationForSmoke
@@ -10054,9 +10988,9 @@ public partial class MainWindow : Window
         int first = await MeasureAtAsync(0);
         int middle = await MeasureAtAsync(viewer.ScrollableHeight / 2);
         int last = await MeasureAtAsync(viewer.ScrollableHeight);
-        bool bounded = first is > 0 and <= MaxGridRealizationCount
-            && middle is > 0 and <= MaxGridRealizationCount
-            && last is > 0 and <= MaxGridRealizationCount;
+        bool bounded = first is > 0 and <= MaxVirtualizedContainerSmokeCount
+            && middle is > 0 and <= MaxVirtualizedContainerSmokeCount
+            && last is > 0 and <= MaxVirtualizedContainerSmokeCount;
         return new ListVirtualizationProbe(listMode, ListUsesRecyclingVirtualizationForSmoke, bounded, first, middle, last);
     }
     public double SidebarWidthForSmoke => Sidebar.ActualWidth;
@@ -10074,10 +11008,20 @@ public partial class MainWindow : Window
     public void ToggleRightPanelForSmoke() => ToggleRight_Click(this, new RoutedEventArgs());
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
     public double LastGridZoomAnchorDriftForSmoke => _lastGridZoomAnchorDrift;
-    public string? GridViewportAnchorForSmoke => _gridTiles.Count == 0 ? null : _gridTiles[_gridTiles.Count / 2].FileName;
+    public string? GridViewportAnchorForSmoke
+    {
+        get
+        {
+            VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+            if (_tiles.Count == 0 || panel is null || panel.FirstVisibleIndex < 0)
+                return null;
+            int end = Math.Max(panel.FirstVisibleIndex, panel.LastVisibleIndex);
+            return _tiles[Math.Clamp((panel.FirstVisibleIndex + end) / 2, 0, _tiles.Count - 1)].FileName;
+        }
+    }
     public string? CaptureGridViewportAnchorForSmoke() => Path.GetFileName(CaptureGridZoomAnchor()?.Path);
     public bool GridContainsFileForSmoke(string? fileName)
-        => !string.IsNullOrWhiteSpace(fileName) && _gridTiles.Any(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        => !string.IsNullOrWhiteSpace(fileName) && _tiles.Any(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
     public async Task<bool> ScrollGridToMiddleForSmokeAsync()
     {
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
@@ -10091,6 +11035,12 @@ public partial class MainWindow : Window
     public string DisplayStyleForSmoke => _displayStyle;
     public string AspectModeForSmoke => _aspectMode;
     public string SortByForSmoke => _sortBy;
+    public bool DateGroupingActiveForSmoke
+        => UsesDateGrouping
+            && FindVisualDescendant<VirtualizingWrapPanel>(CardsList) is { ShowGroupHeaders: true };
+    public bool FlatGridActiveForSmoke
+        => !UsesDateGrouping
+            && FindVisualDescendant<VirtualizingWrapPanel>(CardsList) is { ShowGroupHeaders: false };
     public string DatePresetForSmoke => _datePreset;
     public string? DateFromForSmoke => FormatStateDate(_dateFromLocal);
     public string? DateToForSmoke => FormatStateDate(_dateToLocal);
@@ -10321,7 +11271,11 @@ public partial class MainWindow : Window
             && ModalNextButton.Visibility == Visibility.Visible;
     public bool ModalEdgeZonesAccessibleForSmoke
         => string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalPreviousButton), "Previous image edge zone", StringComparison.Ordinal)
-            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalNextButton), "Next image edge zone", StringComparison.Ordinal);
+            && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalNextButton), "Next image edge zone", StringComparison.Ordinal)
+            && ModalImageArea.ActualWidth > 0
+            && Math.Abs((ModalPreviousZoneColumn.ActualWidth / ModalImageArea.ActualWidth) - 0.28) < 0.01
+            && Math.Abs((ModalNextZoneColumn.ActualWidth / ModalImageArea.ActualWidth) - 0.28) < 0.01;
+    public bool CloseModalFromBackdropForSmoke() => TryCloseModalFromBackdrop(ModalImageArea);
     public bool ModalInteractionFeedbackVisibleForSmoke => ModalInteractionFeedback.Visibility == Visibility.Visible;
     public string ModalInteractionFeedbackForSmoke => ModalInteractionFeedbackText.Text;
     public void ScheduleModalChromeToggleForSmoke() => ScheduleModalChromeToggle();
@@ -10357,6 +11311,63 @@ public partial class MainWindow : Window
     public bool ModalShowingEnhancedForSmoke => _modalShowingEnhanced;
     public bool ModalEnhancedToggleAvailableForSmoke => SelectedTile() is Tile tile && TryGetModalEnhancedOutput(tile, out _);
     public string? ModalDisplayPathForSmoke => _modalDisplayPath;
+    public string? ModalEnhancementJobIdForSmoke => _modalEnhancementJobId;
+    public string? ModalEnhancementStatusForSmoke => _modalEnhancementJobStatus;
+    public int ModalEnhancementProgressForSmoke => _modalEnhancementProgress;
+    public string ModalEnhancementMessageForSmoke => ModalEnhancementStatusText.Text;
+    public bool ModalEnhancementCancelVisibleForSmoke => ModalEnhanceCancelButton.Visibility == Visibility.Visible;
+    public bool ModalEnhancedDeleteVisibleForSmoke => ModalEnhancedDeleteButton.Visibility == Visibility.Visible;
+
+    public void ConfigureModalEnhancementForSmoke(
+        Func<HttpRequestMessage, CancellationToken, Task<HttpResponseMessage>> sender,
+        bool confirmLargeJob = true,
+        bool confirmOutputDelete = true)
+    {
+        _modalEnhancementSender = sender;
+        _confirmLargeEnhancementForSmoke = () => confirmLargeJob;
+        _confirmEnhancedOutputDeleteForSmoke = () => confirmOutputDelete;
+    }
+
+    public async Task<bool> RefreshModalEnhancementForSmokeAsync()
+    {
+        if (Modal.Visibility != Visibility.Visible || SelectedTile() is not Tile tile)
+            return false;
+        await RefreshModalEnhancementStateAsync(tile.Path, _modalEnhancementGeneration, showUnavailableError: true);
+        return true;
+    }
+
+    public async Task<bool> StartModalEnhancementForSmokeAsync()
+    {
+        StartModalEnhancement_Click(this, new RoutedEventArgs());
+        await WaitForModalEnhancementRequestForSmokeAsync();
+        return _modalEnhancementJobStatus is "queued" or "running";
+    }
+
+    public void BeginModalEnhancementForSmoke()
+        => StartModalEnhancement_Click(this, new RoutedEventArgs());
+
+    public Task WaitForModalEnhancementRequestCompletionForSmokeAsync()
+        => WaitForModalEnhancementRequestForSmokeAsync();
+
+    public async Task<bool> CancelModalEnhancementForSmokeAsync()
+    {
+        CancelModalEnhancement_Click(this, new RoutedEventArgs());
+        await WaitForModalEnhancementRequestForSmokeAsync();
+        return _modalEnhancementJobStatus == "canceled";
+    }
+
+    public async Task<bool> DeleteModalEnhancedOutputForSmokeAsync()
+    {
+        DeleteModalEnhancedOutput_Click(this, new RoutedEventArgs());
+        await WaitForModalEnhancementRequestForSmokeAsync();
+        return SelectedTile() is Tile tile && !tile.Enhanced && !_modalShowingEnhanced;
+    }
+
+    private async Task WaitForModalEnhancementRequestForSmokeAsync()
+    {
+        for (int attempt = 0; attempt < 300 && _modalEnhancementRequestPending; attempt++)
+            await Task.Delay(10);
+    }
 
     public DisplayStyleMetrics DisplayStyleMetricsForSmoke()
     {
@@ -10370,6 +11381,7 @@ public partial class MainWindow : Window
             tile?.ListThumbnailWidth ?? 0,
             tile?.ListThumbnailHeight ?? 0,
             tile?.ListThumbnailSize ?? 0,
+            tile?.CardThumbnailStretch.ToString() ?? Stretch.Uniform.ToString(),
             _tiles.Count);
     }
 
@@ -10497,17 +11509,24 @@ public partial class MainWindow : Window
 
     public bool RealizeNextGridBatchForSmoke()
     {
-        int before = _gridTiles.Count;
-        int beforeStart = _gridStartIndex;
-        RealizeNextGridBatch();
-        return _gridTiles.Count > before || _gridStartIndex > beforeStart;
+        VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+        if (panel is null)
+            return false;
+        int before = panel.FirstVisibleIndex;
+        panel.PageDown();
+        UpdateLayout();
+        return panel.FirstVisibleIndex > before;
     }
 
     public bool RealizePreviousGridBatchForSmoke()
     {
-        int beforeStart = _gridStartIndex;
-        RealizePreviousGridBatch();
-        return _gridStartIndex < beforeStart;
+        VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+        if (panel is null)
+            return false;
+        int before = panel.FirstVisibleIndex;
+        panel.PageUp();
+        UpdateLayout();
+        return panel.FirstVisibleIndex >= 0 && panel.FirstVisibleIndex < before;
     }
 
     public bool SelectIndexForSmoke(int index)
@@ -10905,6 +11924,7 @@ public readonly record struct DisplayStyleMetrics(
     double ListThumbnailWidth,
     double ListThumbnailHeight,
     double ListThumbnailSize,
+    string CardThumbnailStretch,
     int FilteredCount);
 
 public readonly record struct ListVirtualizationProbe(
@@ -11090,6 +12110,7 @@ public sealed class LoadMetrics
     public long FolderBucketViewMs { get; set; }
     public long InitialFilterMs { get; set; }
     public long CatalogStatsMs { get; set; }
+    public long CatalogReadyMs { get; set; }
     public long MetadataMs { get; set; }
     public int MetadataWorkers { get; set; }
     public int MetadataCompleted { get; set; }
@@ -11306,6 +12327,11 @@ internal readonly record struct GridZoomAnchor(string Path, double ViewportY, do
 
 internal readonly record struct DecodedThumbnail(Tile Tile, BitmapSource? Thumbnail);
 
+internal readonly record struct DecodedImageMetadata(
+    Tile Tile,
+    ImageDimensions Dimensions,
+    string Prompt);
+
 internal sealed class ResettableObservableCollection<T> : ObservableCollection<T>
 {
     public void ReplaceAll(IReadOnlyList<T> items)
@@ -11328,7 +12354,6 @@ public sealed class Tile : INotifyPropertyChanged
     public Brush? ArtGlow { get; set; }
     public string FileName { get; set; } = "";
     public string Group { get; set; } = "";
-    public string Prompt { get; set; } = "";
     public string Path { get; set; } = "";
     public bool IsRealFile { get; set; }
     public string FolderBucketKey { get; set; } = "";
@@ -11337,10 +12362,58 @@ public sealed class Tile : INotifyPropertyChanged
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
-    public int ImagePixelWidth { get; set; }
-    public int ImagePixelHeight { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
+
+    private string _prompt = "";
+    private int _imagePixelWidth;
+    private int _imagePixelHeight;
+
+    public string Prompt
+    {
+        get => _prompt;
+        set
+        {
+            value ??= "";
+            if (string.Equals(_prompt, value, StringComparison.Ordinal)) return;
+            _prompt = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Prompt)));
+        }
+    }
+
+    public int ImagePixelWidth
+    {
+        get => _imagePixelWidth;
+        set
+        {
+            if (_imagePixelWidth == value) return;
+            _imagePixelWidth = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImagePixelWidth)));
+        }
+    }
+
+    public int ImagePixelHeight
+    {
+        get => _imagePixelHeight;
+        set
+        {
+            if (_imagePixelHeight == value) return;
+            _imagePixelHeight = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ImagePixelHeight)));
+        }
+    }
+
+    private Stretch _cardThumbnailStretch = Stretch.Uniform;
+    public Stretch CardThumbnailStretch
+    {
+        get => _cardThumbnailStretch;
+        set
+        {
+            if (_cardThumbnailStretch == value) return;
+            _cardThumbnailStretch = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardThumbnailStretch)));
+        }
+    }
 
     private int _fav;
     private bool _unseen;

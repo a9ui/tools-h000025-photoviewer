@@ -1,6 +1,9 @@
 param(
     [string]$Configuration = "Release",
+    [string]$ExecutablePath = "",
+    [switch]$SkipBuild,
     [int]$Count = 20000,
+    [int]$FolderCount = 1,
     [string]$OutputPath = (Join-Path $env:TEMP ("photoviewer-wpf-catalog-stress-" + [guid]::NewGuid().ToString('N') + ".json")),
     [int]$UnresponsiveStreakLimitMs = 750,
     [int]$OverallTimeoutSeconds = 90
@@ -8,13 +11,15 @@ param(
 
 $ErrorActionPreference = 'Stop'
 if ($Count -lt 2) { throw 'Count must be at least 2.' }
+if ($FolderCount -lt 1 -or $FolderCount -gt $Count) { throw 'FolderCount must be between 1 and Count.' }
 if ($OutputPath.Contains('"')) { throw 'OutputPath cannot contain a double quote.' }
 if ($UnresponsiveStreakLimitMs -lt 1) { throw 'UnresponsiveStreakLimitMs must be positive.' }
 if ($OverallTimeoutSeconds -lt 1) { throw 'OverallTimeoutSeconds must be positive.' }
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot 'local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj'
-$exe = Join-Path $repoRoot "local-native\PhotoViewer.Wpf\bin\$Configuration\net8.0-windows\PhotoViewer.Wpf.exe"
+$defaultExe = Join-Path $repoRoot "local-native\PhotoViewer.Wpf\bin\$Configuration\net8.0-windows\PhotoViewer.Wpf.exe"
+$exe = if ([string]::IsNullOrWhiteSpace($ExecutablePath)) { $defaultExe } else { [IO.Path]::GetFullPath($ExecutablePath) }
 $tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
 $tempRootPrefix = $tempRoot + [IO.Path]::DirectorySeparatorChar
 $outputFullPath = [IO.Path]::GetFullPath($OutputPath)
@@ -22,8 +27,11 @@ if (-not $outputFullPath.StartsWith($tempRootPrefix, [StringComparison]::Ordinal
     throw "OutputPath must stay under TEMP: $outputFullPath"
 }
 
-dotnet build $project -c $Configuration --nologo
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+if (-not $SkipBuild) {
+    dotnet build $project -c $Configuration --nologo
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+}
+if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) { throw "WPF executable was not found: $exe" }
 
 Remove-Item -LiteralPath $outputFullPath -Force -ErrorAction SilentlyContinue
 if (-not ('PhotoViewerWmNullProbe' -as [type])) {
@@ -64,7 +72,7 @@ $unresponsiveSegments = [Collections.Generic.List[object]]::new()
 $overallTimeoutMs = [int64]$OverallTimeoutSeconds * 1000
 try {
     $process = Start-Process -FilePath $exe `
-        -ArgumentList @('--catalog-stress-smoke', ('"{0}"' -f $outputFullPath), '--count', $Count.ToString()) `
+        -ArgumentList @('--catalog-stress-smoke', ('"{0}"' -f $outputFullPath), '--count', $Count.ToString(), '--folder-count', $FolderCount.ToString()) `
         -WindowStyle Hidden -PassThru
     $spawnedProcessId = $process.Id
     $overallWatch.Start()
@@ -240,20 +248,32 @@ catch {
     $structuralFailures += $_.Exception.Message
 }
 if ($result.requestedCount -ne $Count) { $structuralFailures += "requested count was $($result.requestedCount)" }
+if ($result.requestedFolderCount -ne $FolderCount -or $result.loadedFolderCount -ne $FolderCount) { $structuralFailures += "requested/loaded folder counts were $($result.requestedFolderCount)/$($result.loadedFolderCount)" }
 if ($result.fixtureCount -ne $Count) { $structuralFailures += "fixture count was $($result.fixtureCount)" }
 if ($result.catalogCount -ne $Count -or $result.filteredCount -ne $Count) { $structuralFailures += "catalog/filtered counts were $($result.catalogCount)/$($result.filteredCount)" }
 if ($result.silentTruncateCount -ne 0) { $structuralFailures += "silent truncate count was $($result.silentTruncateCount)" }
 if ($result.gridRealized -gt $result.gridMaximum) { $structuralFailures += "grid realization exceeded bound ($($result.gridRealized) > $($result.gridMaximum))" }
 if ($result.gridDeferred -ne ($Count - $result.gridRealized)) { $structuralFailures += "grid deferred count was $($result.gridDeferred)" }
+if ($result.gridItemsSourceCount -ne $Count -or $result.gridUsesFullExtentVirtualization -ne $true) { $structuralFailures += "grid full-extent source/virtualization was $($result.gridItemsSourceCount)/$($result.gridUsesFullExtentVirtualization)" }
+if ($result.gridExtentHeight -le $result.gridViewportHeight -or $result.gridInitialFirstVisible -ne 0) { $structuralFailures += "grid initial extent/visible range was $($result.gridExtentHeight)/$($result.gridViewportHeight), first $($result.gridInitialFirstVisible)" }
 if ($result.listBounded -ne $true) { $structuralFailures += 'list realization was not recycling/bounded' }
+if ($result.listViewportThumbnailLoaded -ne $true) { $structuralFailures += "List viewport thumbnail scheduler did not decode index $($result.listThumbnailProbeIndex)" }
 if ($result.selectedTail -ne $true -or $result.tailCanonicalSelected -ne $true) { $structuralFailures += 'tail canonical selection failed' }
 if ($result.tailGridWindowContains -ne $true -or $result.tailCardsSelectedItemsContains -ne $true -or $result.tailGridContainerRealized -ne $true -or $result.tailGridContainerSelected -ne $true) { $structuralFailures += 'tail grid visual selection/container failed' }
+if ($result.tailGridLastVisible -ne ($Count - 1)) { $structuralFailures += "tail grid last visible index was $($result.tailGridLastVisible)" }
 if ($result.tailListModeRoundTrip -ne $true -or $result.tailListCanonicalSelected -ne $true -or $result.tailRowsSelectedItemsContains -ne $true -or $result.tailListContainerRealized -ne $true -or $result.tailListContainerSelected -ne $true) { $structuralFailures += 'tail List-mode canonical/visual round trip failed' }
 if ($result.tailGridModeRoundTrip -ne $true -or $result.tailGridRoundTripCanonicalSelected -ne $true -or $result.tailGridRoundTripWindowContains -ne $true -or $result.tailCardsRoundTripSelectedItemsContains -ne $true -or $result.tailGridRoundTripContainerRealized -ne $true -or $result.tailGridRoundTripContainerSelected -ne $true) { $structuralFailures += 'tail Grid-mode canonical/visual round trip failed' }
+if ($result.changedCreatedSort -ne $true -or $result.createdGroupingActive -ne $true) { $structuralFailures += 'Created sort/date-section mode did not activate' }
+if ($result.createdItemsSourceCount -ne $Count -or $result.createdUsesFullExtentVirtualization -ne $true) { $structuralFailures += "Created full-extent source/virtualization was $($result.createdItemsSourceCount)/$($result.createdUsesFullExtentVirtualization)" }
+if ($result.createdRealized -gt $result.gridMaximum -or $result.createdExtentHeight -le $result.createdViewportHeight) { $structuralFailures += "Created extent/realization was $($result.createdExtentHeight)/$($result.createdViewportHeight), realized $($result.createdRealized)" }
+if ($result.createdTailSelected -ne $true -or $result.createdTailCanonicalSelected -ne $true -or $result.createdTailGridWindowContains -ne $true -or $result.createdTailCardsSelectedItemsContains -ne $true -or $result.createdTailContainerRealized -ne $true -or $result.createdTailContainerSelected -ne $true) { $structuralFailures += 'Created exact tail canonical/visual selection failed' }
+if ($result.createdTailLastVisible -ne ($Count - 1)) { $structuralFailures += "Created tail last visible index was $($result.createdTailLastVisible)" }
 if ($result.modalTail -ne $true -or $result.finalSearchExact -ne $true) { $structuralFailures += 'tail search or modal reachability failed' }
+if ($result.flatZoomRoundTrip -ne $true -or $result.createdZoomRoundTrip -ne $true) { $structuralFailures += '100k Grid zoom anchor/width round trip failed' }
 if ($result.staleCancelled -ne $true -or $result.heartbeatCount -lt 4) { $structuralFailures += 'rapid-query cancellation or dispatcher heartbeat failed' }
 if ($result.sourceCountAfter -ne $Count) { $structuralFailures += "source count changed to $($result.sourceCountAfter)" }
 if ($result.enhancementJobsRead -ne 0 -or $result.enhancementCandidates -ne 0) { $structuralFailures += 'enhancement state was touched' }
+if ($result.browserThumbnailCacheCandidateCount -ne 2 -or $result.browserThumbnailPreciseCandidateCreated -ne $true -or $result.browserThumbnailCacheHits -lt 1) { $structuralFailures += "precise/integer Browser thumbnail cache fallback or fake-cache hit failed ($($result.browserThumbnailCacheCandidateCount)/$($result.browserThumbnailCacheHits))" }
 if ($null -eq $windowHandleSeenMs -or $probeCount -lt 1) { $structuralFailures += 'external WM_NULL probe never observed the WPF window' }
 if ($longestUnresponsiveStreakMs -gt $UnresponsiveStreakLimitMs) { $structuralFailures += "external WM_NULL unresponsive streak was $longestUnresponsiveStreakMs ms (limit $UnresponsiveStreakLimitMs ms)" }
 if ($null -eq $result.dispatcherHeartbeatMaxGapMs -or $result.dispatcherHeartbeatMaxGapMs -gt $UnresponsiveStreakLimitMs) { $structuralFailures += "dispatcher heartbeat gap was $($result.dispatcherHeartbeatMaxGapMs) ms (limit $UnresponsiveStreakLimitMs ms)" }

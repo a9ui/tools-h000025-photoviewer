@@ -432,7 +432,7 @@
                   <Grid>
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
-                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Image Source="{Binding Thumbnail}" Stretch="{Binding CardThumbnailStretch}" RenderOptions.BitmapScalingMode="HighQuality"/>
 
                     <!-- unseen dot -->
                     <Ellipse Width="8" Height="8" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"

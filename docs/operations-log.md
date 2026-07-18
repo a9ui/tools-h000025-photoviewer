@@ -115,3 +115,36 @@ Skill candidate:
 - After this change, `corepack pnpm exec vitest run src/lib/thumbnailCache.test.ts`
   and `powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1`
   both passed in the same worktree.
+
+## 2026-07-18 WPF 100k Full-Catalog Recovery
+
+- The former WPF Grid exposed only a 96-item moving window capped at 384 UI
+  items. Replacing it with a full-extent `VirtualizingWrapPanel` kept all
+  100,000 canonical items reachable while realizing only visible rows plus two
+  overscan rows.
+- Publish the complete lightweight path catalog before dimension and PNG prompt
+  metadata. On the final 100-folder / 100,000-image TEMP fixture, Viewer became
+  usable in 4,975ms while metadata continued in the background; the complete
+  load finished in 33,792ms.
+- Browser thumbnail-cache compatibility needs both the precise sub-millisecond
+  mtime key and the legacy integer fallback. WPF only reads these candidates;
+  it does not evict or rewrite the Browser cache.
+- A linked worktree must resolve the common checkout through `.git` /
+  `commondir` before choosing shared `.cache`. Otherwise WPF appears to lose
+  Browser Favorite, Seen, Recent, thumbnail, and Enhancement history even
+  though the files still exist in the main checkout.
+- Final local evidence: 47-check aggregate including 20,000 stress and 24-cycle
+  reload soak passed; exact 100,000 / 100 folders passed with silent truncate
+  0, Grid/List realized 15/9, tail index 99,999, zoom drift 0, and TEMP cleanup;
+  shared Favorite/Seen and Recent cross-runtime tests passed for 20 iterations.
+- SQLite `improvement_items.id = 41` records this local-only milestone. GitHub
+  Actions, GitHub publication, deployment, and external AI consultation were
+  intentionally not used.
+- Operational incident: an earlier invocation of
+  `node scripts/prod_launcher.js status --port 3000` was assumed to be a
+  read-only status check, but that command restarted the user-owned Browser
+  process and then exited. The mistake was disclosed immediately and port 3000
+  was restored with a hidden direct `next start` process (observed PID 2672,
+  HTTP 200 at restoration time). Do not use that launcher `status` form as a
+  probe for a user-owned port; WPF verification after the incident used TEMP
+  processes only and did not touch port 3000 again.
