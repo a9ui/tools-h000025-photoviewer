@@ -600,7 +600,7 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <div className="sidebar-row">
+        <div className="sidebar-row sidebar-size-row" role="group" aria-label="Thumbnail size control">
           <span className="sidebar-row-label">Size</span>
           <input
             type="range"

@@ -9,6 +9,8 @@ const store = vi.hoisted(() => ({
   resolveModalNavigationTarget: vi.fn(),
   setSelectedIndex: vi.fn(),
   setModalImageIds: vi.fn(),
+  searchResults: [] as Array<Record<string, unknown>>,
+  selectedIndex: 0 as number | null,
 }));
 
 const fixtures = vi.hoisted(() => {
@@ -34,16 +36,25 @@ const fixtures = vi.hoisted(() => {
       displayUrl: '/api/image?second&display=1',
       fullUrl: '/api/image?second&full=1',
     },
+    third: {
+      ...first,
+      id: 'C:/images/third.png',
+      filename: 'third.png',
+      absolutePath: 'C:/images/third.png',
+      fileUrl: '/api/image?third',
+      displayUrl: '/api/image?third&display=1',
+      fullUrl: '/api/image?third&full=1',
+    },
   };
 });
 
 vi.mock('../store/ImageContext', () => ({
   useImageStore: () => ({
-    searchResults: [fixtures.first, fixtures.second],
-    searchTotal: 2,
+    searchResults: store.searchResults,
+    searchTotal: store.searchResults.length,
     searchQuery: '',
     setSearchQuery: vi.fn(),
-    selectedIndex: 0,
+    selectedIndex: store.selectedIndex,
     setSelectedIndex: store.setSelectedIndex,
     modalImageIds: [],
     setModalImageIds: store.setModalImageIds,
@@ -71,10 +82,13 @@ vi.mock('../lib/clientImageCache', async (importOriginal) => ({
 
 const firstImage = fixtures.first as ImageFile;
 const secondImage = fixtures.second as ImageFile;
+const thirdImage = fixtures.third as ImageFile;
 
 describe('ImageModal sparse navigation lock', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    store.searchResults = [fixtures.first, fixtures.second];
+    store.selectedIndex = 0;
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({ jobs: [] }),
@@ -126,5 +140,38 @@ describe('ImageModal sparse navigation lock', () => {
     await waitFor(() => expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(0, 'delete'));
     expect(store.setSelectedIndex).not.toHaveBeenCalled();
     expect(store.setModalImageIds).not.toHaveBeenCalled();
+  });
+
+  it('moves exactly once from a deleted middle image to its original right neighbor', async () => {
+    store.searchResults = [fixtures.first, fixtures.second, fixtures.third];
+    store.selectedIndex = 1;
+    store.deleteImage.mockResolvedValue(true);
+    store.resolveModalNavigationTarget.mockResolvedValue({
+      status: 'found',
+      index: 2,
+      id: thirdImage.id,
+      filteredOrderedIds: null,
+    });
+    const { rerender } = render(<ImageModal />);
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
+    await waitFor(() => expect(store.setSelectedIndex).toHaveBeenCalledWith(2));
+    expect(store.deleteImage).toHaveBeenCalledTimes(1);
+    expect(store.deleteImage).toHaveBeenCalledWith(secondImage.id);
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1);
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(1, 'delete');
+    expect(store.setSelectedIndex).toHaveBeenCalledTimes(1);
+
+    // A late search refresh compacts [first, deleted, third] to [first, third].
+    // It changes the surviving image's numeric slot, but must not trigger a
+    // second navigation/selection commit that skips over it.
+    store.searchResults = [fixtures.first, fixtures.third];
+    store.selectedIndex = 1;
+    rerender(<ImageModal />);
+
+    expect(await screen.findByText('third.png')).toBeVisible();
+    await Promise.resolve();
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1);
+    expect(store.setSelectedIndex).toHaveBeenCalledTimes(1);
   });
 });

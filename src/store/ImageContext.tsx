@@ -410,6 +410,12 @@ function withIndexToken(url: string, indexToken: string | null) {
   return `${url}${url.includes('?') ? '&' : '?'}indexToken=${encodeURIComponent(indexToken)}`;
 }
 
+function catalogIdentity(dirSet: string): string {
+  return parseDirSet(dirSet)
+    .map((dir) => dir.replace(/\//g, '\\').replace(/[\\]+$/, '').toLowerCase())
+    .join('\n');
+}
+
 class SearchRequestError extends Error {
   constructor(message: string, readonly kind: SearchErrorKind) {
     super(message);
@@ -437,6 +443,86 @@ function normalizeScanEventProgress(data: Record<string, unknown>) {
     message: typeof data.message === 'string' ? data.message : undefined,
   };
 }
+
+type SharedSettingsPatch =
+  | { keyBindings: KeyBindings }
+  | { confirmBeforeDelete: boolean };
+
+async function saveSharedSettings(patch: SharedSettingsPatch): Promise<SharedSettingsSaveResult> {
+  let response: Response;
+  try {
+    response = await fetch('/api/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+  } catch {
+    return {
+      ok: false,
+      error: 'Could not reach the local settings service. Try again.',
+    };
+  }
+
+  let payload: unknown;
+  try {
+    payload = await response.json();
+  } catch {
+    return {
+      ok: false,
+      status: response.status,
+      error: 'The local settings service returned an invalid response. Try again.',
+    };
+  }
+
+  if (!response.ok) {
+    if (response.status === 409) {
+      return {
+        ok: false,
+        status: response.status,
+        error: 'The shared settings file changed or needs attention. Fix it, then retry.',
+      };
+    }
+    if (response.status === 503) {
+      return {
+        ok: false,
+        status: response.status,
+        error: 'Shared settings are temporarily unavailable. Try again.',
+      };
+    }
+    return {
+      ok: false,
+      status: response.status,
+      error: 'Could not save shared settings. Try again.',
+    };
+  }
+
+  if (!isMatchingSettingsSaveResponse(payload, patch)) {
+    return {
+      ok: false,
+      status: response.status,
+      error: 'The local settings service did not confirm the saved value. Try again.',
+    };
+  }
+
+  return { ok: true };
+}
+
+function isMatchingSettingsSaveResponse(payload: unknown, patch: SharedSettingsPatch): boolean {
+  if (!payload || typeof payload !== 'object' || (payload as { ok?: unknown }).ok !== true) return false;
+  const record = payload as Record<string, unknown>;
+  if ('confirmBeforeDelete' in patch) {
+    return record.confirmBeforeDelete === patch.confirmBeforeDelete;
+  }
+  const savedBindings = record.keyBindings;
+  if (!savedBindings || typeof savedBindings !== 'object') return false;
+  return (Object.keys(patch.keyBindings) as Array<keyof KeyBindings>).every(
+    (action) => (savedBindings as Record<string, unknown>)[action] === patch.keyBindings[action]
+  );
+}
+
+export type SharedSettingsSaveResult =
+  | { ok: true }
+  | { ok: false; error: string; status?: number };
 
 interface Ctx {
   // App phase
@@ -523,9 +609,9 @@ interface Ctx {
 
   // Settings
   keyBindings: KeyBindings;
-  setKeyBindings: (kb: KeyBindings) => void;
+  setKeyBindings: (kb: KeyBindings) => Promise<SharedSettingsSaveResult>;
   confirmBeforeDelete: boolean;
-  setConfirmBeforeDelete: (v: boolean) => void;
+  setConfirmBeforeDelete: (v: boolean) => Promise<SharedSettingsSaveResult>;
   showSettings: boolean;
   setShowSettings: (v: boolean) => void;
 
@@ -596,6 +682,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [revealImageId, setRevealImageId] = useState<string | null>(null);
   const [uiPreferencesHydrated, setUiPreferencesHydrated] = useState(false);
   const [previewTabsPersistenceReady, setPreviewTabsPersistenceReady] = useState(false);
+  const keyBindingsMutationGenerationRef = useRef(0);
+  const confirmDeleteMutationGenerationRef = useRef(0);
+  const keyBindingsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const confirmDeleteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const retainedIds = new Set(closedPreviewStack);
@@ -667,6 +757,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const pendingSearchPagePromisesRef = useRef<Map<string, Promise<void>>>(new Map());
   const pendingSearchControllersRef = useRef<Map<string, AbortController>>(new Map());
   const warmedThumbDirRef = useRef('');
+  const activeCatalogIdentityRef = useRef('');
   const selectedIndexRef = useRef<number | null>(null);
   const activePreviewIdRef = useRef<string | null>(null);
   const previewTabIdsRef = useRef<string[]>([]);
@@ -1177,33 +1268,55 @@ export function ImageProvider({ children }: { children: ReactNode }) {
 
   // ── Load key bindings from server ──
   useEffect(() => {
-    fetch('/api/settings')
-      .then(r => r.json())
+    const controller = new AbortController();
+    const keyBindingsGeneration = keyBindingsMutationGenerationRef.current;
+    const confirmDeleteGeneration = confirmDeleteMutationGenerationRef.current;
+    let active = true;
+
+    fetch('/api/settings', { signal: controller.signal })
+      .then(r => r.ok ? r.json() : null)
       .then(data => {
-        if (data.keyBindings) setKeyBindingsState({ ...DEFAULT_KEY_BINDINGS, ...data.keyBindings });
-        if (typeof data.confirmBeforeDelete === 'boolean') {
+        if (!active || !data || typeof data !== 'object') return;
+        if (keyBindingsMutationGenerationRef.current === keyBindingsGeneration && data.keyBindings) {
+          setKeyBindingsState({ ...DEFAULT_KEY_BINDINGS, ...data.keyBindings });
+        }
+        if (confirmDeleteMutationGenerationRef.current === confirmDeleteGeneration
+          && typeof data.confirmBeforeDelete === 'boolean') {
           setConfirmBeforeDeleteState(data.confirmBeforeDelete);
         }
       })
       .catch(() => {});
+
+    return () => {
+      active = false;
+      controller.abort();
+    };
   }, []);
 
-  const setKeyBindings = useCallback((kb: KeyBindings) => {
-    setKeyBindingsState(kb);
-    fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ keyBindings: kb }),
-    }).catch(() => {});
+  const setKeyBindings = useCallback((kb: KeyBindings): Promise<SharedSettingsSaveResult> => {
+    const operation = keyBindingsSaveQueueRef.current.then(async () => {
+      const result = await saveSharedSettings({ keyBindings: kb });
+      if (result.ok && providerMountedRef.current) {
+        keyBindingsMutationGenerationRef.current += 1;
+        setKeyBindingsState(kb);
+      }
+      return result;
+    });
+    keyBindingsSaveQueueRef.current = operation.then(() => undefined, () => undefined);
+    return operation;
   }, []);
 
-  const setConfirmBeforeDelete = useCallback((v: boolean) => {
-    setConfirmBeforeDeleteState(v);
-    fetch('/api/settings', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ confirmBeforeDelete: v }),
-    }).catch(() => {});
+  const setConfirmBeforeDelete = useCallback((v: boolean): Promise<SharedSettingsSaveResult> => {
+    const operation = confirmDeleteSaveQueueRef.current.then(async () => {
+      const result = await saveSharedSettings({ confirmBeforeDelete: v });
+      if (result.ok && providerMountedRef.current) {
+        confirmDeleteMutationGenerationRef.current += 1;
+        setConfirmBeforeDeleteState(v);
+      }
+      return result;
+    });
+    confirmDeleteSaveQueueRef.current = operation.then(() => undefined, () => undefined);
+    return operation;
   }, []);
 
   const queueFavoriteFilterNavigation = useCallback((
@@ -1926,11 +2039,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
   }, [searchResults, searchTotal]);
 
+  // Search/filter refreshes may temporarily omit an open preview tab. Keep its
+  // last usable snapshot until the user closes/recycles it or a different
+  // catalog is successfully adopted. Matching results still refresh the
+  // snapshot with current URLs/metadata.
   useEffect(() => {
     const byId = new Map<string, ImageFile>();
     for (const image of searchResults) {
       if (image) byId.set(image.id, image);
     }
+    const retainedSnapshotIds = new Set([
+      ...previewTabIdsRef.current,
+      ...(pendingPreviewTabsRestoreRef.current?.tabIds ?? []),
+    ]);
 
     setPreviewById((prev) => {
       if (Object.keys(prev).length === 0) return prev;
@@ -1941,6 +2062,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (matched) {
           next[id] = matched;
           if (matched !== prev[id]) changed = true;
+        } else if (retainedSnapshotIds.has(id)) {
+          next[id] = prev[id];
         } else {
           changed = true;
         }
@@ -1948,6 +2071,36 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       return changed ? next : prev;
     });
   }, [searchResults]);
+
+  const clearCatalogOwnedUiState = useCallback(() => {
+    selectedIndexRef.current = null;
+    activePreviewIdRef.current = null;
+    previewTabIdsRef.current = [];
+    pinnedPreviewIdsRef.current = [];
+    pendingFavoriteFilterMutationRef.current = null;
+    pendingPreviewTabsRestoreRef.current = null;
+    previewTabsHadStoredValueRef.current = true;
+    previewTabsUserModifiedRef.current = true;
+
+    setSelectedIndex(null);
+    setModalImageIdsState([]);
+    setSelectedIds([]);
+    setSelectionAnchorId(null);
+    setRevealImageId(null);
+    setPreviewTabIds([]);
+    setPinnedPreviewIds([]);
+    setActivePreviewIdState(null);
+    setPreviewById({});
+    setClosedPreviewStack([]);
+    setClosedPreviewById({});
+    setPreviewTabsPersistenceReady(true);
+
+    writeJsonLocalStorage(
+      PREVIEW_TAB_STORAGE_KEY,
+      serializePersistedPreviewTabs([], null),
+    );
+    writeJsonLocalStorage('pvu_pinned_tabs', []);
+  }, []);
 
   // ── Scan ──
   const cancelActiveScan = useCallback((resetUi: boolean) => {
@@ -1973,6 +2126,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const startScan = useCallback((options: { full?: boolean; dir?: string; onComplete?: (dir: string) => void } = {}) => {
     const scanDir = formatDirSet(parseDirSet(options.dir ?? dirPath));
     if (!scanDir || phase === 'scanning' || activeScanRunRef.current) return;
+    const nextCatalogIdentity = catalogIdentity(scanDir);
+    const replacesActiveCatalog = Boolean(activeCatalogIdentityRef.current)
+      && activeCatalogIdentityRef.current !== nextCatalogIdentity;
     if (scanDir !== dirPath) setDirPath(scanDir);
     setIndexToken(null);
     setScanError(null);
@@ -2057,6 +2213,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         setIndexToken(typeof eventData.indexToken === 'string' && eventData.indexToken.trim()
           ? eventData.indexToken
           : null);
+        if (replacesActiveCatalog) clearCatalogOwnedUiState();
+        activeCatalogIdentityRef.current = nextCatalogIdentity;
         options.onComplete?.(scanDir);
         setPhase('viewer');
       } else if (type === 'error') {
@@ -2068,7 +2226,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     es.onerror = () => {
       failScan('Connection lost before the scan completed.');
     };
-  }, [dirPath, phase, scheduleViewSettingsPersist]);
+  }, [clearCatalogOwnedUiState, dirPath, phase, scheduleViewSettingsPersist]);
 
   const dismissScanError = useCallback(() => {
     setScanError(null);

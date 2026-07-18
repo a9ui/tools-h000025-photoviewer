@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Collections.Specialized;
 using System.Collections.ObjectModel;
 using System.Collections.Frozen;
 using System.ComponentModel;
@@ -46,6 +47,7 @@ public partial class MainWindow : Window
     private const int MaxRecentFolderSets = 12;
     private const int PersistenceLockTimeoutMilliseconds = 2_000;
     private const int PersistenceLockRetryMilliseconds = 25;
+    private const long AsyncSharedStoreThresholdBytes = 1_048_576;
     private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
     private const double DefaultCardWidth = 200;
     private const double CardWidthStep = 20;
@@ -82,7 +84,7 @@ public partial class MainWindow : Window
         WriteIndented = true,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
-    private readonly ObservableCollection<Tile> _tiles = new();
+    private readonly ResettableObservableCollection<Tile> _tiles = new();
     private readonly ObservableCollection<Tile> _gridTiles = new();
     private readonly ObservableCollection<string> _landingFolderSet = new();
     private readonly ObservableCollection<FolderBucketView> _folderBucketViews = new();
@@ -95,6 +97,8 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _favoriteDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenPaths = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _seenDirtyPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, FavoritePendingMutation> _pendingFavoriteMutations = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, SeenPendingMutation> _pendingSeenMutations = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedFolderBucketKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -116,10 +120,33 @@ public partial class MainWindow : Window
     private bool _suppressStateSave;
     private bool _favoritesWriteBlocked;
     private bool _seenWriteBlocked;
+    private SharedStoreWriter<FavoriteDelta>? _favoriteWriter;
+    private SharedStoreWriter<SeenDelta>? _seenWriter;
+    private IReadOnlyList<FavoriteDelta>? _failedFavoriteBatch;
+    private IReadOnlyList<SeenDelta>? _failedSeenBatch;
+    private long _favoriteMutationGeneration;
+    private long _seenMutationGeneration;
+    private bool _favoriteWriterAdopted;
+    private bool _seenWriterAdopted;
+    private bool _favoritePumpScheduled;
+    private bool _seenPumpScheduled;
+    private bool _forceSharedWritersForSmoke;
+    private ManualResetEventSlim? _favoriteWriterEnteredForSmoke;
+    private ManualResetEventSlim? _favoriteWriterGateForSmoke;
+    private ManualResetEventSlim? _seenWriterEnteredForSmoke;
+    private ManualResetEventSlim? _seenWriterGateForSmoke;
+    private ManualResetEventSlim? _favoriteReloadDrainStartedForSmoke;
+    private ManualResetEventSlim? _seenReloadDrainStartedForSmoke;
+    private int _failNextFavoriteWriterForSmoke;
+    private int _failNextSeenWriterForSmoke;
     private bool _stateWriteBlocked;
     private double _rightPanelWidth = DefaultRightPanelWidth;
     private Dictionary<string, JsonElement>? _stateExtensionData;
     private bool _syncingSelection;
+    private long _selectionVisualSyncGeneration;
+    private long _queuedGridSelectionVisualSyncGeneration = -1;
+    private long _queuedListSelectionVisualSyncGeneration = -1;
+    private long _gridSelectionScrollSuppressionGeneration = -1;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
     private bool _dateFilterMigrationPending;
@@ -162,6 +189,8 @@ public partial class MainWindow : Window
     private string _loadPhase = "idle";
     private int _scanEnumerationDelayForSmokeMs;
     private int _scanMetadataDelayForSmokeMs;
+    private int _catalogPreparationBatchSizeForSmoke = 256;
+    private Action<string, int>? _catalogPreparationBatchHookForSmoke;
     private Action? _beforeMaterializeFilesForSmoke;
     private int _previewDecodeDelayForSmokeMs;
     private int _modalDecodeDelayForSmokeMs;
@@ -186,6 +215,13 @@ public partial class MainWindow : Window
         => Process.Start(startInfo) is not null;
     private string _lastDiagnosticsCopyText = "";
     private int _previewUpdateCount;
+    private long _lastCardsSelectionSyncMs;
+    private long _lastRowsSelectionSyncMs;
+    private long _lastEnsureGridSelectionMs;
+    private long _lastCardsScrollSelectionMs;
+    private long _lastRowsScrollSelectionMs;
+    private long _lastPreviewSelectionMs;
+    private long _lastSeenSelectionMs;
     private long _previewMs;
     private int _previewDeferredDecodeCount;
     private long _previewDeferredDecodeMs;
@@ -224,6 +260,10 @@ public partial class MainWindow : Window
     private bool _confirmBeforeDelete = true;
     private bool _shutdownPersistenceFlushed;
     private int _shutdownPersistenceFlushCount;
+    private bool _closingDrainInProgress;
+    private bool _allowCloseAfterSharedDrain;
+    private bool _sharedActionsDisabled;
+    private int _sharedReloadBarrierDepth;
     private Tile? _pendingDeleteTile;
     private DeleteSnapshot? _pendingBulkDeleteSnapshot;
     private readonly Dictionary<string, long> _sourceRecycleGenerationByPath = new(StringComparer.OrdinalIgnoreCase);
@@ -304,6 +344,77 @@ public partial class MainWindow : Window
 
     private void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
+        if (HasUnresolvedSharedFailures)
+        {
+            e.Cancel = true;
+            SetStatusToast(
+                "Favorite or Seen changes still need Retry. The window stayed open so the recovery intent is not lost.",
+                RetryFailedSharedBatches);
+            return;
+        }
+
+        if (!_allowCloseAfterSharedDrain && HasPendingSharedWrites())
+        {
+            e.Cancel = true;
+            if (!_closingDrainInProgress)
+                _ = DrainThenCloseAsync();
+            return;
+        }
+
+        FlushViewerStateForCloseOnce();
+    }
+
+    private bool HasPendingSharedWrites()
+        => _favoriteWriter?.HasPendingOrInFlight == true
+            || _seenWriter?.HasPendingOrInFlight == true;
+
+    private bool HasUnresolvedSharedFailures
+        => _failedFavoriteBatch is { Count: > 0 }
+            || _failedSeenBatch is { Count: > 0 };
+
+    private async Task DrainThenCloseAsync()
+    {
+        _closingDrainInProgress = true;
+        _sharedActionsDisabled = true;
+        SetStatusToast("Saving Favorite and Seen changes before closing...");
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+        try
+        {
+            Task<SharedWriteStatus> favorite = _favoriteWriter is { } favoriteWriter
+                ? favoriteWriter.DrainAsync(timeout.Token)
+                : Task.FromResult(SharedWriteStatus.Succeeded);
+            Task<SharedWriteStatus> seen = _seenWriter is { } seenWriter
+                ? seenWriter.DrainAsync(timeout.Token)
+                : Task.FromResult(SharedWriteStatus.Succeeded);
+            SharedWriteStatus[] statuses = await Task.WhenAll(favorite, seen);
+            if (statuses.All(static status => status == SharedWriteStatus.Succeeded) && !HasPendingSharedWrites())
+            {
+                _allowCloseAfterSharedDrain = true;
+                _sharedActionsDisabled = false;
+                _closingDrainInProgress = false;
+                Close();
+                return;
+            }
+
+            SetStatusToast("Favorite or Seen changes could not finish saving. The window stayed open; use Retry after fixing the local store.",
+                RetryFailedSharedBatches);
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatusToast("Favorite or Seen changes are still saving. The window stayed open; close again after the save finishes.");
+        }
+        finally
+        {
+            if (!_allowCloseAfterSharedDrain)
+            {
+                _sharedActionsDisabled = false;
+                _closingDrainInProgress = false;
+            }
+        }
+    }
+
+    private void FlushViewerStateForCloseOnce()
+    {
         if (_shutdownPersistenceFlushed)
             return;
 
@@ -326,7 +437,25 @@ public partial class MainWindow : Window
         // Closing flushes only the viewer state. Folder recents, favorites,
         // seen data, enhancement jobs, and source files are separate stores
         // and must not be rewritten merely because the window is closing.
-        SaveState();
+        ForceSaveStateForClose();
+    }
+
+    private void ForceSaveStateForClose()
+    {
+        // Catalog publication suppresses incidental state writes while it
+        // builds a replacement snapshot. Closing can interleave only at its
+        // explicit dispatcher yields, where the current state is still stable;
+        // bypass that temporary suppression so the one shutdown flush is real.
+        bool previousSuppress = _suppressStateSave;
+        _suppressStateSave = false;
+        try
+        {
+            SaveState();
+        }
+        finally
+        {
+            _suppressStateSave = previousSuppress;
+        }
     }
 
     private sealed record FilterSnapshot(
@@ -416,6 +545,14 @@ public partial class MainWindow : Window
             ? focusedPreviewTab?.Path
             : null;
         var requestedFolderSet = NormalizeFolderSet(folders);
+        // Accept every explicit folder-set request as a new load intent before
+        // checking availability. An all-unavailable request must still retire
+        // older work; otherwise that older scan can publish after Landing has
+        // already been updated for the newer request.
+        CancellationTokenSource? supersededCts = _loadCts;
+        _loadCts = null;
+        long generation = ++_loadGeneration;
+        supersededCts?.Cancel();
         var existingFolderSet = requestedFolderSet.Where(Directory.Exists).ToList();
         var unavailableFolderSet = requestedFolderSet
             .Except(existingFolderSet, StringComparer.OrdinalIgnoreCase)
@@ -432,8 +569,6 @@ public partial class MainWindow : Window
 
         string resolvedFolderSummary = FormatFolderSetSummary(requestedFolderSet);
 
-        _loadCts?.Cancel();
-        long generation = ++_loadGeneration;
         var cts = new CancellationTokenSource();
         _loadCtsCreatedCount++;
         _loadCts = cts;
@@ -451,8 +586,8 @@ public partial class MainWindow : Window
         CancelScanButton.Visibility = Visibility.Visible;
         CancelScanButton.IsEnabled = true;
         ScanBar.Value = 0;
-        ScanPercent.Text = "0%";
-        ScanLabel.Text = "Scanning...";
+        ScanPercent.Text = "";
+        ScanLabel.Text = "Scanning folders...";
         ScanMessage.Text = resolvedFolderSummary;
 
         IReadOnlyList<FileInfo> files;
@@ -496,7 +631,8 @@ public partial class MainWindow : Window
         if (files.Count > 0)
         {
             _loadPhase = "metadata";
-            ScanLabel.Text = "Reading image metadata...";
+            ScanPercent.Text = "";
+            ScanLabel.Text = $"Reading metadata for {files.Count:N0} images...";
             try
             {
                 metadata = await Task.Run(() =>
@@ -525,8 +661,21 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
+        HashSet<string> existingScannedPaths;
+        try
+        {
+            existingScannedPaths = await Task.Run(
+                () => SnapshotExistingPaths(files.Select(static file => file.FullName), cts.Token),
+                cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
+        }
+        if (!IsCurrentLoad(generation, cts))
+            return;
         files = files
-            .Where(file => File.Exists(file.FullName)
+            .Where(file => existingScannedPaths.Contains(file.FullName)
                 && !WasSourceRecycledAfter(file.FullName, sourceRecycleGenerationAtStart))
             .ToList();
         string? selectedPathAfterConcurrentRecycle = _sourceRecycleGeneration > sourceRecycleGenerationAtStart
@@ -536,41 +685,56 @@ public partial class MainWindow : Window
         _loadPhase = "publishing";
         CancelScanButton.Visibility = Visibility.Collapsed;
         CancelScanButton.IsEnabled = false;
+        ScanBar.Value = 0;
+        ScanPercent.Text = "0%";
+        ScanLabel.Text = $"Preparing 0 / {files.Count:N0} catalog entries";
 
         var materializeWatch = Stopwatch.StartNew();
+        var preparedTiles = new List<Tile>(files.Count);
+        long catalogPrepareMs = 0;
+        long catalogPublishOtherMs = 0;
+        long folderBucketViewMs = 0;
+        long initialFilterMs = 0;
+        long catalogStatsMs = 0;
         Tile? restoredActivePreviewTile = null;
         Tile? concurrentRecycleSelectionTile = null;
         bool previousSuppress = _suppressStateSave;
         _suppressStateSave = true;
+        _sharedReloadBarrierDepth++;
         try
         {
             // Keep the user's complete folder set, including temporarily
             // unavailable roots.  The catalog is built only from roots that
             // were available for this run, while Refresh can retry the same
             // explicit set after a drive reconnects or permissions change.
-            _currentFolderSet = requestedFolderSet;
-            _currentFolder = existingFolderSet.FirstOrDefault();
-            SetLandingFolderSet(_currentFolderSet);
-            LoadFavorites();
-            LoadSeenState();
+            // Keep interactive Favorite/Seen mutations outside the complete
+            // reload transaction, including async tile preparation. Prepared
+            // tiles capture these stores, so the barrier must remain active
+            // until the replacement catalog and its views are committed.
+            bool favoritesReady = await DrainFavoriteWriterForReloadAsync();
+            bool seenReady = await DrainSeenWriterForReloadAsync();
+            if (!IsCurrentLoad(generation, cts))
+                return;
+            if (favoritesReady)
+                LoadFavorites();
+            if (seenReady)
+                LoadSeenState();
             LoadEnhancedState();
-            _allTiles.Clear();
-            _tiles.Clear();
             double width = SizeSlider?.Value ?? 190;
             Action? beforeMaterialize = _beforeMaterializeFilesForSmoke;
             _beforeMaterializeFilesForSmoke = null;
             beforeMaterialize?.Invoke();
-            foreach (var file in files)
+            var catalogPrepareWatch = Stopwatch.StartNew();
+            for (int index = 0; index < files.Count; index++)
             {
+                FileInfo file = files[index];
                 try
                 {
                     // The source can disappear or become inaccessible after the
-                    // post-scan File.Exists snapshot. Treat that per-file race as
-                    // a recoverable scan skip instead of letting FileInfo.Length
-                    // or timestamp access tear down the UI dispatcher.
-                    if (!File.Exists(file.FullName))
-                        throw new FileNotFoundException("source disappeared before catalog publication", file.FullName);
-                    _allTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts));
+                    // background existence snapshot. FileInfo access is guarded,
+                    // and a second background snapshot immediately before commit
+                    // removes paths that disappeared during preparation.
+                    preparedTiles.Add(MakeFileTile(file, width, metadata.Dimensions, metadata.Prompts, requestedFolderSet));
                 }
                 catch (Exception ex) when (ex is IOException
                     or UnauthorizedAccessException
@@ -580,7 +744,60 @@ public partial class MainWindow : Window
                 {
                     scanAccessFailures.Enqueue(file.FullName);
                 }
+
+                int processed = index + 1;
+                int batchSize = Math.Max(1, _catalogPreparationBatchSizeForSmoke);
+                if (processed % batchSize == 0 || processed == files.Count)
+                {
+                    UpdateCatalogPreparationProgress(processed, files.Count);
+                    _catalogPreparationBatchHookForSmoke?.Invoke(file.FullName, processed);
+                    if (processed < files.Count)
+                    {
+                        await Dispatcher.Yield(DispatcherPriority.Background);
+                        if (!IsCurrentLoad(generation, cts))
+                            return;
+                    }
+                }
             }
+            catalogPrepareWatch.Stop();
+            catalogPrepareMs = catalogPrepareWatch.ElapsedMilliseconds;
+            if (!IsCurrentLoad(generation, cts))
+                return;
+
+            var catalogPublishWatch = Stopwatch.StartNew();
+            HashSet<string> existingPreparedPaths;
+            try
+            {
+                existingPreparedPaths = await Task.Run(
+                    () => SnapshotExistingPaths(preparedTiles.Select(static tile => tile.Path), cts.Token),
+                    cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                return;
+            }
+            if (!IsCurrentLoad(generation, cts))
+                return;
+            if (_sourceRecycleGeneration > sourceRecycleGenerationAtStart)
+                selectedPathAfterConcurrentRecycle = SelectedTile()?.Path;
+
+            var publishableTiles = new List<Tile>(preparedTiles.Count);
+            foreach (Tile tile in preparedTiles)
+            {
+                if (WasSourceRecycledAfter(tile.Path, sourceRecycleGenerationAtStart))
+                    continue;
+                if (!existingPreparedPaths.Contains(tile.Path))
+                {
+                    scanAccessFailures.Enqueue(tile.Path);
+                    continue;
+                }
+                publishableTiles.Add(tile);
+            }
+            _currentFolderSet = requestedFolderSet;
+            _currentFolder = existingFolderSet.FirstOrDefault();
+            SetLandingFolderSet(_currentFolderSet);
+            _allTiles.Clear();
+            _allTiles.AddRange(publishableTiles);
             ReportScanPublicationWarning(BuildScanWarning(
                 scanAccessFailures.Count,
                 scanBoundarySkips.Count,
@@ -588,20 +805,34 @@ public partial class MainWindow : Window
                 metadata.DecodeFailures));
             _lastInitialUnseenCount = _allTiles.Count(static tile => tile.Unseen);
             PruneHiddenFolderBucketsToCurrentSet();
+            var folderBucketViewWatch = Stopwatch.StartNew();
             RefreshFolderBucketViews();
+            folderBucketViewWatch.Stop();
+            folderBucketViewMs = folderBucketViewWatch.ElapsedMilliseconds;
 
             FolderPathText.Text = resolvedFolderSummary;
+            var initialFilterWatch = Stopwatch.StartNew();
             ApplyFilters(selectFirst: false);
+            initialFilterWatch.Stop();
+            initialFilterMs = initialFilterWatch.ElapsedMilliseconds;
             restoredActivePreviewTile = ReconcilePreviewTabsWithCurrentCatalog();
             if (!string.IsNullOrWhiteSpace(selectedPathAfterConcurrentRecycle))
             {
                 concurrentRecycleSelectionTile = _allTiles.FirstOrDefault(tile =>
                     string.Equals(tile.Path, selectedPathAfterConcurrentRecycle, StringComparison.OrdinalIgnoreCase));
             }
+            var catalogStatsWatch = Stopwatch.StartNew();
             UpdateFolderStats();
+            catalogStatsWatch.Stop();
+            catalogStatsMs = catalogStatsWatch.ElapsedMilliseconds;
+            catalogPublishWatch.Stop();
+            catalogPublishOtherMs = Math.Max(
+                0,
+                catalogPublishWatch.ElapsedMilliseconds - folderBucketViewMs - initialFilterMs - catalogStatsMs);
         }
         finally
         {
+            _sharedReloadBarrierDepth = Math.Max(0, _sharedReloadBarrierDepth - 1);
             _suppressStateSave = previousSuppress;
         }
         materializeWatch.Stop();
@@ -633,6 +864,11 @@ public partial class MainWindow : Window
                 previewDeferredDecodeMs: _previewDeferredDecodeMs,
                 previewDeferredDecodeCount: _previewDeferredDecodeCount,
                 totalWatch.ElapsedMilliseconds);
+            LastLoadMetrics.CatalogPrepareMs = catalogPrepareMs;
+            LastLoadMetrics.CatalogPublishOtherMs = catalogPublishOtherMs;
+            LastLoadMetrics.FolderBucketViewMs = folderBucketViewMs;
+            LastLoadMetrics.InitialFilterMs = initialFilterMs;
+            LastLoadMetrics.CatalogStatsMs = catalogStatsMs;
             UpdateGridMetrics(LastLoadMetrics);
             LandingPanel.IsEnabled = true;
             ScanBar.Value = 0;
@@ -677,6 +913,11 @@ public partial class MainWindow : Window
             _previewDeferredDecodeMs,
             _previewDeferredDecodeCount,
             totalWatch.ElapsedMilliseconds);
+        LastLoadMetrics.CatalogPrepareMs = catalogPrepareMs;
+        LastLoadMetrics.CatalogPublishOtherMs = catalogPublishOtherMs;
+        LastLoadMetrics.FolderBucketViewMs = folderBucketViewMs;
+        LastLoadMetrics.InitialFilterMs = initialFilterMs;
+        LastLoadMetrics.CatalogStatsMs = catalogStatsMs;
         UpdateGridMetrics(LastLoadMetrics);
         FinishCurrentLoad(generation, cts);
         }
@@ -1141,6 +1382,29 @@ public partial class MainWindow : Window
         ScanLabel.Text = $"{done:N0} / {total:N0} thumbnails";
     }
 
+    private void UpdateCatalogPreparationProgress(int done, int total)
+    {
+        if (total <= 0)
+            return;
+
+        double progress = done * 100.0 / total;
+        ScanBar.Value = progress;
+        ScanPercent.Text = $"{(int)progress}%";
+        ScanLabel.Text = $"Preparing {done:N0} / {total:N0} catalog entries";
+    }
+
+    private static HashSet<string> SnapshotExistingPaths(IEnumerable<string> paths, CancellationToken cancellationToken)
+    {
+        var existing = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (string path in paths)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (File.Exists(path))
+                existing.Add(path);
+        }
+        return existing;
+    }
+
     private static IEnumerable<string> EnumerateImageFiles(
         string root,
         ConcurrentQueue<string>? accessFailures = null,
@@ -1249,14 +1513,15 @@ public partial class MainWindow : Window
         FileInfo file,
         double width,
         IReadOnlyDictionary<string, ImageDimensions> dimensions,
-        IReadOnlyDictionary<string, string> prompts)
+        IReadOnlyDictionary<string, string> prompts,
+        IReadOnlyList<string> folderSet)
     {
         var modified = file.LastWriteTime;
         int paletteIndex = file.FullName.GetHashCode(StringComparison.OrdinalIgnoreCase) & int.MaxValue;
         bool enhanced = TryGetEnhancedOutputForPath(file.FullName, out string? enhancedOutputPath);
         dimensions.TryGetValue(file.FullName, out var imageSize);
         prompts.TryGetValue(file.FullName, out string? indexedPrompt);
-        var folderBucket = ResolveFolderBucket(file.FullName);
+        var folderBucket = ResolveFolderBucket(file.FullName, folderSet);
         var tile = new Tile
         {
             ArtBase = MakeBaseBrush(paletteIndex),
@@ -1307,7 +1572,7 @@ public partial class MainWindow : Window
         return $"{value:0.#} {units[unit]}";
     }
 
-    private FolderBucketIdentity ResolveFolderBucket(string filePath)
+    private static FolderBucketIdentity ResolveFolderBucket(string filePath, IReadOnlyList<string> folderSet)
     {
         string fullPath;
         try
@@ -1320,7 +1585,7 @@ public partial class MainWindow : Window
         }
 
         string? bestRoot = null;
-        foreach (string root in _currentFolderSet)
+        foreach (string root in folderSet)
         {
             if (!IsPathWithinRoot(fullPath, root))
                 continue;
@@ -1738,6 +2003,490 @@ public partial class MainWindow : Window
         SetStatusToast(message, retryAction);
     }
 
+    private sealed record FavoritePendingMutation(int DurableLevel, int DesiredLevel, long Generation);
+    private sealed record SeenPendingMutation(bool DurableSeen, bool WasUnseen, bool ShowedUnseenDot, long Generation);
+    private enum SharedStoreKind { Favorite, Seen }
+
+    private static long SafeStoreLength(string path)
+    {
+        try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
+        catch { return 0; }
+    }
+
+    private bool ShouldUseFavoriteWriter()
+    {
+        if (_favoriteWriterAdopted)
+            return true;
+        if (!_forceSharedWritersForSmoke && SafeStoreLength(ResolvedFavoritesPath) < AsyncSharedStoreThresholdBytes)
+            return false;
+
+        _favoriteWriterAdopted = true;
+        EnsureFavoriteWriter();
+        return true;
+    }
+
+    private bool ShouldUseSeenWriter()
+    {
+        if (_seenWriterAdopted)
+            return true;
+        if (!_forceSharedWritersForSmoke && SafeStoreLength(ResolvedSeenPath) < AsyncSharedStoreThresholdBytes)
+            return false;
+
+        _seenWriterAdopted = true;
+        EnsureSeenWriter();
+        return true;
+    }
+
+    private SharedStoreWriter<FavoriteDelta> EnsureFavoriteWriter()
+    {
+        return _favoriteWriter ??= new SharedStoreWriter<FavoriteDelta>(
+            WriteFavoriteBatchForActor,
+            result => Dispatcher.InvokeAsync(() => ApplyFavoriteWriteResult(result), DispatcherPriority.Background).Task);
+    }
+
+    private SharedStoreWriter<SeenDelta> EnsureSeenWriter()
+    {
+        return _seenWriter ??= new SharedStoreWriter<SeenDelta>(
+            WriteSeenBatchForActor,
+            result => Dispatcher.InvokeAsync(() => ApplySeenWriteResult(result), DispatcherPriority.Background).Task);
+    }
+
+    private SharedWriteResult<FavoriteDelta> WriteFavoriteBatchForActor(IReadOnlyList<FavoriteDelta> batch)
+    {
+        _favoriteWriterEnteredForSmoke?.Set();
+        if (_favoriteWriterGateForSmoke is { } gate && !gate.Wait(TimeSpan.FromSeconds(10)))
+            return new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Failed, batch, "favorite smoke gate timed out");
+        if (Interlocked.Exchange(ref _failNextFavoriteWriterForSmoke, 0) != 0)
+            return new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Failed, batch, "injected Favorite write failure");
+        return WriteFavoriteBatch(ResolvedFavoritesPath, batch);
+    }
+
+    private SharedWriteResult<SeenDelta> WriteSeenBatchForActor(IReadOnlyList<SeenDelta> batch)
+    {
+        _seenWriterEnteredForSmoke?.Set();
+        if (_seenWriterGateForSmoke is { } gate && !gate.Wait(TimeSpan.FromSeconds(10)))
+            return new SharedWriteResult<SeenDelta>(SharedWriteStatus.Failed, batch, "seen smoke gate timed out");
+        if (Interlocked.Exchange(ref _failNextSeenWriterForSmoke, 0) != 0)
+            return new SharedWriteResult<SeenDelta>(SharedWriteStatus.Failed, batch, "injected Seen write failure");
+        return WriteSeenBatch(ResolvedSeenPath, batch);
+    }
+
+    private static SharedWriteResult<FavoriteDelta> WriteFavoriteBatch(string path, IReadOnlyList<FavoriteDelta> batch)
+    {
+        using PersistenceLockLease? lease = TryAcquirePersistenceLock(path, PersistenceLockTimeoutMilliseconds);
+        if (lease is null)
+        {
+            return new SharedWriteResult<FavoriteDelta>(
+                File.Exists(path + ".lock") ? SharedWriteStatus.Busy : SharedWriteStatus.Failed,
+                batch,
+                "Favorite persistence lock was unavailable");
+        }
+
+        var merged = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        if (!TryLoadFavoritesFile(path, merged))
+            return new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Protected, batch, "Favorite JSON is invalid or unsupported");
+
+        foreach (FavoriteDelta delta in batch)
+        {
+            if (delta.DesiredLevel > 0)
+                merged[delta.Path] = Math.Clamp(delta.DesiredLevel, 1, 5);
+            else
+                merged.Remove(delta.Path);
+        }
+
+        var ordered = merged
+            .OrderBy(static item => item.Key, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static item => item.Key, static item => item.Value, StringComparer.OrdinalIgnoreCase);
+        string json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
+        return TryWriteAtomicText(path, json)
+            ? new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Succeeded, batch)
+            : new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Failed, batch, "Favorite atomic replacement failed");
+    }
+
+    private static SharedWriteResult<SeenDelta> WriteSeenBatch(string path, IReadOnlyList<SeenDelta> batch)
+    {
+        using PersistenceLockLease? lease = TryAcquirePersistenceLock(path, PersistenceLockTimeoutMilliseconds);
+        if (lease is null)
+        {
+            return new SharedWriteResult<SeenDelta>(
+                File.Exists(path + ".lock") ? SharedWriteStatus.Busy : SharedWriteStatus.Failed,
+                batch,
+                "Seen persistence lock was unavailable");
+        }
+
+        var merged = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (!TryLoadSeenFile(path, merged))
+            return new SharedWriteResult<SeenDelta>(SharedWriteStatus.Protected, batch, "Seen JSON is invalid or unsupported");
+
+        foreach (SeenDelta delta in batch)
+            merged.Add(delta.Path);
+
+        var ordered = merged
+            .OrderBy(static item => item, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(static item => item, static _ => true, StringComparer.OrdinalIgnoreCase);
+        string json = JsonSerializer.Serialize(ordered, new JsonSerializerOptions { WriteIndented = true });
+        return TryWriteAtomicText(path, json)
+            ? new SharedWriteResult<SeenDelta>(SharedWriteStatus.Succeeded, batch)
+            : new SharedWriteResult<SeenDelta>(SharedWriteStatus.Failed, batch, "Seen atomic replacement failed");
+    }
+
+    private void ScheduleFavoriteWriterPump()
+    {
+        if (_favoritePumpScheduled)
+            return;
+        _favoritePumpScheduled = true;
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            _favoritePumpScheduled = false;
+            _ = RunFavoriteWriterPumpAsync();
+        }, DispatcherPriority.SystemIdle);
+    }
+
+    private void ScheduleSeenWriterPump()
+    {
+        if (_seenPumpScheduled)
+            return;
+        _seenPumpScheduled = true;
+        _ = Dispatcher.InvokeAsync(() =>
+        {
+            _seenPumpScheduled = false;
+            _ = RunSeenWriterPumpAsync();
+        }, DispatcherPriority.SystemIdle);
+    }
+
+    private async Task RunFavoriteWriterPumpAsync()
+    {
+        SharedStoreWriter<FavoriteDelta>? writer = _favoriteWriter;
+        if (writer is null)
+            return;
+        try
+        {
+            SharedWriteStatus status = await writer.DrainAsync(CancellationToken.None);
+            if (status != SharedWriteStatus.Succeeded && writer.HasPendingOrInFlight)
+                ScheduleFavoriteWriterPump();
+        }
+        catch (Exception ex) { SetStatusToast($"Favorites could not be saved: {ex.Message}", RetryFailedFavoriteBatch); }
+    }
+
+    private async Task RunSeenWriterPumpAsync()
+    {
+        SharedStoreWriter<SeenDelta>? writer = _seenWriter;
+        if (writer is null)
+            return;
+        try
+        {
+            SharedWriteStatus status = await writer.DrainAsync(CancellationToken.None);
+            if (status != SharedWriteStatus.Succeeded && writer.HasPendingOrInFlight)
+                ScheduleSeenWriterPump();
+        }
+        catch (Exception ex) { SetStatusToast($"Seen state could not be saved: {ex.Message}", RetryFailedSeenBatch); }
+    }
+
+    private async Task<bool> DrainFavoriteWriterForReloadAsync()
+    {
+        _favoriteReloadDrainStartedForSmoke?.Set();
+        if (_favoriteWriter is not { HasPendingOrInFlight: true } writer)
+            return true;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+        try
+        {
+            return await writer.DrainAsync(timeout.Token) == SharedWriteStatus.Succeeded;
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatusToast("Favorites are still saving. The current in-memory Favorite state was kept.", RetryFailedFavoriteBatch);
+            return false;
+        }
+    }
+
+    private async Task<bool> DrainSeenWriterForReloadAsync()
+    {
+        _seenReloadDrainStartedForSmoke?.Set();
+        if (_seenWriter is not { HasPendingOrInFlight: true } writer)
+            return true;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2.5));
+        try
+        {
+            return await writer.DrainAsync(timeout.Token) == SharedWriteStatus.Succeeded;
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatusToast("Seen state is still saving. The current in-memory Seen state was kept.", RetryFailedSeenBatch);
+            return false;
+        }
+    }
+
+    private void ApplyFavoriteWriteResult(SharedWriteResult<FavoriteDelta> result)
+    {
+        if (result.Status == SharedWriteStatus.Succeeded)
+        {
+            bool committedCurrent = false;
+            foreach (FavoriteDelta delta in result.Batch)
+            {
+                if (!_pendingFavoriteMutations.TryGetValue(delta.Path, out FavoritePendingMutation? current))
+                    continue;
+                if (current.Generation == delta.Generation)
+                {
+                    _pendingFavoriteMutations.Remove(delta.Path);
+                    committedCurrent = true;
+                }
+                else if (current.Generation > delta.Generation)
+                    _pendingFavoriteMutations[delta.Path] = current with { DurableLevel = delta.DesiredLevel };
+            }
+            if (committedCurrent && _pendingFavoriteMutations.Count == 0)
+                SetStatusToast("Favorites saved.");
+            return;
+        }
+
+        var failed = new List<FavoriteDelta>();
+        foreach (FavoriteDelta delta in result.Batch)
+        {
+            if (!_pendingFavoriteMutations.TryGetValue(delta.Path, out FavoritePendingMutation? current)
+                || current.Generation != delta.Generation)
+            {
+                continue;
+            }
+
+            if (current.DurableLevel > 0)
+                _favorites[delta.Path] = current.DurableLevel;
+            else
+                _favorites.Remove(delta.Path);
+            SetTileFavoriteLevel(delta.Path, current.DurableLevel);
+            _pendingFavoriteMutations.Remove(delta.Path);
+            failed.Add(delta with { DurableBefore = current.DurableLevel });
+        }
+
+        if (failed.Count > 0)
+        {
+            ApplyFilters();
+            SyncSelectionActionSurface();
+            RefreshModalFavoriteSurface();
+        }
+
+        if (result.Status == SharedWriteStatus.Protected)
+        {
+            _failedFavoriteBatch = null;
+            _favoritesWriteBlocked = true;
+            ReportPersistenceRefusal("Favorites", ResolvedFavoritesPath, protectedFile: true);
+        }
+        else
+        {
+            _failedFavoriteBatch = failed;
+            ReportPersistenceRefusal("Favorites", ResolvedFavoritesPath, retryAction: failed.Count > 0 ? RetryFailedFavoriteBatch : null);
+        }
+    }
+
+    private void ApplySeenWriteResult(SharedWriteResult<SeenDelta> result)
+    {
+        if (result.Status == SharedWriteStatus.Succeeded)
+        {
+            bool applyUnseenFilter = false;
+            foreach (SeenDelta delta in result.Batch)
+            {
+                if (!_pendingSeenMutations.TryGetValue(delta.Path, out SeenPendingMutation? current))
+                    continue;
+                if (current.Generation == delta.Generation)
+                {
+                    _pendingSeenMutations.Remove(delta.Path);
+                    applyUnseenFilter = true;
+                }
+                else if (current.Generation > delta.Generation)
+                {
+                    _pendingSeenMutations[delta.Path] = current with { DurableSeen = true };
+                }
+            }
+
+            if (applyUnseenFilter && UnseenOnlyFilter?.IsChecked == true)
+            {
+                Tile? selected = SelectedTile();
+                ApplyFilters(selectFirst: false);
+                if (selected is not null && !_tiles.Contains(selected))
+                    SelectTile(null);
+            }
+            else if (applyUnseenFilter)
+            {
+                UpdateHeaderStats();
+            }
+            return;
+        }
+
+        var failed = new List<SeenDelta>();
+        foreach (SeenDelta delta in result.Batch)
+        {
+            if (!_pendingSeenMutations.TryGetValue(delta.Path, out SeenPendingMutation? current)
+                || current.Generation != delta.Generation)
+            {
+                continue;
+            }
+
+            if (current.DurableSeen)
+                _seenPaths.Add(delta.Path);
+            else
+                _seenPaths.Remove(delta.Path);
+            RestoreTileSeenState(delta.Path, current.WasUnseen, current.ShowedUnseenDot);
+            _pendingSeenMutations.Remove(delta.Path);
+            failed.Add(delta with
+            {
+                DurableSeenBefore = current.DurableSeen,
+                WasUnseen = current.WasUnseen,
+                ShowedUnseenDot = current.ShowedUnseenDot,
+            });
+        }
+        UpdateHeaderStats();
+
+        if (result.Status == SharedWriteStatus.Protected)
+        {
+            _failedSeenBatch = null;
+            _seenWriteBlocked = true;
+            ReportPersistenceRefusal("Seen state", ResolvedSeenPath, protectedFile: true);
+        }
+        else
+        {
+            _failedSeenBatch = failed;
+            ReportPersistenceRefusal("Seen state", ResolvedSeenPath, retryAction: failed.Count > 0 ? RetryFailedSeenBatch : null);
+        }
+    }
+
+    private void RetryFailedFavoriteBatch()
+    {
+        if (!CanStartSharedStateAction(SharedStoreKind.Favorite, RetryFailedFavoriteBatch, allowFailedRecovery: true))
+            return;
+
+        IReadOnlyList<FavoriteDelta>? failed = _failedFavoriteBatch;
+        _failedFavoriteBatch = null;
+        if (failed is null || failed.Count == 0 || _favoritesWriteBlocked)
+        {
+            SetStatusToast("Favorite retry is no longer available.");
+            return;
+        }
+
+        SharedStoreWriter<FavoriteDelta> writer = EnsureFavoriteWriter();
+        foreach (FavoriteDelta previous in failed)
+        {
+            int durable = FavoriteLevelForPath(previous.Path);
+            long generation = ++_favoriteMutationGeneration;
+            _pendingFavoriteMutations[previous.Path] = new FavoritePendingMutation(durable, previous.DesiredLevel, generation);
+            if (previous.DesiredLevel > 0)
+                _favorites[previous.Path] = previous.DesiredLevel;
+            else
+                _favorites.Remove(previous.Path);
+            SetTileFavoriteLevel(previous.Path, previous.DesiredLevel);
+            writer.Enqueue(new FavoriteDelta(previous.Path, durable, previous.DesiredLevel, generation));
+        }
+        ApplyFilters();
+        SyncSelectionActionSurface();
+        RefreshModalFavoriteSurface();
+        ScheduleFavoriteWriterPump();
+    }
+
+    private void RetryFailedSeenBatch()
+    {
+        if (!CanStartSharedStateAction(SharedStoreKind.Seen, RetryFailedSeenBatch, allowFailedRecovery: true))
+            return;
+
+        IReadOnlyList<SeenDelta>? failed = _failedSeenBatch;
+        _failedSeenBatch = null;
+        if (failed is null || failed.Count == 0 || _seenWriteBlocked)
+        {
+            SetStatusToast("Seen-state retry is no longer available.");
+            return;
+        }
+
+        SharedStoreWriter<SeenDelta> writer = EnsureSeenWriter();
+        foreach (SeenDelta previous in failed)
+        {
+            bool durable = _seenPaths.Contains(previous.Path);
+            long generation = ++_seenMutationGeneration;
+            _pendingSeenMutations[previous.Path] = new SeenPendingMutation(durable, previous.WasUnseen, previous.ShowedUnseenDot, generation);
+            _seenPaths.Add(previous.Path);
+            RestoreTileSeenState(previous.Path, unseen: false, showDot: false);
+            writer.Enqueue(new SeenDelta(previous.Path, durable, previous.WasUnseen, previous.ShowedUnseenDot, generation));
+        }
+        UpdateHeaderStats();
+        ScheduleSeenWriterPump();
+    }
+
+    private void RetryFailedSharedBatches()
+    {
+        if (!CanStartSharedStateAction(store: null, retryAfterReload: RetryFailedSharedBatches, allowFailedRecovery: true))
+            return;
+
+        bool retryFavorite = _failedFavoriteBatch is { Count: > 0 };
+        bool retrySeen = _failedSeenBatch is { Count: > 0 };
+        if (!retryFavorite && !retrySeen)
+        {
+            SetStatusToast("Shared-state retry is no longer available.");
+            return;
+        }
+
+        if (retryFavorite)
+            RetryFailedFavoriteBatch();
+        if (retrySeen)
+            RetryFailedSeenBatch();
+    }
+
+    private void SetTileFavoriteLevel(string path, int level)
+    {
+        foreach (Tile tile in _allTiles)
+        {
+            if (string.Equals(tile.Path, path, StringComparison.OrdinalIgnoreCase))
+                tile.Fav = Math.Clamp(level, 0, 5);
+        }
+    }
+
+    private void RestoreTileSeenState(string path, bool unseen, bool showDot)
+    {
+        foreach (Tile tile in _allTiles)
+        {
+            if (!string.Equals(tile.Path, path, StringComparison.OrdinalIgnoreCase))
+                continue;
+            tile.Unseen = unseen;
+            tile.ShowUnseenDot = showDot;
+        }
+    }
+
+    private bool CanStartSharedStateAction(
+        SharedStoreKind? store,
+        Action? retryAfterReload = null,
+        bool allowFailedRecovery = false)
+    {
+        if (_sharedReloadBarrierDepth > 0)
+        {
+            SetStatusToast(
+                "Folder reload is synchronizing Favorite and Seen state. Try again after it finishes.",
+                retryAfterReload);
+            return false;
+        }
+        if (_sharedActionsDisabled)
+            return false;
+
+        bool unresolvedFailure = store switch
+        {
+            SharedStoreKind.Favorite => _failedFavoriteBatch is { Count: > 0 },
+            SharedStoreKind.Seen => _failedSeenBatch is { Count: > 0 },
+            _ => false,
+        };
+        if (!allowFailedRecovery && unresolvedFailure)
+        {
+            SetStatusToast(
+                $"A previous {store} change still needs Retry before another {store} change can start.",
+                RetryFailedSharedBatches);
+            return false;
+        }
+
+        return true;
+    }
+
+    private void RefreshModalFavoriteSurface()
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return;
+        if (SelectedTile() is null)
+            Modal.Visibility = Visibility.Collapsed;
+        else
+            OpenModal();
+    }
+
     private bool SaveFavorites()
     {
         _favoriteSaveAttemptCount++;
@@ -1932,6 +2681,12 @@ public partial class MainWindow : Window
         if (!tile.IsRealFile)
             return false;
 
+        if (!CanStartSharedStateAction(SharedStoreKind.Seen))
+            return false;
+
+        if (ShouldUseSeenWriter())
+            return QueueTileSeen(tile);
+
         string key = NormalizeFavoritePath(tile.Path);
         bool wasUnseen = tile.Unseen;
         bool showedUnseenDot = tile.ShowUnseenDot;
@@ -1968,6 +2723,40 @@ public partial class MainWindow : Window
             UpdateHeaderStats();
         }
 
+        return true;
+    }
+
+    private bool QueueTileSeen(Tile tile)
+    {
+        if (_seenWriteBlocked)
+        {
+            ReportPersistenceRefusal("Seen state", ResolvedSeenPath, protectedFile: true);
+            return false;
+        }
+
+        string key = NormalizeFavoritePath(tile.Path);
+        if (_pendingSeenMutations.ContainsKey(key))
+            return true;
+
+        bool durableSeen = _seenPaths.Contains(key);
+        if (durableSeen && !tile.Unseen)
+            return true;
+
+        long generation = ++_seenMutationGeneration;
+        var pending = new SeenPendingMutation(durableSeen, tile.Unseen, tile.ShowUnseenDot, generation);
+        _pendingSeenMutations[key] = pending;
+        _seenPaths.Add(key);
+        tile.Unseen = false;
+        tile.ShowUnseenDot = false;
+
+        EnsureSeenWriter().Enqueue(new SeenDelta(
+            key,
+            durableSeen,
+            pending.WasUnseen,
+            pending.ShowedUnseenDot,
+            generation));
+        UpdateHeaderStats();
+        ScheduleSeenWriterPump();
         return true;
     }
 
@@ -2692,6 +3481,18 @@ public partial class MainWindow : Window
         new[] { "#93C5FD", "#1E40AF", "#020814" }, new[] { "#FEF08A", "#A16207", "#141002" },
     };
 
+    // Placeholder art is visible only until a real thumbnail arrives. Its
+    // palette repeats every 10 items and its two glow coordinates repeat every
+    // 70 / 60 items, so 420 variants preserve the existing visual cycle while
+    // avoiding two new frozen gradient objects for every catalog entry.
+    private const int ArtGlowVariantCount = 420;
+    private static readonly Brush[] BaseBrushCache = Enumerable.Range(0, Palettes.Length)
+        .Select(CreateBaseBrush)
+        .ToArray();
+    private static readonly Brush[] GlowBrushCache = Enumerable.Range(0, ArtGlowVariantCount)
+        .Select(CreateGlowBrush)
+        .ToArray();
+
     private static readonly string[] Names =
     {
         "portrait", "elf", "castle", "mecha", "sunset", "samurai", "forest", "android",
@@ -2758,7 +3559,9 @@ public partial class MainWindow : Window
 
     private static Color Hex(string hex) => (Color)ColorConverter.ConvertFromString(hex);
 
-    private static Brush MakeBaseBrush(int i)
+    private static Brush MakeBaseBrush(int i) => BaseBrushCache[i % BaseBrushCache.Length];
+
+    private static Brush CreateBaseBrush(int i)
     {
         var p = Palettes[i % Palettes.Length];
         var b = new LinearGradientBrush { StartPoint = new Point(0, 0), EndPoint = new Point(1, 1) };
@@ -2769,7 +3572,9 @@ public partial class MainWindow : Window
         return b;
     }
 
-    private static Brush MakeGlowBrush(int i)
+    private static Brush MakeGlowBrush(int i) => GlowBrushCache[i % GlowBrushCache.Length];
+
+    private static Brush CreateGlowBrush(int i)
     {
         var p = Palettes[i % Palettes.Length];
         var c = Hex(p[0]);
@@ -2804,6 +3609,7 @@ public partial class MainWindow : Window
             primary = e.AddedItems.OfType<Tile>().LastOrDefault()
                 ?? SelectedTiles().LastOrDefault();
         _primarySelectedPath = primary?.Path;
+        _selectionVisualSyncGeneration++;
 
         SynchronizeSelectionControls();
         ApplyPrimarySelection(primary);
@@ -2822,6 +3628,7 @@ public partial class MainWindow : Window
             ? primary
             : SelectedTiles().LastOrDefault();
         _primarySelectedPath = effectivePrimary?.Path;
+        _selectionVisualSyncGeneration++;
 
         SynchronizeSelectionControls();
         ApplyPrimarySelection(effectivePrimary);
@@ -2835,8 +3642,16 @@ public partial class MainWindow : Window
         try
         {
             _syncingSelection = true;
-            SynchronizeSelectionControl(CardsList);
-            SynchronizeSelectionControl(RowsList);
+            List<Tile> cardSelections = _gridTiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
+            List<Tile> rowSelections = _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
+            var cardsWatch = Stopwatch.StartNew();
+            SynchronizeSelectionControl(CardsList, cardSelections);
+            cardsWatch.Stop();
+            _lastCardsSelectionSyncMs = cardsWatch.ElapsedMilliseconds;
+            var rowsWatch = Stopwatch.StartNew();
+            SynchronizeSelectionControl(RowsList, rowSelections);
+            rowsWatch.Stop();
+            _lastRowsSelectionSyncMs = rowsWatch.ElapsedMilliseconds;
         }
         finally
         {
@@ -2844,14 +3659,26 @@ public partial class MainWindow : Window
         }
     }
 
-    private void SynchronizeSelectionControl(ListBox listBox)
+    private static void SynchronizeSelectionControl(ListBox listBox, IReadOnlyList<Tile> selectedTiles)
     {
+        // The hidden surface is reconciled when it becomes visible. Touching a
+        // grouped 20k-item ListBox here can force full index resolution even
+        // though no visual state is observable.
+        if (listBox.Visibility != Visibility.Visible)
+            return;
+
         listBox.SelectedItems.Clear();
-        foreach (Tile tile in listBox.Items.OfType<Tile>())
+        if (selectedTiles.Count == 1)
         {
-            if (_selectedPaths.Contains(tile.Path))
-                listBox.SelectedItems.Add(tile);
+            // Never ask grouped ListBox.SelectedItems to resolve a distant
+            // single item. Select an existing visible container directly, or
+            // let the Render-priority resync apply it after ScrollIntoView.
+            if (listBox.ItemContainerGenerator.ContainerFromItem(selectedTiles[0]) is ListBoxItem container)
+                container.IsSelected = true;
+            return;
         }
+        foreach (Tile tile in selectedTiles)
+            listBox.SelectedItems.Add(tile);
     }
 
     private void ApplyPrimarySelection(Tile? primary)
@@ -2862,15 +3689,125 @@ public partial class MainWindow : Window
             return;
         }
 
-        EnsureGridTileRealized(primary);
-        CardsList.ScrollIntoView(primary);
-        RowsList.ScrollIntoView(primary);
+        var ensureGridWatch = Stopwatch.StartNew();
+        if (CardsList.Visibility == Visibility.Visible)
+        {
+            _gridSelectionScrollSuppressionGeneration = _selectionVisualSyncGeneration;
+            EnsureGridTileRealized(primary);
+        }
+        ensureGridWatch.Stop();
+        _lastEnsureGridSelectionMs = ensureGridWatch.ElapsedMilliseconds;
+        var cardsScrollWatch = Stopwatch.StartNew();
+        if (CardsList.Visibility == Visibility.Visible)
+        {
+            CardsList.ScrollIntoView(primary);
+            QueueGridSelectionVisualSync(primary);
+        }
+        cardsScrollWatch.Stop();
+        _lastCardsScrollSelectionMs = cardsScrollWatch.ElapsedMilliseconds;
+        var rowsScrollWatch = Stopwatch.StartNew();
+        if (RowsList.Visibility == Visibility.Visible)
+        {
+            RowsList.ScrollIntoView(primary);
+            SelectRealizedContainer(RowsList, primary);
+            QueueListSelectionVisualSync(primary);
+        }
+        rowsScrollWatch.Stop();
+        _lastRowsScrollSelectionMs = rowsScrollWatch.ElapsedMilliseconds;
+        var previewWatch = Stopwatch.StartNew();
         UpdatePreview(primary);
+        previewWatch.Stop();
+        _lastPreviewSelectionMs = previewWatch.ElapsedMilliseconds;
         if (primary.IsRealFile)
         {
+            var seenWatch = Stopwatch.StartNew();
             MarkTileSeen(primary);
+            seenWatch.Stop();
+            _lastSeenSelectionMs = seenWatch.ElapsedMilliseconds;
             SaveState();
         }
+    }
+
+    private void SelectRealizedContainer(ListBox listBox, Tile tile)
+    {
+        if (listBox.ItemContainerGenerator.ContainerFromItem(tile) is not ListBoxItem container || container.IsSelected)
+            return;
+
+        bool wasSyncingSelection = _syncingSelection;
+        _syncingSelection = true;
+        try
+        {
+            container.IsSelected = true;
+        }
+        finally
+        {
+            _syncingSelection = wasSyncingSelection;
+        }
+    }
+
+    private void QueueGridSelectionVisualSync(Tile tile)
+    {
+        long generation = _selectionVisualSyncGeneration;
+        if (_queuedGridSelectionVisualSyncGeneration == generation)
+            return;
+
+        _queuedGridSelectionVisualSyncGeneration = generation;
+        string path = tile.Path;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_queuedGridSelectionVisualSyncGeneration == generation)
+                _queuedGridSelectionVisualSyncGeneration = -1;
+
+            // ScrollIntoView can post additional extent/offset notifications
+            // after the Render callback. Keep those synthetic notifications
+            // from shifting the bounded window until the dispatcher is idle;
+            // real user scrolling resumes immediately afterward.
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_gridSelectionScrollSuppressionGeneration == generation)
+                    _gridSelectionScrollSuppressionGeneration = -1;
+            }, DispatcherPriority.ApplicationIdle);
+
+            if (generation != _selectionVisualSyncGeneration
+                || CardsList.Visibility != Visibility.Visible
+                || !_selectedPaths.Contains(path)
+                || !string.Equals(_primarySelectedPath, path, StringComparison.OrdinalIgnoreCase)
+                || !_gridTiles.Contains(tile))
+            {
+                return;
+            }
+
+            // ScrollIntoView queues container generation. Reapply only the
+            // canonical primary container after render; never enumerate the
+            // catalog, move focus, or trigger another scroll from this callback.
+            SelectRealizedContainer(CardsList, tile);
+        }, DispatcherPriority.Render);
+    }
+
+    private void QueueListSelectionVisualSync(Tile tile)
+    {
+        long generation = _selectionVisualSyncGeneration;
+        if (_queuedListSelectionVisualSyncGeneration == generation)
+            return;
+
+        _queuedListSelectionVisualSyncGeneration = generation;
+        string path = tile.Path;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (_queuedListSelectionVisualSyncGeneration == generation)
+                _queuedListSelectionVisualSyncGeneration = -1;
+
+            if (generation != _selectionVisualSyncGeneration
+                || RowsList.Visibility != Visibility.Visible
+                || !_selectedPaths.Contains(path)
+                || !string.Equals(_primarySelectedPath, path, StringComparison.OrdinalIgnoreCase)
+                || !_tiles.Contains(tile))
+            {
+                return;
+            }
+
+            SelectRealizedContainer(RowsList, tile);
+        }, DispatcherPriority.Render);
     }
 
     private void UpdatePreview(Tile t)
@@ -3629,6 +4566,7 @@ public partial class MainWindow : Window
     private void SyncFoldersSectionControls()
     {
         if (FoldersSectionContent is null || FoldersSectionToggleText is null) return;
+        FoldersSectionToggle.IsExpanded = _foldersSectionExpanded;
         FoldersSectionContent.Visibility = _foldersSectionExpanded ? Visibility.Visible : Visibility.Collapsed;
         FoldersSectionToggleText.Text = _foldersSectionExpanded ? "−" : "+";
     }
@@ -3902,6 +4840,15 @@ public partial class MainWindow : Window
         if (selected.Count == 1)
             return SetFavoriteLevel(selected[0], levelSelector(selected[0]));
 
+        if (!CanStartSharedStateAction(SharedStoreKind.Favorite))
+            return false;
+        if (ShouldUseFavoriteWriter())
+        {
+            return QueueFavoriteLevels(
+                selected.Select(tile => (Tile: tile, Level: Math.Clamp(levelSelector(tile), 0, 5))).ToList(),
+                string.Format(CultureInfo.InvariantCulture, successMessageFormat, selected.Count));
+        }
+
         var previousFavorites = new Dictionary<string, int>(_favorites, StringComparer.OrdinalIgnoreCase);
         var previousDirtyPaths = new HashSet<string>(_favoriteDirtyPaths, StringComparer.OrdinalIgnoreCase);
         var nextLevels = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
@@ -3968,7 +4915,13 @@ public partial class MainWindow : Window
         if (!tile.IsRealFile)
             return false;
 
+        if (!CanStartSharedStateAction(SharedStoreKind.Favorite))
+            return false;
+
         int clamped = Math.Clamp(level, 0, 5);
+        if (ShouldUseFavoriteWriter())
+            return QueueFavoriteLevels([(tile, clamped)], $"Set favorite level {clamped}.");
+
         string key = NormalizeFavoritePath(tile.Path);
         int previousLevel = tile.Fav;
         bool hadStoredLevel = _favorites.TryGetValue(key, out int previousStoredLevel);
@@ -4005,6 +4958,46 @@ public partial class MainWindow : Window
         }
 
         SaveState();
+        return true;
+    }
+
+    private bool QueueFavoriteLevels(IReadOnlyList<(Tile Tile, int Level)> changes, string successMessage)
+    {
+        if (changes.Count == 0)
+            return false;
+        if (_favoritesWriteBlocked)
+        {
+            ReportPersistenceRefusal("Favorites", ResolvedFavoritesPath, protectedFile: true);
+            return false;
+        }
+
+        _favoriteSaveAttemptCount++;
+        SharedStoreWriter<FavoriteDelta> writer = EnsureFavoriteWriter();
+        foreach ((Tile tile, int requestedLevel) in changes)
+        {
+            int desired = Math.Clamp(requestedLevel, 0, 5);
+            string key = NormalizeFavoritePath(tile.Path);
+            int displayedBefore = FavoriteLevelForPath(key);
+            int durable = _pendingFavoriteMutations.TryGetValue(key, out FavoritePendingMutation? existing)
+                ? existing.DurableLevel
+                : displayedBefore;
+            long generation = ++_favoriteMutationGeneration;
+            _pendingFavoriteMutations[key] = new FavoritePendingMutation(durable, desired, generation);
+
+            if (desired > 0)
+                _favorites[key] = desired;
+            else
+                _favorites.Remove(key);
+            tile.Fav = desired;
+            writer.Enqueue(new FavoriteDelta(key, durable, desired, generation));
+        }
+
+        ApplyFilters();
+        SyncSelectionActionSurface();
+        RefreshModalFavoriteSurface();
+        SaveState();
+        SetStatusToast($"{successMessage} Saving...");
+        ScheduleFavoriteWriterPump();
         return true;
     }
 
@@ -4814,9 +5807,7 @@ public partial class MainWindow : Window
         _syncingSelection = true;
         try
         {
-            _tiles.Clear();
-            foreach (var tile in filtered)
-                _tiles.Add(tile);
+            _tiles.ReplaceAll(filtered);
         }
         finally
         {
@@ -4979,7 +5970,9 @@ public partial class MainWindow : Window
 
     private void CardsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
-        if (CardsList.Visibility != Visibility.Visible || _gridTiles.Count >= _tiles.Count)
+        if (CardsList.Visibility != Visibility.Visible
+            || _gridTiles.Count >= _tiles.Count
+            || _gridSelectionScrollSuppressionGeneration == _selectionVisualSyncGeneration)
             return;
 
         double remaining = e.ExtentHeight - (e.VerticalOffset + e.ViewportHeight);
@@ -5692,18 +6685,35 @@ public partial class MainWindow : Window
     private void ModeGrid_Checked(object sender, RoutedEventArgs e)
     {
         if (CardsList is null || RowsList is null) return;
+        Tile? selected = SelectedTile();
         CardsList.Visibility = Visibility.Visible;
         RowsList.Visibility = Visibility.Collapsed;
+        if (selected is not null)
+        {
+            _gridSelectionScrollSuppressionGeneration = _selectionVisualSyncGeneration;
+            EnsureGridTileRealized(selected);
+            SynchronizeSelectionControls();
+            CardsList.ScrollIntoView(selected);
+            QueueGridSelectionVisualSync(selected);
+        }
+        else
+            SynchronizeSelectionControls();
         SizeSlider.IsEnabled = true;
     }
 
     private void ModeList_Checked(object sender, RoutedEventArgs e)
     {
         if (CardsList is null || RowsList is null) return;
-        if (RowsList.SelectedItem is null && CardsList.SelectedIndex >= 0)
-            RowsList.SelectedIndex = CardsList.SelectedIndex;
+        Tile? selected = SelectedTile();
         CardsList.Visibility = Visibility.Collapsed;
         RowsList.Visibility = Visibility.Visible;
+        SynchronizeSelectionControls();
+        if (selected is not null)
+        {
+            RowsList.ScrollIntoView(selected);
+            SelectRealizedContainer(RowsList, selected);
+            QueueListSelectionVisualSync(selected);
+        }
         SizeSlider.IsEnabled = false;
     }
 
@@ -7423,6 +8433,15 @@ public partial class MainWindow : Window
 
     private void SetStatusToast(string status, Action? retryAction = null)
     {
+        if (HasUnresolvedSharedFailures)
+        {
+            // The toast is a singleton, but Favorite and Seen recovery intents
+            // are independent. Never let an unrelated success/warning replace
+            // the only reachable route to either retained failed batch.
+            retryAction = RetryFailedSharedBatches;
+            if (!status.Contains("Retry", StringComparison.OrdinalIgnoreCase))
+                status = $"{status} Favorite or Seen changes still need Retry.";
+        }
         _deleteStatus = status;
         _statusRetryAction = retryAction;
         if (ScanMessage is not null)
@@ -8497,6 +9516,7 @@ public partial class MainWindow : Window
     public string? CurrentFolderForSmoke => _currentFolder;
     public List<string> CurrentFolderSetForSmoke => _currentFolderSet.ToList();
     public List<string> LandingFolderSetForSmoke => _landingFolderSet.ToList();
+    public string LandingFolderStatusForSmoke => LandingFolderStatusText.Text;
     public bool LandingVisibleForSmoke => Landing.Visibility == Visibility.Visible;
     public string LoadPhaseForSmoke => _loadPhase;
     public bool CancelScanVisibleForSmoke => CancelScanButton.Visibility == Visibility.Visible;
@@ -8520,6 +9540,12 @@ public partial class MainWindow : Window
     }
     public void SetBeforeMaterializeFilesForSmoke(Action action)
         => _beforeMaterializeFilesForSmoke = action ?? throw new ArgumentNullException(nameof(action));
+
+    public void ConfigureCatalogPreparationBatchesForSmoke(int batchSize, Action<string, int>? hook)
+    {
+        _catalogPreparationBatchSizeForSmoke = Math.Max(1, batchSize);
+        _catalogPreparationBatchHookForSmoke = hook;
+    }
     public void ConfigureImageDecodeDelaysForSmoke(int previewMilliseconds, int modalMilliseconds)
     {
         _previewDecodeDelayForSmokeMs = Math.Max(0, previewMilliseconds);
@@ -8660,6 +9686,55 @@ public partial class MainWindow : Window
         ModeGrid.IsChecked = true;
         return CardsList.Visibility == Visibility.Visible;
     }
+    public async Task<GridSelectionVisualSmokeSnapshot> WaitForGridSelectionVisualForSmokeAsync(string fileName)
+    {
+        // Let the production Render-priority resync run. This probe only reads
+        // the resulting canonical and visual states; it does not scroll or
+        // mutate selection and therefore cannot make a broken path pass.
+        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+
+        Tile? tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        string? canonicalPath = SelectedTile()?.Path;
+        bool canonicalSelected = tile is not null
+            && string.Equals(canonicalPath, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && _selectedPaths.Contains(tile.Path)
+            && string.Equals(_primarySelectedPath, tile.Path, StringComparison.OrdinalIgnoreCase);
+        bool gridWindowContains = tile is not null && _gridTiles.Contains(tile);
+        bool selectedItemsContains = tile is not null && CardsList.SelectedItems.Contains(tile);
+        ListBoxItem? container = tile is null
+            ? null
+            : CardsList.ItemContainerGenerator.ContainerFromItem(tile) as ListBoxItem;
+
+        return new GridSelectionVisualSmokeSnapshot(
+            canonicalPath,
+            canonicalSelected,
+            gridWindowContains,
+            selectedItemsContains,
+            container is not null,
+            container?.IsSelected == true);
+    }
+    public async Task<ListSelectionVisualSmokeSnapshot> WaitForListSelectionVisualForSmokeAsync(string fileName)
+    {
+        await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+
+        Tile? tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        string? canonicalPath = SelectedTile()?.Path;
+        bool canonicalSelected = tile is not null
+            && string.Equals(canonicalPath, tile.Path, StringComparison.OrdinalIgnoreCase)
+            && _selectedPaths.Contains(tile.Path)
+            && string.Equals(_primarySelectedPath, tile.Path, StringComparison.OrdinalIgnoreCase);
+        bool selectedItemsContains = tile is not null && RowsList.SelectedItems.Contains(tile);
+        ListBoxItem? container = tile is null
+            ? null
+            : RowsList.ItemContainerGenerator.ContainerFromItem(tile) as ListBoxItem;
+
+        return new ListSelectionVisualSmokeSnapshot(
+            canonicalPath,
+            canonicalSelected,
+            selectedItemsContains,
+            container is not null,
+            container?.IsSelected == true);
+    }
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
     public bool SelectedUnseenForSmoke => SelectedTile()?.Unseen == true;
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
@@ -8778,7 +9853,7 @@ public partial class MainWindow : Window
     public bool ListUsesRecyclingVirtualizationForSmoke
         => VirtualizingPanel.GetIsVirtualizing(RowsList) && VirtualizingPanel.GetVirtualizationMode(RowsList) == VirtualizationMode.Recycling;
     public int ListRealizedContainerCountForSmoke
-        => Enumerable.Range(0, RowsList.Items.Count).Count(index => RowsList.ItemContainerGenerator.ContainerFromIndex(index) is not null);
+        => FindVisualDescendants<ListBoxItem>(RowsList).Count();
     public static async Task<PersistenceLockProbe> ProbePersistenceLockForSmokeAsync(string favoritesPath, string firstPath, string secondPath)
     {
         var start = new ManualResetEventSlim(false);
@@ -9101,6 +10176,14 @@ public partial class MainWindow : Window
     public int ModalFavoriteLevelForSmoke
         => int.TryParse(ModalFavoriteLevelText.Text, out int level) ? level : -1;
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
+    public bool SetFileFavoriteLevelForSmoke(string fileName, int level)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase)) is { IsRealFile: true } tile
+            && SetFavoriteLevel(tile, level);
+    public bool MarkFileSeenForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase)) is { IsRealFile: true } tile
+            && MarkTileSeen(tile);
+    public bool UnseenDotForFileForSmoke(string fileName)
+        => _allTiles.FirstOrDefault(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase))?.ShowUnseenDot == true;
     public bool ZoomInForSmoke() => AdjustCardWidth(1);
     public bool ZoomOutForSmoke() => AdjustCardWidth(-1);
     public bool ZoomResetForSmoke() => ResetCardWidth();
@@ -9323,6 +10406,65 @@ public partial class MainWindow : Window
     public bool BulkFavoritePanelVisibleForSmoke => BulkFavoritePanel.Visibility == Visibility.Visible;
     public string BulkSelectionSummaryForSmoke => BulkSelectionText.Text;
     public int FavoriteSaveAttemptCountForSmoke => _favoriteSaveAttemptCount;
+    public bool FavoriteWriterAdoptedForSmoke => _favoriteWriterAdopted;
+    public bool SeenWriterAdoptedForSmoke => _seenWriterAdopted;
+    public bool FavoriteWriterPendingForSmoke => _favoriteWriter?.HasPendingOrInFlight == true;
+    public bool SeenWriterPendingForSmoke => _seenWriter?.HasPendingOrInFlight == true;
+    public int FavoriteWriterBatchCountForSmoke => _favoriteWriter?.BatchWriteCount ?? 0;
+    public int SeenWriterBatchCountForSmoke => _seenWriter?.BatchWriteCount ?? 0;
+    public int PendingFavoriteMutationCountForSmoke => _pendingFavoriteMutations.Count;
+    public int PendingSeenMutationCountForSmoke => _pendingSeenMutations.Count;
+    public bool FavoritesWriteBlockedForSmoke => _favoritesWriteBlocked;
+    public bool SeenWriteBlockedForSmoke => _seenWriteBlocked;
+    public bool FailedFavoriteRetryPendingForSmoke => _failedFavoriteBatch is { Count: > 0 };
+    public bool FailedSeenRetryPendingForSmoke => _failedSeenBatch is { Count: > 0 };
+    public bool SharedReloadBarrierActiveForSmoke => _sharedReloadBarrierDepth > 0;
+
+    public void ForceSharedStoreWritersForSmoke() => _forceSharedWritersForSmoke = true;
+
+    public void ConfigureFavoriteWriterGateForSmoke(ManualResetEventSlim? entered, ManualResetEventSlim? gate)
+    {
+        _favoriteWriterEnteredForSmoke = entered;
+        _favoriteWriterGateForSmoke = gate;
+    }
+
+    public void ConfigureSeenWriterGateForSmoke(ManualResetEventSlim? entered, ManualResetEventSlim? gate)
+    {
+        _seenWriterEnteredForSmoke = entered;
+        _seenWriterGateForSmoke = gate;
+    }
+
+    public void ConfigureReloadDrainStartedForSmoke(
+        ManualResetEventSlim? favoriteStarted,
+        ManualResetEventSlim? seenStarted)
+    {
+        _favoriteReloadDrainStartedForSmoke = favoriteStarted;
+        _seenReloadDrainStartedForSmoke = seenStarted;
+    }
+
+    public void FailNextFavoriteWriterForSmoke() => Interlocked.Exchange(ref _failNextFavoriteWriterForSmoke, 1);
+    public void FailNextSeenWriterForSmoke() => Interlocked.Exchange(ref _failNextSeenWriterForSmoke, 1);
+    public void RetryFailedFavoriteForSmoke() => RetryFailedFavoriteBatch();
+    public void RetryFailedSeenForSmoke() => RetryFailedSeenBatch();
+
+    internal async Task<SharedWriteStatus[]> DrainSharedStoreWritersForSmokeAsync()
+    {
+        Task<SharedWriteStatus> favorite = _favoriteWriter is { } favoriteWriter
+            ? favoriteWriter.DrainAsync(CancellationToken.None)
+            : Task.FromResult(SharedWriteStatus.Succeeded);
+        Task<SharedWriteStatus> seen = _seenWriter is { } seenWriter
+            ? seenWriter.DrainAsync(CancellationToken.None)
+            : Task.FromResult(SharedWriteStatus.Succeeded);
+        return await Task.WhenAll(favorite, seen);
+    }
+
+    public Task CloseAndWaitForSmokeAsync()
+    {
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Closed += (_, _) => completion.TrySetResult();
+        Close();
+        return completion.Task;
+    }
 
     public void SetFavoriteOnlyFilterForSmoke(bool enabled)
     {
@@ -9419,6 +10561,13 @@ public partial class MainWindow : Window
         SaveState();
         return true;
     }
+    public long LastCardsSelectionSyncMsForSmoke => _lastCardsSelectionSyncMs;
+    public long LastRowsSelectionSyncMsForSmoke => _lastRowsSelectionSyncMs;
+    public long LastEnsureGridSelectionMsForSmoke => _lastEnsureGridSelectionMs;
+    public long LastCardsScrollSelectionMsForSmoke => _lastCardsScrollSelectionMs;
+    public long LastRowsScrollSelectionMsForSmoke => _lastRowsScrollSelectionMs;
+    public long LastPreviewSelectionMsForSmoke => _lastPreviewSelectionMs;
+    public long LastSeenSelectionMsForSmoke => _lastSeenSelectionMs;
 
     public void ClearSelectionForSmoke() => SetSelection([], null);
 
@@ -9936,6 +11085,11 @@ public sealed class LoadMetrics
     public int FileCount { get; set; }
     public long ScanMs { get; set; }
     public long MaterializeMs { get; set; }
+    public long CatalogPrepareMs { get; set; }
+    public long CatalogPublishOtherMs { get; set; }
+    public long FolderBucketViewMs { get; set; }
+    public long InitialFilterMs { get; set; }
+    public long CatalogStatsMs { get; set; }
     public long MetadataMs { get; set; }
     public int MetadataWorkers { get; set; }
     public int MetadataCompleted { get; set; }
@@ -9987,6 +11141,21 @@ public sealed record ScanBoundarySmokeSnapshot(
     IReadOnlyList<string> AccessFailures,
     IReadOnlyList<string> BoundarySkips,
     long ElapsedMs);
+
+public sealed record GridSelectionVisualSmokeSnapshot(
+    string? CanonicalPath,
+    bool CanonicalSelected,
+    bool GridWindowContains,
+    bool SelectedItemsContains,
+    bool ContainerRealized,
+    bool ContainerSelected);
+
+public sealed record ListSelectionVisualSmokeSnapshot(
+    string? CanonicalPath,
+    bool CanonicalSelected,
+    bool SelectedItemsContains,
+    bool ContainerRealized,
+    bool ContainerSelected);
 
 public sealed record PreviewDecodeSmokeSnapshot(
     bool Selected,
@@ -10136,6 +11305,21 @@ internal readonly record struct BitmapDecodePlan(int PixelWidth, int PixelHeight
 internal readonly record struct GridZoomAnchor(string Path, double ViewportY, double CenterDistance);
 
 internal readonly record struct DecodedThumbnail(Tile Tile, BitmapSource? Thumbnail);
+
+internal sealed class ResettableObservableCollection<T> : ObservableCollection<T>
+{
+    public void ReplaceAll(IReadOnlyList<T> items)
+    {
+        ArgumentNullException.ThrowIfNull(items);
+        CheckReentrancy();
+        Items.Clear();
+        for (int index = 0; index < items.Count; index++)
+            Items.Add(items[index]);
+        OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
+        OnPropertyChanged(new PropertyChangedEventArgs("Item[]"));
+        OnCollectionChanged(new NotifyCollectionChangedEventArgs(NotifyCollectionChangedAction.Reset));
+    }
+}
 
 // ─────────── Tile view model ───────────
 public sealed class Tile : INotifyPropertyChanged

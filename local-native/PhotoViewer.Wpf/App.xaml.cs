@@ -549,6 +549,13 @@ public partial class App : Application
             return;
         }
 
+        int sharedStateWriterSmokeIdx = Array.IndexOf(e.Args, "--shared-state-writer-smoke");
+        if (sharedStateWriterSmokeIdx >= 0 && sharedStateWriterSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSharedStateWriterSmoke(e.Args[sharedStateWriterSmokeIdx + 1]);
+            return;
+        }
+
         int stateSmokeIdx = Array.IndexOf(e.Args, "--state-smoke");
         if (stateSmokeIdx >= 0 && stateSmokeIdx + 1 < e.Args.Length)
         {
@@ -1412,6 +1419,7 @@ public partial class App : Application
         string baselineFolder = Path.Combine(sourceRoot, "03 published baseline");
         string metadataFolder = Path.Combine(sourceRoot, "04 metadata canceled");
         string newerFolder = Path.Combine(sourceRoot, "05 immediate rescan wins");
+        string unavailableFolder = Path.Combine(sourceRoot, "06 unavailable request");
         string statePath = Path.Combine(smokeRoot, "cache", "state.json");
         string favoritesPath = Path.Combine(smokeRoot, "cache", "favorites.json");
         string seenPath = Path.Combine(smokeRoot, "cache", "seen.json");
@@ -1553,6 +1561,42 @@ public partial class App : Application
                     && finalNames.Count == 2 && finalNames.All(name => name.StartsWith("newer-", StringComparison.Ordinal))
                     && finalState?.LastFolderSet?.SequenceEqual([newerFolder], StringComparer.OrdinalIgnoreCase) == true
                     && string.Equals(window.LastLoadMetrics?.Folder, newerFolder, StringComparison.OrdinalIgnoreCase);
+
+                string stateBeforeUnavailableIntent = FileFingerprint(statePath);
+                string seenBeforeUnavailableIntent = FileFingerprint(seenPath);
+                string recentBeforeUnavailableIntent = FileFingerprint(recentPath);
+                List<string> catalogBeforeUnavailableIntent = window.AllFileNamesForSmoke;
+                List<string> currentFoldersBeforeUnavailableIntent = window.CurrentFolderSetForSmoke;
+                window.ConfigureScanPhaseDelaysForSmoke(enumerationMilliseconds: 650, metadataMilliseconds: 0);
+                Task delayedValidBeforeUnavailableTask = window.LoadFolderAsync(metadataFolder);
+                bool unavailableSupersessionPhase = await WaitForPhaseAsync(window, "enumeration")
+                    && window.CancelScanVisibleForSmoke && window.CancelScanEnabledForSmoke;
+                Task unavailableIntentTask = window.LoadFolderAsync(unavailableFolder);
+                await unavailableIntentTask;
+                bool unavailableIntentReturnedBeforeDelayedValid = !delayedValidBeforeUnavailableTask.IsCompleted;
+                bool unavailableIntentOwnedUi = window.LandingVisibleForSmoke
+                    && string.Equals(window.LoadPhaseForSmoke, "idle", StringComparison.Ordinal)
+                    && !window.CancelScanVisibleForSmoke && !window.CancelScanEnabledForSmoke
+                    && window.LandingFolderSetForSmoke.SequenceEqual([unavailableFolder], StringComparer.OrdinalIgnoreCase)
+                    && window.LandingFolderStatusForSmoke.Contains("unavailable", StringComparison.OrdinalIgnoreCase)
+                    && window.CurrentFolderSetForSmoke.SequenceEqual(currentFoldersBeforeUnavailableIntent, StringComparer.OrdinalIgnoreCase)
+                    && window.AllFileNamesForSmoke.SequenceEqual(catalogBeforeUnavailableIntent, StringComparer.OrdinalIgnoreCase);
+                bool unavailableIntentImmediateIsolation = string.Equals(stateBeforeUnavailableIntent, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeUnavailableIntent, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeUnavailableIntent, FileFingerprint(recentPath), StringComparison.Ordinal);
+                await delayedValidBeforeUnavailableTask;
+                bool unavailableIntentLateIsolation = window.LandingVisibleForSmoke
+                    && string.Equals(window.LoadPhaseForSmoke, "idle", StringComparison.Ordinal)
+                    && window.LandingFolderSetForSmoke.SequenceEqual([unavailableFolder], StringComparer.OrdinalIgnoreCase)
+                    && window.CurrentFolderSetForSmoke.SequenceEqual(currentFoldersBeforeUnavailableIntent, StringComparer.OrdinalIgnoreCase)
+                    && window.AllFileNamesForSmoke.SequenceEqual(catalogBeforeUnavailableIntent, StringComparer.OrdinalIgnoreCase)
+                    && string.Equals(stateBeforeUnavailableIntent, FileFingerprint(statePath), StringComparison.Ordinal)
+                    && string.Equals(seenBeforeUnavailableIntent, FileFingerprint(seenPath), StringComparison.Ordinal)
+                    && string.Equals(recentBeforeUnavailableIntent, FileFingerprint(recentPath), StringComparison.Ordinal);
+                bool unavailableNeverPersisted = !JsonContainsString(statePath, unavailableFolder)
+                    && !JsonContainsString(recentPath, unavailableFolder)
+                    && !JsonContainsString(seenPath, unavailableFolder);
+                window.ConfigureScanPhaseDelaysForSmoke(0, 0);
                 bool canceledFoldersNeverPublished = !JsonContainsString(statePath, enumerationA)
                     && !JsonContainsString(statePath, enumerationB)
                     && !JsonContainsString(statePath, metadataFolder)
@@ -1576,12 +1620,14 @@ public partial class App : Application
                     .All(path => Path.GetFullPath(path).StartsWith(rootPrefix, StringComparison.OrdinalIgnoreCase));
                 bool residueFree = NoPersistenceResidue(smokeRoot);
                 bool responsive = enumerationCancelWatch.ElapsedMilliseconds < 100 && metadataCancelWatch.ElapsedMilliseconds < 100;
-                bool loadCtsBalanced = window.LoadCtsCreatedCountForSmoke == 4
+                bool loadCtsBalanced = window.LoadCtsCreatedCountForSmoke == 5
                     && window.LoadCtsRetiredCountForSmoke == window.LoadCtsCreatedCountForSmoke;
                 ok = initiallyInactive && enumerationPhase && enumerationCancelAccepted && enumerationCancelUi
                     && doubleCancelNoOp && enumerationDraftPreserved && enumerationImmediateIsolation && enumerationLateIgnored
                     && baselinePublished && metadataPhase && metadataCancelAccepted && metadataCancelUi && metadataCancelIsolation
                     && newerCompletedBeforeLateCanceledTask && newerRunWon && canceledFoldersNeverPublished
+                    && unavailableSupersessionPhase && unavailableIntentReturnedBeforeDelayedValid && unavailableIntentOwnedUi
+                    && unavailableIntentImmediateIsolation && unavailableIntentLateIsolation && unavailableNeverPersisted
                     && successfulRunsPersisted && unknownFieldsPreserved && sourceUntouched && unrelatedCacheUntouched
                     && isolated && residueFree && responsive && loadCtsBalanced;
                 result = new
@@ -1607,6 +1653,12 @@ public partial class App : Application
                     metadataCancelIsolation,
                     newerCompletedBeforeLateCanceledTask,
                     newerRunWon,
+                    unavailableSupersessionPhase,
+                    unavailableIntentReturnedBeforeDelayedValid,
+                    unavailableIntentOwnedUi,
+                    unavailableIntentImmediateIsolation,
+                    unavailableIntentLateIsolation,
+                    unavailableNeverPersisted,
                     canceledFoldersNeverPublished,
                     successfulRunsPersisted,
                     unknownFieldsPreserved,
@@ -3965,6 +4017,24 @@ public partial class App : Application
                 List<string> bucketKeys = first.FolderBucketKeysForSmoke;
                 bool defaultExpanded = first.FoldersSectionExpandedForSmoke;
                 bool folderAccessibility = first.FolderBucketSelectionAccessibleForSmoke && first.FocusFolderBucketListForSmoke();
+                System.Windows.Automation.Peers.AutomationPeer? foldersTogglePeer =
+                    System.Windows.Automation.Peers.UIElementAutomationPeer.CreatePeerForElement(first.FoldersSectionToggle);
+                var foldersExpandCollapseProvider = foldersTogglePeer?
+                    .GetPattern(System.Windows.Automation.Peers.PatternInterface.ExpandCollapse)
+                    as System.Windows.Automation.Provider.IExpandCollapseProvider;
+                string folderAutomationInitialState = foldersExpandCollapseProvider?.ExpandCollapseState.ToString() ?? "Unavailable";
+                foldersExpandCollapseProvider?.Collapse();
+                string folderAutomationCollapsedState = foldersExpandCollapseProvider?.ExpandCollapseState.ToString() ?? "Unavailable";
+                bool folderAutomationCollapsedVisual = !first.FoldersSectionExpandedForSmoke;
+                foldersExpandCollapseProvider?.Expand();
+                string folderAutomationExpandedState = foldersExpandCollapseProvider?.ExpandCollapseState.ToString() ?? "Unavailable";
+                bool folderAutomationExpandedVisual = first.FoldersSectionExpandedForSmoke;
+                bool folderAutomationRoundTrip = foldersExpandCollapseProvider is not null
+                    && string.Equals(folderAutomationInitialState, "Expanded", StringComparison.Ordinal)
+                    && string.Equals(folderAutomationCollapsedState, "Collapsed", StringComparison.Ordinal)
+                    && folderAutomationCollapsedVisual
+                    && string.Equals(folderAutomationExpandedState, "Expanded", StringComparison.Ordinal)
+                    && folderAutomationExpandedVisual;
                 int favoritesBeforeBucketSelection = first.FavoriteStoreCountForSmoke;
                 int seenBeforeBucketSelection = first.SeenStoreCountForSmoke;
                 bool selectedRange = first.SelectFolderBucketRangeForSmoke(0, 1);
@@ -4085,6 +4155,7 @@ public partial class App : Application
                     && bulkOk
                     && defaultExpanded
                     && folderAccessibility
+                    && folderAutomationRoundTrip
                     && selectedActionsOk
                     && persistenceOk
                     && selectedFolderBBeforePersistence
@@ -4105,8 +4176,8 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "folder bucket sidebar expansion, multi-select actions, migration, persistence, and state isolation checks passed"
-                        : "folder bucket smoke did not meet show/hide/selection/persistence expectations",
+                        ? "folder bucket sidebar UI Automation expansion, multi-select actions, migration, persistence, and state isolation checks passed"
+                        : "folder bucket smoke did not meet UI Automation/show/hide/selection/persistence expectations",
                     ProjectRoot = smokeRoot,
                     FolderA = fixture.FolderA,
                     FolderB = fixture.FolderB,
@@ -4116,6 +4187,10 @@ public partial class App : Application
                     BucketKeys = bucketKeys,
                     DefaultExpanded = defaultExpanded,
                     FolderAccessibility = folderAccessibility,
+                    FolderAutomationInitialState = folderAutomationInitialState,
+                    FolderAutomationCollapsedState = folderAutomationCollapsedState,
+                    FolderAutomationExpandedState = folderAutomationExpandedState,
+                    FolderAutomationRoundTrip = folderAutomationRoundTrip,
                     SelectedActionsOk = selectedActionsOk,
                     SelectedFolderA = selectedFolderA,
                     AfterHideFolderA = afterHideFolderA,
@@ -5046,7 +5121,11 @@ public partial class App : Application
             return;
         }
 
-        string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-catalog-stress-" + Guid.NewGuid().ToString("N"));
+        string tempRootPrefix = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        string smokeRoot = Path.GetFullPath(Path.Combine(Path.GetTempPath(), "photoviewer-wpf-catalog-stress-" + Guid.NewGuid().ToString("N")));
+        string smokeRootPrefix = smokeRoot.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!smokeRootPrefix.StartsWith(tempRootPrefix, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("catalog stress root escaped the temp directory");
         string folder = Path.Combine(smokeRoot, "images");
         string statePath = Path.Combine(smokeRoot, "state.json");
         string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
@@ -5091,29 +5170,94 @@ public partial class App : Application
             var loadWatch = Stopwatch.StartNew();
             var heartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
             int heartbeatCount = 0;
-            heartbeat.Tick += (_, _) => heartbeatCount++;
+            var heartbeatWatch = Stopwatch.StartNew();
+            long lastHeartbeatMs = 0;
+            long maxHeartbeatGapMs = 0;
+            string heartbeatStage = "load";
+            string lastHeartbeatStage = heartbeatStage;
+            string lastHeartbeatLoadPhase = win.LoadPhaseForSmoke;
+            var dispatcherGapSegments = new List<DispatcherGapSmokeSegment>();
+            heartbeat.Tick += (_, _) =>
+            {
+                long nowMs = heartbeatWatch.ElapsedMilliseconds;
+                long gapMs = nowMs - lastHeartbeatMs;
+                string currentLoadPhase = win.LoadPhaseForSmoke;
+                if (gapMs >= 100)
+                {
+                    dispatcherGapSegments.Add(new DispatcherGapSmokeSegment
+                    {
+                        StartMs = lastHeartbeatMs,
+                        EndMs = nowMs,
+                        DurationMs = gapMs,
+                        StageBefore = lastHeartbeatStage,
+                        StageAfter = heartbeatStage,
+                        LoadPhaseBefore = lastHeartbeatLoadPhase,
+                        LoadPhaseAfter = currentLoadPhase,
+                    });
+                }
+                maxHeartbeatGapMs = Math.Max(maxHeartbeatGapMs, gapMs);
+                lastHeartbeatMs = nowMs;
+                lastHeartbeatStage = heartbeatStage;
+                lastHeartbeatLoadPhase = currentLoadPhase;
+                heartbeatCount++;
+            };
             try
             {
+                heartbeat.Start();
                 await win.LoadFolderAsync(folder);
                 loadWatch.Stop();
+                heartbeatStage = "post-load-layout";
+                var initialGridLayoutWatch = Stopwatch.StartNew();
                 await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
-                int sourceCountBefore = Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count();
+                initialGridLayoutWatch.Stop();
+                heartbeatStage = "source-count-before";
+                int sourceCountBefore = await Task.Run(
+                    () => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count());
                 int catalogCount = win.CatalogCountForSmoke;
                 int filteredCount = win.FilteredCountForSmoke;
                 int gridRealized = win.GridRealizedCountForSmoke;
                 int gridMaximum = win.GridMaxRealizationCountForSmoke;
                 int gridDeferred = win.GridDeferredCountForSmoke;
+                heartbeatStage = "list-switch";
+                var listSwitchWatch = Stopwatch.StartNew();
                 bool listMode = win.SetListModeForSmoke();
                 await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                listSwitchWatch.Stop();
                 int listRealized = win.ListRealizedContainerCountForSmoke;
                 bool listBounded = win.ListUsesRecyclingVirtualizationForSmoke && listRealized <= Math.Min(count, 512);
+                bool gridModeAfterListProbe = win.SetGridModeForSmoke();
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
 
                 string tailName = $"stress-{count - 1:D6}.png";
+                heartbeatStage = "tail-select";
+                var tailSelectWatch = Stopwatch.StartNew();
                 bool selectedTail = win.SelectFileNameForSmoke(tailName);
+                tailSelectWatch.Stop();
+                var tailGridVisualWatch = Stopwatch.StartNew();
+                GridSelectionVisualSmokeSnapshot tailGridVisual = await win.WaitForGridSelectionVisualForSmokeAsync(tailName);
+                tailGridVisualWatch.Stop();
+                var tailModeRoundTripWatch = Stopwatch.StartNew();
+                bool tailListModeRoundTrip = win.SetListModeForSmoke();
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                ListSelectionVisualSmokeSnapshot tailListVisual = await win.WaitForListSelectionVisualForSmokeAsync(tailName);
+                bool tailGridModeRoundTrip = win.SetGridModeForSmoke();
+                await win.Dispatcher.InvokeAsync(win.UpdateLayout, DispatcherPriority.Render);
+                GridSelectionVisualSmokeSnapshot tailGridRoundTripVisual = await win.WaitForGridSelectionVisualForSmokeAsync(tailName);
+                tailModeRoundTripWatch.Stop();
+                long tailCardsSelectionSyncMs = win.LastCardsSelectionSyncMsForSmoke;
+                long tailRowsSelectionSyncMs = win.LastRowsSelectionSyncMsForSmoke;
+                long tailEnsureGridSelectionMs = win.LastEnsureGridSelectionMsForSmoke;
+                long tailCardsScrollSelectionMs = win.LastCardsScrollSelectionMsForSmoke;
+                long tailRowsScrollSelectionMs = win.LastRowsScrollSelectionMsForSmoke;
+                long tailPreviewSelectionMs = win.LastPreviewSelectionMsForSmoke;
+                long tailSeenSelectionMs = win.LastSeenSelectionMsForSmoke;
+                heartbeatStage = "tail-modal";
+                var modalTailWatch = Stopwatch.StartNew();
                 bool modalTail = selectedTail && win.OpenModalForSmoke() && win.ModalVisibleForSmoke;
                 win.CloseModalForSmoke();
+                modalTailWatch.Stop();
 
-                heartbeat.Start();
+                heartbeatStage = "rapid-search";
                 var inputWatch = Stopwatch.StartNew();
                 var searchWatch = Stopwatch.StartNew();
                 string[] rapidQueries = ["s", "st", "str", "stress", "stress-0", "stress-01", "stress-019", "stress-0199", $"stress-{count - 1:D6}"];
@@ -5128,8 +5272,6 @@ public partial class App : Application
                     : new MainWindow.SearchFilterCompletion(false, false, "timed out waiting for the final stress search");
                 MainWindow.SearchFilterCompletion[] earlierCompletions = await Task.WhenAll(completions.Take(completions.Count - 1));
                 await Task.Delay(120);
-                heartbeat.Stop();
-                searchWatch.Stop();
 
                 List<string> finalMatches = win.FilteredFileNamesForSmoke(4);
                 bool finalSearchExact = finalCompletion.Applied
@@ -5138,7 +5280,11 @@ public partial class App : Application
                     && string.Equals(win.SelectedFileNameForSmoke, tailName, StringComparison.OrdinalIgnoreCase);
                 bool staleCancelled = earlierCompletions.All(static completion => completion.Discarded);
                 bool heartbeatAdvanced = heartbeatCount >= 4;
-                int sourceCountAfter = Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count();
+                heartbeatStage = "source-count-after";
+                int sourceCountAfter = await Task.Run(
+                    () => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count());
+                heartbeat.Stop();
+                searchWatch.Stop();
                 process.Refresh();
                 LoadMetrics? loadMetrics = win.LastLoadMetrics;
                 result = new CatalogStressSmokeResult
@@ -5155,10 +5301,31 @@ public partial class App : Application
                     ListBounded = listBounded,
                     TailName = tailName,
                     SelectedTail = selectedTail,
+                    TailCanonicalSelectedPath = tailGridVisual.CanonicalPath,
+                    TailCanonicalSelected = tailGridVisual.CanonicalSelected,
+                    TailGridWindowContains = tailGridVisual.GridWindowContains,
+                    TailCardsSelectedItemsContains = tailGridVisual.SelectedItemsContains,
+                    TailGridContainerRealized = tailGridVisual.ContainerRealized,
+                    TailGridContainerSelected = tailGridVisual.ContainerSelected,
+                    TailListModeRoundTrip = tailListModeRoundTrip,
+                    TailListCanonicalSelectedPath = tailListVisual.CanonicalPath,
+                    TailListCanonicalSelected = tailListVisual.CanonicalSelected,
+                    TailRowsSelectedItemsContains = tailListVisual.SelectedItemsContains,
+                    TailListContainerRealized = tailListVisual.ContainerRealized,
+                    TailListContainerSelected = tailListVisual.ContainerSelected,
+                    TailGridModeRoundTrip = tailGridModeRoundTrip,
+                    TailGridRoundTripCanonicalSelectedPath = tailGridRoundTripVisual.CanonicalPath,
+                    TailGridRoundTripCanonicalSelected = tailGridRoundTripVisual.CanonicalSelected,
+                    TailGridRoundTripWindowContains = tailGridRoundTripVisual.GridWindowContains,
+                    TailCardsRoundTripSelectedItemsContains = tailGridRoundTripVisual.SelectedItemsContains,
+                    TailGridRoundTripContainerRealized = tailGridRoundTripVisual.ContainerRealized,
+                    TailGridRoundTripContainerSelected = tailGridRoundTripVisual.ContainerSelected,
                     ModalTail = modalTail,
                     FinalSearchExact = finalSearchExact,
                     StaleCancelled = staleCancelled,
                     HeartbeatCount = heartbeatCount,
+                    DispatcherHeartbeatMaxGapMs = maxHeartbeatGapMs,
+                    DispatcherGapSegments = dispatcherGapSegments,
                     WorkingSetBeforeBytes = workingSetBefore,
                     WorkingSetAfterBytes = process.WorkingSet64,
                     ManagedBytesBefore = managedBefore,
@@ -5172,7 +5339,27 @@ public partial class App : Application
                     SearchElapsedMs = searchWatch.ElapsedMilliseconds,
                     LoadMetricsTotalElapsedMs = loadMetrics?.TotalMs,
                     ScanElapsedMs = loadMetrics?.ScanMs,
+                    MaterializeElapsedMs = loadMetrics?.MaterializeMs,
+                    CatalogPrepareElapsedMs = loadMetrics?.CatalogPrepareMs,
+                    CatalogPublishOtherElapsedMs = loadMetrics?.CatalogPublishOtherMs,
+                    FolderBucketViewElapsedMs = loadMetrics?.FolderBucketViewMs,
+                    InitialFilterElapsedMs = loadMetrics?.InitialFilterMs,
+                    CatalogStatsElapsedMs = loadMetrics?.CatalogStatsMs,
                     MetadataElapsedMs = loadMetrics?.MetadataMs,
+                    ThumbnailElapsedMs = loadMetrics?.ThumbnailMs,
+                    ListSwitchElapsedMs = listSwitchWatch.ElapsedMilliseconds,
+                    InitialGridLayoutElapsedMs = initialGridLayoutWatch.ElapsedMilliseconds,
+                    TailSelectElapsedMs = tailSelectWatch.ElapsedMilliseconds,
+                    TailGridVisualElapsedMs = tailGridVisualWatch.ElapsedMilliseconds,
+                    TailModeRoundTripElapsedMs = tailModeRoundTripWatch.ElapsedMilliseconds,
+                    TailModalElapsedMs = modalTailWatch.ElapsedMilliseconds,
+                    TailCardsSelectionSyncMs = tailCardsSelectionSyncMs,
+                    TailRowsSelectionSyncMs = tailRowsSelectionSyncMs,
+                    TailEnsureGridSelectionMs = tailEnsureGridSelectionMs,
+                    TailCardsScrollSelectionMs = tailCardsScrollSelectionMs,
+                    TailRowsScrollSelectionMs = tailRowsScrollSelectionMs,
+                    TailPreviewSelectionMs = tailPreviewSelectionMs,
+                    TailSeenSelectionMs = tailSeenSelectionMs,
                     SourceCountAfter = sourceCountAfter,
                     EnhancementJobsRead = win.EnhancementJobsReadForSmoke,
                     EnhancementCandidates = win.EnhancedCandidateCountForSmoke,
@@ -5181,15 +5368,32 @@ public partial class App : Application
                         && filteredCount == count
                         && gridRealized <= gridMaximum
                         && gridDeferred == count - gridRealized
-                        && listMode && listBounded
-                        && selectedTail && modalTail
+                        && listMode && listBounded && gridModeAfterListProbe
+                        && selectedTail
+                        && tailGridVisual.CanonicalSelected
+                        && tailGridVisual.GridWindowContains
+                        && tailGridVisual.SelectedItemsContains
+                        && tailGridVisual.ContainerRealized
+                        && tailGridVisual.ContainerSelected
+                        && tailListModeRoundTrip
+                        && tailListVisual.CanonicalSelected
+                        && tailListVisual.SelectedItemsContains
+                        && tailListVisual.ContainerRealized
+                        && tailListVisual.ContainerSelected
+                        && tailGridModeRoundTrip
+                        && tailGridRoundTripVisual.CanonicalSelected
+                        && tailGridRoundTripVisual.GridWindowContains
+                        && tailGridRoundTripVisual.SelectedItemsContains
+                        && tailGridRoundTripVisual.ContainerRealized
+                        && tailGridRoundTripVisual.ContainerSelected
+                        && modalTail
                         && finalSearchExact && staleCancelled && heartbeatAdvanced
                         && sourceCountAfter == count
                         && win.EnhancementJobsReadForSmoke == 0
                         && win.EnhancedCandidateCountForSmoke == 0,
                 };
                 result.Message = result.Ok
-                    ? $"{count:N0}-image catalog stayed exact and structurally bounded while tail search, modal, stale cancellation, and dispatcher responsiveness passed"
+                    ? $"{count:N0}-image catalog stayed exact and structurally bounded while canonical and visual tail selection survived Grid/List round trips, modal, stale cancellation, and dispatcher responsiveness"
                     : "catalog stress structural gate did not meet the expected result";
             }
             catch (Exception ex)
@@ -5204,9 +5408,23 @@ public partial class App : Application
                     LoadElapsedMs = loadWatch.ElapsedMilliseconds,
                 };
             }
-            finally
+
+            result.SmokeRoot = smokeRoot;
+            result.CleanupBoundaryPublished = true;
+            result.CleanupAttempted = false;
+            result.CleanupSucceeded = false;
+            result.CleanupError = "cleanup pending";
+            // Publish the semantic/liveness boundary first. The verifier waits
+            // for process exit before reading the final JSON, so the same file
+            // is rewritten below with an observed cleanup result. If the process
+            // dies between writes, the pending fields fail closed.
+            WriteCatalogStressSmokeResult(resultFullPath, result);
+            try
             {
                 win.Close();
+            }
+            finally
+            {
                 Environment.CurrentDirectory = previousCurrentDirectory;
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
@@ -5215,8 +5433,36 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
             }
 
+            result.CleanupAttempted = true;
+            try
+            {
+                // Deleting 20k fixture files can take more than a second on
+                // Windows. Keep that exact TEMP-root cleanup off the dispatcher
+                // while still awaiting it before publishing the final result.
+                result.CleanupSucceeded = await Task.Run(() =>
+                {
+                    if (Directory.Exists(smokeRoot))
+                        Directory.Delete(smokeRoot, recursive: true);
+                    return !Directory.Exists(smokeRoot);
+                });
+                if (result.CleanupSucceeded)
+                    result.CleanupError = null;
+                else
+                    result.CleanupError = "temp fixture root still existed after recursive deletion";
+            }
+            catch (Exception ex)
+            {
+                result.CleanupSucceeded = false;
+                result.CleanupError = ex.GetType().Name + ": " + ex.Message;
+            }
+            if (!result.CleanupSucceeded)
+            {
+                result.Ok = false;
+                result.Message = string.IsNullOrWhiteSpace(result.Message)
+                    ? "catalog stress temp fixture cleanup failed"
+                    : result.Message + "; temp fixture cleanup failed";
+            }
             WriteCatalogStressSmokeResult(resultFullPath, result);
-            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { }
             Shutdown(result.Ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
@@ -7521,7 +7767,7 @@ public partial class App : Application
 
                 string hotelPath = Path.Combine(folder, "hotel.png");
                 string indiaPath = Path.Combine(folder, "india.png");
-                win.ConfigureImageDecodeDelaysForSmoke(300, 300);
+                win.ConfigureImageDecodeDelaysForSmoke(1500, 1500);
                 bool hotelPrepared = win.SelectFileNameForSmoke("hotel.png")
                     && win.OpenSelectedPreviewTabForSmoke()
                     && win.TogglePreviewTabPinForSmoke("hotel.png")
@@ -7529,9 +7775,22 @@ public partial class App : Application
                     && win.FocusModalCloseForSmoke();
                 Task<PreviewDecodeSmokeSnapshot> staleRefreshPreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("hotel.png");
                 win.ConfigureScanPhaseDelaysForSmoke(0, 500);
+                bool refreshDeleteDuringCatalogYield = false;
+                bool hotelDeleteScheduled = false;
+                win.ConfigureCatalogPreparationBatchesForSmoke(1, (preparedPath, _) =>
+                {
+                    if (hotelDeleteScheduled || !string.Equals(preparedPath, hotelPath, StringComparison.OrdinalIgnoreCase))
+                        return;
+
+                    hotelDeleteScheduled = true;
+                    win.Dispatcher.BeginInvoke(() =>
+                    {
+                        refreshDeleteDuringCatalogYield = string.Equals(win.LoadPhaseForSmoke, "publishing", StringComparison.Ordinal)
+                            && win.RequestDeleteSelectedForSmoke();
+                    }, DispatcherPriority.Input);
+                });
                 Task refreshTask = win.RefreshActiveFolderForSmokeAsync();
                 bool refreshReachedMetadata = await WaitForPhaseAsync(win, "metadata");
-                bool hotelDeletedDuringRefresh = refreshReachedMetadata && win.RequestDeleteSelectedForSmoke();
                 string? refreshError = null;
                 try
                 {
@@ -7541,8 +7800,10 @@ public partial class App : Application
                 {
                     refreshError = ex.GetType().Name + ": " + ex.Message;
                 }
+                win.ConfigureCatalogPreparationBatchesForSmoke(256, null);
+                bool hotelDeletedDuringRefresh = refreshDeleteDuringCatalogYield;
                 PreviewDecodeSmokeSnapshot staleRefreshPreview = await staleRefreshPreviewTask;
-                await Task.Delay(500);
+                await Task.Delay(1700);
                 ViewerState? stateAfterRefreshRace = ReadPersistedState(statePath);
                 bool refreshCatalogClean = !win.AllFileNamesForSmoke.Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
                     && !win.FilteredFileNamesForSmoke().Contains("hotel.png", StringComparer.OrdinalIgnoreCase)
@@ -7559,6 +7820,7 @@ public partial class App : Application
                     && win.ModalCloseFocusedForSmoke;
                 bool refreshStateClean = StateExcludes(stateAfterRefreshRace, [hotelPath]);
                 bool refreshRaceReconciled = hotelPrepared && refreshReachedMetadata && hotelDeletedDuringRefresh
+                    && refreshDeleteDuringCatalogYield
                     && refreshError is null
                     && !File.Exists(hotelPath) && File.Exists(Path.Combine(recycle, "hotel.png"))
                     && refreshCatalogClean && refreshSelectionPreserved && refreshPreviewSafe
@@ -7605,6 +7867,7 @@ public partial class App : Application
                     historiesRetained,
                     tempRecycleOnly,
                     refreshReachedMetadata,
+                    refreshDeleteDuringCatalogYield,
                     hotelDeletedDuringRefresh,
                     refreshError,
                     refreshCatalogClean,
@@ -10779,6 +11042,677 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureSharedStateWriterSmoke(string resultPath)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string tempRoot = Path.GetFullPath(Path.GetTempPath()).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!resultFullPath.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+            throw new ArgumentException("shared-state writer result must be under the temp directory");
+
+        string statePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH")
+            ?? throw new InvalidOperationException("automation state path was not configured");
+        string favoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH")
+            ?? throw new InvalidOperationException("automation favorites path was not configured");
+        string seenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH")
+            ?? throw new InvalidOperationException("automation seen path was not configured");
+        string recentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH")
+            ?? throw new InvalidOperationException("automation recent path was not configured");
+        string jobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH")
+            ?? throw new InvalidOperationException("automation jobs path was not configured");
+        string smokeRoot = Path.GetDirectoryName(Path.GetFullPath(statePath))
+            ?? throw new InvalidOperationException("automation root was unavailable");
+        string smokePrefix = Path.GetFullPath(smokeRoot).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+        if (!smokePrefix.StartsWith(tempRoot, StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException("shared-state writer root escaped TEMP");
+
+        string folder = Path.Combine(smokeRoot, "sources");
+        Directory.CreateDirectory(folder);
+        Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+        string alphaPath = Path.Combine(folder, "alpha.png");
+        string betaPath = Path.Combine(folder, "beta.png");
+        string gammaPath = Path.Combine(folder, "gamma.png");
+        string deltaPath = Path.Combine(folder, "delta.png");
+        string externalPath = Path.Combine(smokeRoot, "external-owner.png");
+        WriteSmokePng(alphaPath, 48, 36, Color.FromRgb(70, 120, 180));
+        WriteSmokePng(betaPath, 48, 36, Color.FromRgb(90, 165, 115));
+        WriteSmokePng(gammaPath, 48, 36, Color.FromRgb(190, 115, 85));
+        WriteSmokePng(deltaPath, 48, 36, Color.FromRgb(135, 95, 195));
+        DateTime stamp = new(2026, 7, 18, 0, 0, 0, DateTimeKind.Utc);
+        File.SetLastWriteTimeUtc(alphaPath, stamp);
+        File.SetLastWriteTimeUtc(betaPath, stamp.AddMinutes(-1));
+        File.SetLastWriteTimeUtc(gammaPath, stamp.AddMinutes(-2));
+        File.SetLastWriteTimeUtc(deltaPath, stamp.AddMinutes(-3));
+        File.WriteAllText(statePath, "{\"Version\":2}");
+        File.WriteAllText(favoritesPath, "{}");
+        File.WriteAllText(seenPath, "{}");
+        File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\"}");
+        File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+        string sourceBefore = FolderFingerprint(folder);
+        string jobsBefore = FileFingerprint(jobsPath);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.ForceSharedStoreWritersForSmoke();
+        window.Show();
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            MainWindow? closeWindow = null;
+            MainWindow? reopenWindow = null;
+            MainWindow? reloadWindow = null;
+            MainWindow? publishCloseWindow = null;
+            MainWindow? compositionWindow = null;
+            MainWindow? compositionReopenWindow = null;
+            async Task<bool> WaitForSmokeAsync(Func<bool> condition)
+            {
+                for (int attempt = 0; attempt < 100; attempt++)
+                {
+                    if (condition())
+                        return true;
+                    await Task.Delay(10);
+                }
+                return condition();
+            }
+            try
+            {
+                await window.LoadFolderAsync(folder);
+                window.SetSortByForSmoke("name");
+                window.SetShowUnseenDotsForSmoke(true);
+                bool selectedAlpha = window.SelectFileNameForSmoke("alpha.png");
+                await window.DrainSharedStoreWritersForSmokeAsync();
+
+                // One dispatcher turn owns all 100 mutations. The background
+                // schedule therefore snapshots one final generation.
+                using var coalescedEntered = new ManualResetEventSlim(false);
+                using var coalescedGate = new ManualResetEventSlim(false);
+                window.ConfigureFavoriteWriterGateForSmoke(coalescedEntered, coalescedGate);
+                int coalescedBatchBefore = window.FavoriteWriterBatchCountForSmoke;
+                bool actionsAccepted = true;
+                for (int index = 0; index < 100; index++)
+                {
+                    int level = index == 99 ? 4 : (index % 5) + 1;
+                    actionsAccepted &= window.SetSelectedFavoriteLevelForSmoke(level);
+                }
+                bool coalescedEnteredWriter = await Task.Run(() => coalescedEntered.Wait(TimeSpan.FromSeconds(5)));
+                var externalMap = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase)
+                {
+                    [externalPath] = 3,
+                };
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(externalMap, new JsonSerializerOptions { WriteIndented = true }));
+                coalescedGate.Set();
+                SharedWriteStatus[] coalescedStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                window.ConfigureFavoriteWriterGateForSmoke(null, null);
+                int coalescedBatches = window.FavoriteWriterBatchCountForSmoke - coalescedBatchBefore;
+                bool coalesced = actionsAccepted && coalescedEnteredWriter
+                    && coalescedStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && coalescedBatches == 1
+                    && ReadFavoriteLevel(favoritesPath, alphaPath) == 4
+                    && ReadFavoriteLevel(favoritesPath, externalPath) == 3
+                    && window.PendingFavoriteMutationCountForSmoke == 0;
+                bool durableSuccessStatus = window.DeleteStatusVisibleForSmoke
+                    && window.DeleteStatusForSmoke.Contains("Favorites saved", StringComparison.OrdinalIgnoreCase)
+                    && !window.DeleteStatusRetryVisibleForSmoke;
+
+                // Hold generation N in flight, enqueue N+1, then release N.
+                // N must not clear N+1; the pump writes both in order.
+                using var staleEntered = new ManualResetEventSlim(false);
+                using var staleGate = new ManualResetEventSlim(false);
+                window.ConfigureFavoriteWriterGateForSmoke(staleEntered, staleGate);
+                int staleBatchBefore = window.FavoriteWriterBatchCountForSmoke;
+                bool staleFirstAccepted = window.SetSelectedFavoriteLevelForSmoke(5);
+                bool staleEnteredWriter = await Task.Run(() => staleEntered.Wait(TimeSpan.FromSeconds(5)));
+                bool staleNewerAccepted = window.SetSelectedFavoriteLevelForSmoke(4);
+                staleGate.Set();
+                SharedWriteStatus[] staleStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                window.ConfigureFavoriteWriterGateForSmoke(null, null);
+                bool staleCompletionSafe = staleFirstAccepted && staleEnteredWriter && staleNewerAccepted
+                    && staleStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && window.FavoriteWriterBatchCountForSmoke - staleBatchBefore == 2
+                    && window.SelectedFavoriteLevelForSmoke == 4
+                    && ReadFavoriteLevel(favoritesPath, alphaPath) == 4
+                    && window.PendingFavoriteMutationCountForSmoke == 0;
+
+                // Deterministic worker failure must roll back the exact
+                // generation, expose one Retry, and preserve target bytes.
+                string favoriteBeforeFailure = FileFingerprint(favoritesPath);
+                window.FailNextFavoriteWriterForSmoke();
+                bool favoriteFailureAccepted = window.SetSelectedFavoriteLevelForSmoke(2);
+                SharedWriteStatus[] favoriteFailureStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                bool favoriteRolledBack = favoriteFailureAccepted
+                    && favoriteFailureStatuses.Contains(SharedWriteStatus.Failed)
+                    && window.SelectedFavoriteLevelForSmoke == 4
+                    && ReadFavoriteLevel(favoritesPath, alphaPath) == 4
+                    && string.Equals(favoriteBeforeFailure, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                    && window.DeleteStatusRetryVisibleForSmoke;
+                bool favoriteFailureBlockedNewAction = !window.SetFileFavoriteLevelForSmoke("beta.png", 5)
+                    && window.FailedFavoriteRetryPendingForSmoke
+                    && ReadFavoriteLevel(favoritesPath, betaPath) == 0
+                    && window.FavoriteLevelForFileForSmoke("beta.png") == 0
+                    && window.DeleteStatusRetryVisibleForSmoke;
+                window.RetryStatusForSmoke();
+                SharedWriteStatus[] favoriteRetryStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                bool favoriteRetry = favoriteRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && window.SelectedFavoriteLevelForSmoke == 2
+                    && ReadFavoriteLevel(favoritesPath, alphaPath) == 2
+                    && window.PendingFavoriteMutationCountForSmoke == 0;
+
+                // Seen failure restores both the durable set and the visible
+                // unseen/blue-dot state. Retry then commits the additive mark.
+                await window.DrainSharedStoreWritersForSmokeAsync();
+                window.FailNextSeenWriterForSmoke();
+                bool selectedBeta = window.SelectFileNameForSmoke("beta.png");
+                SharedWriteStatus[] seenFailureStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                bool seenRolledBack = selectedBeta
+                    && seenFailureStatuses.Contains(SharedWriteStatus.Failed)
+                    && window.SelectedUnseenForSmoke
+                    && window.SelectedUnseenDotForSmoke
+                    && !ReadSeenFlag(seenPath, betaPath)
+                    && window.DeleteStatusRetryVisibleForSmoke;
+                bool seenFailureBlockedNewAction = !window.MarkFileSeenForSmoke("gamma.png")
+                    && window.FailedSeenRetryPendingForSmoke
+                    && !ReadSeenFlag(seenPath, gammaPath)
+                    && window.UnseenForFileForSmoke("gamma.png")
+                    && window.DeleteStatusRetryVisibleForSmoke;
+                window.RetryStatusForSmoke();
+                SharedWriteStatus[] seenRetryStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                bool seenRetry = seenRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && !window.SelectedUnseenForSmoke
+                    && !window.SelectedUnseenDotForSmoke
+                    && ReadSeenFlag(seenPath, betaPath)
+                    && window.PendingSeenMutationCountForSmoke == 0;
+
+                // Invalid latest JSON is protected, byte-identical, and has no
+                // automatic retry.
+                bool selectedAlphaAgain = window.SelectFileNameForSmoke("alpha.png");
+                await window.DrainSharedStoreWritersForSmokeAsync();
+                const string malformedFavorite = "{\"broken\":{}}";
+                File.WriteAllText(favoritesPath, malformedFavorite);
+                bool protectedAccepted = window.SetSelectedFavoriteLevelForSmoke(3);
+                SharedWriteStatus[] protectedStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+                bool protectedRollback = selectedAlphaAgain && protectedAccepted
+                    && protectedStatuses.Contains(SharedWriteStatus.Protected)
+                    && window.SelectedFavoriteLevelForSmoke == 2
+                    && window.FavoritesWriteBlockedForSmoke
+                    && string.Equals(File.ReadAllText(favoritesPath), malformedFavorite, StringComparison.Ordinal)
+                    && !window.DeleteStatusRetryVisibleForSmoke;
+
+                window.Close();
+
+                // Reload owns a two-store transaction: no interactive
+                // Favorite/Seen mutation may slip between the sequential
+                // drains and then be erased by the following disk snapshots.
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    [alphaPath] = 2,
+                    [externalPath] = 3,
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                File.WriteAllText(seenPath, "{}");
+                reloadWindow = HiddenWindow();
+                reloadWindow.ForceSharedStoreWritersForSmoke();
+                reloadWindow.Show();
+                await reloadWindow.LoadFolderAsync(folder);
+                reloadWindow.SetSortByForSmoke("name");
+                reloadWindow.SetShowUnseenDotsForSmoke(true);
+                await reloadWindow.DrainSharedStoreWritersForSmokeAsync();
+
+                bool reloadFirstDrainGuarded = false;
+                bool reloadSecondDrainGuarded = false;
+                bool reloadBarrierRaceSafe = false;
+                bool reloadRetryGuarded = false;
+                bool reloadSeenRetryGuarded = false;
+                bool reloadFavoriteRetryGuarded = false;
+                bool reloadPreparationGuarded = false;
+                using var reloadFavoriteWriterEntered = new ManualResetEventSlim(false);
+                using var reloadFavoriteWriterGate = new ManualResetEventSlim(false);
+                using var reloadSeenWriterEntered = new ManualResetEventSlim(false);
+                using var reloadSeenWriterGate = new ManualResetEventSlim(false);
+                using var reloadFavoriteDrainStarted = new ManualResetEventSlim(false);
+                using var reloadSeenDrainStarted = new ManualResetEventSlim(false);
+                reloadWindow.ConfigureFavoriteWriterGateForSmoke(reloadFavoriteWriterEntered, reloadFavoriteWriterGate);
+                reloadWindow.ConfigureSeenWriterGateForSmoke(reloadSeenWriterEntered, reloadSeenWriterGate);
+                reloadWindow.ConfigureReloadDrainStartedForSmoke(reloadFavoriteDrainStarted, reloadSeenDrainStarted);
+                try
+                {
+                    bool reloadFavoriteQueued = reloadWindow.SetFileFavoriteLevelForSmoke("alpha.png", 4);
+                    bool reloadSeenQueued = reloadWindow.MarkFileSeenForSmoke("beta.png");
+                    Task reloadTask = reloadWindow.LoadFolderAsync(folder);
+
+                    bool favoriteDrainStarted = await Task.Run(() => reloadFavoriteDrainStarted.Wait(TimeSpan.FromSeconds(5)));
+                    bool favoriteWriterHeld = await Task.Run(() => reloadFavoriteWriterEntered.Wait(TimeSpan.FromSeconds(5)));
+                    bool firstFavoriteRejected = !reloadWindow.SetFileFavoriteLevelForSmoke("gamma.png", 5);
+                    bool firstSeenRejected = !reloadWindow.MarkFileSeenForSmoke("gamma.png");
+                    reloadFirstDrainGuarded = favoriteDrainStarted && favoriteWriterHeld
+                        && reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && firstFavoriteRejected && firstSeenRejected
+                        && reloadWindow.DeleteStatusForSmoke.Contains("reload", StringComparison.OrdinalIgnoreCase);
+
+                    reloadFavoriteWriterGate.Set();
+                    bool seenDrainStarted = await Task.Run(() => reloadSeenDrainStarted.Wait(TimeSpan.FromSeconds(5)));
+                    bool seenWriterHeld = await Task.Run(() => reloadSeenWriterEntered.Wait(TimeSpan.FromSeconds(5)));
+                    bool secondFavoriteRejected = !reloadWindow.SetFileFavoriteLevelForSmoke("gamma.png", 1);
+                    bool secondSeenRejected = !reloadWindow.MarkFileSeenForSmoke("gamma.png");
+                    reloadSecondDrainGuarded = seenDrainStarted && seenWriterHeld
+                        && reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && secondFavoriteRejected && secondSeenRejected
+                        && reloadWindow.DeleteStatusForSmoke.Contains("reload", StringComparison.OrdinalIgnoreCase);
+
+                    reloadSeenWriterGate.Set();
+                    await reloadTask.WaitAsync(TimeSpan.FromSeconds(10));
+                    reloadBarrierRaceSafe = reloadFavoriteQueued && reloadSeenQueued
+                        && reloadFirstDrainGuarded && reloadSecondDrainGuarded
+                        && !reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && ReadFavoriteLevel(favoritesPath, alphaPath) == 4
+                        && ReadFavoriteLevel(favoritesPath, gammaPath) == 0
+                        && ReadSeenFlag(seenPath, betaPath)
+                        && !ReadSeenFlag(seenPath, gammaPath)
+                        && reloadWindow.FavoriteLevelForFileForSmoke("alpha.png") == 4
+                        && reloadWindow.FavoriteLevelForFileForSmoke("gamma.png") == 0
+                        && !reloadWindow.UnseenForFileForSmoke("beta.png")
+                        && reloadWindow.UnseenForFileForSmoke("gamma.png")
+                        && reloadWindow.UnseenDotForFileForSmoke("gamma.png");
+                }
+                finally
+                {
+                    reloadFavoriteWriterGate.Set();
+                    reloadSeenWriterGate.Set();
+                    reloadWindow.ConfigureFavoriteWriterGateForSmoke(null, null);
+                    reloadWindow.ConfigureSeenWriterGateForSmoke(null, null);
+                    reloadWindow.ConfigureReloadDrainStartedForSmoke(null, null);
+                }
+
+                // The barrier remains active through dispatcher-yielding tile
+                // preparation, because each prepared tile captures Favorite
+                // and Seen state before the catalog swap.
+                bool preparationHookRan = false;
+                bool preparationFavoriteRejected = false;
+                bool preparationSeenRejected = false;
+                bool preparationStatus = false;
+                reloadWindow.ConfigureCatalogPreparationBatchesForSmoke(1, (_, processed) =>
+                {
+                    if (processed != 1 || preparationHookRan)
+                        return;
+                    preparationHookRan = true;
+                    preparationFavoriteRejected = !reloadWindow.SetFileFavoriteLevelForSmoke("gamma.png", 5);
+                    preparationSeenRejected = !reloadWindow.MarkFileSeenForSmoke("gamma.png");
+                    preparationStatus = reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && reloadWindow.DeleteStatusForSmoke.Contains("reload", StringComparison.OrdinalIgnoreCase);
+                });
+                try
+                {
+                    await reloadWindow.LoadFolderAsync(folder).WaitAsync(TimeSpan.FromSeconds(10));
+                    reloadPreparationGuarded = preparationHookRan
+                        && preparationFavoriteRejected && preparationSeenRejected && preparationStatus
+                        && ReadFavoriteLevel(favoritesPath, gammaPath) == 0
+                        && !ReadSeenFlag(seenPath, gammaPath)
+                        && reloadWindow.FavoriteLevelForFileForSmoke("gamma.png") == 0
+                        && reloadWindow.UnseenForFileForSmoke("gamma.png")
+                        && reloadWindow.UnseenDotForFileForSmoke("gamma.png")
+                        && !reloadWindow.SharedReloadBarrierActiveForSmoke;
+                }
+                finally
+                {
+                    reloadWindow.ConfigureCatalogPreparationBatchesForSmoke(256, null);
+                }
+
+                // Seen Retry is guarded symmetrically while the Favorite
+                // drain is held, then remains available after reload.
+                reloadWindow.FailNextSeenWriterForSmoke();
+                bool seenRetryFailureAccepted = reloadWindow.MarkFileSeenForSmoke("gamma.png");
+                SharedWriteStatus[] seenRetryFailureStatuses = await reloadWindow.DrainSharedStoreWritersForSmokeAsync();
+                bool seenRetryReady = seenRetryFailureAccepted
+                    && seenRetryFailureStatuses.Contains(SharedWriteStatus.Failed)
+                    && reloadWindow.FailedSeenRetryPendingForSmoke
+                    && reloadWindow.UnseenForFileForSmoke("gamma.png");
+                using var retryFavoriteWriterEntered = new ManualResetEventSlim(false);
+                using var retryFavoriteWriterGate = new ManualResetEventSlim(false);
+                using var retryFavoriteDrainStarted = new ManualResetEventSlim(false);
+                reloadWindow.ConfigureFavoriteWriterGateForSmoke(retryFavoriteWriterEntered, retryFavoriteWriterGate);
+                reloadWindow.ConfigureReloadDrainStartedForSmoke(retryFavoriteDrainStarted, null);
+                try
+                {
+                    bool retryFavoriteQueued = reloadWindow.SetFileFavoriteLevelForSmoke("beta.png", 3);
+                    Task retryFavoriteReloadTask = reloadWindow.LoadFolderAsync(folder);
+                    bool retryFirstDrainStarted = await Task.Run(() => retryFavoriteDrainStarted.Wait(TimeSpan.FromSeconds(5)));
+                    bool retryFavoriteWriterHeld = await Task.Run(() => retryFavoriteWriterEntered.Wait(TimeSpan.FromSeconds(5)));
+                    reloadWindow.RetryFailedSeenForSmoke();
+                    bool seenRetryDeferred = reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && reloadWindow.FailedSeenRetryPendingForSmoke
+                        && reloadWindow.DeleteStatusRetryVisibleForSmoke
+                        && reloadWindow.DeleteStatusForSmoke.Contains("reload", StringComparison.OrdinalIgnoreCase)
+                        && reloadWindow.UnseenForFileForSmoke("gamma.png")
+                        && !reloadWindow.SeenWriterPendingForSmoke;
+
+                    retryFavoriteWriterGate.Set();
+                    await retryFavoriteReloadTask.WaitAsync(TimeSpan.FromSeconds(10));
+                    reloadWindow.RetryStatusForSmoke();
+                    SharedWriteStatus[] postReloadSeenRetryStatuses = await reloadWindow.DrainSharedStoreWritersForSmokeAsync();
+                    reloadSeenRetryGuarded = seenRetryReady && retryFavoriteQueued
+                        && retryFirstDrainStarted && retryFavoriteWriterHeld && seenRetryDeferred
+                        && postReloadSeenRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                        && ReadFavoriteLevel(favoritesPath, betaPath) == 3
+                        && ReadSeenFlag(seenPath, gammaPath)
+                        && reloadWindow.FavoriteLevelForFileForSmoke("beta.png") == 3
+                        && !reloadWindow.UnseenForFileForSmoke("gamma.png")
+                        && !reloadWindow.FailedSeenRetryPendingForSmoke;
+                }
+                finally
+                {
+                    retryFavoriteWriterGate.Set();
+                    reloadWindow.ConfigureFavoriteWriterGateForSmoke(null, null);
+                    reloadWindow.ConfigureReloadDrainStartedForSmoke(null, null);
+                }
+
+                // A Retry callback that was already visible before reload is
+                // also a shared-state mutation. Keep it available, but defer
+                // it while the second store is inside the reload barrier.
+                reloadWindow.FailNextFavoriteWriterForSmoke();
+                bool retryFailureAccepted = reloadWindow.SetFileFavoriteLevelForSmoke("delta.png", 5);
+                SharedWriteStatus[] retryFailureStatuses = await reloadWindow.DrainSharedStoreWritersForSmokeAsync();
+                bool retryReady = retryFailureAccepted
+                    && retryFailureStatuses.Contains(SharedWriteStatus.Failed)
+                    && reloadWindow.DeleteStatusRetryVisibleForSmoke
+                    && reloadWindow.FailedFavoriteRetryPendingForSmoke
+                    && reloadWindow.FavoriteLevelForFileForSmoke("delta.png") == 0;
+                using var retrySeenWriterEntered = new ManualResetEventSlim(false);
+                using var retrySeenWriterGate = new ManualResetEventSlim(false);
+                using var retrySeenDrainStarted = new ManualResetEventSlim(false);
+                reloadWindow.ConfigureSeenWriterGateForSmoke(retrySeenWriterEntered, retrySeenWriterGate);
+                reloadWindow.ConfigureReloadDrainStartedForSmoke(null, retrySeenDrainStarted);
+                try
+                {
+                    bool retrySeenQueued = reloadWindow.MarkFileSeenForSmoke("delta.png");
+                    Task retryReloadTask = reloadWindow.LoadFolderAsync(folder);
+                    bool retrySecondDrainStarted = await Task.Run(() => retrySeenDrainStarted.Wait(TimeSpan.FromSeconds(5)));
+                    bool retrySeenWriterHeld = await Task.Run(() => retrySeenWriterEntered.Wait(TimeSpan.FromSeconds(5)));
+                    bool retryWasVisible = reloadWindow.DeleteStatusRetryVisibleForSmoke;
+                    reloadWindow.RetryStatusForSmoke();
+                    bool retryDeferred = reloadWindow.SharedReloadBarrierActiveForSmoke
+                        && reloadWindow.DeleteStatusRetryVisibleForSmoke
+                        && reloadWindow.DeleteStatusForSmoke.Contains("reload", StringComparison.OrdinalIgnoreCase)
+                        && reloadWindow.FailedFavoriteRetryPendingForSmoke
+                        && reloadWindow.FavoriteLevelForFileForSmoke("delta.png") == 0
+                        && !reloadWindow.FavoriteWriterPendingForSmoke;
+
+                    retrySeenWriterGate.Set();
+                    await retryReloadTask.WaitAsync(TimeSpan.FromSeconds(10));
+                    reloadWindow.RetryStatusForSmoke();
+                    SharedWriteStatus[] postReloadRetryStatuses = await reloadWindow.DrainSharedStoreWritersForSmokeAsync();
+                    reloadFavoriteRetryGuarded = retryReady && retrySeenQueued
+                        && retrySecondDrainStarted && retrySeenWriterHeld && retryWasVisible && retryDeferred
+                        && postReloadRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                        && ReadFavoriteLevel(favoritesPath, deltaPath) == 5
+                        && ReadSeenFlag(seenPath, deltaPath)
+                        && reloadWindow.FavoriteLevelForFileForSmoke("delta.png") == 5
+                        && !reloadWindow.UnseenForFileForSmoke("delta.png")
+                        && !reloadWindow.FavoriteWriterPendingForSmoke
+                        && !reloadWindow.FailedFavoriteRetryPendingForSmoke;
+                }
+                finally
+                {
+                    retrySeenWriterGate.Set();
+                    reloadWindow.ConfigureSeenWriterGateForSmoke(null, null);
+                    reloadWindow.ConfigureReloadDrainStartedForSmoke(null, null);
+                }
+                reloadRetryGuarded = reloadSeenRetryGuarded && reloadFavoriteRetryGuarded;
+                reloadWindow.Close();
+                reloadWindow = null;
+
+                // Closing at a catalog preparation yield must perform the one
+                // viewer-state flush even though incidental saves are currently
+                // suppressed for the unpublished catalog transaction.
+                publishCloseWindow = HiddenWindow();
+                publishCloseWindow.ForceSharedStoreWritersForSmoke();
+                publishCloseWindow.Show();
+                await publishCloseWindow.LoadFolderAsync(folder);
+                await publishCloseWindow.DrainSharedStoreWritersForSmokeAsync();
+                publishCloseWindow.SetGridZoomForSmoke(220);
+                string stateBeforePublishClose = FileFingerprint(statePath);
+                bool publishCloseHookRan = false;
+                bool publishCloseSaveWasSuppressed = false;
+                publishCloseWindow.ConfigureCatalogPreparationBatchesForSmoke(1, (_, processed) =>
+                {
+                    if (processed != 1 || publishCloseHookRan)
+                        return;
+                    publishCloseHookRan = true;
+                    publishCloseWindow.SetGridZoomForSmoke(280);
+                    publishCloseSaveWasSuppressed = string.Equals(
+                        stateBeforePublishClose,
+                        FileFingerprint(statePath),
+                        StringComparison.Ordinal);
+                    publishCloseWindow.Close();
+                });
+                await publishCloseWindow.LoadFolderAsync(folder).WaitAsync(TimeSpan.FromSeconds(10));
+                double closePersistedCardWidth = -1;
+                using (JsonDocument closeState = JsonDocument.Parse(File.ReadAllText(statePath)))
+                {
+                    if (closeState.RootElement.TryGetProperty("CardWidth", out JsonElement cardWidthElement)
+                        && cardWidthElement.TryGetDouble(out double parsedCardWidth))
+                    {
+                        closePersistedCardWidth = parsedCardWidth;
+                    }
+                }
+                bool closeDuringPreparationForceSaved = publishCloseHookRan
+                    && publishCloseSaveWasSuppressed
+                    && !publishCloseWindow.IsVisible
+                    && publishCloseWindow.ShutdownPersistenceFlushCountForSmoke == 1
+                    && Math.Abs(closePersistedCardWidth - 280) < 0.01;
+                publishCloseWindow = null;
+
+                // Two independent failed-store intents share one toast. Verify
+                // both completion orders and reopen durability.
+                File.WriteAllText(favoritesPath, "{}");
+                File.WriteAllText(seenPath, "{}");
+                compositionWindow = HiddenWindow();
+                compositionWindow.ForceSharedStoreWritersForSmoke();
+                compositionWindow.Show();
+                await compositionWindow.LoadFolderAsync(folder);
+                compositionWindow.SetSortByForSmoke("name");
+                await compositionWindow.DrainSharedStoreWritersForSmokeAsync();
+
+                using var dualFavoriteEntered = new ManualResetEventSlim(false);
+                using var dualFavoriteGate = new ManualResetEventSlim(false);
+                using var dualSeenEntered = new ManualResetEventSlim(false);
+                using var dualSeenGate = new ManualResetEventSlim(false);
+                compositionWindow.ConfigureFavoriteWriterGateForSmoke(dualFavoriteEntered, dualFavoriteGate);
+                compositionWindow.ConfigureSeenWriterGateForSmoke(dualSeenEntered, dualSeenGate);
+                compositionWindow.FailNextFavoriteWriterForSmoke();
+                compositionWindow.FailNextSeenWriterForSmoke();
+                bool dualFavoriteAccepted = compositionWindow.SetFileFavoriteLevelForSmoke("alpha.png", 4);
+                bool dualSeenAccepted = compositionWindow.MarkFileSeenForSmoke("beta.png");
+                bool dualFavoriteHeld = await Task.Run(() => dualFavoriteEntered.Wait(TimeSpan.FromSeconds(5)));
+                bool dualSeenHeld = await Task.Run(() => dualSeenEntered.Wait(TimeSpan.FromSeconds(5)));
+                dualFavoriteGate.Set();
+                bool favoriteFailedFirst = await WaitForSmokeAsync(() => compositionWindow.FailedFavoriteRetryPendingForSmoke);
+                bool seenNotCompletedBeforeFavorite = !compositionWindow.FailedSeenRetryPendingForSmoke;
+                dualSeenGate.Set();
+                SharedWriteStatus[] dualFailureStatuses = await compositionWindow.DrainSharedStoreWritersForSmokeAsync();
+                compositionWindow.ConfigureFavoriteWriterGateForSmoke(null, null);
+                compositionWindow.ConfigureSeenWriterGateForSmoke(null, null);
+                bool bothRetriesReachable = compositionWindow.FailedFavoriteRetryPendingForSmoke
+                    && compositionWindow.FailedSeenRetryPendingForSmoke
+                    && compositionWindow.DeleteStatusRetryVisibleForSmoke;
+                compositionWindow.Close();
+                bool failedBatchCloseStayedOpen = compositionWindow.IsVisible
+                    && compositionWindow.DeleteStatusRetryVisibleForSmoke
+                    && compositionWindow.DeleteStatusForSmoke.Contains("stayed open", StringComparison.OrdinalIgnoreCase)
+                    && compositionWindow.ShutdownPersistenceFlushCountForSmoke == 0;
+                compositionWindow.RetryStatusForSmoke();
+                SharedWriteStatus[] dualRetryStatuses = await compositionWindow.DrainSharedStoreWritersForSmokeAsync();
+                bool dualFailureCompositeRetry = dualFavoriteAccepted && dualSeenAccepted
+                    && dualFavoriteHeld && dualSeenHeld && favoriteFailedFirst && seenNotCompletedBeforeFavorite
+                    && bothRetriesReachable && failedBatchCloseStayedOpen
+                    && dualRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && ReadFavoriteLevel(favoritesPath, alphaPath) == 4
+                    && ReadSeenFlag(seenPath, betaPath)
+                    && !compositionWindow.FailedFavoriteRetryPendingForSmoke
+                    && !compositionWindow.FailedSeenRetryPendingForSmoke;
+
+                using var orderedFavoriteEntered = new ManualResetEventSlim(false);
+                using var orderedFavoriteGate = new ManualResetEventSlim(false);
+                using var orderedSeenEntered = new ManualResetEventSlim(false);
+                using var orderedSeenGate = new ManualResetEventSlim(false);
+                compositionWindow.ConfigureFavoriteWriterGateForSmoke(orderedFavoriteEntered, orderedFavoriteGate);
+                compositionWindow.ConfigureSeenWriterGateForSmoke(orderedSeenEntered, orderedSeenGate);
+                compositionWindow.FailNextSeenWriterForSmoke();
+                bool orderedFavoriteAccepted = compositionWindow.SetFileFavoriteLevelForSmoke("gamma.png", 3);
+                bool orderedSeenAccepted = compositionWindow.MarkFileSeenForSmoke("delta.png");
+                bool orderedFavoriteHeld = await Task.Run(() => orderedFavoriteEntered.Wait(TimeSpan.FromSeconds(5)));
+                bool orderedSeenHeld = await Task.Run(() => orderedSeenEntered.Wait(TimeSpan.FromSeconds(5)));
+                orderedSeenGate.Set();
+                bool seenFailedFirst = await WaitForSmokeAsync(() => compositionWindow.FailedSeenRetryPendingForSmoke);
+                bool retryVisibleBeforeFavoriteSuccess = compositionWindow.DeleteStatusRetryVisibleForSmoke;
+                orderedFavoriteGate.Set();
+                SharedWriteStatus[] orderedStatuses = await compositionWindow.DrainSharedStoreWritersForSmokeAsync();
+                compositionWindow.ConfigureFavoriteWriterGateForSmoke(null, null);
+                compositionWindow.ConfigureSeenWriterGateForSmoke(null, null);
+                bool retrySurvivedFavoriteSuccess = compositionWindow.FailedSeenRetryPendingForSmoke
+                    && compositionWindow.DeleteStatusRetryVisibleForSmoke
+                    && ReadFavoriteLevel(favoritesPath, gammaPath) == 3;
+                compositionWindow.RetryStatusForSmoke();
+                SharedWriteStatus[] orderedRetryStatuses = await compositionWindow.DrainSharedStoreWritersForSmokeAsync();
+                bool successPreservedCompositeRetry = orderedFavoriteAccepted && orderedSeenAccepted
+                    && orderedFavoriteHeld && orderedSeenHeld && seenFailedFirst && retryVisibleBeforeFavoriteSuccess
+                    && retrySurvivedFavoriteSuccess
+                    && orderedRetryStatuses.All(static status => status == SharedWriteStatus.Succeeded)
+                    && ReadSeenFlag(seenPath, deltaPath)
+                    && !compositionWindow.FailedSeenRetryPendingForSmoke;
+                compositionWindow.Close();
+                bool failedBatchCloseGuarded = failedBatchCloseStayedOpen
+                    && !compositionWindow.IsVisible
+                    && compositionWindow.ShutdownPersistenceFlushCountForSmoke == 1;
+                compositionWindow = null;
+
+                compositionReopenWindow = HiddenWindow();
+                compositionReopenWindow.Show();
+                await compositionReopenWindow.LoadFolderAsync(folder);
+                bool compositeReopened = compositionReopenWindow.FavoriteLevelForFileForSmoke("alpha.png") == 4
+                    && compositionReopenWindow.FavoriteLevelForFileForSmoke("gamma.png") == 3
+                    && !compositionReopenWindow.UnseenForFileForSmoke("beta.png")
+                    && !compositionReopenWindow.UnseenForFileForSmoke("delta.png");
+                compositionReopenWindow.Close();
+                compositionReopenWindow = null;
+
+                // A real close request waits for the one in-flight Favorite
+                // batch, then re-enters Closing and flushes viewer state once.
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    [alphaPath] = 2,
+                    [externalPath] = 3,
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                closeWindow = HiddenWindow();
+                closeWindow.ForceSharedStoreWritersForSmoke();
+                closeWindow.Show();
+                await closeWindow.LoadFolderAsync(folder);
+                closeWindow.SetSortByForSmoke("name");
+                bool closeSelectedGamma = closeWindow.SelectFileNameForSmoke("gamma.png");
+                await closeWindow.DrainSharedStoreWritersForSmokeAsync();
+                using var closeEntered = new ManualResetEventSlim(false);
+                using var closeGate = new ManualResetEventSlim(false);
+                closeWindow.ConfigureFavoriteWriterGateForSmoke(closeEntered, closeGate);
+                bool closeFavoriteAccepted = closeWindow.SetSelectedFavoriteLevelForSmoke(5);
+                bool closeWriterEntered = await Task.Run(() => closeEntered.Wait(TimeSpan.FromSeconds(5)));
+                Task closeTask = closeWindow.CloseAndWaitForSmokeAsync();
+                await Task.Delay(100);
+                bool closeDeferred = !closeTask.IsCompleted && closeWindow.IsVisible;
+                closeGate.Set();
+                await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+                bool pendingCloseDrained = closeSelectedGamma && closeFavoriteAccepted && closeWriterEntered && closeDeferred
+                    && closeWindow.ShutdownPersistenceFlushCountForSmoke == 1
+                    && ReadFavoriteLevel(favoritesPath, gammaPath) == 5;
+                closeWindow = null;
+
+                reopenWindow = HiddenWindow();
+                reopenWindow.Show();
+                await reopenWindow.LoadFolderAsync(folder);
+                reopenWindow.SetSortByForSmoke("name");
+                bool reopenedGamma = reopenWindow.SelectFileNameForSmoke("gamma.png")
+                    && reopenWindow.SelectedFavoriteLevelForSmoke == 5;
+                reopenWindow.Close();
+                reopenWindow = null;
+
+                bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                bool jobsUntouched = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool residueFree = NoPersistenceResidue(smokeRoot);
+                bool isolated = new[] { statePath, favoritesPath, seenPath, recentPath, jobsPath }
+                    .All(path => Path.GetFullPath(path).StartsWith(smokePrefix, StringComparison.OrdinalIgnoreCase));
+                ok = selectedAlpha && coalesced && durableSuccessStatus && staleCompletionSafe
+                    && favoriteRolledBack && favoriteFailureBlockedNewAction && favoriteRetry
+                    && seenRolledBack && seenFailureBlockedNewAction && seenRetry
+                    && protectedRollback
+                    && reloadBarrierRaceSafe && reloadPreparationGuarded && reloadRetryGuarded
+                    && closeDuringPreparationForceSaved
+                    && dualFailureCompositeRetry && successPreservedCompositeRetry && compositeReopened
+                    && failedBatchCloseGuarded
+                    && pendingCloseDrained && reopenedGamma
+                    && sourceUntouched && jobsUntouched && residueFree && isolated;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "generation-aware single-flight Favorite/Seen writer, rollback, retry, protection, and close drain passed"
+                        : "shared-state writer contract did not pass",
+                    coalesced,
+                    coalescedBatches,
+                    durableSuccessStatus,
+                    externalFavoritePreserved = ReadFavoriteLevel(favoritesPath, externalPath) == 3,
+                    staleCompletionSafe,
+                    favoriteRolledBack,
+                    favoriteFailureBlockedNewAction,
+                    favoriteRetry,
+                    seenRolledBack,
+                    seenFailureBlockedNewAction,
+                    seenRetry,
+                    protectedRollback,
+                    reloadFirstDrainGuarded,
+                    reloadSecondDrainGuarded,
+                    reloadBarrierRaceSafe,
+                    reloadPreparationGuarded,
+                    reloadSeenRetryGuarded,
+                    reloadFavoriteRetryGuarded,
+                    reloadRetryGuarded,
+                    closeDuringPreparationForceSaved,
+                    dualFailureCompositeRetry,
+                    successPreservedCompositeRetry,
+                    compositeReopened,
+                    failedBatchCloseGuarded,
+                    pendingCloseDrained,
+                    reopenedGamma,
+                    favoriteWriterAdopted = window.FavoriteWriterAdoptedForSmoke,
+                    seenWriterAdopted = window.SeenWriterAdoptedForSmoke,
+                    favoriteBatchCount = window.FavoriteWriterBatchCountForSmoke,
+                    seenBatchCount = window.SeenWriterBatchCountForSmoke,
+                    sourceUntouched,
+                    jobsUntouched,
+                    residueFree,
+                    isolated,
+                    browserPortUsed = false,
+                    sourceOrUserCacheTouched = false,
+                    smokeRoot,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString(), smokeRoot };
+            }
+            finally
+            {
+                try { if (window.IsVisible) window.Close(); } catch { }
+                try { if (reloadWindow?.IsVisible == true) reloadWindow.Close(); } catch { }
+                try { if (publishCloseWindow?.IsVisible == true) publishCloseWindow.Close(); } catch { }
+                try { if (compositionWindow?.IsVisible == true) compositionWindow.Close(); } catch { }
+                try { if (compositionReopenWindow?.IsVisible == true) compositionReopenWindow.Close(); } catch { }
+                try { if (closeWindow?.IsVisible == true) closeWindow.Close(); } catch { }
+                try { if (reopenWindow?.IsVisible == true) reopenWindow.Close(); } catch { }
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            try { if (Directory.Exists(smokeRoot)) Directory.Delete(smokeRoot, recursive: true); } catch { ok = false; }
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureSharedStateLatencySmoke(string resultPath)
     {
         string resultFullPath = Path.GetFullPath(resultPath);
@@ -10948,6 +11882,8 @@ public partial class App : Application
                 await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Background);
             }
 
+            SharedWriteStatus[] drainedStatuses = await window.DrainSharedStoreWritersForSmokeAsync();
+            actionsAccepted &= drainedStatuses.All(static status => status == SharedWriteStatus.Succeeded);
             string seenBeforeNoOp = FileFingerprint(seenPath);
             var noOpWatch = Stopwatch.StartNew();
             bool repeatedSeenAccepted = window.MarkSelectedSeenForSmoke();
@@ -10955,7 +11891,57 @@ public partial class App : Application
             bool repeatedSeenNoWrite = string.Equals(seenBeforeNoOp, FileFingerprint(seenPath), StringComparison.Ordinal);
             await Task.Delay(45);
             timer.Stop();
-            window.Close();
+
+            // Exercise the real close/drain lifecycle after the timed workload.
+            // The large profile holds a genuine Favorite writer batch so Closing
+            // must remain deferred until the actor drains; the small control has
+            // no async writer and therefore closes immediately.  Record both
+            // observed states instead of publishing a constant lifecycle flag.
+            bool closePendingExpected = window.FavoriteWriterAdoptedForSmoke;
+            bool closeMutationAccepted = false;
+            bool closeWriterEntered = false;
+            bool pendingBeforeClose;
+            bool closeDeferred = false;
+            bool pendingAfterClose;
+            bool closeDrainSucceeded;
+            bool closeLifecycleExercised = false;
+            int closeFlushCount;
+            int expectedImage20FavoriteLevel = 1;
+            if (closePendingExpected)
+            {
+                using var closeEntered = new ManualResetEventSlim(false);
+                using var closeGate = new ManualResetEventSlim(false);
+                window.ConfigureFavoriteWriterGateForSmoke(closeEntered, closeGate);
+                closeMutationAccepted = window.SetSelectedFavoriteLevelForSmoke(2);
+                expectedImage20FavoriteLevel = 2;
+                closeWriterEntered = await Task.Run(() => closeEntered.Wait(TimeSpan.FromSeconds(5)));
+                pendingBeforeClose = window.FavoriteWriterPendingForSmoke || window.SeenWriterPendingForSmoke;
+                Task closeTask = window.CloseAndWaitForSmokeAsync();
+                await Task.Delay(75);
+                closeDeferred = !closeTask.IsCompleted && window.IsVisible;
+                closeGate.Set();
+                await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+                pendingAfterClose = window.FavoriteWriterPendingForSmoke || window.SeenWriterPendingForSmoke;
+                closeFlushCount = window.ShutdownPersistenceFlushCountForSmoke;
+                closeDrainSucceeded = !pendingAfterClose && closeFlushCount == 1;
+                closeLifecycleExercised = true;
+            }
+            else
+            {
+                pendingBeforeClose = window.FavoriteWriterPendingForSmoke || window.SeenWriterPendingForSmoke;
+                Task closeTask = window.CloseAndWaitForSmokeAsync();
+                await closeTask.WaitAsync(TimeSpan.FromSeconds(5));
+                pendingAfterClose = window.FavoriteWriterPendingForSmoke || window.SeenWriterPendingForSmoke;
+                closeFlushCount = window.ShutdownPersistenceFlushCountForSmoke;
+                closeDrainSucceeded = !pendingAfterClose && closeFlushCount == 1;
+                closeLifecycleExercised = true;
+            }
+            actionsAccepted &= closeLifecycleExercised
+                && closeDrainSucceeded
+                && pendingAfterClose == false
+                && (closePendingExpected
+                    ? closeMutationAccepted && closeWriterEntered && pendingBeforeClose && closeDeferred
+                    : !pendingBeforeClose && !closeDeferred);
 
             var favoriteFinal = ReadObjectCount(favoritesPath);
             var seenFinal = ReadObjectCount(seenPath);
@@ -10963,7 +11949,11 @@ public partial class App : Application
             for (int cycle = 1; cycle <= 20; cycle++)
             {
                 string path = Path.Combine(sourceRoot, $"image-{cycle:00}.png");
-                if (cycle != 10) favoriteExact &= ReadFavoriteLevel(favoritesPath, path) == 1;
+                if (cycle != 10)
+                {
+                    int expectedLevel = cycle == 20 ? expectedImage20FavoriteLevel : 1;
+                    favoriteExact &= ReadFavoriteLevel(favoritesPath, path) == expectedLevel;
+                }
                 favoriteExact &= cycle == 10 || FavoriteFileContainsPath(favoritesPath, path);
             }
             bool seenAdditive = Enumerable.Range(0, 21).All(index => ReadSeenFlag(seenPath, Path.Combine(sourceRoot, $"image-{index:00}.png")));
@@ -11011,7 +12001,19 @@ public partial class App : Application
                 residueFree,
                 isolated,
                 enhancementPassive,
-                pendingAtClose = false,
+                favoriteWriterAdopted = window.FavoriteWriterAdoptedForSmoke,
+                seenWriterAdopted = window.SeenWriterAdoptedForSmoke,
+                favoriteWriterBatchCount = window.FavoriteWriterBatchCountForSmoke,
+                seenWriterBatchCount = window.SeenWriterBatchCountForSmoke,
+                closeLifecycleExercised,
+                closePendingExpected,
+                closeMutationAccepted,
+                closeWriterEntered,
+                pendingBeforeClose,
+                closeDeferred,
+                pendingAfterClose,
+                closeDrainSucceeded,
+                closeFlushCount,
             });
         }
 
@@ -11028,7 +12030,7 @@ public partial class App : Application
                 result = new
                 {
                     ok,
-                    decision = "measurement-only; performance thresholds are intentionally not gating",
+                    decision = "semantic profile; acceptance thresholds are enforced by verify-wpf-shared-state-latency.ps1",
                     smokeRoot,
                     runtime = new
                     {
@@ -14144,6 +15146,10 @@ public partial class App : Application
         public List<string> BucketKeys { get; init; } = [];
         public bool DefaultExpanded { get; init; }
         public bool FolderAccessibility { get; init; }
+        public string FolderAutomationInitialState { get; init; } = "Unavailable";
+        public string FolderAutomationCollapsedState { get; init; } = "Unavailable";
+        public string FolderAutomationExpandedState { get; init; } = "Unavailable";
+        public bool FolderAutomationRoundTrip { get; init; }
         public bool SelectedActionsOk { get; init; }
         public bool SelectedFolderA { get; init; }
         public int AfterHideFolderA { get; init; }
@@ -14409,6 +15415,11 @@ public partial class App : Application
     {
         public bool Ok { get; set; }
         public string Message { get; set; } = "";
+        public string SmokeRoot { get; set; } = "";
+        public bool CleanupBoundaryPublished { get; set; }
+        public bool CleanupAttempted { get; set; }
+        public bool CleanupSucceeded { get; set; }
+        public string? CleanupError { get; set; }
         public int RequestedCount { get; set; }
         public int FixtureCount { get; set; }
         public int CatalogCount { get; set; }
@@ -14421,10 +15432,31 @@ public partial class App : Application
         public bool ListBounded { get; set; }
         public string TailName { get; set; } = "";
         public bool SelectedTail { get; set; }
+        public string? TailCanonicalSelectedPath { get; set; }
+        public bool TailCanonicalSelected { get; set; }
+        public bool TailGridWindowContains { get; set; }
+        public bool TailCardsSelectedItemsContains { get; set; }
+        public bool TailGridContainerRealized { get; set; }
+        public bool TailGridContainerSelected { get; set; }
+        public bool TailListModeRoundTrip { get; set; }
+        public string? TailListCanonicalSelectedPath { get; set; }
+        public bool TailListCanonicalSelected { get; set; }
+        public bool TailRowsSelectedItemsContains { get; set; }
+        public bool TailListContainerRealized { get; set; }
+        public bool TailListContainerSelected { get; set; }
+        public bool TailGridModeRoundTrip { get; set; }
+        public string? TailGridRoundTripCanonicalSelectedPath { get; set; }
+        public bool TailGridRoundTripCanonicalSelected { get; set; }
+        public bool TailGridRoundTripWindowContains { get; set; }
+        public bool TailCardsRoundTripSelectedItemsContains { get; set; }
+        public bool TailGridRoundTripContainerRealized { get; set; }
+        public bool TailGridRoundTripContainerSelected { get; set; }
         public bool ModalTail { get; set; }
         public bool FinalSearchExact { get; set; }
         public bool StaleCancelled { get; set; }
         public int HeartbeatCount { get; set; }
+        public long DispatcherHeartbeatMaxGapMs { get; set; }
+        public List<DispatcherGapSmokeSegment> DispatcherGapSegments { get; set; } = [];
         public long WorkingSetBeforeBytes { get; set; }
         public long WorkingSetAfterBytes { get; set; }
         public long ManagedBytesBefore { get; set; }
@@ -14438,10 +15470,41 @@ public partial class App : Application
         public long SearchElapsedMs { get; set; }
         public double? LoadMetricsTotalElapsedMs { get; set; }
         public double? ScanElapsedMs { get; set; }
+        public double? MaterializeElapsedMs { get; set; }
+        public double? CatalogPrepareElapsedMs { get; set; }
+        public double? CatalogPublishOtherElapsedMs { get; set; }
+        public double? FolderBucketViewElapsedMs { get; set; }
+        public double? InitialFilterElapsedMs { get; set; }
+        public double? CatalogStatsElapsedMs { get; set; }
         public double? MetadataElapsedMs { get; set; }
+        public double? ThumbnailElapsedMs { get; set; }
+        public long ListSwitchElapsedMs { get; set; }
+        public long InitialGridLayoutElapsedMs { get; set; }
+        public long TailSelectElapsedMs { get; set; }
+        public long TailGridVisualElapsedMs { get; set; }
+        public long TailModeRoundTripElapsedMs { get; set; }
+        public long TailModalElapsedMs { get; set; }
+        public long TailCardsSelectionSyncMs { get; set; }
+        public long TailRowsSelectionSyncMs { get; set; }
+        public long TailEnsureGridSelectionMs { get; set; }
+        public long TailCardsScrollSelectionMs { get; set; }
+        public long TailRowsScrollSelectionMs { get; set; }
+        public long TailPreviewSelectionMs { get; set; }
+        public long TailSeenSelectionMs { get; set; }
         public int SourceCountAfter { get; set; }
         public int EnhancementJobsRead { get; set; }
         public int EnhancementCandidates { get; set; }
+    }
+
+    private sealed class DispatcherGapSmokeSegment
+    {
+        public long StartMs { get; set; }
+        public long EndMs { get; set; }
+        public long DurationMs { get; set; }
+        public string StageBefore { get; set; } = "";
+        public string StageAfter { get; set; } = "";
+        public string LoadPhaseBefore { get; set; } = "";
+        public string LoadPhaseAfter { get; set; } = "";
     }
 
     private sealed class SearchStallSmokeResult

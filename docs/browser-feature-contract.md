@@ -264,7 +264,7 @@ Desktopの概念配置:
 +-------------------------------------------------------------+
 ```
 
-Sidebarはdesktopでwidth/min/max/flex-basis 240px。gallery zoomでこの幅を変えない。
+Sidebarはdesktopでwidth/min/max/flex-basis 240px。gallery zoomでこの幅を変えない。内部controlは利用可能幅へshrinkし、desktop sidebar自身にhorizontal scrollを発生させない。
 
 ### BR-STATE-004 Visual tokens
 
@@ -343,7 +343,7 @@ shared、browser-local、legacy additive importのset dedupeはすべてcase-ins
 
 ### BR-LND-005 Scan時のview reset
 
-新しいfolder setのscan開始時はDate From/Toとhidden folder setをresetする。Favorite値、Seen map、shared recent/cacheを削除するresetではない。
+新しいfolder setのscan開始時はDate From/Toとhidden folder setをresetする。別のactive catalogへのscanが成功した時だけ、旧catalogのselection、selection anchor、modal current/order、gallery reveal、right preview snapshot、open/active preview tab、pin、closed-tab restore history、pending reload restoreをclearし、`pvu_preview_tabs` / `pvu_pinned_tabs`も空へ同期する。失敗またはcancelしたscanはこれらを変更しない。同じactive catalogのrefreshは保持する。Favorite値、Seen map、shared recent/cacheを削除するresetではない。
 
 ## 6. Scan、index、cache
 
@@ -828,7 +828,7 @@ Drag data:
 - Open external。
 - Enhance。
 - Show Details。
-- active preview tabがcurrent loaded result外なら、`Outside current search/filter`とmodal navigation不可の理由を`aria-live` statusで示す。画像、Favorite、Open、Enhance、Detailsは利用可能なままにする。
+- active preview tabがcurrent loaded result外なら、`Outside current search/filter`とmodal navigation不可の理由を`aria-live` statusで示す。同じactive catalog内のsearch/filter変更またはrefreshではlast usable snapshotを保持し、画像、Favorite、Open、Enhance、Detailsを利用可能なままにする。別catalogのscan成功時はBR-LND-005に従って旧catalog tab/snapshotをclearする。
 
 Detailsは現行では次だけ。
 
@@ -1265,6 +1265,12 @@ Behavior defaults:
 - Confirm before deleteとconfigurable key bindings: shared `/api/settings`
 - Unseen dots、modal edge ratio、panel/view値: browser local `pvu_view`
 
+Shared settingはHTTP success、`ok: true`、requestした値のechoが揃って初めてBrowser stateへcommitする。409、503、network failure、不正なsuccess payloadでは保存済みstateを変更しない。
+
+起動時の`GET /api/settings`はcomponent lifecycleとfield-local save generationに属する。取得中にPUTが成功したfieldは後着した古いGET responseで巻き戻さず、変更していない兄弟fieldは同じGETから通常どおりhydrateする。unmount時はrequestをabortし、その後のresponseをstateへ適用しない。
+
+同じshared fieldへのsaveはclient側でも直列化し、呼出し順とdisk到達順を一致させる。Settingsをpending save中に閉じて再度開いても、そのfieldは完了までSaving/disabledを維持し、同じ意図の二重PUTや古いresponseによる新しい意図の上書きを許さない。key bindingsとConfirm before deleteは別field queueなので互いのUIを不要にblockしない。
+
 ### BR-SET-002 Configurable bindings
 
 | Action | Default |
@@ -1286,6 +1292,9 @@ Settings cellをclick後、次のkeydownをdraftへ記録する。
 - printable keyはcase-insensitiveで比較し、同じnormalized keyを複数actionへ割り当てたら各fieldにinline conflictを表示する。
 - conflict中はSaveをdisabledにし、shared settingsへ書かない。
 - `Save key bindings`でconflict-free draftだけをcommitする。
+- dialogを開いた後に起動時GETや外部hydrateが完了しても、ユーザーが編集済みのbinding fieldは上書きしない。未編集の兄弟fieldは保存済みbindingへ追従し、`Reset to defaults`は全fieldを編集済み意図として扱う。
+- key binding保存失敗時はdialogを閉じず、draftとinline errorを保持して同じdraftをRetryできる。
+- Confirm before delete保存失敗時はcheckboxを保存済み値へrollbackし、失敗した変更値をinline Retryから再送できる。
 - dialog close/backdrop/Escapeは未保存draftを破棄し、現在保存済みbindingへ戻す。
 - `Reset to defaults`はdraftを既定値へ戻し、Saveするまでは永続化しない。
 
@@ -1464,7 +1473,7 @@ Enhancement storeは `{ version: number, jobs: EnhancementJob[] }`。
 - active modal
 - Original/Enhancedの画像ごとの表示選択
 
-Folder setはlast/recentとして保存する。Folder section collapseは`pvu_view.foldersExpanded`へ、open preview tab order/active IDは`pvu_preview_tabs`へ、pin IDは`pvu_pinned_tabs`へ保存する。reload後はcurrent resultに存在するtabだけを復元し、modalを自動openしない。
+Folder setはlast/recentとして保存する。Folder section collapseは`pvu_view.foldersExpanded`へ、open preview tab order/active IDは`pvu_preview_tabs`へ、pin IDは`pvu_pinned_tabs`へ保存する。reload後はcurrent resultに存在するtabだけを復元し、modalを自動openしない。別catalogのscanが成功したら旧catalog IDを両storageからclearし、失敗/cancelまたは同catalog refreshでは書き換えない。
 
 ### BR-PER-005 Concurrency
 

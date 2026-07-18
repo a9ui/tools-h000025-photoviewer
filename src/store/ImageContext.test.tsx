@@ -31,6 +31,57 @@ function PreferencesProbe() {
   );
 }
 
+function SharedSettingsProbe() {
+  const {
+    keyBindings,
+    setKeyBindings,
+    confirmBeforeDelete,
+    setConfirmBeforeDelete,
+  } = useImageStore();
+  const [saveResult, setSaveResult] = React.useState('');
+
+  return (
+    <div>
+      <output aria-label="saved next binding">{keyBindings.nextImage}</output>
+      <output aria-label="saved delete confirmation">{confirmBeforeDelete ? 'enabled' : 'disabled'}</output>
+      <output aria-label="shared settings save result">{saveResult}</output>
+      <button type="button" onClick={() => {
+        void setKeyBindings({ ...keyBindings, nextImage: 'n' }).then((result) => {
+          setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
+        });
+      }}>Save next binding</button>
+      <button type="button" onClick={() => {
+        void setConfirmBeforeDelete(false).then((result) => {
+          setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
+        });
+      }}>Disable delete confirmation</button>
+    </div>
+  );
+}
+
+function QueuedSharedSettingsProbe() {
+  const { confirmBeforeDelete, setConfirmBeforeDelete } = useImageStore();
+  const [result, setResult] = React.useState('');
+
+  return (
+    <div>
+      <output aria-label="queued delete confirmation">
+        {confirmBeforeDelete ? 'enabled' : 'disabled'}
+      </output>
+      <output aria-label="queued settings result">{result}</output>
+      <button type="button" onClick={() => {
+        const disable = setConfirmBeforeDelete(false);
+        const enable = setConfirmBeforeDelete(true);
+        void Promise.all([disable, enable]).then((results) => {
+          setResult(results.every((item) => item.ok) ? 'saved-both' : 'failed');
+        });
+      }}>
+        Queue confirmation intents
+      </button>
+    </div>
+  );
+}
+
 function RapidPreferencesProbe() {
   const {
     favoriteFilterLevels,
@@ -444,6 +495,68 @@ function ScanProbe({ onComplete }: { onComplete?: (dir: string) => void } = {}) 
       <button type="button" onClick={() => startScan({ dir: '' })}>Start empty scan</button>
       <button type="button" onClick={cancelScan}>Cancel test scan</button>
       <button type="button" onClick={dismissScanError}>Dismiss scan error</button>
+    </div>
+  );
+}
+
+function CatalogSwitchProbe() {
+  const {
+    phase,
+    searchResults,
+    selectedIndex,
+    selectedIds,
+    modalImageIds,
+    previewTabIds,
+    pinnedPreviewIds,
+    activePreviewId,
+    previewById,
+    closedPreviewTabCount,
+    revealImageId,
+    setSearchQuery,
+    startScan,
+    selectImage,
+    openModalAtImage,
+    openPreviewTab,
+    closePreviewTab,
+    requestRevealImage,
+    showPreviewImage,
+  } = useImageStore();
+  const loaded = searchResults.filter((image): image is ImageFile => Boolean(image));
+
+  return (
+    <div>
+      <output aria-label="catalog switch phase">{phase}</output>
+      <output aria-label="catalog switch results">{loaded.map((image) => image.id).join(',')}</output>
+      <output aria-label="catalog switch selected index">{selectedIndex ?? ''}</output>
+      <output aria-label="catalog switch selection">{selectedIds.join(',')}</output>
+      <output aria-label="catalog switch modal order">{modalImageIds.join(',')}</output>
+      <output aria-label="catalog switch preview tabs">{previewTabIds.join(',')}</output>
+      <output aria-label="catalog switch pinned tabs">{pinnedPreviewIds.join(',')}</output>
+      <output aria-label="catalog switch active preview">{activePreviewId ?? ''}</output>
+      <output aria-label="catalog switch preview cache">{Object.keys(previewById).join(',')}</output>
+      <output aria-label="catalog switch closed previews">{closedPreviewTabCount}</output>
+      <output aria-label="catalog switch reveal">{revealImageId ?? ''}</output>
+      <button type="button" onClick={() => startScan({ dir: 'C:/old-catalog-a\nC:/old-catalog-b' })}>Scan old catalog</button>
+      <button type="button" disabled={loaded.length === 0} onClick={() => {
+        const image = loaded[0];
+        selectImage(image, loaded.map((item) => item.id));
+        openModalAtImage(image.id, 0, loaded.map((item) => item.id));
+        openPreviewTab(image, { makeActive: true, pin: true });
+        if (loaded[1]) {
+          openPreviewTab(loaded[1], { makeActive: false });
+        }
+        requestRevealImage(image.id);
+      }}>Prepare old catalog UI</button>
+      <button type="button" disabled={!loaded[1]} onClick={() => {
+        if (loaded[1]) closePreviewTab(loaded[1].id);
+      }}>Close secondary old preview</button>
+      <button type="button" disabled={!loaded[1]} onClick={() => {
+        if (loaded[1]) showPreviewImage(loaded[1], { makeActive: false });
+      }}>Cache transient old preview</button>
+      <button type="button" onClick={() => setSearchQuery('outside')}>Filter current catalog</button>
+      <button type="button" onClick={() => startScan({ dir: 'C:/old-catalog-a\nC:/old-catalog-b' })}>Refresh old catalog</button>
+      <button type="button" onClick={() => startScan({ dir: 'C:/old-catalog-b\nC:/old-catalog-a' })}>Scan reordered old catalog</button>
+      <button type="button" onClick={() => startScan({ dir: 'C:/new-catalog' })}>Scan new catalog</button>
     </div>
   );
 }
@@ -1232,6 +1345,350 @@ describe('ImageProvider browser UI preferences', () => {
   });
 });
 
+describe('ImageProvider shared settings save failures', () => {
+  function renderSharedSettingsProbe(
+    saveResponse: (patch: Record<string, unknown>) => Promise<Response>,
+    loadResponse: () => Promise<Response> = async () => ({
+      ok: true,
+      status: 200,
+      json: async () => ({
+        keyBindings: {
+          nextImage: 'ArrowRight',
+          prevImage: 'ArrowLeft',
+          toggleFavorite: 'f',
+          decreaseFavorite: 'u',
+          deleteImage: 'Delete',
+          closeModal: 'Escape',
+          flipHorizontal: 'h',
+          enhanceImage: 'a',
+          zoomIn: '=',
+          zoomOut: '-',
+          zoomReset: '0',
+        },
+        confirmBeforeDelete: true,
+      }),
+    } as Response)
+  ) {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/settings')) {
+        if (init?.method === 'PUT') {
+          return saveResponse(JSON.parse(String(init.body || '{}')) as Record<string, unknown>);
+        }
+        return loadResponse();
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/seen')
+            ? { seen: {} }
+            : url.includes('/api/enhance/jobs')
+              ? { jobs: [] }
+              : {},
+      } as Response;
+    }));
+
+    return render(
+      <ImageProvider>
+        <SharedSettingsProbe />
+      </ImageProvider>
+    );
+  }
+
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
+  it('commits key bindings only when a 200 response confirms ok and echoes the requested values', async () => {
+    renderSharedSettingsProbe(async (patch) => ({
+      ok: true,
+      status: 200,
+      json: async () => ({ ok: true, keyBindings: patch.keyBindings }),
+    } as Response));
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved next binding' }))
+      .toHaveTextContent('ArrowRight'));
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('saved'));
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('n');
+  });
+
+  it('ignores a delayed initial GET after newer shared settings saves succeed', async () => {
+    let resolveLoad!: (response: Response) => void;
+    const delayedLoad = new Promise<Response>((resolve) => {
+      resolveLoad = resolve;
+    });
+    renderSharedSettingsProbe(
+      async (patch) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, ...patch }),
+      } as Response),
+      () => delayedLoad
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved next binding' }))
+      .toHaveTextContent('n'));
+    await user.click(screen.getByRole('button', { name: 'Disable delete confirmation' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved delete confirmation' }))
+      .toHaveTextContent('disabled'));
+
+    await act(async () => {
+      resolveLoad({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          keyBindings: {
+            nextImage: 'ArrowLeft',
+            prevImage: 'ArrowRight',
+            toggleFavorite: 'z',
+            decreaseFavorite: 'x',
+            deleteImage: 'Backspace',
+            closeModal: 'q',
+            flipHorizontal: 'm',
+            enhanceImage: 'e',
+            zoomIn: 'i',
+            zoomOut: 'o',
+            zoomReset: 'r',
+          },
+          confirmBeforeDelete: true,
+        }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('n');
+    expect(screen.getByRole('status', { name: 'saved delete confirmation' })).toHaveTextContent('disabled');
+  });
+
+  it('hydrates untouched key bindings when Confirm changes during the initial GET', async () => {
+    let resolveLoad!: (response: Response) => void;
+    const delayedLoad = new Promise<Response>((resolve) => {
+      resolveLoad = resolve;
+    });
+    renderSharedSettingsProbe(
+      async (patch) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, ...patch }),
+      } as Response),
+      () => delayedLoad
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Disable delete confirmation' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved delete confirmation' }))
+      .toHaveTextContent('disabled'));
+
+    await act(async () => {
+      resolveLoad({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          keyBindings: { nextImage: 'x' },
+          confirmBeforeDelete: true,
+        }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('x');
+    expect(screen.getByRole('status', { name: 'saved delete confirmation' })).toHaveTextContent('disabled');
+  });
+
+  it('hydrates untouched Confirm when key bindings change during the initial GET', async () => {
+    let resolveLoad!: (response: Response) => void;
+    const delayedLoad = new Promise<Response>((resolve) => {
+      resolveLoad = resolve;
+    });
+    renderSharedSettingsProbe(
+      async (patch) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, ...patch }),
+      } as Response),
+      () => delayedLoad
+    );
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved next binding' }))
+      .toHaveTextContent('n'));
+
+    await act(async () => {
+      resolveLoad({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          keyBindings: { nextImage: 'x' },
+          confirmBeforeDelete: false,
+        }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('n');
+    expect(screen.getByRole('status', { name: 'saved delete confirmation' })).toHaveTextContent('disabled');
+  });
+
+  it('serializes same-field shared settings saves so the latest intent reaches disk last', async () => {
+    let resolveFirstSave!: (response: Response) => void;
+    const firstSave = new Promise<Response>((resolve) => {
+      resolveFirstSave = resolve;
+    });
+    const patches: Array<Record<string, unknown>> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/settings')) {
+        if (init?.method === 'PUT') {
+          const patch = JSON.parse(String(init.body || '{}')) as Record<string, unknown>;
+          patches.push(patch);
+          if (patches.length === 1) return firstSave;
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({ ok: true, ...patch }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({ confirmBeforeDelete: true }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/seen')
+            ? { seen: {} }
+            : url.includes('/api/enhance/jobs')
+              ? { jobs: [] }
+              : {},
+      } as Response;
+    }));
+    render(<ImageProvider><QueuedSharedSettingsProbe /></ImageProvider>);
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Queue confirmation intents' }));
+    await waitFor(() => expect(patches).toEqual([{ confirmBeforeDelete: false }]));
+    expect(screen.getByRole('status', { name: 'queued delete confirmation' }))
+      .toHaveTextContent('enabled');
+
+    await act(async () => {
+      resolveFirstSave({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, confirmBeforeDelete: false }),
+      } as Response);
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(patches).toEqual([
+      { confirmBeforeDelete: false },
+      { confirmBeforeDelete: true },
+    ]));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'queued settings result' }))
+      .toHaveTextContent('saved-both'));
+    expect(screen.getByRole('status', { name: 'queued delete confirmation' }))
+      .toHaveTextContent('enabled');
+  });
+
+  it.each([
+    [
+      'ok false',
+      async (patch: Record<string, unknown>) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: false, keyBindings: patch.keyBindings }),
+      } as Response),
+    ],
+    [
+      'a mismatched echo',
+      async (patch: Record<string, unknown>) => ({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          keyBindings: { ...(patch.keyBindings as Record<string, unknown>), nextImage: 'x' },
+        }),
+      } as Response),
+    ],
+    [
+      'invalid JSON',
+      async () => ({
+        ok: true,
+        status: 200,
+        json: async () => { throw new SyntaxError('invalid JSON'); },
+      } as unknown as Response),
+    ],
+  ])('does not commit key bindings when a 200 response contains %s', async (_label, responseFactory) => {
+    renderSharedSettingsProbe(responseFactory);
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved next binding' }))
+      .toHaveTextContent('ArrowRight'));
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('failed:200'));
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('ArrowRight');
+  });
+
+  it('does not commit key bindings when the settings file rejects the write with 409', async () => {
+    renderSharedSettingsProbe(async () => ({
+      ok: false,
+      status: 409,
+      json: async () => ({ ok: false, error: 'malformed settings' }),
+    } as Response));
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved next binding' }))
+      .toHaveTextContent('ArrowRight'));
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('failed:409'));
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('ArrowRight');
+  });
+
+  it('rolls back delete confirmation when the settings lock returns 503', async () => {
+    renderSharedSettingsProbe(async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({ ok: false, error: 'locked' }),
+    } as Response));
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Disable delete confirmation' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('failed:503'));
+    expect(screen.getByRole('status', { name: 'saved delete confirmation' })).toHaveTextContent('enabled');
+  });
+
+  it('keeps the saved state when the local settings service is unreachable', async () => {
+    renderSharedSettingsProbe(async () => {
+      throw new TypeError('Failed to fetch');
+    });
+    const user = userEvent.setup();
+
+    await user.click(screen.getByRole('button', { name: 'Save next binding' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('failed:network'));
+    expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('ArrowRight');
+  });
+});
+
 describe('ImageProvider favorite filter mutation navigation', () => {
   const images = [previewProbeImage, secondPreviewProbeImage, thirdPreviewProbeImage];
 
@@ -1562,6 +2019,166 @@ describe('ImageProvider preview tab persistence', () => {
         activeId: previewProbeImage.id,
       });
     });
+  });
+});
+
+describe('ImageProvider catalog switch ownership', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/search')) {
+        const results = url.includes('q=outside') || url.includes('indexToken=idx_new')
+          ? [thirdPreviewProbeImage]
+          : [previewProbeImage, secondPreviewProbeImage];
+        return {
+          ok: true,
+          json: async () => ({ results, total: results.length, page: 0, totalPages: 1 }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: {} }
+          : url.includes('/api/seen')
+            ? { seen: {} }
+            : url.includes('/api/enhance/jobs')
+              ? { jobs: [] }
+              : {},
+      } as Response;
+    }));
+  });
+
+  async function establishOldCatalogUi() {
+    const user = userEvent.setup();
+    render(<ImageProvider><CatalogSwitchProbe /></ImageProvider>);
+
+    await user.click(screen.getByRole('button', { name: 'Scan old catalog' }));
+    act(() => {
+      MockEventSource.instances[0].onmessage?.({
+        data: JSON.stringify({
+          type: 'complete', processed: 2, total: 2, newFiles: 2, stage: 'complete', indexToken: 'idx_old',
+        }),
+      } as MessageEvent);
+    });
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch results' }))
+      .toHaveTextContent(`${previewProbeImage.id},${secondPreviewProbeImage.id}`));
+
+    await user.click(screen.getByRole('button', { name: 'Prepare old catalog UI' }));
+    await user.click(screen.getByRole('button', { name: 'Close secondary old preview' }));
+    expect(screen.getByRole('status', { name: 'catalog switch selected index' })).toHaveTextContent('0');
+    expect(screen.getByRole('status', { name: 'catalog switch selection' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch modal order' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch pinned tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch active preview' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch closed previews' })).toHaveTextContent('1');
+    expect(screen.getByRole('status', { name: 'catalog switch reveal' })).toHaveTextContent(previewProbeImage.id);
+    return user;
+  }
+
+  function completeScan(instanceIndex: number, indexToken: string, processed = 2) {
+    act(() => {
+      MockEventSource.instances[instanceIndex].onmessage?.({
+        data: JSON.stringify({
+          type: 'complete', processed, total: processed, newFiles: processed, stage: 'complete', indexToken,
+        }),
+      } as MessageEvent);
+    });
+  }
+
+  it('preserves every old-catalog reference when a different catalog scan fails', async () => {
+    const user = await establishOldCatalogUi();
+
+    await user.click(screen.getByRole('button', { name: 'Scan new catalog' }));
+    act(() => {
+      MockEventSource.instances[1].onmessage?.({
+        data: JSON.stringify({ type: 'error', message: 'New catalog is unavailable.' }),
+      } as MessageEvent);
+    });
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch phase' })).toHaveTextContent('landing'));
+    expect(screen.getByRole('status', { name: 'catalog switch selection' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch modal order' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch pinned tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch active preview' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch closed previews' })).toHaveTextContent('1');
+    expect(screen.getByRole('status', { name: 'catalog switch reveal' })).toHaveTextContent(previewProbeImage.id);
+  });
+
+  it('preserves usable preview tabs and snapshots on a successful same-catalog refresh', async () => {
+    const user = await establishOldCatalogUi();
+
+    await user.click(screen.getByRole('button', { name: 'Refresh old catalog' }));
+    completeScan(1, 'idx_old_refresh');
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch phase' })).toHaveTextContent('viewer'));
+    expect(screen.getByRole('status', { name: 'catalog switch selection' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch modal order' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch pinned tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch active preview' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch closed previews' })).toHaveTextContent('1');
+  });
+
+  it('retains an open-tab snapshot outside a same-catalog filter without retaining arbitrary preview cache', async () => {
+    const user = await establishOldCatalogUi();
+
+    await user.click(screen.getByRole('button', { name: 'Cache transient old preview' }));
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' }))
+      .toHaveTextContent(`${previewProbeImage.id},${secondPreviewProbeImage.id}`);
+
+    await user.click(screen.getByRole('button', { name: 'Filter current catalog' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch results' }))
+      .toHaveTextContent(thirdPreviewProbeImage.id));
+    expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' }))
+      .not.toHaveTextContent(secondPreviewProbeImage.id);
+  });
+
+  it('clears all browser-owned volatile references only after a different catalog succeeds', async () => {
+    const user = await establishOldCatalogUi();
+
+    await user.click(screen.getByRole('button', { name: 'Scan new catalog' }));
+    completeScan(1, 'idx_new', 1);
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch selection' })).toBeEmptyDOMElement());
+    expect(screen.getByRole('status', { name: 'catalog switch selected index' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch modal order' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch pinned tabs' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch active preview' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch closed previews' })).toHaveTextContent('0');
+    expect(screen.getByRole('status', { name: 'catalog switch reveal' })).toBeEmptyDOMElement();
+    await waitFor(() => expect(JSON.parse(localStorage.getItem('pvu_preview_tabs') || '{}')).toEqual({
+      version: 1,
+      tabIds: [],
+      activeId: null,
+    }));
+    expect(JSON.parse(localStorage.getItem('pvu_pinned_tabs') || 'null')).toEqual([]);
+  });
+
+  it('treats reordered roots as a different ordered catalog and clears old references on success', async () => {
+    const user = await establishOldCatalogUi();
+
+    await user.click(screen.getByRole('button', { name: 'Scan reordered old catalog' }));
+    completeScan(1, 'idx_old_reordered');
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch preview tabs' }))
+      .toBeEmptyDOMElement());
+    expect(screen.getByRole('status', { name: 'catalog switch selection' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch modal order' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toBeEmptyDOMElement();
+    expect(screen.getByRole('status', { name: 'catalog switch closed previews' })).toHaveTextContent('0');
   });
 });
 

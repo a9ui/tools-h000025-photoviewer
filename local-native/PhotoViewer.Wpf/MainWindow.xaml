@@ -153,7 +153,7 @@
             <!-- Folders -->
             <Border Padding="16,14,16,12" BorderBrush="#0AFFFFFF" BorderThickness="0,0,0,1">
               <StackPanel>
-                <Button x:Name="FoldersSectionToggle" Style="{StaticResource SidebarLink}" Click="ToggleFoldersSection_Click" HorizontalAlignment="Left" Margin="0,0,0,8" AutomationProperties.Name="Toggle folders section"><StackPanel Orientation="Horizontal"><TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}"/><TextBlock x:Name="FoldersSectionToggleText" Text="−" Margin="8,0,0,0"/></StackPanel></Button>
+                <local:ExpandCollapseButton x:Name="FoldersSectionToggle" Style="{StaticResource SidebarLink}" Click="ToggleFoldersSection_Click" HorizontalAlignment="Left" Margin="0,0,0,8" AutomationProperties.Name="Toggle folders section"><StackPanel Orientation="Horizontal"><TextBlock Text="FOLDERS" Style="{StaticResource SectionHeader}"/><TextBlock x:Name="FoldersSectionToggleText" Text="−" Margin="8,0,0,0"/></StackPanel></local:ExpandCollapseButton>
                 <StackPanel x:Name="FoldersSectionContent">
                 <WrapPanel Margin="0,0,0,8">
                   <Button Style="{StaticResource SidebarLink}" Content="Show all" Margin="0,0,12,0" Click="ShowAllFolderBuckets_Click" AutomationProperties.Name="Show all folder buckets"/>

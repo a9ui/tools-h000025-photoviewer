@@ -1,4 +1,6 @@
 import React from 'react';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,6 +14,7 @@ vi.mock('../store/ImageContext', () => ({
 const toggleFavoriteFilterLevel = vi.fn();
 const clearFavoriteFilterLevels = vi.fn();
 const setView = vi.fn();
+const sidebarCss = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8');
 
 function createStore(options: {
   dirPath?: string;
@@ -117,6 +120,22 @@ describe('Sidebar favorite level controls', () => {
     fireEvent.change(slider, { target: { value: '260' } });
 
     expect(setView).toHaveBeenCalledWith({ thumbSize: 260 });
+  });
+
+  it('keeps the Size slider shrinkable without creating horizontal sidebar scroll', () => {
+    render(<Sidebar />);
+
+    const sizeRow = screen.getByRole('group', { name: 'Thumbnail size control' });
+    expect(sizeRow).toHaveClass('sidebar-size-row');
+    expect(within(sizeRow).getByRole('slider', { name: 'Thumbnail size' })).toBeVisible();
+
+    const sidebarRule = sidebarCss.match(/\.sidebar\s*\{([\s\S]*?)\}/)?.[1] ?? '';
+    const sectionRule = sidebarCss.match(/\.sidebar-section\s*\{([\s\S]*?)\}/)?.[1] ?? '';
+    const sizeSliderRule = sidebarCss.match(/\.sidebar-size-row \.sidebar-slider\s*\{([\s\S]*?)\}/)?.[1] ?? '';
+    expect(sidebarRule).toMatch(/overflow-x:\s*hidden/);
+    expect(sectionRule).toMatch(/min-width:\s*0/);
+    expect(sizeSliderRule).toMatch(/min-width:\s*0/);
+    expect(sizeSliderRule).toMatch(/width:\s*0/);
   });
 
   it('labels sparse client-filtered matches separately from indexed totals without a live region', () => {

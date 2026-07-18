@@ -40,6 +40,7 @@ if ($result.ok -ne $true `
     -or $result.bulkPartialReconciled -ne $true `
     -or $result.cancelWasNonDestructive -ne $true `
     -or $result.refreshRaceReconciled -ne $true `
+    -or $result.refreshDeleteDuringCatalogYield -ne $true `
     -or $result.refreshCatalogClean -ne $true `
     -or $result.refreshSelectionPreserved -ne $true `
     -or $result.refreshPreviewSafe -ne $true `

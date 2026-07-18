@@ -33,13 +33,19 @@ function runtimeResponse(payload: unknown, ok = true) {
   return { ok, json: async () => payload } as Response;
 }
 
-function mockSettingsStore(showSettings = true) {
+function mockSettingsStore(
+  showSettings = true,
+  confirmBeforeDelete = true,
+  keyBindings = DEFAULT_KEY_BINDINGS
+) {
+  setKeyBindings.mockResolvedValue({ ok: true });
+  setConfirmBeforeDelete.mockResolvedValue({ ok: true });
   vi.mocked(useImageStore).mockReturnValue({
     showSettings,
     setShowSettings,
-    keyBindings: DEFAULT_KEY_BINDINGS,
+    keyBindings,
     setKeyBindings,
-    confirmBeforeDelete: true,
+    confirmBeforeDelete,
     setConfirmBeforeDelete,
     view: {
       modalEdgeRatio: 0.28,
@@ -104,7 +110,126 @@ describe('SettingsModal unseen markers setting', () => {
     expect(save).toBeEnabled();
     await user.click(save);
     expect(setKeyBindings).toHaveBeenCalledWith(DEFAULT_KEY_BINDINGS);
-    expect(setShowSettings).toHaveBeenCalledWith(false);
+    await waitFor(() => expect(setShowSettings).toHaveBeenCalledWith(false));
+  });
+
+  it('keeps a rejected key-binding draft open and retries the same draft', async () => {
+    setKeyBindings
+      .mockResolvedValueOnce({ ok: false, error: 'Shared settings are temporarily unavailable. Try again.' })
+      .mockResolvedValueOnce({ ok: true });
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('n');
+    await user.click(screen.getByRole('button', { name: 'Save key bindings' }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Draft preserved');
+    expect(screen.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Next image binding' })).toHaveTextContent('N');
+    expect(screen.getByRole('button', { name: 'Retry save key bindings' })).toBeEnabled();
+    expect(setShowSettings).not.toHaveBeenCalledWith(false);
+
+    await user.click(screen.getByRole('button', { name: 'Retry save key bindings' }));
+    await waitFor(() => expect(setShowSettings).toHaveBeenCalledWith(false));
+    expect(setKeyBindings).toHaveBeenCalledTimes(2);
+    expect(setKeyBindings).toHaveBeenNthCalledWith(1, {
+      ...DEFAULT_KEY_BINDINGS,
+      nextImage: 'n',
+    });
+    expect(setKeyBindings).toHaveBeenNthCalledWith(2, {
+      ...DEFAULT_KEY_BINDINGS,
+      nextImage: 'n',
+    });
+  });
+
+  it('rolls back a rejected delete-confirmation toggle and can retry the requested value', async () => {
+    setConfirmBeforeDelete
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce({ ok: true });
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    const checkbox = screen.getByRole('checkbox', { name: 'Confirm before delete' });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('saved value was restored');
+    expect(checkbox).toBeChecked();
+    expect(screen.getByRole('button', { name: 'Retry delete confirmation change' })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: 'Retry delete confirmation change' }));
+    await waitFor(() => expect(checkbox).not.toBeChecked());
+    expect(setConfirmBeforeDelete).toHaveBeenCalledTimes(2);
+    expect(setConfirmBeforeDelete).toHaveBeenNthCalledWith(1, false);
+    expect(setConfirmBeforeDelete).toHaveBeenNthCalledWith(2, false);
+  });
+
+  it('preserves an edited key-binding draft when delete confirmation finishes saving', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('n');
+    await user.click(screen.getByRole('checkbox', { name: 'Confirm before delete' }));
+    await waitFor(() => expect(setConfirmBeforeDelete).toHaveBeenCalledWith(false));
+
+    mockSettingsStore(true, false);
+    rerender(<SettingsModal />);
+
+    expect(screen.getByRole('button', { name: 'Next image binding' })).toHaveTextContent('N');
+    expect(screen.getByRole('checkbox', { name: 'Confirm before delete' })).not.toBeChecked();
+  });
+
+  it('does not erase an unsaved binding draft when delayed hydration arrives', async () => {
+    const user = userEvent.setup();
+    const { rerender } = render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('n');
+    expect(screen.getByRole('button', { name: 'Next image binding' })).toHaveTextContent('N');
+
+    mockSettingsStore(true, true, {
+      ...DEFAULT_KEY_BINDINGS,
+      nextImage: 'x',
+      prevImage: 'p',
+    });
+    rerender(<SettingsModal />);
+
+    expect(screen.getByRole('button', { name: 'Next image binding' })).toHaveTextContent('N');
+    expect(screen.getByRole('button', { name: 'Previous image binding' })).toHaveTextContent('P');
+    expect(screen.getByRole('button', { name: 'Save key bindings' })).toBeEnabled();
+  });
+
+  it('keeps a pending save serialized when Settings closes and reopens', async () => {
+    let resolveSave!: (result: { ok: true }) => void;
+    setKeyBindings.mockReturnValueOnce(new Promise((resolve) => {
+      resolveSave = resolve;
+    }));
+    const user = userEvent.setup();
+    const { rerender } = render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('n');
+    await user.click(screen.getByRole('button', { name: 'Save key bindings' }));
+    expect(screen.getByRole('button', { name: 'Saving key bindings…' })).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Close settings' }));
+    mockSettingsStore(false);
+    rerender(<SettingsModal />);
+    mockSettingsStore(true);
+    rerender(<SettingsModal />);
+
+    expect(screen.getByRole('button', { name: 'Saving key bindings…' })).toBeDisabled();
+    expect(setKeyBindings).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveSave({ ok: true });
+      await Promise.resolve();
+    });
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save key bindings' })).toBeEnabled());
+    expect(setKeyBindings).toHaveBeenCalledTimes(1);
   });
 
   it('keeps Escape as a dialog close while capture is active', async () => {

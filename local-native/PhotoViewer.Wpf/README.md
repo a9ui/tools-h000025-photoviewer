@@ -51,6 +51,8 @@ implementation. The normative current behavior is documented in
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
+- `--shared-state-writer-smoke <path>` temp-only generation/coalescing/fault/Retry/reload-barrier/close-drain writer contract smoke
+- `--shared-state-latency-smoke <path>` temp-only small-control and 100,000-entry Favorite/Seen responsiveness profile
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
@@ -67,7 +69,7 @@ implementation. The normative current behavior is documented in
 - `--external-stale-source-smoke <path>` temp-only external delete/rename/corrupt-source Refresh, tab/pin/modal/focus/state recovery, and shared-history isolation smoke
 - `--decode-mutation-smoke <path>` temp-only active Preview/Modal truncate, lock, same-path replace/recreate, Refresh generation, bitmap release, and shared-state isolation smoke
 - `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
-- `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image tail-search/modal/heartbeat observation gate
+- `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image far-tail canonical/visual Grid-List-Grid selection, search, modal, and heartbeat gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
 - `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
 - `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
@@ -82,6 +84,8 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
 - `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
 - `scripts/verify-wpf-crash-lock-recovery.ps1` actual-process fresh/live lock protection, abrupt-exit stale recovery, atomic-temp cleanup, schema protection, and Browser/WPF concurrency verifier
+- `scripts/verify-wpf-shared-state-writer.ps1` generation-aware Favorite/Seen actor, coalescing, external merge, fault rollback/Retry, reload-barrier, malformed protection, and close/reopen verifier
+- `scripts/verify-wpf-shared-state-latency.ps1 -Repetitions 3` bounded-process 50/65/110ms absolute and `max(control*2.5, control+10ms)` noise-aware relative gate for 100,000-entry shared stores, including executable legacy-regression self-tests
 - `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
 - `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
 - `scripts/verify-wpf-scan-materialization-race.ps1` temp-only existence-snapshot-to-catalog-publication source disappearance and UI/state ownership verifier
@@ -864,7 +868,37 @@ metadata and copy state preserved.
 | `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` / WPF smoke capture paths |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
 | `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
+| `SharedStoreWriter.cs` | generation-aware single-writer actor for large Favorite/Seen stores |
+| `ExpandCollapseButton.cs` | native Folders UI Automation `ExpandCollapse` provider |
 | `Converters.cs` | simple WPF value converters |
+
+## Current verified hardening (2026-07-18)
+
+- The product catalog is not capped at 1,200. The final standalone 20,000-image
+  gate publishes all 20,000 entries with no silent truncation, bounds Grid
+  realization to 384 and List realization to 22, and proves the far-tail
+  canonical path plus `SelectedItems` and container visual selection before and
+  after Grid -> List -> Grid. The round trip took 32ms; dispatcher/external probe
+  maxima were 292/254ms on the acceptance machine. The aggregate catalog run was
+  also green with an external maximum of 248ms.
+- Shared Favorite/Seen files at 1 MiB or larger use independent generation-aware
+  writer actors. A successful write re-reads latest disk state under the existing
+  process lock and atomically replaces it; failed current generations roll back and
+  retain Retry, while newer generations are never reverted.
+- Three final 100,000-entry jitter-margin runs recorded large-store modal-next
+  p95 7.159/9.803/12.169ms, Favorite action p95 45.148/41.155/42.445ms, and
+  dispatcher max gap 50.561/50.412/55.704ms. All runs pass the 50/65/110ms
+  absolute gates and the noise-aware `max(control*2.5, control+10ms)` relative
+  gate. The verifier self-test accepts bounded scheduling jitter while rejecting
+  a relative regression and the historical P1 186/251/460ms baseline.
+- Folders exposes a real UI Automation `ExpandCollapse` state. The focused smoke
+  drives Expanded -> Collapsed -> Expanded through the Automation peer and verifies
+  persistence/migration without touching user state.
+- The current full local gate is 46/46 checks PASS in 241,988ms with
+  `-IncludeReloadSoak`. Separate shared Favorite/Seen and shared Recent
+  cross-runtime verifiers are green for 20 iterations each.
+- These measurements are machine evidence, not universal hardware guarantees. The
+  normative behavior and current limitations remain in `../../docs/wpf-product-spec.md`.
 
 ## Historical limits at the time of those milestones (non-normative)
 

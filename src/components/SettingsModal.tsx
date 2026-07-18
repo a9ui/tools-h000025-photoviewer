@@ -36,20 +36,53 @@ export default function SettingsModal() {
 
   const [recording, setRecording] = useState<keyof KeyBindings | null>(null);
   const [draftKeyBindings, setDraftKeyBindings] = useState<KeyBindings>(keyBindings);
+  const [confirmDraft, setConfirmDraft] = useState(confirmBeforeDelete);
+  const [failedConfirmValue, setFailedConfirmValue] = useState<boolean | null>(null);
+  const [keyBindingsSaveError, setKeyBindingsSaveError] = useState('');
+  const [confirmSaveError, setConfirmSaveError] = useState('');
+  const [savingKeyBindings, setSavingKeyBindings] = useState(false);
+  const [savingConfirm, setSavingConfirm] = useState(false);
   const modalEdgePercent = Math.round(clampModalEdgeRatio(view.modalEdgeRatio) * 100);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const keyBindingsSaveAttemptRef = useRef(0);
+  const confirmSaveAttemptRef = useRef(0);
+  const dirtyKeyBindingActionsRef = useRef<Set<keyof KeyBindings>>(new Set());
   const close = useCallback(() => {
+    keyBindingsSaveAttemptRef.current += 1;
+    confirmSaveAttemptRef.current += 1;
     setShowSettings(false);
     setRecording(null);
     setDraftKeyBindings(keyBindings);
-  }, [keyBindings, setShowSettings]);
+    setConfirmDraft(confirmBeforeDelete);
+    setFailedConfirmValue(null);
+    setKeyBindingsSaveError('');
+    setConfirmSaveError('');
+    dirtyKeyBindingActionsRef.current.clear();
+  }, [confirmBeforeDelete, keyBindings, setShowSettings]);
 
   useEffect(() => {
     if (!showSettings) return;
-    setDraftKeyBindings(keyBindings);
-    setRecording(null);
+    const dirtyActions = dirtyKeyBindingActionsRef.current;
+    if (dirtyActions.size === 0) {
+      setDraftKeyBindings(keyBindings);
+      setKeyBindingsSaveError('');
+      setRecording(null);
+      return;
+    }
+    setDraftKeyBindings((current) => {
+      const merged = { ...keyBindings };
+      for (const action of dirtyActions) merged[action] = current[action];
+      return merged;
+    });
   }, [keyBindings, showSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    setConfirmDraft(confirmBeforeDelete);
+    setFailedConfirmValue(null);
+    setConfirmSaveError('');
+  }, [confirmBeforeDelete, showSettings]);
 
   useDialogFocus({
     open: showSettings,
@@ -77,17 +110,66 @@ export default function SettingsModal() {
     e.preventDefault();
     e.stopPropagation();
     setDraftKeyBindings((current) => ({ ...current, [action]: e.key }));
+    dirtyKeyBindingActionsRef.current.add(action);
+    setKeyBindingsSaveError('');
     setRecording(null);
   }, []);
-  const saveKeyBindings = useCallback(() => {
-    if (hasBindingConflicts) return;
-    setKeyBindings(draftKeyBindings);
-    close();
-  }, [close, draftKeyBindings, hasBindingConflicts, setKeyBindings]);
+  const saveKeyBindings = useCallback(async () => {
+    if (hasBindingConflicts || savingKeyBindings) return;
+    const attempt = keyBindingsSaveAttemptRef.current + 1;
+    keyBindingsSaveAttemptRef.current = attempt;
+    setSavingKeyBindings(true);
+    setKeyBindingsSaveError('');
+    try {
+      const result = await setKeyBindings(draftKeyBindings);
+      if (keyBindingsSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setKeyBindingsSaveError(`${result.error} Draft preserved; retry when ready.`);
+        return;
+      }
+      close();
+    } catch {
+      if (keyBindingsSaveAttemptRef.current !== attempt) return;
+      setKeyBindingsSaveError('Could not reach the local settings service. Draft preserved; retry when ready.');
+    } finally {
+      setSavingKeyBindings(false);
+    }
+  }, [close, draftKeyBindings, hasBindingConflicts, savingKeyBindings, setKeyBindings]);
   const resetKeyBindings = useCallback(() => {
     setDraftKeyBindings(DEFAULT_KEY_BINDINGS);
+    dirtyKeyBindingActionsRef.current = new Set(Object.keys(DEFAULT_KEY_BINDINGS) as Array<keyof KeyBindings>);
+    setKeyBindingsSaveError('');
     setRecording(null);
   }, []);
+
+  const saveConfirmBeforeDelete = useCallback(async (nextValue: boolean) => {
+    if (savingConfirm) return;
+    const savedValue = confirmBeforeDelete;
+    const attempt = confirmSaveAttemptRef.current + 1;
+    confirmSaveAttemptRef.current = attempt;
+    setConfirmDraft(nextValue);
+    setFailedConfirmValue(null);
+    setConfirmSaveError('');
+    setSavingConfirm(true);
+    try {
+      const result = await setConfirmBeforeDelete(nextValue);
+      if (confirmSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setConfirmDraft(savedValue);
+        setFailedConfirmValue(nextValue);
+        setConfirmSaveError(`${result.error} The saved value was restored.`);
+        return;
+      }
+      setConfirmDraft(nextValue);
+    } catch {
+      if (confirmSaveAttemptRef.current !== attempt) return;
+      setConfirmDraft(savedValue);
+      setFailedConfirmValue(nextValue);
+      setConfirmSaveError('Could not reach the local settings service. The saved value was restored.');
+    } finally {
+      setSavingConfirm(false);
+    }
+  }, [confirmBeforeDelete, savingConfirm, setConfirmBeforeDelete]);
 
   if (!showSettings) return null;
 
@@ -116,13 +198,28 @@ export default function SettingsModal() {
             <label className="sidebar-toggle">
               <input
                 aria-label="Confirm before delete"
+                aria-describedby={confirmSaveError ? 'confirm-delete-save-error' : undefined}
                 type="checkbox"
-                checked={confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(e.target.checked)}
+                checked={confirmDraft}
+                disabled={savingConfirm}
+                onChange={(e) => { void saveConfirmBeforeDelete(e.target.checked); }}
               />
-              <span>{confirmBeforeDelete ? 'Enabled' : 'Disabled'}</span>
+              <span>{savingConfirm ? 'Saving…' : confirmDraft ? 'Enabled' : 'Disabled'}</span>
             </label>
           </div>
+          {confirmSaveError && failedConfirmValue !== null && (
+            <div id="confirm-delete-save-error" className="settings-save-error" role="alert">
+              <span>{confirmSaveError}</span>
+              <button
+                type="button"
+                className="sidebar-link"
+                disabled={savingConfirm}
+                onClick={() => { void saveConfirmBeforeDelete(failedConfirmValue); }}
+              >
+                {savingConfirm ? 'Retrying…' : 'Retry delete confirmation change'}
+              </button>
+            </div>
+          )}
           <div className="setting-row">
             <span className="setting-label">Unseen dots</span>
             <label className="sidebar-toggle">
@@ -179,18 +276,28 @@ export default function SettingsModal() {
             );
           })}
           <div className="sidebar-actions" style={{ marginTop: '0.75rem' }}>
-            <button type="button" className="sidebar-link" onClick={resetKeyBindings}>
+            <button type="button" className="sidebar-link" onClick={resetKeyBindings} disabled={savingKeyBindings}>
               Reset to defaults
             </button>
             <button
               type="button"
               className="sidebar-link"
-              onClick={saveKeyBindings}
-              disabled={hasBindingConflicts}
+              onClick={() => { void saveKeyBindings(); }}
+              disabled={hasBindingConflicts || savingKeyBindings}
+              aria-describedby={keyBindingsSaveError ? 'key-bindings-save-error' : undefined}
             >
-              Save key bindings
+              {savingKeyBindings
+                ? 'Saving key bindings…'
+                : keyBindingsSaveError
+                  ? 'Retry save key bindings'
+                  : 'Save key bindings'}
             </button>
           </div>
+          {keyBindingsSaveError && (
+            <p id="key-bindings-save-error" className="settings-save-error" role="alert">
+              {keyBindingsSaveError}
+            </p>
+          )}
         </div>
       </div>
     </div>
