@@ -144,12 +144,20 @@ function validateIncomingDocument(value: unknown):
   if (Object.hasOwn(value, 'keyBindings') && !validateKeyBindings(value.keyBindings)) {
     return { ok: false, error: 'keyBindings must contain only bounded string bindings.' };
   }
-  if (Object.hasOwn(value, 'thumbnailStatusBorders')
-    && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
-    return {
-      ok: false,
-      error: 'thumbnailStatusBorders must contain boolean enabled values, six-digit hex colors, or the enhanced rainbow preset.',
-    };
+  if (Object.hasOwn(value, 'thumbnailStatusBorders')) {
+    const borders = value.thumbnailStatusBorders;
+    const hasPreferenceUpdate = isObject(borders)
+      && (['favorite', 'enhanced'] as const).some((status) => {
+        const preference = borders[status];
+        return isObject(preference)
+          && (Object.hasOwn(preference, 'enabled') || Object.hasOwn(preference, 'color'));
+      });
+    if (!isValidThumbnailStatusBordersDocument(borders) || !hasPreferenceUpdate) {
+      return {
+        ok: false,
+        error: 'thumbnailStatusBorders must update favorite or enhanced with a boolean enabled value, a six-digit hex color, or the enhanced rainbow preset.',
+      };
+    }
   }
   if (!Object.hasOwn(value, 'confirmBeforeDelete')
     && !Object.hasOwn(value, 'keyBindings')

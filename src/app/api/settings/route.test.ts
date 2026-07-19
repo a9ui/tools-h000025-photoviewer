@@ -207,6 +207,8 @@ describe('settings route write safety', () => {
     ['invalid bindings map', JSON.stringify({ keyBindings: [] })],
     ['invalid binding value', JSON.stringify({ keyBindings: { nextImage: 7 } })],
     ['empty binding value', JSON.stringify({ keyBindings: { nextImage: '' } })],
+    ['empty thumbnail border patch', JSON.stringify({ thumbnailStatusBorders: {} })],
+    ['empty thumbnail border preference', JSON.stringify({ thumbnailStatusBorders: { favorite: {} } })],
     ['invalid favorite border toggle', JSON.stringify({ thumbnailStatusBorders: { favorite: { enabled: 'yes' } } })],
     ['rainbow favorite border color', JSON.stringify({ thumbnailStatusBorders: { favorite: { color: 'rainbow' } } })],
     ['invalid enhanced border color', JSON.stringify({ thumbnailStatusBorders: { enhanced: { color: 'yellow' } } })],
