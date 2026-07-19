@@ -54,10 +54,6 @@
 }
 
 .hasFavorite::after {
-  inset: 0;
-  border: 2px solid var(--favorite-thumbnail-border-color);
-}
-
-.hasEnhanced.hasFavorite::after {
   inset: 4px;
+  border: 2px solid var(--favorite-thumbnail-border-color);
 }

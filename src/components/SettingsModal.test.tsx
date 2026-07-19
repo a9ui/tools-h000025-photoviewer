@@ -4,7 +4,11 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsModal from './SettingsModal';
 import { useImageStore } from '../store/ImageContext';
-import { DEFAULT_KEY_BINDINGS, DEFAULT_THUMBNAIL_STATUS_BORDERS } from '../lib/types';
+import {
+  DEFAULT_KEY_BINDINGS,
+  DEFAULT_THUMBNAIL_STATUS_BORDERS,
+  type ThumbnailStatusBorderSettings,
+} from '../lib/types';
 
 vi.mock('../store/ImageContext', () => ({
   useImageStore: vi.fn(),
@@ -37,7 +41,8 @@ function runtimeResponse(payload: unknown, ok = true) {
 function mockSettingsStore(
   showSettings = true,
   confirmBeforeDelete = true,
-  keyBindings = DEFAULT_KEY_BINDINGS
+  keyBindings = DEFAULT_KEY_BINDINGS,
+  thumbnailStatusBorders: ThumbnailStatusBorderSettings = DEFAULT_THUMBNAIL_STATUS_BORDERS,
 ) {
   setKeyBindings.mockResolvedValue({ ok: true });
   setConfirmBeforeDelete.mockResolvedValue({ ok: true });
@@ -49,7 +54,7 @@ function mockSettingsStore(
     setKeyBindings,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
-    thumbnailStatusBorders: DEFAULT_THUMBNAIL_STATUS_BORDERS,
+    thumbnailStatusBorders,
     setThumbnailStatusBorders,
     view: {
       modalEdgeRatio: 0.28,
@@ -106,6 +111,40 @@ describe('SettingsModal unseen markers setting', () => {
 
     await waitFor(() => expect(setThumbnailStatusBorders).toHaveBeenCalledWith({
       favorite: { enabled: false, color: '#facc15' },
+      enhanced: { enabled: true, color: '#12abef' },
+    }));
+  });
+
+  it('saves only the thumbnail border preference changed in this settings session', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('checkbox', { name: 'Show favorite thumbnail border' }));
+    await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
+
+    await waitFor(() => expect(setThumbnailStatusBorders).toHaveBeenCalledWith({
+      favorite: { enabled: false, color: '#facc15' },
+    }));
+  });
+
+  it('restores the current session custom enhanced color after Rainbow then Single color', async () => {
+    mockSettingsStore(true, true, DEFAULT_KEY_BINDINGS, {
+      favorite: { enabled: true, color: '#facc15' },
+      enhanced: { enabled: true, color: '#12abef' },
+    });
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    const enhancedStyle = screen.getByRole('combobox', { name: 'AI enhanced thumbnail border style' });
+    const enhancedColor = screen.getByLabelText('AI enhanced thumbnail border color');
+    expect(enhancedColor).toHaveValue('#12abef');
+
+    await user.selectOptions(enhancedStyle, 'rainbow');
+    await user.selectOptions(enhancedStyle, 'solid');
+
+    expect(enhancedColor).toHaveValue('#12abef');
+    await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
+    await waitFor(() => expect(setThumbnailStatusBorders).toHaveBeenCalledWith({
       enhanced: { enabled: true, color: '#12abef' },
     }));
   });

@@ -1,4 +1,6 @@
 import React from "react";
+import { readFileSync } from "node:fs";
+import path from "node:path";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -320,6 +322,16 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(overlay.style.getPropertyValue("--enhanced-thumbnail-border-color")).toBe("#abcdef");
     expect(firstGroup).toHaveClass("is-selected");
     expect(firstGroup).toHaveClass("is-unseen");
+  });
+
+  it("keeps the favorite thumbnail ring on the inner inset even without an enhanced ring", () => {
+    const css = readFileSync(
+      path.join(process.cwd(), "src/components/ImageGridStatusBorders.module.css"),
+      "utf8",
+    );
+
+    expect(css).toMatch(/\.hasFavorite::after\s*\{[\s\S]*?inset:\s*4px;/);
+    expect(css).not.toMatch(/\.hasEnhanced\.hasFavorite::after/);
   });
 
   it.each(["grid", "list"] as const)(

@@ -96,6 +96,8 @@ export interface ThumbnailStatusBorderSettings {
   enhanced: ThumbnailStatusBorderPreference;
 }
 
+export type ThumbnailStatusBorderSettingsPatch = Partial<ThumbnailStatusBorderSettings>;
+
 export const DEFAULT_THUMBNAIL_STATUS_BORDERS: ThumbnailStatusBorderSettings = {
   favorite: { enabled: true, color: '#facc15' },
   enhanced: { enabled: true, color: THUMBNAIL_STATUS_BORDER_RAINBOW },

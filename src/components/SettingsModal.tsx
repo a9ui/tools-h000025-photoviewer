@@ -8,6 +8,7 @@ import {
   THUMBNAIL_STATUS_BORDER_RAINBOW,
   type KeyBindings,
   type ThumbnailStatusBorderSettings,
+  type ThumbnailStatusBorderSettingsPatch,
 } from '../lib/types';
 import { clampModalEdgeRatio } from '../lib/modalNavigation';
 import { useDialogFocus } from '../lib/useDialogFocus';
@@ -62,7 +63,12 @@ export default function SettingsModal() {
   const confirmSaveAttemptRef = useRef(0);
   const thumbnailBordersSaveAttemptRef = useRef(0);
   const dirtyKeyBindingActionsRef = useRef<Set<keyof KeyBindings>>(new Set());
-  const thumbnailBordersDraftDirtyRef = useRef(false);
+  const dirtyThumbnailBorderStatusesRef = useRef<Set<keyof ThumbnailStatusBorderSettings>>(new Set());
+  const enhancedSolidColorRef = useRef(
+    thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
+      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
+      : thumbnailStatusBorders.enhanced.color,
+  );
   const close = useCallback(() => {
     keyBindingsSaveAttemptRef.current += 1;
     confirmSaveAttemptRef.current += 1;
@@ -77,7 +83,10 @@ export default function SettingsModal() {
     setConfirmSaveError('');
     setThumbnailBordersSaveError('');
     dirtyKeyBindingActionsRef.current.clear();
-    thumbnailBordersDraftDirtyRef.current = false;
+    dirtyThumbnailBorderStatusesRef.current.clear();
+    enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
+      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
+      : thumbnailStatusBorders.enhanced.color;
   }, [confirmBeforeDelete, keyBindings, setShowSettings, thumbnailStatusBorders]);
 
   useEffect(() => {
@@ -104,8 +113,16 @@ export default function SettingsModal() {
   }, [confirmBeforeDelete, showSettings]);
 
   useEffect(() => {
-    if (!showSettings || thumbnailBordersDraftDirtyRef.current) return;
-    setThumbnailBordersDraft(thumbnailStatusBorders);
+    if (!showSettings) return;
+    const dirtyStatuses = dirtyThumbnailBorderStatusesRef.current;
+    setThumbnailBordersDraft((current) => ({
+      favorite: dirtyStatuses.has('favorite') ? current.favorite : thumbnailStatusBorders.favorite,
+      enhanced: dirtyStatuses.has('enhanced') ? current.enhanced : thumbnailStatusBorders.enhanced,
+    }));
+    if (!dirtyStatuses.has('enhanced')
+      && thumbnailStatusBorders.enhanced.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
+      enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color;
+    }
     setThumbnailBordersSaveError('');
   }, [showSettings, thumbnailStatusBorders]);
 
@@ -200,7 +217,12 @@ export default function SettingsModal() {
     status: keyof ThumbnailStatusBorderSettings,
     patch: Partial<ThumbnailStatusBorderSettings[typeof status]>,
   ) => {
-    thumbnailBordersDraftDirtyRef.current = true;
+    dirtyThumbnailBorderStatusesRef.current.add(status);
+    if (status === 'enhanced'
+      && typeof patch.color === 'string'
+      && patch.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
+      enhancedSolidColorRef.current = patch.color;
+    }
     setThumbnailBordersSaveError('');
     setThumbnailBordersDraft((current) => ({
       ...current,
@@ -209,7 +231,8 @@ export default function SettingsModal() {
   }, []);
 
   const resetThumbnailBorders = useCallback(() => {
-    thumbnailBordersDraftDirtyRef.current = true;
+    dirtyThumbnailBorderStatusesRef.current = new Set(['favorite', 'enhanced']);
+    enhancedSolidColorRef.current = DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color;
     setThumbnailBordersSaveError('');
     setThumbnailBordersDraft({
       favorite: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite },
@@ -219,18 +242,22 @@ export default function SettingsModal() {
 
   const saveThumbnailBorders = useCallback(async () => {
     if (savingThumbnailBorders) return;
+    const dirtyStatuses = [...dirtyThumbnailBorderStatusesRef.current];
+    if (dirtyStatuses.length === 0) return;
+    const patch: ThumbnailStatusBorderSettingsPatch = {};
+    for (const status of dirtyStatuses) patch[status] = thumbnailBordersDraft[status];
     const attempt = thumbnailBordersSaveAttemptRef.current + 1;
     thumbnailBordersSaveAttemptRef.current = attempt;
     setSavingThumbnailBorders(true);
     setThumbnailBordersSaveError('');
     try {
-      const result = await setThumbnailStatusBorders(thumbnailBordersDraft);
+      const result = await setThumbnailStatusBorders(patch);
       if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
       if (!result.ok) {
         setThumbnailBordersSaveError(`${result.error} Draft preserved; retry when ready.`);
         return;
       }
-      thumbnailBordersDraftDirtyRef.current = false;
+      dirtyThumbnailBorderStatusesRef.current.clear();
     } catch {
       if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
       setThumbnailBordersSaveError('Could not reach the local settings service. Draft preserved; retry when ready.');
@@ -331,7 +358,7 @@ export default function SettingsModal() {
                       onChange={(event) => updateThumbnailBorderDraft('enhanced', {
                         color: event.target.value === THUMBNAIL_STATUS_BORDER_RAINBOW
                           ? THUMBNAIL_STATUS_BORDER_RAINBOW
-                          : '#facc15',
+                          : enhancedSolidColorRef.current,
                       })}
                     >
                       <option value={THUMBNAIL_STATUS_BORDER_RAINBOW}>Rainbow</option>

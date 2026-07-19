@@ -31,6 +31,16 @@ describe('thumbnail status borders', () => {
     });
     expect(getThumbnailStatusBorderPresentation({ favorite: true, enhanced: true, settings }))
       .toEqual({ favoriteColor: null, enhancedColor: '#00ff00', enhancedRainbow: false });
+
+    const favoriteOnlySettings = normalizeThumbnailStatusBorders({
+      favorite: { enabled: true, color: '#ff0000' },
+      enhanced: { enabled: false, color: 'rainbow' },
+    });
+    expect(getThumbnailStatusBorderPresentation({
+      favorite: true,
+      enhanced: true,
+      settings: favoriteOnlySettings,
+    })).toEqual({ favoriteColor: '#ff0000', enhancedColor: null, enhancedRainbow: false });
   });
 
   it('normalizes custom colors and uses rainbow for a missing enhanced preference', () => {

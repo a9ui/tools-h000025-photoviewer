@@ -82,6 +82,39 @@ describe('settings route write safety', () => {
     });
   });
 
+  it('merges sequential cross-runtime thumbnail preference saves against the latest disk state', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      futureSetting: { version: 2 },
+      thumbnailStatusBorders: {
+        favorite: { enabled: true, color: '#101010', futureWidth: 4 },
+        enhanced: { enabled: false, color: '#202020', futureGlow: true },
+      },
+    }), 'utf8');
+
+    const browserFavoriteResponse = await PUT(putRequest(JSON.stringify({
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#303030' },
+      },
+    })));
+    expect(browserFavoriteResponse.status).toBe(200);
+
+    const wpfEnhancedResponse = await PUT(putRequest(JSON.stringify({
+      thumbnailStatusBorders: {
+        enhanced: { enabled: true, color: 'rainbow' },
+      },
+    })));
+    const stored = JSON.parse(await fs.readFile(target, 'utf8'));
+
+    expect(wpfEnhancedResponse.status).toBe(200);
+    expect(stored).toMatchObject({
+      futureSetting: { version: 2 },
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#303030', futureWidth: 4 },
+        enhanced: { enabled: true, color: 'rainbow', futureGlow: true },
+      },
+    });
+  });
+
   it('keeps a legacy enhanced hex color solid and defaults only a missing color to rainbow without rewriting', async () => {
     const legacy = {
       thumbnailStatusBorders: {

@@ -9,6 +9,7 @@ import type {
   KeyBindings,
   SearchResponse,
   ThumbnailStatusBorderSettings,
+  ThumbnailStatusBorderSettingsPatch,
 } from '../lib/types';
 import { DEFAULT_KEY_BINDINGS, DEFAULT_THUMBNAIL_STATUS_BORDERS } from '../lib/types';
 import {
@@ -493,7 +494,18 @@ function normalizeScanEventProgress(data: Record<string, unknown>) {
 type SharedSettingsPatch =
   | { keyBindings: KeyBindings }
   | { confirmBeforeDelete: boolean }
-  | { thumbnailStatusBorders: ThumbnailStatusBorderSettings };
+  | { thumbnailStatusBorders: ThumbnailStatusBorderSettingsPatch };
+
+function normalizeThumbnailStatusBorderPatch(
+  value: ThumbnailStatusBorderSettingsPatch,
+): ThumbnailStatusBorderSettingsPatch | null {
+  if (!isValidThumbnailStatusBordersDocument(value)) return null;
+  const normalized = normalizeThumbnailStatusBorders(value);
+  const patch: ThumbnailStatusBorderSettingsPatch = {};
+  if (Object.hasOwn(value, 'favorite')) patch.favorite = normalized.favorite;
+  if (Object.hasOwn(value, 'enhanced')) patch.enhanced = normalized.enhanced;
+  return Object.keys(patch).length > 0 ? patch : null;
+}
 
 async function saveSharedSettings(patch: SharedSettingsPatch): Promise<SharedSettingsSaveResult> {
   let response: Response;
@@ -551,6 +563,13 @@ async function saveSharedSettings(patch: SharedSettingsPatch): Promise<SharedSet
     };
   }
 
+  if ('thumbnailStatusBorders' in patch) {
+    const record = payload as Record<string, unknown>;
+    return {
+      ok: true,
+      thumbnailStatusBorders: normalizeThumbnailStatusBorders(record.thumbnailStatusBorders),
+    };
+  }
   return { ok: true };
 }
 
@@ -563,10 +582,13 @@ function isMatchingSettingsSaveResponse(payload: unknown, patch: SharedSettingsP
   if ('thumbnailStatusBorders' in patch) {
     if (!isValidThumbnailStatusBordersDocument(record.thumbnailStatusBorders)) return false;
     const saved = normalizeThumbnailStatusBorders(record.thumbnailStatusBorders);
-    return saved.favorite.enabled === patch.thumbnailStatusBorders.favorite.enabled
-      && saved.favorite.color === patch.thumbnailStatusBorders.favorite.color.toLowerCase()
-      && saved.enhanced.enabled === patch.thumbnailStatusBorders.enhanced.enabled
-      && saved.enhanced.color === patch.thumbnailStatusBorders.enhanced.color.toLowerCase();
+    const requested = patch.thumbnailStatusBorders;
+    return (!requested.favorite
+        || (saved.favorite.enabled === requested.favorite.enabled
+          && saved.favorite.color === requested.favorite.color.toLowerCase()))
+      && (!requested.enhanced
+        || (saved.enhanced.enabled === requested.enhanced.enabled
+          && saved.enhanced.color === requested.enhanced.color.toLowerCase()));
   }
   const savedBindings = record.keyBindings;
   if (!savedBindings || typeof savedBindings !== 'object') return false;
@@ -576,7 +598,7 @@ function isMatchingSettingsSaveResponse(payload: unknown, patch: SharedSettingsP
 }
 
 export type SharedSettingsSaveResult =
-  | { ok: true }
+  | { ok: true; thumbnailStatusBorders?: ThumbnailStatusBorderSettings }
   | { ok: false; error: string; status?: number };
 
 interface Ctx {
@@ -669,7 +691,7 @@ interface Ctx {
   confirmBeforeDelete: boolean;
   setConfirmBeforeDelete: (v: boolean) => Promise<SharedSettingsSaveResult>;
   thumbnailStatusBorders: ThumbnailStatusBorderSettings;
-  setThumbnailStatusBorders: (v: ThumbnailStatusBorderSettings) => Promise<SharedSettingsSaveResult>;
+  setThumbnailStatusBorders: (v: ThumbnailStatusBorderSettingsPatch) => Promise<SharedSettingsSaveResult>;
   showSettings: boolean;
   setShowSettings: (v: boolean) => void;
 
@@ -1519,14 +1541,21 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const setThumbnailStatusBorders = useCallback((
-    value: ThumbnailStatusBorderSettings,
+    value: ThumbnailStatusBorderSettingsPatch,
   ): Promise<SharedSettingsSaveResult> => {
-    const normalized = normalizeThumbnailStatusBorders(value);
+    const normalized = normalizeThumbnailStatusBorderPatch(value);
+    if (!normalized) {
+      return Promise.resolve({
+        ok: false,
+        error: 'Choose at least one valid thumbnail border preference to save.',
+      });
+    }
     const operation = thumbnailStatusBordersSaveQueueRef.current.then(async () => {
       const result = await saveSharedSettings({ thumbnailStatusBorders: normalized });
       if (result.ok && providerMountedRef.current) {
         thumbnailStatusBordersMutationGenerationRef.current += 1;
-        setThumbnailStatusBordersState(normalized);
+        setThumbnailStatusBordersState(result.thumbnailStatusBorders
+          ?? ((current) => ({ ...current, ...normalized })));
       }
       return result;
     });

@@ -69,6 +69,13 @@ function SharedSettingsProbe() {
           setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
         });
       }}>Save thumbnail borders</button>
+      <button type="button" onClick={() => {
+        void setThumbnailStatusBorders({
+          favorite: { enabled: false, color: '#445566' },
+        }).then((result) => {
+          setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
+        });
+      }}>Save favorite border only</button>
     </div>
   );
 }
@@ -1868,6 +1875,39 @@ describe('ImageProvider shared settings save failures', () => {
         enhanced: { enabled: true, color: '#aabbcc' },
       },
     });
+  });
+
+  it('sends only the dirty thumbnail preference and adopts the complete latest response', async () => {
+    const patches: Record<string, unknown>[] = [];
+    renderSharedSettingsProbe(async (patch) => {
+      patches.push(patch);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          ok: true,
+          thumbnailStatusBorders: {
+            favorite: { enabled: false, color: '#445566' },
+            enhanced: { enabled: false, color: '#778899' },
+          },
+        }),
+      } as Response;
+    });
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved thumbnail borders' }))
+      .toHaveTextContent('#facc15'));
+    await user.click(screen.getByRole('button', { name: 'Save favorite border only' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('saved'));
+    expect(patches).toContainEqual({
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#445566' },
+      },
+    });
+    expect(screen.getByRole('status', { name: 'saved thumbnail borders' })).toHaveTextContent('#445566');
+    expect(screen.getByRole('status', { name: 'saved thumbnail borders' })).toHaveTextContent('#778899');
   });
 
   it('ignores a delayed initial GET after newer shared settings saves succeed', async () => {
