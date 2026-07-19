@@ -44,6 +44,25 @@ describe('withFileWriteLock', () => {
     await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('queues same-process contenders FIFO without starving behind the shared lock timeout', async () => {
+    const acquisitionOrder: number[] = [];
+
+    const writers = Array.from({ length: 30 }, (_, index) =>
+      withFileWriteLock(
+        target,
+        async () => {
+          acquisitionOrder.push(index);
+          await new Promise((resolve) => setTimeout(resolve, 8));
+        },
+        { retryDelayMs: 1, timeoutMs: 20 },
+      ),
+    );
+
+    await expect(Promise.all(writers)).resolves.toHaveLength(30);
+    expect(acquisitionOrder).toEqual(Array.from({ length: 30 }, (_, index) => index));
+    await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
   it('recovers an orphan only after it is stale', async () => {
     const lockPath = `${target}.lock`;
     await fs.writeFile(lockPath, 'orphan', 'utf8');
