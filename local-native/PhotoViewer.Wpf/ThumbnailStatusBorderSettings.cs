@@ -6,6 +6,15 @@ namespace PhotoViewer.Wpf;
 
 internal sealed record ThumbnailStatusBorderPreference(bool Enabled, string Color);
 
+[Flags]
+internal enum ThumbnailStatusBorderDirtyPreferences
+{
+    None = 0,
+    Favorite = 1,
+    Enhanced = 2,
+    All = Favorite | Enhanced,
+}
+
 internal sealed record ThumbnailStatusBorderSettings(
     ThumbnailStatusBorderPreference Favorite,
     ThumbnailStatusBorderPreference Enhanced)
@@ -89,6 +98,7 @@ internal static class ThumbnailStatusBorderSettingsStore
     public static bool TryMerge(
         string? existingJson,
         ThumbnailStatusBorderSettings settings,
+        ThumbnailStatusBorderDirtyPreferences dirtyPreferences,
         out string mergedJson,
         out string? error)
     {
@@ -96,6 +106,12 @@ internal static class ThumbnailStatusBorderSettingsStore
         error = null;
         try
         {
+            if (dirtyPreferences == ThumbnailStatusBorderDirtyPreferences.None)
+            {
+                error = "At least one thumbnail border preference must be selected for saving.";
+                return false;
+            }
+
             JsonObject root;
             if (string.IsNullOrWhiteSpace(existingJson))
             {
@@ -119,13 +135,18 @@ internal static class ThumbnailStatusBorderSettingsStore
             }
 
             JsonObject borders = GetOrCreateObject(root, "thumbnailStatusBorders");
-            JsonObject favorite = GetOrCreateObject(borders, "favorite");
-            JsonObject enhanced = GetOrCreateObject(borders, "enhanced");
-
-            favorite["enabled"] = settings.Favorite.Enabled;
-            favorite["color"] = NormalizeFavoriteColor(settings.Favorite.Color);
-            enhanced["enabled"] = settings.Enhanced.Enabled;
-            enhanced["color"] = NormalizeEnhancedColor(settings.Enhanced.Color);
+            if (dirtyPreferences.HasFlag(ThumbnailStatusBorderDirtyPreferences.Favorite))
+            {
+                JsonObject favorite = GetOrCreateObject(borders, "favorite");
+                favorite["enabled"] = settings.Favorite.Enabled;
+                favorite["color"] = NormalizeFavoriteColor(settings.Favorite.Color);
+            }
+            if (dirtyPreferences.HasFlag(ThumbnailStatusBorderDirtyPreferences.Enhanced))
+            {
+                JsonObject enhanced = GetOrCreateObject(borders, "enhanced");
+                enhanced["enabled"] = settings.Enhanced.Enabled;
+                enhanced["color"] = NormalizeEnhancedColor(settings.Enhanced.Color);
+            }
 
             mergedJson = root.ToJsonString(IndentedJson) + Environment.NewLine;
             return true;

@@ -292,6 +292,7 @@ public partial class MainWindow : Window
     private bool _thumbnailStatusBorderSettingsProtected;
     private string? _thumbnailStatusBorderSettingsError;
     private bool _syncingThumbnailStatusBorderControls;
+    private ThumbnailStatusBorderDirtyPreferences _dirtyThumbnailStatusBorderPreferences;
     private bool _lastThumbnailStatusBorderSaveSucceeded;
     private bool _foldersSectionExpanded = true;
     private bool _syncingFolderBucketSelection;
@@ -10228,6 +10229,7 @@ public partial class MainWindow : Window
     private void BeginThumbnailStatusBorderEdit()
     {
         _draftThumbnailStatusBorderSettings = _thumbnailStatusBorderSettings;
+        _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.None;
         PopulateThumbnailStatusBorderControls(_draftThumbnailStatusBorderSettings);
         SaveThumbnailBordersButton.Content = _thumbnailStatusBorderSettingsProtected ? "Retry save" : "Save borders";
         ThumbnailBordersStatusText.Text = _thumbnailStatusBorderSettingsProtected
@@ -10291,6 +10293,9 @@ public partial class MainWindow : Window
     {
         if (_initializing || _syncingThumbnailStatusBorderControls)
             return;
+        _dirtyThumbnailStatusBorderPreferences |= ReferenceEquals(sender, FavoriteThumbnailBorderColorTextBox)
+            ? ThumbnailStatusBorderDirtyPreferences.Favorite
+            : ThumbnailStatusBorderDirtyPreferences.Enhanced;
         bool valid = RefreshThumbnailStatusBorderColorPreviews();
         ThumbnailBordersStatusText.Text = valid
             ? "Ready to save."
@@ -10305,6 +10310,7 @@ public partial class MainWindow : Window
         {
             return;
         }
+        _dirtyThumbnailStatusBorderPreferences |= ThumbnailStatusBorderDirtyPreferences.Enhanced;
         bool valid = RefreshThumbnailStatusBorderColorPreviews();
         ThumbnailBordersStatusText.Text = valid
             ? EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true
@@ -10313,9 +10319,20 @@ public partial class MainWindow : Window
             : "Use a six-digit hex color such as #facc15 for Single color mode.";
     }
 
+    private void ThumbnailBorderEnabled_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing || _syncingThumbnailStatusBorderControls)
+            return;
+        _dirtyThumbnailStatusBorderPreferences |= ReferenceEquals(sender, FavoriteThumbnailBorderCheckBox)
+            ? ThumbnailStatusBorderDirtyPreferences.Favorite
+            : ThumbnailStatusBorderDirtyPreferences.Enhanced;
+        ThumbnailBordersStatusText.Text = "Ready to save.";
+    }
+
     private void ResetThumbnailBorders_Click(object sender, RoutedEventArgs e)
     {
         _draftThumbnailStatusBorderSettings = ThumbnailStatusBorderSettings.Default;
+        _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.All;
         PopulateThumbnailStatusBorderControls(_draftThumbnailStatusBorderSettings);
         SaveThumbnailBordersButton.Content = "Save borders";
         ThumbnailBordersStatusText.Text = "Default yellow Favorite and rainbow AI-enhanced borders are ready. Save to apply them.";
@@ -10324,6 +10341,20 @@ public partial class MainWindow : Window
     private void SaveThumbnailBorders_Click(object sender, RoutedEventArgs e)
     {
         _lastThumbnailStatusBorderSaveSucceeded = false;
+        if (_dirtyThumbnailStatusBorderPreferences == ThumbnailStatusBorderDirtyPreferences.None)
+        {
+            if (_thumbnailStatusBorderSettingsProtected)
+            {
+                SaveThumbnailBordersButton.Content = "Retry save";
+                ThumbnailBordersStatusText.Text = "Shared settings remain protected. Change a border preference before retrying; nothing was overwritten.";
+            }
+            else
+            {
+                _lastThumbnailStatusBorderSaveSucceeded = true;
+                ThumbnailBordersStatusText.Text = "No thumbnail border changes to save.";
+            }
+            return;
+        }
         if (!TryReadThumbnailStatusBorderDraft(out ThumbnailStatusBorderSettings draft))
         {
             SaveThumbnailBordersButton.Content = "Retry save";
@@ -10332,7 +10363,11 @@ public partial class MainWindow : Window
         }
 
         _draftThumbnailStatusBorderSettings = draft;
-        if (!TryPersistThumbnailStatusBorderSettings(draft, out string? error))
+        if (!TryPersistThumbnailStatusBorderSettings(
+                draft,
+                _dirtyThumbnailStatusBorderPreferences,
+                out ThumbnailStatusBorderSettings persisted,
+                out string? error))
         {
             _thumbnailStatusBorderSettingsProtected = true;
             _thumbnailStatusBorderSettingsError = error;
@@ -10341,10 +10376,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        _thumbnailStatusBorderSettings = draft;
+        _thumbnailStatusBorderSettings = persisted;
+        _draftThumbnailStatusBorderSettings = persisted;
         _thumbnailStatusBorderSettingsProtected = false;
         _thumbnailStatusBorderSettingsError = null;
-        ApplyThumbnailStatusBorderResources(draft);
+        ApplyThumbnailStatusBorderResources(persisted);
+        PopulateThumbnailStatusBorderControls(persisted);
+        _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.None;
         _lastThumbnailStatusBorderSaveSucceeded = true;
         SaveThumbnailBordersButton.Content = "Save borders";
         ThumbnailBordersStatusText.Text = "Saved. Gallery and list borders updated without reloading thumbnails.";
@@ -10379,8 +10417,11 @@ public partial class MainWindow : Window
 
     private static bool TryPersistThumbnailStatusBorderSettings(
         ThumbnailStatusBorderSettings settings,
+        ThumbnailStatusBorderDirtyPreferences dirtyPreferences,
+        out ThumbnailStatusBorderSettings persistedSettings,
         out string? error)
     {
+        persistedSettings = settings;
         error = null;
         string path;
         try
@@ -10394,6 +10435,7 @@ public partial class MainWindow : Window
         }
 
         string? operationError = null;
+        ThumbnailStatusBorderSettings mergedSettings = settings;
         bool operationStarted = false;
         bool saved = TryWithPersistenceLock(path, () =>
         {
@@ -10409,18 +10451,33 @@ public partial class MainWindow : Window
                 return false;
             }
 
-            if (!ThumbnailStatusBorderSettingsStore.TryMerge(existingJson, settings, out string mergedJson, out operationError))
+            if (!ThumbnailStatusBorderSettingsStore.TryMerge(
+                    existingJson,
+                    settings,
+                    dirtyPreferences,
+                    out string mergedJson,
+                    out operationError))
                 return false;
+            ThumbnailStatusBorderLoadResult parsed = ThumbnailStatusBorderSettingsStore.Parse(mergedJson);
+            if (parsed.IsProtected)
+            {
+                operationError = parsed.Error ?? "The merged thumbnail border settings were invalid.";
+                return false;
+            }
             if (!TryWriteAtomicText(path, mergedJson))
             {
                 operationError = "Windows did not allow the atomic settings replacement.";
                 return false;
             }
+            mergedSettings = parsed.Settings;
             return true;
         });
 
         if (saved)
+        {
+            persistedSettings = mergedSettings;
             return true;
+        }
         error = operationError ?? (operationStarted
             ? "The shared settings write failed."
             : "The shared settings file is busy. Try again.");
@@ -10444,6 +10501,7 @@ public partial class MainWindow : Window
     {
         CancelKeyBindingEdit();
         _draftThumbnailStatusBorderSettings = _thumbnailStatusBorderSettings;
+        _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.None;
         AppSettingsDialog.Visibility = Visibility.Collapsed;
         RestoreOverlayFocus(_settingsFocusBeforeDialog);
     }
@@ -13488,9 +13546,19 @@ public partial class MainWindow : Window
         string favoriteColor,
         bool enhancedEnabled,
         string enhancedColor)
-        => PopulateThumbnailStatusBorderControls(new ThumbnailStatusBorderSettings(
+    {
+        PopulateThumbnailStatusBorderControls(new ThumbnailStatusBorderSettings(
             new ThumbnailStatusBorderPreference(favoriteEnabled, favoriteColor),
             new ThumbnailStatusBorderPreference(enhancedEnabled, enhancedColor)));
+        _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.All;
+    }
+    public void SetEnhancedThumbnailStatusBorderDraftForSmoke(bool enabled, string color)
+    {
+        PopulateThumbnailStatusBorderControls(new ThumbnailStatusBorderSettings(
+            _draftThumbnailStatusBorderSettings.Favorite,
+            new ThumbnailStatusBorderPreference(enabled, color)));
+        _dirtyThumbnailStatusBorderPreferences |= ThumbnailStatusBorderDirtyPreferences.Enhanced;
+    }
     public bool SaveThumbnailStatusBorderDraftForSmoke()
     {
         SaveThumbnailBorders_Click(this, new RoutedEventArgs());

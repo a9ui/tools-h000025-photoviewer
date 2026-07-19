@@ -48,6 +48,8 @@ try {
         'rainbowBrushContract',
         'unknownFieldsPreserved',
         'firstPersisted',
+        'crossRuntimePreferenceMerge',
+        'crossRuntimeStateRestored',
         'reloadPersisted',
         'resetIsDraftOnly',
         'invalidColorProtected',

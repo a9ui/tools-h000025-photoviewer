@@ -1380,6 +1380,29 @@ public partial class App : Application
                 bool rainbowBrushContract = first.EnhancedThumbnailStatusBorderRainbowStopsForSmoke;
                 bool unknownFieldsPreserved = UnknownFieldsArePreserved(settingsPath);
                 bool firstPersisted = PersistedContractMatches(settingsPath, true, "#abcdef", true, "rainbow");
+
+                first.SetEnhancedThumbnailStatusBorderDraftForSmoke(false, "#334455");
+                bool browserFavoriteMerged = ThumbnailStatusBorderSettingsStore.TryMerge(
+                    File.ReadAllText(settingsPath),
+                    new ThumbnailStatusBorderSettings(
+                        new ThumbnailStatusBorderPreference(false, "#667788"),
+                        ThumbnailStatusBorderSettings.Default.Enhanced),
+                    ThumbnailStatusBorderDirtyPreferences.Favorite,
+                    out string browserFavoriteJson,
+                    out _);
+                if (browserFavoriteMerged)
+                    File.WriteAllText(settingsPath, browserFavoriteJson);
+                bool crossRuntimePreferenceMerge = browserFavoriteMerged
+                    && first.SaveThumbnailStatusBorderDraftForSmoke()
+                    && PersistedContractMatches(settingsPath, false, "#667788", false, "#334455")
+                    && !first.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && first.FavoriteThumbnailStatusBorderColorForSmoke == "#667788"
+                    && !first.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && first.EnhancedThumbnailStatusBorderColorForSmoke == "#334455"
+                    && UnknownFieldsArePreserved(settingsPath);
+                first.SetThumbnailStatusBorderDraftForSmoke(true, "#abcdef", true, "rainbow");
+                bool crossRuntimeStateRestored = first.SaveThumbnailStatusBorderDraftForSmoke()
+                    && PersistedContractMatches(settingsPath, true, "#abcdef", true, "rainbow");
                 first.Close();
 
                 var reload = HiddenWindow();
@@ -1518,6 +1541,7 @@ public partial class App : Application
                 ok = surfaceContract && seededSettingsLoaded && seededResourcesLoaded
                     && firstSaveSucceeded && normalizedAndApplied && rainbowBrushContract
                     && unknownFieldsPreserved && firstPersisted
+                    && crossRuntimePreferenceMerge && crossRuntimeStateRestored
                     && reloadPersisted && resetIsDraftOnly && invalidColorProtected && busyWriteProtected
                     && retrySucceeded && retryReloaded && malformedProtected && invalidSchemaProtected
                     && rainbowSchemaAccepted && missingDefaults && missingDefaultsApplied
@@ -1536,6 +1560,8 @@ public partial class App : Application
                     rainbowBrushContract,
                     unknownFieldsPreserved,
                     firstPersisted,
+                    crossRuntimePreferenceMerge,
+                    crossRuntimeStateRestored,
                     reloadPersisted,
                     resetIsDraftOnly,
                     invalidColorProtected,
