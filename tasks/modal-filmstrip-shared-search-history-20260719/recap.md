@@ -83,11 +83,12 @@ be called implemented from branch archaeology alone.
 
 ## GitHub reflection status
 
-Draft PR #322 remains open, but its remote head is still `557cfb8...` and does
-not yet contain this local milestone. The exact command
-`git push origin main:codex/wpf-thumbnail-performance-20260719` was rejected
-before process creation because this Codex session requires approval for
-external writes while `AskForApproval` is `Never`. No partial remote mutation
-occurred. SQLite improvement item #45 records the retry command and required
-head verification. Until that succeeds, local main and this task pack are the
-implementation truth; the PR is only a stale Draft pointer.
+Draft PR #322 remains open and Draft. The user ran the canonical command
+`git push origin main:codex/wpf-thumbnail-performance-20260719`, after this
+Codex session could not perform the external write itself. Both `gh pr view`
+and `git ls-remote` then returned
+`14ebe6a16a89123e5dfd6e966324522094c1188c`, matching the local milestone
+head. SQLite improvement item #45 is `done`. The default `origin/main` remains
+old until an explicit merge. GitHub Actions run `29689487462` also completed
+successfully for `14ebe6a...`, but it was supplementary evidence rather than
+the milestone gate. No merge or deployment was performed.
