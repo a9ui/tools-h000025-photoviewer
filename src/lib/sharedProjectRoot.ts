@@ -42,8 +42,23 @@ export function resolveSharedProjectRoot(start = process.cwd()) {
   }
 }
 
-export function resolveSharedCachePath(fileName: string, overridePath?: string, start = process.cwd()) {
-  return overridePath
-    ? path.resolve(overridePath)
-    : path.join(resolveSharedProjectRoot(start), '.cache', fileName);
+export type SharedCacheEntry = 'favorites.json' | 'seen.json' | 'recent-folders.json' | 'enhance';
+
+export function resolveSharedCachePath(fileName: SharedCacheEntry, overridePath?: string, start = process.cwd()) {
+  if (overridePath) return path.resolve(overridePath);
+
+  const projectRoot = resolveSharedProjectRoot(start);
+  // Keep every supported suffix literal. Turbopack otherwise treats a dynamic
+  // cache child as a broad filesystem pattern and scans the full thumbnail
+  // cache in a real user checkout during production builds.
+  switch (fileName) {
+    case 'favorites.json':
+      return path.join(projectRoot, '.cache', 'favorites.json');
+    case 'seen.json':
+      return path.join(projectRoot, '.cache', 'seen.json');
+    case 'recent-folders.json':
+      return path.join(projectRoot, '.cache', 'recent-folders.json');
+    case 'enhance':
+      return path.join(projectRoot, '.cache', 'enhance');
+  }
 }

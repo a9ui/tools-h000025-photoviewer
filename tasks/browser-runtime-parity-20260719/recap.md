@@ -17,6 +17,7 @@ Status: implementation and isolated verification are green. Normal-root launcher
 - Visible thumbnail warmup flushes ahead of nearby/background work, retains bounded retry/dedupe state, and gives the newest viewport work priority.
 - Favorite/Unrated/Enhanced sparse paging keeps a bounded match demand through sparse pages and reaches catalog tail instead of silently stopping at a partial page.
 - Linked worktrees resolve Favorites, Seen, Recent folders, and Enhancement job storage to the normal checkout.
+- Shared cache resolution uses a closed set of literal store paths so production builds do not glob the real thumbnail cache.
 - Browser and WPF share exact Favorite Lv0–5 state. Browser performs a one-time non-destructive local import, refreshes on focus/visibility, and preserves malformed/unknown journal bytes instead of guessing.
 - Seen parsing accepts the WPF legacy-compatible stored forms while new Browser writes stay canonical.
 
