@@ -146,6 +146,13 @@ test.describe('modal filmstrip runtime contract', () => {
     await page.waitForTimeout(260);
     await expect(page.locator('.modal-filename')).toHaveText(targetFilename!);
 
+    await target.focus();
+    await page.keyboard.press('ArrowRight');
+    await expect(page.locator('.modal-counter')).toHaveText('112 / 120');
+    await page.keyboard.press('ArrowLeft');
+    await expect(page.locator('.modal-counter')).toHaveText('111 / 120');
+    await expect(page.locator('.modal-filename')).toHaveText(targetFilename!);
+
     const modalImage = page.locator('.modal-full-image');
     const clickModalImageCenter = () => modalImage.evaluate((element) => {
       const area = element.closest('.modal-image-area');

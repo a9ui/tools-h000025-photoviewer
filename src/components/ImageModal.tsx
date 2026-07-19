@@ -1167,6 +1167,10 @@ export default function ImageModal() {
                 getItem={getFilmstripItem}
                 onNeedRange={requestFilmstripRange}
                 onSelect={selectFilmstripItem}
+                onNavigate={(intent) => {
+                  if (intent === 'prev') goPrev();
+                  else goNext();
+                }}
                 onCollapse={toggleFilmstrip}
                 onSessionExpired={reportImageSessionExpired}
                 toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}

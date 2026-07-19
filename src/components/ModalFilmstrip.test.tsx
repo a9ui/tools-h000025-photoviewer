@@ -35,6 +35,7 @@ describe('ModalFilmstrip virtualization', () => {
         getItem={(index) => itemAt(index)}
         onNeedRange={onNeedRange}
         onSelect={vi.fn()}
+        onNavigate={vi.fn()}
         onCollapse={vi.fn()}
         onSessionExpired={vi.fn()}
         toggleShortcut="T"
@@ -54,6 +55,7 @@ describe('ModalFilmstrip virtualization', () => {
 
   it('selects a visible thumbnail and exposes an accessible collapse shortcut', () => {
     const onSelect = vi.fn();
+    const onNavigate = vi.fn();
     const onCollapse = vi.fn();
     render(
       <ModalFilmstrip
@@ -62,6 +64,7 @@ describe('ModalFilmstrip virtualization', () => {
         getItem={(index) => itemAt(index)}
         onNeedRange={vi.fn()}
         onSelect={onSelect}
+        onNavigate={onNavigate}
         onCollapse={onCollapse}
         onSessionExpired={vi.fn()}
         toggleShortcut="T"
@@ -75,5 +78,12 @@ describe('ModalFilmstrip virtualization', () => {
     expect(collapse).toHaveAttribute('aria-keyshortcuts', 'T');
     fireEvent.click(collapse);
     expect(onCollapse).toHaveBeenCalledTimes(1);
+
+    const option = screen.getByRole('option', { name: 'Open image-11.png, image 12 of 40' });
+    option.focus();
+    fireEvent.keyDown(option, { key: 'ArrowLeft' });
+    fireEvent.keyDown(option, { key: 'ArrowRight' });
+    expect(onNavigate).toHaveBeenNthCalledWith(1, 'prev');
+    expect(onNavigate).toHaveBeenNthCalledWith(2, 'next');
   });
 });

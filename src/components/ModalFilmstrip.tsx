@@ -21,6 +21,7 @@ interface ModalFilmstripProps {
   getItem: (logicalIndex: number) => ModalFilmstripItem | null;
   onNeedRange: (startIndex: number, endIndex: number) => void;
   onSelect: (item: ModalFilmstripItem) => void;
+  onNavigate: (intent: 'prev' | 'next') => void;
   onCollapse: () => void;
   onSessionExpired: () => void;
   toggleShortcut: string;
@@ -56,6 +57,7 @@ function ModalFilmstrip({
   getItem,
   onNeedRange,
   onSelect,
+  onNavigate,
   onCollapse,
   onSessionExpired,
   toggleShortcut,
@@ -154,6 +156,12 @@ function ModalFilmstrip({
         aria-label="Image filmstrip thumbnails"
         aria-orientation="horizontal"
         onScroll={updateRenderWindow}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          event.stopPropagation();
+          onNavigate(event.key === 'ArrowLeft' ? 'prev' : 'next');
+        }}
         onWheel={(event) => {
           event.stopPropagation();
           const scroller = scrollerRef.current;
