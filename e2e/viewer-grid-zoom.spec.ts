@@ -41,6 +41,43 @@ async function openFixtureFolder(page: Page, fixtureDir: string) {
 test.describe('viewer grid zoom runtime contract', () => {
   let fixtureDir = '';
 
+  test.beforeEach(async ({ page }) => {
+    await page.route('**/api/recent-folders', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          malformed: false,
+          recent: { version: 1, lastFolderSet: [], recentFolderSets: [], updatedAtUtc: '' },
+        }),
+      });
+    });
+    await page.route('**/api/legacy-state', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ recentDirs: [], lastDirSet: '' }),
+      });
+    });
+    await page.route('**/api/favorites', async (route) => {
+      const body = route.request().method() === 'PUT'
+        ? await route.request().postDataJSON()
+        : { favorites: {} };
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, malformed: false, favorites: body?.favorites ?? {} }),
+      });
+    });
+    await page.route('**/api/seen', async (route) => {
+      const body = route.request().method() === 'PUT'
+        ? await route.request().postDataJSON()
+        : { seen: {} };
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, malformed: false, seen: body?.seen ?? {} }),
+      });
+    });
+  });
+
   test.beforeAll(async () => {
     fixtureDir = await mkdtemp(join(tmpdir(), 'photoviewer-grid-zoom-e2e-'));
     await Promise.all(Array.from({ length: 96 }, (_, index) => (

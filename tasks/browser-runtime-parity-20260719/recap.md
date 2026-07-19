@@ -38,7 +38,7 @@ Status: implementation and isolated verification are green. Normal-root launcher
 - Isolated production Playwright on port 43132: 4/4 PASS.
 - Selected-card zoom drift: at most 1px in Browser e2e; Sidebar geometry/font/viewport scale unchanged.
 - UI retirement/sidebar guard: 18 files PASS.
-- Normal port 3000 and real user cache/state were not used by these tests.
+- E2E routes isolate Recent/legacy/Favorite/Seen state from the real user stores; normal port 3000 is not used by these tests.
 
 ## WPF integrated evidence
 
@@ -80,4 +80,5 @@ Earlier same-fixture after-runs were 3,762/4,040 ms catalog-ready and 30,756/29,
 - No destructive cache/state deletion or migration reset.
 - No change to successful Delete adjacency/navigation semantics or passive Enhancement enqueue behavior.
 - All stress/contention fixtures stayed under TEMP and cleaned up.
+- The final Playwright pass fingerprints real shared stores before/after and rejects test-history leakage.
 - Unrelated normal-root `next-env.d.ts` remains user-owned and untouched.

@@ -1,5 +1,24 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/recent-folders', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        malformed: false,
+        recent: { version: 1, lastFolderSet: [], recentFolderSets: [], updatedAtUtc: '' },
+      }),
+    });
+  });
+  await page.route('**/api/legacy-state', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ recentDirs: [], lastDirSet: '' }),
+    });
+  });
+});
+
 test('landing page exposes the PhotoViewer folder workflow', async ({ page }) => {
   await page.goto('/');
 
