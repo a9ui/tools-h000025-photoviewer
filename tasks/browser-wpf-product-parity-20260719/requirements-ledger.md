@@ -56,9 +56,9 @@
 
 | Requirement | Browser | WPF | Current truth / completion gate |
 | --- | --- | --- | --- |
-| Favorite画像のthumbnailに設定可能な色枠、default黄 | implemented `837e722` | in progress | independent enabled/color、Favorite inner ring、O(1)、Grid/List、selection/unseen非干渉 |
-| AI高画質化済みthumbnailに設定可能な色枠、default黄 | implemented `837e722` | in progress | Enhanced outer ring。Favoriteと同時可視、追加image I/O/全走査なし |
-| 2種の枠を独立ON/OFF・色保存 | implemented | in progress | shared `.cache/settings.json` nested unknown保持、WPF同schema採用 |
+| Favorite画像のthumbnailに設定可能な色枠、default黄 | implemented `2863519` | implemented `a091ec7` | independent enabled/color、Favorite 2px inner ring、O(1)、Grid/List、selection/unseen非干渉 |
+| AI高画質化済みthumbnailに設定可能な別色枠、default虹色 | implemented `2863519` | implemented `a091ec7` | Enhanced 3px outer ring。`rainbow` presetまたは単色を選択可能。Favorite黄枠と同時可視、追加image I/O/全走査なし |
+| 2種の枠を独立ON/OFF・表示色保存 | implemented `2863519` | implemented `a091ec7` | shared `.cache/settings.json` nested unknown保持、旧hex値互換、malformed/busy非破壊、同一schema |
 
 ## 6. Modal・Filmstrip・shortcut
 
@@ -68,13 +68,14 @@
 | 左右edge click/Arrowでfiltered order移動 | implemented | implemented | user-configurable edge ratio、wrap、stale navigation拒否 |
 | Delete後は隣へ正確に1枚だけ進む | implemented | implemented | Browser component+provider regression、WPF pre-delete order reconciliation |
 | backdrop黒余白clickで一覧へ戻る | implemented | implemented | image/controls内clickはcloseしない |
-| manual UI visibleは操作停止でも出たまま | implemented `f6f63d3` | in progress | auto-hideをmanual stateと分離 |
-| manual UI hiddenはcursorも隠し、pointer/keyで約900msだけ再表示 | implemented `f6f63d3` | in progress | Delete confirm中はvisible、touch/native input隔離 |
-| UI hiddenは画像遷移/Delete/Original-Enhanced切替後も維持 | implemented `f6f63d3` | in progress | Modal session stateとして保持 |
-| zoom倍率を上端の目立ちにくい位置へ表示 | implemented `f6f63d3` | in progress | hover/focus時だけcontrast上昇 |
-| manual Filmstripは画像外の専用bottom rowでviewportを縮める | implemented | in progress | 画像へ重ねない、T/toolbarで保存開閉 |
-| UI hidden中は下端hoverで前面overlay Filmstrip、離脱で収納 | implemented `f6f63d3` | in progress | overlay時image geometry不変、current追従、bounded virtualization |
-| top UI button後もArrow/Delete/T/H/F等shortcutが動く | implemented `f6f63d3` | in progress | Enter/Spaceはbutton native activation、TextBox等は隔離 |
+| manual UI visibleは操作停止でも出たまま | implemented `f6f63d3` | implemented `a091ec7` | auto-hideをmanual stateと分離 |
+| manual UI hiddenはcursorも隠し、pointer/keyで約900msだけ再表示 | implemented `f6f63d3` | implemented `a091ec7` | transient終了後cursor再非表示、touch/native input隔離 |
+| UI hiddenは画像遷移/Delete/Original-Enhanced切替後も維持 | implemented `f6f63d3` | implemented `a091ec7` | Modal session stateとして保持 |
+| zoom倍率を上端の目立ちにくい位置へ表示 | implemented `f6f63d3` | implemented `a091ec7` | root上端、低contrast、画像/Filmstrip非干渉 |
+| Modalに現在表示中assetのfile容量を`0.00MB`形式で表示 | pending | pending | 小数2桁・スペースなし。Originalはsource bytes、Enhancedはmanaged output bytes。toggleで即時更新し、missing/stale fallback時はsource容量 |
+| manual Filmstripは画像外の専用bottom rowでviewportを縮める | implemented | implemented `a091ec7` + `c3d4ff5` | 画像へ重ねない、T/toolbarで開閉しWPF ViewerState/Browser view stateへ保存 |
+| UI hidden中は下端hoverで前面overlay Filmstrip、離脱で収納 | implemented `f6f63d3` | implemented `a091ec7` | overlay時image geometry不変、current追従、bounded virtualization |
+| top UI button後もArrow/Delete/T/H/F等shortcutが動く | implemented `f6f63d3` | implemented `a091ec7` | Enter/Spaceはbutton native activation、TextBox等は隔離 |
 | H/D/F等をsimple monochrome icon化、Fはheart、Deleteはtrash | pending | pending | tooltip/aria-label/shortcut hintを残し、色だけに依存しない |
 
 ## 7. Delete・Windows action・clipboard
@@ -111,4 +112,3 @@
 - `implemented both`でないrowは未完了として残す。
 - Browser/WPFのUI機構が異なっても、user outcome、state meaning、安全性、失敗時の非破壊、性能gateは一致させる。
 - 100点/完全は、全pending解消に加えてreal Windows keyboard、high contrast、200% DPI、screen reader、real GPU Enhancementのmanual evidenceが揃うまで使わない。
-

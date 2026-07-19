@@ -27,6 +27,36 @@ mutation targets or gates.
 - `8d0442f` current WPF search HelpText contract
 - `792716f` concurrent verifier output isolation
 
+## Verified-current descendants
+
+The original milestone evidence above remains historical. Later local-main
+descendants refine that adopted behavior without changing the Search History
+schema or the bounded filmstrip navigation model:
+
+- `9d8acb0` makes the filmstrip a dedicated layout row below the image
+  viewport. Opening it reduces the image viewport instead of overlaying the
+  image; chrome auto-hides after 3 seconds of inactivity, pointer/keyboard
+  activity restores it, a Delete confirmation keeps it visible, and the zoom
+  indicator stays at the top of the image viewport.
+- `3654b88` fixes the observed Windows Enhancement `EBUSY` false failure. A
+  completed copy is now a successful publish independently of temporary-file
+  cleanup, cleanup receives bounded retry, and a still-locked temporary is
+  reported as residue instead of changing a valid destination into a failed
+  job. The ncnn-vulkan adapter also avoids reopening the just-written temporary
+  with Sharp solely to read metadata.
+- `f6f63d3` replaces the temporary 3-second Browser chrome policy with manual
+  visible/manual hidden state. Manual visible stays visible; manual hidden also
+  hides the cursor and allows a roughly 900ms pointer/key reveal. Bottom hover
+  uses a foreground filmstrip overlay without changing image geometry, while
+  the manually visible strip keeps its dedicated bottom row.
+- `a091ec7` brings the same manual/transient state, Filmstrip geometry, top
+  zoom indicator, and focused-button shortcuts to WPF. `c3d4ff5` persists the
+  WPF Filmstrip open state in ViewerState.
+- `2863519` and `a091ec7` make Favorite and AI-enhanced thumbnail status
+  borders cross-runtime configurable. Favorite remains yellow by default;
+  AI-enhanced now defaults to a distinct rainbow outer border and retains old
+  saved hex colors as single-color settings.
+
 ## Browser evidence
 
 - unit: 61 files passed, 3 skipped; 521 tests passed, 3 skipped
@@ -39,6 +69,28 @@ mutation targets or gates.
   chrome isolation, close/reopen, and persistence
 - feature browser console: 0 errors / 0 warnings
 
+For the later `9d8acb0` layout refinement, a focused isolated production E2E
+ran on `http://127.0.0.1:3001` so the normal user runtime on port 3000 was not
+used. `e2e/viewer-modal-filmstrip.spec.ts` passed 1/1 and verified that the
+filmstrip starts at or below the image viewport bottom, the zoom indicator is
+above the strip, 3-second auto-hide/re-show works, and the browser console has
+no reported problems. The temporary port-3001 server was stopped after the
+test.
+
+The later `f6f63d3` Browser refinement passed 8 focused files / 190 tests,
+typecheck, scoped lint, and diff-check. The rainbow status-border successor
+`2863519` passed 5 focused files / 161 tests, typecheck, scoped lint, and
+diff-check. A second live Browser run was intentionally not used because the
+normal profile can merge legacy localStorage into shared state; no source,
+cache, or user state was deleted or restored speculatively.
+
+For `3654b88`, the Enhancement-focused unit set passed 4 files / 23 tests,
+including transient and persistent cleanup locks and a real copy failure. The
+previous failed user jobs and cache were not rewritten or deleted. A fresh
+real-GPU Enhancement rerun reproducing the original user action is still
+pending, so these deterministic tests prove the error classification and file
+publication logic, not end-to-end GPU success on this machine.
+
 ## WPF / shared-state evidence
 
 - Search History focused verifier: PASS
@@ -47,6 +99,13 @@ mutation targets or gates.
   protected, Busy writes 0, lock/temp residue 0
 - Release build: 0 warnings / 0 errors
 - final `verify-wpf-product.ps1 -SkipStress`: 50/50 PASS
+- `verify-wpf-modal-interaction.ps1`: all manual/transient chrome, cursor,
+  dedicated/overlay Filmstrip geometry, persistence, top zoom, focused-button
+  shortcut, navigation/Delete/Original-Enhanced hidden-state checks true
+- `verify-wpf-thumbnail-status-borders.ps1`: shared rainbow schema, old hex,
+  independent save/reload/reset, unknown/malformed/busy protection, O(1)
+  Grid/List bindings, and residue-free checks all true
+- current Release builds: 0 warnings / 0 errors
 
 One preceding aggregate run stopped at the existing focus/filter race because
 `SearchLatestWins` was false once. The same focused 20-iteration verifier

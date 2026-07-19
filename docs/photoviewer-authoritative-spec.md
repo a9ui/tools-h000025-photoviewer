@@ -292,12 +292,12 @@ entryはgalleryのfiltered/sorted full orderをsnapshotする。Left/Right/butto
 表示:
 
 - center image、black backdrop、top toolbar、bottom feedback、left/right edge、metadata sidebar
-- filtered/sorted Modal orderを横に示すvirtualized filmstrip。画像に重ねず専用下段を確保してviewportを縮め、current imageへ追従し、thumbnail clickで直接移動
+- filtered/sorted Modal orderを横に示すvirtualized filmstrip。manual UI表示中は画像に重ねず専用下段を確保してviewportを縮める。manual UI非表示中の下端hoverでは前面overlayとして出し、離脱時に畳んで画像geometryを動かさない。current imageへ追従し、thumbnail clickで直接移動
 - zoom 0.25〜10、wheel/`+/-/0`、pan、horizontal flip
 - succeeded managed outputがあればEでOriginal/Enhanced切替
 - center image single clickでchrome toggle、double clickでmetadata sidebar、empty backdropでclose
-- chromeは操作停止3秒で自動非表示。Modal内pointer移動またはkeyboard操作で再表示し、Delete確認中は表示を維持する
-- zoom倍率indicatorは画像viewportの上側中央へ表示し、top toolbarと重ねない
+- manual chrome表示は操作停止でも消さない。manual非表示ではcursorも隠し、Modal内pointer移動またはkeyboard操作で約900msだけ一時表示して再び隠す。画像遷移、Delete隣接移動、Original/Enhanced切替後もmanual非表示を維持する
+- zoom倍率indicatorはModal rootの上端中央へ低contrastで表示し、top toolbar、画像、filmstripと重ねない
 - Prompt/Negative/Settings tabsとtext copy
 - Delete、Open external、explicit Enhance、Cancel/Retry/output delete
 
@@ -388,7 +388,9 @@ Preview tabsはopen/activate/pin/close/Close all/Reopen、Ctrl+Shift+T、drag/Al
 
 ### 7.6 Modal
 
-filtered/sorted full orderを使い、Left/Right/button/left-right 28% edge zoneでnavigationし、端でwrapする。center 44%、single click chrome、double click metadata sidebar、black backdrop close。zoom 0.25〜10、wheel/key、pan、flip、swipe、650ms feedback。
+filtered/sorted full orderを使い、Left/Right/button/left-right 28% edge zoneでnavigationし、端でwrapする。center 44%、single click manual chrome、double click metadata sidebar、black backdrop close。zoom 0.25〜10、wheel/key、pan、flip、swipe、650ms feedback。
+
+manual chrome表示は操作停止でも出たままとする。manual非表示ではcursorも隠し、pointer/keyで約900msだけ一時表示して戻す。非表示状態はnavigation、Delete隣接移動、Original/Enhanced切替後も維持する。manual Filmstripは画像外の専用bottom row、非表示中の下端hover Filmstripは画像geometryを変えない前面overlayとし、`T`/toolbarで開閉してViewerStateへ保存する。倍率はModal root上端の低contrast indicatorへ表示する。Modal top buttonへfocus中でもArrow/Delete/T/H/F等を処理し、Enter/Spaceはbutton native activation、TextBox等は隔離する。
 
 Prompt/Negative/Settings tabs、metadata copy、Prompt chip→Searchを持つ。Original/Enhanced toggleは既存succeeded managed outputだけ。explicit AI x2だけがBrowser loopback APIへcreateし、WPF自身はworker/job storeを所有しない。
 
@@ -396,7 +398,7 @@ Prompt/Negative/Settings tabs、metadata copy、Prompt chip→Searchを持つ。
 
 ### 7.7 Settings / keyboard / accessibility
 
-App SettingsはUnseen dots、Confirm before delete、editable key bindings、安全なAbout/Diagnosticsを持つ。未知nested keyとextension fieldを保持し、invalid chordはaction単位fallback、active-context conflict時は曖昧mapを採用しない。
+App SettingsはUnseen dots、Confirm before delete、editable key bindings、thumbnail status borders、安全なAbout/Diagnosticsを持つ。Favorite枠は独立ON/OFF + `#RRGGBB`で既定黄色、AI高画質化済み枠は独立ON/OFF + `rainbow | #RRGGBB`で既定虹色。shared `.cache/settings.json`の未知nested keyとextension fieldを保持し、malformed/busy書込を非破壊でRetryへ戻す。invalid chordはaction単位fallback、active-context conflict時は曖昧mapを採用しない。
 
 既定binding:
 
@@ -533,7 +535,7 @@ queued -> running -> succeeded
 
 thumbnail object URL cacheはcompleted 2,400、displayは160、同一fetchはshared pending、最後のconsumer releaseでabortし、LRU evictionでURL revokeする。warmupはfocused > visible > nearby、40ms batch、3,500ms dedupe、pending speculative最大1,200。background warm最大1,200は製品画像件数上限ではない。Sharp concurrencyはCPU基準4〜12、`PV_THUMB_CONCURRENCY`で1〜16。5,000画像は推奨stress protocolで、現行source由来の固定時間閾値ではない。
 
-Modal filmstripは100,000 logical itemsでもviewport + overscanだけをDOMへ出すunit gateを持つ。production E2Eは120-item fixtureで遠方index click、Arrow往復、Delete隣接移動が二重発火しないこと、current追従、chrome hide、close/reopenとlocalStorage保存を確認する。`9d8acb0`後のfocused production E2Eは通常runtimeのport 3000を避けて`127.0.0.1:3001`で1/1 PASSし、filmstripがimage viewport bottom以降の専用段にあること、zoom indicatorがstripより上にあること、3秒auto-hide/re-show、console problem 0も確認した。reload hydrationは`ImageContext`のunmount/remount unit gateで確認する。この120-item E2Eを製品件数上限と解釈しない。
+Modal filmstripは100,000 logical itemsでもviewport + overscanだけをDOMへ出すunit gateを持つ。production E2Eは120-item fixtureで遠方index click、Arrow往復、Delete隣接移動が二重発火しないこと、current追従、chrome hide、close/reopenとlocalStorage保存を確認する。`9d8acb0`時点のfocused production E2Eは通常runtimeのport 3000を避けて`127.0.0.1:3001`で1/1 PASSし、専用段geometry、当時の3秒auto-hide、console problem 0を確認した。後続`f6f63d3`のmanual visible / 900ms transient / hidden hover overlayはfocused component testsで固定し、旧3秒挙動を現行仕様として扱わない。reload hydrationは`ImageContext`のunmount/remount unit gateで確認する。この120-item E2Eを製品件数上限と解釈しない。
 
 ### 12.3 WPF
 
@@ -587,8 +589,10 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | 20px〜最大1列 | 20〜600、step 20。600で1列、persisted clamp | 20〜600、step 20。600で1列、旧40維持・範囲外clamp | **implemented**。両surfaceでGridだけを変更しListを拡縮しない |
 | Sidebar開閉アンカー | geometry changeを検出し同じanchor path/offsetを復元 | canonical full path+viewport offsetをSidebar/right panel/window resize/DPIで復元 | **implemented**。selection有無、同名別folder、List非破壊をfocused/stress gateで確認 |
 | Enhancement EBUSY publish retry | transient rename retry→awaited copy fallback。copy完了後のtemporary cleanupは別にbounded retryし、cleanup-only lockで完成済みoutputをfailedへ戻さない。temporary metadata再openを回避 | 明示actionはBrowser APIへ委譲 | **implemented**。source非上書き、publish完了前にsucceededにしない。focused 4 files / 23 testsはgreenだがfresh real-GPU rerunはpending |
-| Browser Modal virtualized filmstrip | current追従、direct click、bounded virtualization、T/toolbar開閉、保存、Arrow navigation。画像viewport外の専用下段、3秒chrome auto-hide/re-show、上側zoom indicator | 今回scope外 | **implemented (Browser scope)**。100k logical unit + production E2Eでclick/Arrow/Delete/persistenceを確認。`127.0.0.1:3001` focused E2E 1/1で非overlay geometry/auto-hide/console 0も確認 |
+| Browser Modal virtualized filmstrip | current追従、direct click、bounded virtualization、T/toolbar開閉、保存、Arrow navigation。manual時専用下段、hidden時下端overlay、manual表示固定、hidden cursor + 900ms transient、hidden-state維持、root上端zoom | WPFも同じUI状態とFilmstrip geometryを採用 | **implemented**。Browser 100k logical/unit + historical production E2E、current focused 8 files / 190 tests。WPF focused smoke全true |
 | Browser/WPF shared Search History v1 | focus/click list、whole-query replacement、delete/clear、API、protected status | nonblocking popup、keyboard/list selection、delete/clear、protected/Busy status | **implemented**。version 1/max50/NFKC共通identity、unknown保持、cross-runtime lost 0、WinForms非参加 |
+| Favorite / AI高画質化thumbnail枠 | Favoriteは既定黄色2px inner、Enhancedは既定虹色3px outer。独立ON/OFF、単色選択、Grid/List | Browserと同じshared schema、Freeze済み虹brush、同じinner/outer優先順 | **implemented** (`2863519`, `a091ec7`)。旧Enhanced hex値互換、unknown/malformed/busy保護、同時表示、追加image I/Oなし |
+| Modal manual/transient UI + Filmstrip parity | manual表示固定、非表示cursor、900ms transient、下端overlay、hidden-state維持 | 同じmanual/transient契約、専用row/overlay、button-focus shortcut、ViewerState保存 | **implemented** (`f6f63d3`, `a091ec7`, `c3d4ff5`)。WPF focused smokeで全項目true |
 
 今回追加分の採用gateはBrowser unit 61 files / 521 tests（3 files / 3 tests skip）、typecheck、production build、lint 0 errors、production Playwright 7/7、WPF Search History focused、Browser/WPF 20+20同時writer、Release build 0 warnings / 0 errors、WPF zoom promotion aggregate + reload soak 53/53、reload 24/24がgreen。WPF zoom/anchorはfocusedとexact 100,000 images / 100 foldersもcurrent mainで再実行した。後続shared-state latency descendantは`-SkipStress` aggregate 51/51とfocused latency 6/6がgreen。通常Browser/WPF launcherの最終採用は同日のtruth tableに示す。
 
@@ -598,7 +602,6 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 
 | Requirement | Browser local main | WPF local main | Canonical status / acceptance |
 | --- | --- | --- | --- |
-| Enhancement枠色設定 | schema/UIなし、固定status色のみ | schema/UIなし | **実装確認待ち / pending**。設定surface、validation、保存、Original/Enhanced/成功失敗との優先規則 |
 | 表示中Original/EnhancedをEnterで開く | Enterはsource固定 | external openはsource固定 | **実装確認待ち / pending**。表示中assetをguardして開き、missing outputはsource fallback/明示status |
 | 一覧EnterでModal | source+unit testに現行挙動あり | double-clickだけ | **実装確認待ち**。WPF parity、current order、focus return、overlay isolationを確認するまで新要件全体を完了扱いしない |
 | image context menu | なし | なし | **実装確認待ち / pending**。selection rule、keyboard invocation、action availability、focus/Escape、Delete確認を定義 |
@@ -649,7 +652,8 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | Landing/recent/runtime | `e2e/home.spec.ts`, `verify-browser-runtime.ps1` | landing/recent verifier、launcher freshness | Browser isolated production Playwright 7/7。通常runtime evidenceはtruth tableへ記録 |
 | Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | `verify-wpf-gallery-zoom-anchor.ps1`、catalog stress、gallery zoom/scroll/date/layout verifier | Browser/WPFとも20〜600/1列/geometry anchor採用。WPF current aggregate 53/53 + reload 24/24、exact100k/100folder green |
 | Modal/Delete | `ImageModal.test.tsx`, `RightPreviewPanel.test.tsx`, `favoriteDeleteProtection.test.ts`, delete integration/route tests | modal/delete verifier | Favorite source mandatory confirmation採用。displayed Enhanced openは未gate |
-| Modal filmstrip | `ModalFilmstrip.test.tsx`, `ImageModal.test.tsx`, `ImageContext.test.tsx`, settings tests、`e2e/viewer-modal-filmstrip.spec.ts` | 今回scope外 | 100k bounded DOM、current follow、click/Arrow/Delete/persistence、非overlay専用下段、3秒auto-hide/re-show、top zoom indicator、console 0。port 3001 focused production E2E 1/1 green |
+| Modal filmstrip | `ModalFilmstrip.test.tsx`, `ImageModal.test.tsx`, `ImageContext.test.tsx`, settings tests、`e2e/viewer-modal-filmstrip.spec.ts` | `verify-wpf-modal-interaction.ps1` | 100k bounded DOM、current follow、click/Arrow/Delete/persistence、manual dedicated row、hidden hover overlay、900ms transient、cursor/hidden-state維持、top zoom、focused-button shortcuts。WPF focused全true |
+| thumbnail status borders | status schema/API/Settings/Grid tests | `verify-wpf-thumbnail-status-borders.ps1` | Browser focused 5 files / 161 tests、WPF schema/render/persistence/protection全true、Release 0/0 |
 | Enhancement Windows publish | `outputPublish.test.ts`、ncnn-vulkan adapter tests | Browser API委譲のみ | copy publishとtemporary cleanupの成否を分離。focused 4 files / 23 tests green、fresh real-GPU rerun pending |
 | Search History | route/SearchBar tests、API live-lock timeout | `verify-wpf-search-history.ps1`, `verify-cross-runtime-search-history.ps1` | async UI、keyboard/a11y、max50、malformed/future保護、Busy writes 0、lost 0 |
 | Favorite/Seen/Recent concurrency | API route tests、2 cross-runtime scripts | same cross-runtime actors | 各20反復green、WinForms actorは含まない |
