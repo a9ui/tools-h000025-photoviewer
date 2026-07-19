@@ -17,6 +17,7 @@ const KEY_LABELS: Record<keyof KeyBindings, string> = {
   closeModal: 'Close modal',
   flipHorizontal: 'Flip horizontal',
   enhanceImage: 'Enhance image',
+  toggleFilmstrip: 'Toggle modal filmstrip',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   zoomReset: 'Reset zoom',

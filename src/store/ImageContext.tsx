@@ -57,6 +57,7 @@ export interface ViewSettings {
   randomSeed: string;
   folderSortBy: FolderSortBy;
   modalEdgeRatio: number;
+  modalFilmstripOpen: boolean;
   enhanceQueueOpen: boolean;
   dateFrom: string;
   dateTo: string;
@@ -78,6 +79,7 @@ const DEFAULT_VIEW: ViewSettings = {
   randomSeed: 'default',
   folderSortBy: 'name-asc',
   modalEdgeRatio: 0.28,
+  modalFilmstripOpen: true,
   enhanceQueueOpen: true,
   dateFrom: '',
   dateTo: '',
@@ -259,6 +261,9 @@ export function normalizeStoredView(value: unknown): ViewSettings {
     modalEdgeRatio: normalizeBoundedNumber(
       readOwnStoredValue(stored, 'modalEdgeRatio'), DEFAULT_VIEW.modalEdgeRatio,
       MIN_MODAL_EDGE_RATIO, MAX_MODAL_EDGE_RATIO,
+    ),
+    modalFilmstripOpen: normalizeBoolean(
+      readOwnStoredValue(stored, 'modalFilmstripOpen'), DEFAULT_VIEW.modalFilmstripOpen,
     ),
     enhanceQueueOpen: normalizeBoolean(
       readOwnStoredValue(stored, 'enhanceQueueOpen'), DEFAULT_VIEW.enhanceQueueOpen,

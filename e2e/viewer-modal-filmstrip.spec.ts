@@ -1,0 +1,212 @@
+import { expect, test, type Page } from '@playwright/test';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
+import { DEFAULT_KEY_BINDINGS } from '../src/lib/types';
+
+const PNG_1X1 = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=',
+  'base64',
+);
+
+async function openFixtureFolder(page: Page, fixtureDir: string) {
+  await page.goto('/');
+  await page.getByPlaceholder('Paste one absolute path per line...').fill(fixtureDir);
+  await page.getByRole('button', { name: 'Add pasted' }).click();
+  await page.getByRole('button', { name: 'Open folder set', exact: true }).click();
+  await expect(page.locator('.viewer')).toBeVisible({ timeout: 30_000 });
+  await expect(page.locator('.viewer-header .header-stats')).toContainText('120', { timeout: 15_000 });
+  await expect(page.locator('[data-image-primary="true"]').first()).toBeVisible();
+}
+
+test.describe('modal filmstrip runtime contract', () => {
+  let fixtureDir = '';
+
+  test.beforeAll(async () => {
+    fixtureDir = await mkdtemp(join(tmpdir(), 'photoviewer-modal-filmstrip-e2e-'));
+    await Promise.all(Array.from({ length: 120 }, (_, index) => (
+      writeFile(join(fixtureDir, `filmstrip-${String(index).padStart(3, '0')}.png`), PNG_1X1)
+    )));
+  });
+
+  test.beforeEach(async ({ page }) => {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.route('**/api/recent-folders', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          malformed: false,
+          recent: { version: 1, lastFolderSet: [], recentFolderSets: [], updatedAtUtc: '' },
+        }),
+      });
+    });
+    await page.route('**/api/legacy-state', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ recentDirs: [], lastDirSet: '' }),
+      });
+    });
+    await page.route('**/api/favorites', async (route) => {
+      const body = route.request().method() === 'PUT'
+        ? await route.request().postDataJSON()
+        : { favorites: {} };
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, malformed: false, favorites: body?.favorites ?? {} }),
+      });
+    });
+    await page.route('**/api/seen', async (route) => {
+      const body = route.request().method() === 'PUT'
+        ? await route.request().postDataJSON()
+        : { seen: {} };
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ ok: true, malformed: false, seen: body?.seen ?? {} }),
+      });
+    });
+    await page.route('**/api/settings', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          malformed: false,
+          keyBindings: DEFAULT_KEY_BINDINGS,
+          confirmBeforeDelete: false,
+        }),
+      });
+    });
+    await page.route('**/api/enhance/jobs**', async (route) => {
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({ jobs: [] }),
+      });
+    });
+  });
+
+  test.afterAll(async ({ request }) => {
+    await expect.poll(async () => {
+      const response = await request.get('/api/thumbs/warm');
+      if (!response.ok()) return false;
+      const payload = await response.json() as {
+        warmup?: { running?: boolean; activeThumbJobs?: number; pendingThumbs?: number; queuedThumbJobs?: number };
+      };
+      const warmup = payload.warmup;
+      return Boolean(warmup)
+        && warmup?.running === false
+        && warmup.activeThumbJobs === 0
+        && warmup.pendingThumbs === 0
+        && warmup.queuedThumbJobs === 0;
+    }, { timeout: 15_000 }).toBe(true);
+
+    const resolvedFixture = resolve(fixtureDir);
+    const resolvedTemp = resolve(tmpdir());
+    if (!resolvedFixture.startsWith(`${resolvedTemp}\\photoviewer-modal-filmstrip-e2e-`)) {
+      throw new Error(`Refusing to remove unexpected fixture path: ${resolvedFixture}`);
+    }
+    await rm(resolvedFixture, { recursive: true, force: true });
+  });
+
+  test('virtualizes thumbnails, navigates directly, and persists hide/show across modal sessions', async ({ page }) => {
+    const consoleProblems: string[] = [];
+    page.on('console', (message) => {
+      if (message.type() === 'error' || message.type() === 'warning') consoleProblems.push(message.text());
+    });
+
+    await openFixtureFolder(page, fixtureDir);
+    await page.locator('[data-image-primary="true"]').first().dblclick();
+
+    const dialog = page.getByRole('dialog', { name: /Image preview:/ });
+    const listbox = page.getByRole('listbox', { name: 'Image filmstrip thumbnails' });
+    await expect(dialog).toBeVisible();
+    await expect(listbox).toBeVisible();
+
+    const renderedOptions = listbox.getByRole('option');
+    await expect.poll(() => renderedOptions.count()).toBeGreaterThan(1);
+    expect(await renderedOptions.count()).toBeLessThan(40);
+
+    const current = listbox.locator('[role="option"][aria-current="true"]');
+    await expect(current).toHaveCount(1);
+    await expect(current).toHaveAttribute('aria-selected', 'true');
+
+    await listbox.evaluate((element) => {
+      element.scrollLeft = 110 * 84;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    const target = listbox.locator('[role="option"][data-filmstrip-index="110"]');
+    await expect(target).toBeVisible({ timeout: 15_000 });
+    const targetLabel = await target.getAttribute('aria-label');
+    const targetFilename = await target.getAttribute('title');
+    expect(targetLabel).toBeTruthy();
+    expect(targetFilename).toBeTruthy();
+    await target.click();
+    await expect(page.locator('.modal-filename')).toHaveText(targetFilename!);
+    await expect(page.locator('.modal-counter')).toHaveText('111 / 120');
+    await expect(listbox.getByRole('option', { name: targetLabel! })).toHaveAttribute('aria-current', 'true');
+    await page.waitForTimeout(260);
+    await expect(page.locator('.modal-filename')).toHaveText(targetFilename!);
+
+    const modalImage = page.locator('.modal-full-image');
+    const clickModalImageCenter = () => modalImage.evaluate((element) => {
+      const area = element.closest('.modal-image-area');
+      if (!area) throw new Error('Expected modal image area');
+      const rect = area.getBoundingClientRect();
+      element.dispatchEvent(new MouseEvent('click', {
+        bubbles: true,
+        cancelable: true,
+        detail: 1,
+        clientX: rect.left + rect.width / 2,
+        clientY: rect.top + rect.height / 2,
+      }));
+    });
+    await clickModalImageCenter();
+    await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCSS('pointer-events', 'none');
+    await clickModalImageCenter();
+    await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
+    await expect(listbox).toBeVisible();
+
+    await dialog.focus();
+    await page.keyboard.press('Delete');
+    await expect.poll(() => page.locator('.modal-filename').textContent()).not.toBe(targetFilename);
+    const afterDelete = await page.locator('.modal-filename').textContent();
+    await expect(page.locator('.modal-counter')).toContainText('/ 119');
+    await expect(listbox.locator('[role="option"][aria-current="true"]')).toHaveCount(1);
+    await expect(listbox.locator('[role="option"][aria-current="true"]')).toHaveAttribute('title', afterDelete!);
+    await page.waitForTimeout(320);
+    await expect(page.locator('.modal-filename')).toHaveText(afterDelete!);
+
+    const toolbarToggle = page.locator('.modal-topbar').getByRole('button', { name: 'Hide image filmstrip' });
+    await expect(toolbarToggle).toHaveAttribute('aria-keyshortcuts', 'T');
+    await toolbarToggle.click();
+    await expect(listbox).toHaveCount(0);
+    await expect.poll(() => page.evaluate(() => (
+      JSON.parse(localStorage.getItem('pvu_view') || '{}') as { modalFilmstripOpen?: boolean }
+    ).modalFilmstripOpen)).toBe(false);
+
+    await clickModalImageCenter();
+    await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
+    await clickModalImageCenter();
+    await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
+    await expect(listbox).toHaveCount(0);
+    await expect(page.locator('.modal-topbar').getByRole('button', { name: 'Show image filmstrip' }))
+      .toHaveAttribute('aria-expanded', 'false');
+
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await page.locator('[data-image-primary="true"]').first().dblclick();
+    await expect(dialog).toBeVisible();
+    await expect(listbox).toHaveCount(0);
+
+    const showToggle = page.locator('.modal-topbar').getByRole('button', { name: 'Show image filmstrip' });
+    await expect(showToggle).toHaveAttribute('aria-expanded', 'false');
+    await dialog.focus();
+    await page.keyboard.press('t');
+    await expect(listbox).toBeVisible();
+    await expect.poll(() => page.evaluate(() => (
+      JSON.parse(localStorage.getItem('pvu_view') || '{}') as { modalFilmstripOpen?: boolean }
+    ).modalFilmstripOpen)).toBe(true);
+
+    expect(consoleProblems).toEqual([]);
+  });
+});

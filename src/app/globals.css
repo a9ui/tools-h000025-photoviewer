@@ -2201,6 +2201,121 @@ a { color: inherit; text-decoration: none; }
 .modal-image-area img.dragging { transition: none; cursor: grabbing; }
 .modal-image-area img:active { cursor: grabbing; }
 
+.modal-body:not(.chrome-hidden) .modal-image-area.filmstrip-open img.modal-main-image {
+  max-height: calc(90% - 112px);
+}
+
+.modal-body:not(.chrome-hidden) .modal-image-area.filmstrip-open .zoom-indicator {
+  bottom: 126px;
+}
+
+.modal-filmstrip-shell {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 10px;
+  z-index: 12;
+  height: 104px;
+  padding: 6px 8px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 12px;
+  background: rgba(6, 8, 15, 0.84);
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.42);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  cursor: default;
+}
+
+.modal-filmstrip-header {
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 2px;
+  color: rgba(255, 255, 255, 0.58);
+  font-size: 0.68rem;
+  line-height: 1;
+}
+
+.modal-filmstrip-collapse {
+  min-height: 20px;
+  padding: 0 0.4rem;
+  border-radius: 5px;
+  color: rgba(255, 255, 255, 0.68);
+  font-size: 0.66rem;
+}
+
+.modal-filmstrip-collapse:hover,
+.modal-filmstrip-collapse:focus-visible {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.modal-filmstrip-scroller {
+  width: 100%;
+  height: 72px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(129, 140, 248, 0.58) rgba(255, 255, 255, 0.05);
+}
+
+.modal-filmstrip-track {
+  position: relative;
+  height: 64px;
+}
+
+.modal-filmstrip-item {
+  position: absolute;
+  top: 0;
+  width: 76px;
+  height: 64px;
+  overflow: hidden;
+  border: 2px solid transparent;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.06);
+  color: transparent;
+  opacity: 0.72;
+  transition: border-color var(--transition-fast), opacity var(--transition-fast), transform var(--transition-fast);
+}
+
+.modal-filmstrip-item:hover,
+.modal-filmstrip-item:focus-visible {
+  opacity: 1;
+  border-color: rgba(255, 255, 255, 0.48);
+  transform: translateY(-1px);
+}
+
+.modal-filmstrip-item.is-current {
+  opacity: 1;
+  border-color: #818cf8;
+  box-shadow: 0 0 0 1px rgba(129, 140, 248, 0.65), 0 0 16px rgba(99, 102, 241, 0.38);
+}
+
+.modal-filmstrip-item.is-loading {
+  background: linear-gradient(110deg, rgba(255, 255, 255, 0.05) 25%, rgba(255, 255, 255, 0.12) 40%, rgba(255, 255, 255, 0.05) 55%);
+  background-size: 220% 100%;
+  animation: filmstripLoading 1.35s linear infinite;
+}
+
+.modal-image-area img.modal-filmstrip-image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: cover;
+  cursor: pointer;
+  transition: none;
+}
+
+@keyframes filmstripLoading {
+  to { background-position-x: -220%; }
+}
+
 .modal-edge-zone {
   position: absolute;
   top: 0;
@@ -2352,9 +2467,14 @@ a { color: inherit; text-decoration: none; }
 }
 
 .modal-body.chrome-hidden .modal-topbar,
-.modal-body.chrome-hidden .zoom-indicator {
+.modal-body.chrome-hidden .zoom-indicator,
+.modal-body.chrome-hidden .modal-filmstrip-shell {
   opacity: 0;
   pointer-events: none;
+}
+
+.modal-body.chrome-hidden .modal-filmstrip-shell {
+  transform: translateY(8px);
 }
 
 .modal-body.chrome-hidden .modal-edge-zone {

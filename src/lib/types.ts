@@ -63,6 +63,7 @@ export interface KeyBindings {
   closeModal: string;
   flipHorizontal: string;
   enhanceImage: string;
+  toggleFilmstrip: string;
   zoomIn: string;
   zoomOut: string;
   zoomReset: string;
@@ -77,6 +78,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   closeModal: 'Escape',
   flipHorizontal: 'h',
   enhanceImage: 'a',
+  toggleFilmstrip: 't',
   zoomIn: '=',
   zoomOut: '-',
   zoomReset: '0',

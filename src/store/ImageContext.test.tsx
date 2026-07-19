@@ -27,6 +27,9 @@ function PreferencesProbe() {
       <button type="button" onClick={() => setView({ foldersExpanded: !view.foldersExpanded })}>
         Toggle folders
       </button>
+      <button type="button" onClick={() => setView({ modalFilmstripOpen: !view.modalFilmstripOpen })}>
+        Toggle modal filmstrip
+      </button>
     </div>
   );
 }
@@ -573,7 +576,7 @@ describe('normalizeStoredView', () => {
       snapshot: {
         viewMode: 'list', thumbSize: 999, aspectMode: 'not-an-aspect', displayStyle: 'compact', columns: 12,
         sidebarOpen: false, rightPanelOpen: 'yes', rightPanelWidth: 120, sortBy: 'name',
-        randomSeed: '  fixed-seed  ', folderSortBy: 'count-desc', modalEdgeRatio: 0.6, enhanceQueueOpen: false,
+        randomSeed: '  fixed-seed  ', folderSortBy: 'count-desc', modalEdgeRatio: 0.6, modalFilmstripOpen: false, enhanceQueueOpen: false,
         dateFrom: '2024-02-29', dateTo: '2024-02-30',
         hiddenFolders: [' C:/Images/Hidden ', 'c:/images/hidden', 12, 'C:/Images/Other'],
         showUnseenMarkers: true, foldersExpanded: false,
@@ -581,7 +584,7 @@ describe('normalizeStoredView', () => {
       expected: {
         viewMode: 'list', thumbSize: 600, aspectMode: 'original', displayStyle: 'compact', columns: 0,
         sidebarOpen: false, rightPanelOpen: true, rightPanelWidth: 240, sortBy: 'name',
-        randomSeed: 'fixed-seed', folderSortBy: 'count-desc', modalEdgeRatio: 0.4, enhanceQueueOpen: false,
+        randomSeed: 'fixed-seed', folderSortBy: 'count-desc', modalEdgeRatio: 0.4, modalFilmstripOpen: false, enhanceQueueOpen: false,
         dateFrom: '2024-02-29', dateTo: '', hiddenFolders: ['C:/Images/Hidden', 'C:/Images/Other'],
         showUnseenMarkers: true, foldersExpanded: false,
       },
@@ -590,11 +593,11 @@ describe('normalizeStoredView', () => {
       name: 'uses defaults for NaN, infinity, invalid enum, and non-boolean values',
       snapshot: {
         viewMode: 'masonry', thumbSize: Number.NaN, rightPanelWidth: Infinity, modalEdgeRatio: -Infinity,
-        sidebarOpen: 1, rightPanelOpen: null, enhanceQueueOpen: 'false', showUnseenMarkers: 0, foldersExpanded: 'true',
+        sidebarOpen: 1, rightPanelOpen: null, modalFilmstripOpen: 'false', enhanceQueueOpen: 'false', showUnseenMarkers: 0, foldersExpanded: 'true',
       },
       expected: {
         viewMode: 'grid', thumbSize: 200, rightPanelWidth: 320, modalEdgeRatio: 0.28,
-        sidebarOpen: true, rightPanelOpen: true, enhanceQueueOpen: true, showUnseenMarkers: false, foldersExpanded: true,
+        sidebarOpen: true, rightPanelOpen: true, modalFilmstripOpen: true, enhanceQueueOpen: true, showUnseenMarkers: false, foldersExpanded: true,
       },
     },
     {
@@ -822,6 +825,35 @@ describe('ImageProvider browser UI preferences', () => {
         screen.getByRole('status', { name: 'view settings' }).textContent || '{}'
       );
       expect(renderedView.foldersExpanded).toBe(false);
+    });
+  });
+
+  it('persists modal filmstrip visibility for a subsequent modal session', async () => {
+    const user = userEvent.setup();
+
+    const view = render(
+      <ImageProvider>
+        <PreferencesProbe />
+      </ImageProvider>
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Toggle modal filmstrip' }));
+    await waitFor(() => {
+      expect(JSON.parse(localStorage.getItem('pvu_view') || '{}').modalFilmstripOpen).toBe(false);
+    });
+    view.unmount();
+
+    render(
+      <ImageProvider>
+        <PreferencesProbe />
+      </ImageProvider>
+    );
+
+    await waitFor(() => {
+      const renderedView = JSON.parse(
+        screen.getByRole('status', { name: 'view settings' }).textContent || '{}'
+      );
+      expect(renderedView.modalFilmstripOpen).toBe(false);
     });
   });
 

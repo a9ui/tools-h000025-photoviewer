@@ -9,9 +9,13 @@ const store = vi.hoisted(() => ({
   resolveModalNavigationTarget: vi.fn(),
   setSelectedIndex: vi.fn(),
   setModalImageIds: vi.fn(),
+  ensureSearchRange: vi.fn(),
+  setView: vi.fn(),
   searchResults: [] as Array<Record<string, unknown>>,
+  modalImageIds: [] as string[],
   selectedIndex: 0 as number | null,
   favorites: {} as Record<string, number>,
+  view: { modalEdgeRatio: 0.28, modalFilmstripOpen: true },
   reportImageSessionExpired: vi.fn(),
 }));
 
@@ -58,9 +62,9 @@ vi.mock('../store/ImageContext', () => ({
     setSearchQuery: vi.fn(),
     selectedIndex: store.selectedIndex,
     setSelectedIndex: store.setSelectedIndex,
-    modalImageIds: [],
+    modalImageIds: store.modalImageIds,
     setModalImageIds: store.setModalImageIds,
-    ensureSearchRange: vi.fn(),
+    ensureSearchRange: store.ensureSearchRange,
     resolveModalNavigationTarget: store.resolveModalNavigationTarget,
     cycleFavoriteLevel: vi.fn(),
     decreaseFavoriteLevel: vi.fn(),
@@ -72,7 +76,8 @@ vi.mock('../store/ImageContext', () => ({
     openExternal: vi.fn(),
     confirmBeforeDelete: false,
     setConfirmBeforeDelete: vi.fn(),
-    view: { modalEdgeRatio: 0.28 },
+    view: store.view,
+    setView: store.setView,
     indexToken: null,
     reportImageSessionExpired: store.reportImageSessionExpired,
   }),
@@ -93,6 +98,8 @@ describe('ImageModal sparse navigation lock', () => {
     store.searchResults = [fixtures.first, fixtures.second];
     store.selectedIndex = 0;
     store.favorites = {};
+    store.modalImageIds = [];
+    store.view = { modalEdgeRatio: 0.28, modalFilmstripOpen: true };
     store.reportImageSessionExpired.mockReset();
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
@@ -144,6 +151,36 @@ describe('ImageModal sparse navigation lock', () => {
     expect(thumbnail).toHaveClass('is-thumb-preview');
     expect(fullImage).toHaveAttribute('data-image-session-expired', 'true');
     expect(fullImage).toHaveClass('is-full-loading');
+  });
+
+  it('shows a virtualized filmstrip, selects its thumbnail, and toggles it with the configured key', async () => {
+    store.searchResults = [fixtures.first, fixtures.second, fixtures.third];
+    render(<ImageModal />);
+
+    const strip = screen.getByRole('region', { name: 'Image filmstrip' });
+    expect(strip).toBeVisible();
+    expect(screen.getByRole('option', { name: 'Open first.png, image 1 of 3' }))
+      .toHaveAttribute('aria-current', 'true');
+
+    const thirdOption = screen.getByRole('option', { name: 'Open third.png, image 3 of 3' });
+    fireEvent.pointerDown(thirdOption, { pointerId: 7, clientX: 10, clientY: 10 });
+    fireEvent.pointerMove(thirdOption, { pointerId: 7, clientX: 180, clientY: 10 });
+    fireEvent.pointerUp(thirdOption, { pointerId: 7, clientX: 180, clientY: 10 });
+    expect(store.resolveModalNavigationTarget).not.toHaveBeenCalled();
+
+    fireEvent.click(thirdOption);
+    expect(store.setSelectedIndex).toHaveBeenCalledWith(2);
+    expect(store.resolveModalNavigationTarget).not.toHaveBeenCalled();
+
+    const toggle = screen.getAllByRole('button', { name: 'Hide image filmstrip' })
+      .find((button) => button.hasAttribute('aria-expanded'));
+    expect(toggle).toBeDefined();
+    if (!toggle) throw new Error('expected the toolbar filmstrip toggle');
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle).toHaveAttribute('aria-keyshortcuts', 'T');
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.toggleFilmstrip });
+    expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
   });
 
   it('always confirms a favorite even when ordinary delete confirmation is disabled', async () => {

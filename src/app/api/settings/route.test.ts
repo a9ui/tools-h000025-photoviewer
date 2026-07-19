@@ -73,6 +73,27 @@ describe('settings route write safety', () => {
     await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('defaults a missing filmstrip binding and preserves a legacy T assignment with a conflict-free fallback', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      keyBindings: { nextImage: 't' },
+    }), 'utf8');
+
+    const response = await GET();
+    const body = await response.json();
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      malformed: false,
+      keyBindings: {
+        nextImage: 't',
+        toggleFilmstrip: 'b',
+      },
+    });
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual({
+      keyBindings: { nextImage: 't' },
+    });
+  });
+
   it.each([
     ['invalid JSON', '{'],
     ['array body', JSON.stringify([])],

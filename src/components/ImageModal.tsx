@@ -9,6 +9,7 @@ import { buildImageIndexById } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
 import CachedImage from './CachedImage';
+import ModalFilmstrip, { type ModalFilmstripItem } from './ModalFilmstrip';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
 import { MetadataTabList, type MetadataTab } from './MetadataTabList';
 import { ChevronLeft, ChevronRight, Minus, X } from 'lucide-react';
@@ -173,6 +174,7 @@ export default function ImageModal() {
     confirmBeforeDelete,
     setConfirmBeforeDelete,
     view,
+    setView,
     indexToken,
     reportImageSessionExpired,
   } = useImageStore();
@@ -362,6 +364,9 @@ export default function ImageModal() {
   const modalCounter = modalOrderIndex >= 0
     ? `${modalOrderIndex + 1} / ${modalImageIds.length}`
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
+  const filmstripOpen = view.modalFilmstripOpen !== false;
+  const filmstripTotal = modalImageIds.length > 0 ? modalImageIds.length : searchTotal;
+  const filmstripActiveIndex = modalOrderIndex >= 0 ? modalOrderIndex : (selectedIndex ?? -1);
   const favLevel = img ? (favorites[img.id] ?? 0) : 0;
   const isFav = favLevel > 0;
   const shouldConfirmImageDelete = confirmBeforeDelete || isFav;
@@ -381,6 +386,34 @@ export default function ImageModal() {
   const fullImageReady = fullImageKey
     ? readyFullImageKeys.includes(fullImageKey) && !failedFullImageKeys.includes(fullImageKey)
     : false;
+
+  const getFilmstripItem = useCallback((logicalIndex: number): ModalFilmstripItem | null => {
+    if (logicalIndex < 0 || logicalIndex >= filmstripTotal) return null;
+    if (modalImageIds.length > 0) {
+      const id = modalImageIds[logicalIndex];
+      const sourceIndex = searchResultIndexById.get(id);
+      const image = sourceIndex === undefined ? null : searchResults[sourceIndex];
+      return image && sourceIndex !== undefined ? { image, sourceIndex } : null;
+    }
+    const image = searchResults[logicalIndex];
+    return image ? { image, sourceIndex: logicalIndex } : null;
+  }, [filmstripTotal, modalImageIds, searchResultIndexById, searchResults]);
+
+  const requestFilmstripRange = useCallback((startIndex: number, endIndex: number) => {
+    if (modalImageIds.length === 0) ensureSearchRange(startIndex, endIndex);
+  }, [ensureSearchRange, modalImageIds.length]);
+
+  const selectFilmstripItem = useCallback((item: ModalFilmstripItem) => {
+    if (item.sourceIndex === selectedIndex && item.image.id === img?.id) return;
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = false;
+    setFlipped(false);
+    setSelectedIndex(item.sourceIndex);
+  }, [img?.id, selectedIndex, setSelectedIndex]);
+
+  const toggleFilmstrip = useCallback(() => {
+    setView({ modalFilmstripOpen: !filmstripOpen });
+  }, [filmstripOpen, setView]);
 
   useEffect(() => {
     if (img) markImageSeen(img.id);
@@ -670,6 +703,10 @@ export default function ImageModal() {
       e.preventDefault();
       resetZoom();
     }
+    else if (isShortcutKey(key, keyBindings.toggleFilmstrip)) {
+      e.preventDefault();
+      toggleFilmstrip();
+    }
     else if (key.toLowerCase() === 'e' && hasEnhancedOutput) {
       e.preventDefault();
       toggleEnhancedView();
@@ -683,7 +720,7 @@ export default function ImageModal() {
       setSidebarCollapsed((prev) => !prev);
     }
     else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView]);
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -709,6 +746,7 @@ export default function ImageModal() {
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-topbar')) return;
     if (target.closest('.modal-sidebar')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
 
     const startsOnImage = Boolean(target.closest('.modal-main-image'));
     const mode = zoom > 1 && startsOnImage ? 'pan' : 'swipe';
@@ -826,6 +864,7 @@ export default function ImageModal() {
     }
     const target = e.target as HTMLElement;
     if (target.closest('.zoom-indicator')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
     const { x, width } = getRelativeClickPosition(e);
     const clickTarget = target.closest('.modal-main-image') || isPointOnMainImage(e.currentTarget, e.clientX, e.clientY)
       ? 'image'
@@ -839,6 +878,7 @@ export default function ImageModal() {
     const target = e.target as HTMLElement;
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-sidebar')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
     if (!target.closest('.modal-main-image') && !isPointOnMainImage(e.currentTarget, e.clientX, e.clientY)) return;
     setSidebarCollapsed((prev) => !prev);
   }, [cancelSingleClickAction]);
@@ -1016,6 +1056,17 @@ export default function ImageModal() {
                 {isDeleting ? '...' : 'D'}
               </button>
               <button
+                className={`modal-icon-btn ${filmstripOpen ? 'fav-active' : ''}`}
+                onClick={toggleFilmstrip}
+                title={`${filmstripOpen ? 'Hide' : 'Show'} filmstrip (${formatShortcutKey(keyBindings.toggleFilmstrip)})`}
+                aria-label={`${filmstripOpen ? 'Hide' : 'Show'} image filmstrip`}
+                aria-expanded={filmstripOpen}
+                aria-controls="modal-filmstrip"
+                aria-keyshortcuts={formatShortcutKey(keyBindings.toggleFilmstrip)}
+              >
+                FS
+              </button>
+              <button
                 className="modal-icon-btn modal-metadata-toggle"
                 onClick={() => setSidebarCollapsed((prev) => !prev)}
                 title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
@@ -1034,7 +1085,7 @@ export default function ImageModal() {
           </div>
 
           <div
-            className="modal-image-area"
+            className={`modal-image-area ${filmstripOpen ? 'filmstrip-open' : ''}`}
             onWheel={handleWheel}
             onPointerDown={handlePointerDown}
             onPointerMove={handlePointerMove}
@@ -1108,6 +1159,19 @@ export default function ImageModal() {
               }}
               draggable={false}
             />
+
+            {filmstripOpen && (
+              <ModalFilmstrip
+                total={filmstripTotal}
+                activeIndex={filmstripActiveIndex}
+                getItem={getFilmstripItem}
+                onNeedRange={requestFilmstripRange}
+                onSelect={selectFilmstripItem}
+                onCollapse={toggleFilmstrip}
+                onSessionExpired={reportImageSessionExpired}
+                toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
+              />
+            )}
 
             <div className="zoom-indicator">
               <span>{Math.round(zoom * 100)}%</span>
@@ -1231,6 +1295,8 @@ export default function ImageModal() {
               <kbd>{formatShortcutKey(keyBindings.flipHorizontal)}</kbd> Flip
               {' | '}
               <kbd>{formatShortcutKey(keyBindings.enhanceImage)}</kbd> AI
+              {' | '}
+              <kbd>{formatShortcutKey(keyBindings.toggleFilmstrip)}</kbd> Filmstrip
               {' | '}
               <kbd>E</kbd> Original/Upscaled
               {' | '}

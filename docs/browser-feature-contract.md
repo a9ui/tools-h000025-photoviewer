@@ -968,6 +968,7 @@ Reorderはactive/pin/image dataを変えず、tab orderだけを変更する。u
 - Original/Enhanced toggle
 - enhanced output delete
 - source Recycle
+- filmstrip show/hide
 - metadata sidebar
 - close
 - zoom percent/reset
@@ -999,6 +1000,15 @@ Close時はcurrent画像をgalleryの約35%位置へrevealし、selection/right 
 - Space: metadata sidebar
 - Enter: Open external
 - Ctrl/Cmd+Shift+T: closed tab restore
+
+### BR-MOD-011 Filmstrip
+
+- Modal chrome表示中は、current modal orderを横方向のthumbnail列として画面下部へ表示する。client-filter subsetではそのID順、通常検索ではlogical search orderを使う。
+- current画像はaccent border、`aria-current`、`aria-selected`で明示する。thumbnail clickは同じModalを閉じずに対象画像へ直接移動し、Seen、full-image load、Original/Enhanced判定は通常navigationと同じ経路へ続く。
+- `Toggle modal filmstrip` key bindingは既定`T`。Settingsのkey conflict検査対象に含め、toolbarとfilmstrip内の両方にshow/hide操作、`aria-expanded`、`aria-controls`、`aria-keyshortcuts`を持つ。新field導入前のsettingsで既存actionが`T`を使っている場合はその割当を保持し、filmstripだけを未使用の`B`、`G`、`V`、`Y`の順へfallbackして二重発火を作らない。
+- show/hideは`pvu_view.modalFilmstripOpen`へdebounce保存し、Modal close/reopenとreload後も保持する。chrome全体をhideした時はfilmstripもpointerを受けず、filmstripの保存値自体は変えない。
+- 大量画像で全thumbnail DOMを生成しない。横scrollのviewportとoverscanだけをrenderし、通常検索の未load範囲はそのwindowだけを`ensureSearchRange`へ要求する。visible filmstrip thumbnail以外をdecodeしない。各virtual optionはlogical全件中の位置を`aria-posinset`/`aria-setsize`で伝える。
+- filmstrip上のpointer/click/wheelはModal edge click、center chrome toggle、swipe、pan、wheel zoomへ伝播させない。縦wheelはfilmstripの横scrollとして扱う。
 
 ## 12. Source Delete
 
@@ -1989,6 +1999,7 @@ Desktopで:
 - Modal Previous/Nextが端でwrap。
 - Closeでcurrent画像をgalleryへreveal。
 - center click chrome、double-click metadata、swipe threshold。
+- filmstripはcurrent optionを1件だけ選択表示し、遠方scrollはviewport windowだけをfetch/renderする。thumbnail clickでその1枚へ移動してedge/center clickへ伝播せず、Delete後は隣接selectedへ一度だけ追従する。show/hide keyとtoolbar操作はclose/reopen/reload後も`pvu_view`から復元し、chrome hidden中はpointerを受けない。
 
 ### BR-ACC-075 Right preview / tabs
 
@@ -2115,7 +2126,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Gallery/zoom/virtualization | `src/components/ImageGrid.tsx` |
 | Right preview | `src/components/RightPreviewPanel.tsx` |
 | Bottom tabs | `src/components/BottomPreviewTabs.tsx` |
-| Modal/Delete neighbor | `src/components/ImageModal.tsx` |
+| Modal/filmstrip/Delete neighbor | `src/components/ImageModal.tsx`, `src/components/ModalFilmstrip.tsx` |
 | Settings / Runtime diagnostics | `src/components/SettingsModal.tsx`, `src/components/RuntimeDiagnosticsSection.tsx`, `src/lib/runtimeDiagnostics.ts` |
 | Enhance UI | `src/components/EnhanceQueuePanel.tsx` |
 | Search/sort/index/folders | `src/lib/indexer.ts` |
@@ -2154,7 +2165,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Favorite merge/view migration | `src/store/ImageContext.test.tsx` |
 | Preview tab reload | `src/lib/previewTabPersistence.test.ts`, `src/store/ImageContext.test.tsx` |
 | Scan cancellation/conflict/recovery | `src/lib/scanRunCoordinator.test.ts`, `src/app/api/scan/route.test.ts`, `src/store/ImageContext.test.tsx` |
-| Modal order/swipe | `src/lib/modalNavigation.test.ts` |
+| Modal order/swipe/filmstrip | `src/lib/modalNavigation.test.ts`, `src/components/ModalFilmstrip.test.tsx`, `src/components/ImageModal.test.tsx`, `e2e/viewer-modal-filmstrip.spec.ts` |
 | Modal zoom | `src/lib/modalZoom.test.ts` |
 | Gallery arrow math | `src/lib/viewerUi.test.ts` |
 | Date | `src/lib/dateFilter.test.ts` |

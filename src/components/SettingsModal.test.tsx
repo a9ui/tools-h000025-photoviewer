@@ -97,6 +97,21 @@ describe('SettingsModal unseen markers setting', () => {
     expect(setShowSettings).toHaveBeenCalledWith(false);
   });
 
+  it('includes the modal filmstrip key in conflict detection', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('button', { name: 'Next image binding' }));
+    await user.keyboard('t');
+
+    expect(screen.getByRole('button', { name: 'Next image binding' }))
+      .toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByRole('button', { name: 'Toggle modal filmstrip binding' }))
+      .toHaveAttribute('aria-invalid', 'true');
+    expect(screen.getByText('Also assigned to Toggle modal filmstrip.')).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Save key bindings' })).toBeDisabled();
+  });
+
   it('resets bindings only through the explicit action, then saves a conflict-free draft', async () => {
     const user = userEvent.setup();
     render(<SettingsModal />);

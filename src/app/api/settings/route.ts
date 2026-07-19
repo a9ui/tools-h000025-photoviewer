@@ -3,7 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
-import { hasKeyBindingConflicts } from '@/lib/keyBindings';
+import { hasKeyBindingConflicts, normalizeKeyBinding } from '@/lib/keyBindings';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
 
@@ -13,6 +13,7 @@ type SettingsDocument = Record<string, unknown>;
 
 const KEY_BINDING_NAMES = Object.keys(DEFAULT_KEY_BINDINGS) as Array<keyof KeyBindings>;
 const MAX_KEY_BINDING_LENGTH = 64;
+const FILMSTRIP_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.toggleFilmstrip, 'b', 'g', 'v', 'y'] as const;
 
 function settingsPath() {
   return process.env.PVU_SETTINGS_PATH
@@ -57,6 +58,20 @@ function publicSettings(document: SettingsDocument): AppSettings {
       ? storedBindings[name]
       : DEFAULT_KEY_BINDINGS[name],
   ])) as unknown as KeyBindings;
+
+  // `toggleFilmstrip` was added after the original settings schema. Preserve a
+  // user's existing T assignment instead of silently making two modal actions
+  // fire from the same key. The fallback is only for an old document that has
+  // no explicit filmstrip binding; an explicitly saved collision remains
+  // visible to the normal Settings conflict repair flow.
+  if (typeof storedBindings.toggleFilmstrip !== 'string') {
+    const usedKeys = new Set(KEY_BINDING_NAMES
+      .filter((name) => name !== 'toggleFilmstrip')
+      .map((name) => normalizeKeyBinding(keyBindings[name])));
+    keyBindings.toggleFilmstrip = FILMSTRIP_MIGRATION_KEYS.find(
+      (candidate) => !usedKeys.has(normalizeKeyBinding(candidate)),
+    ) ?? DEFAULT_KEY_BINDINGS.toggleFilmstrip;
+  }
 
   return {
     keyBindings,
