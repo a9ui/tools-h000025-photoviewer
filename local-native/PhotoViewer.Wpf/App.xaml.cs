@@ -10968,7 +10968,7 @@ public partial class App : Application
                 bool modalFocusRestored = modalControlFocused
                     && modalEscCloses
                     && !win.ModalVisibleForSmoke
-                    && win.IsCardsListFocusedForSmoke;
+                    && win.SelectedGalleryItemFocusedForSmoke;
 
                 File.WriteAllText(statePath + ".lock", "{\"pid\":1}");
                 win.FlushStateForSmoke();
