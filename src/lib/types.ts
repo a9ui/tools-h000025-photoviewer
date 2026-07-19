@@ -89,6 +89,8 @@ export interface ThumbnailStatusBorderPreference {
   color: string;
 }
 
+export const THUMBNAIL_STATUS_BORDER_RAINBOW = 'rainbow' as const;
+
 export interface ThumbnailStatusBorderSettings {
   favorite: ThumbnailStatusBorderPreference;
   enhanced: ThumbnailStatusBorderPreference;
@@ -96,7 +98,7 @@ export interface ThumbnailStatusBorderSettings {
 
 export const DEFAULT_THUMBNAIL_STATUS_BORDERS: ThumbnailStatusBorderSettings = {
   favorite: { enabled: true, color: '#facc15' },
-  enhanced: { enabled: true, color: '#facc15' },
+  enhanced: { enabled: true, color: THUMBNAIL_STATUS_BORDER_RAINBOW },
 };
 
 // App settings.

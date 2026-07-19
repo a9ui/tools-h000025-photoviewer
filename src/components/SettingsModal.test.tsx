@@ -81,7 +81,7 @@ describe('SettingsModal unseen markers setting', () => {
     expect(setView).toHaveBeenCalledWith({ showUnseenMarkers: false });
   });
 
-  it('shows yellow enabled defaults and saves independent off/custom border settings', async () => {
+  it('shows favorite yellow and enhanced rainbow defaults, then saves independent toggle/style/color settings', async () => {
     const user = userEvent.setup();
     render(<SettingsModal />);
 
@@ -89,12 +89,18 @@ describe('SettingsModal unseen markers setting', () => {
     const enhancedToggle = screen.getByRole('checkbox', { name: 'Show enhanced thumbnail border' });
     const favoriteColor = screen.getByLabelText('Favorite thumbnail border color');
     const enhancedColor = screen.getByLabelText('AI enhanced thumbnail border color');
+    const enhancedStyle = screen.getByRole('combobox', { name: 'AI enhanced thumbnail border style' });
     expect(favoriteToggle).toBeChecked();
     expect(enhancedToggle).toBeChecked();
     expect(favoriteColor).toHaveValue('#facc15');
+    expect(enhancedStyle).toHaveValue('rainbow');
+    expect(screen.getByRole('img', { name: 'Rainbow border preview' })).toBeInTheDocument();
     expect(enhancedColor).toHaveValue('#facc15');
+    expect(enhancedColor).toBeDisabled();
 
     await user.click(favoriteToggle);
+    await user.selectOptions(enhancedStyle, 'solid');
+    expect(enhancedColor).toBeEnabled();
     fireEvent.change(enhancedColor, { target: { value: '#12abef' } });
     await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
 
@@ -104,7 +110,7 @@ describe('SettingsModal unseen markers setting', () => {
     }));
   });
 
-  it('restores both thumbnail border controls to the enabled yellow defaults', async () => {
+  it('resets both controls to enabled favorite yellow and enhanced rainbow, then saves those defaults', async () => {
     const user = userEvent.setup();
     render(<SettingsModal />);
 
@@ -117,7 +123,15 @@ describe('SettingsModal unseen markers setting', () => {
     expect(screen.getByRole('checkbox', { name: 'Show favorite thumbnail border' })).toBeChecked();
     expect(screen.getByRole('checkbox', { name: 'Show enhanced thumbnail border' })).toBeChecked();
     expect(screen.getByLabelText('Favorite thumbnail border color')).toHaveValue('#facc15');
+    expect(screen.getByRole('combobox', { name: 'AI enhanced thumbnail border style' })).toHaveValue('rainbow');
     expect(screen.getByLabelText('AI enhanced thumbnail border color')).toHaveValue('#facc15');
+    expect(screen.getByLabelText('AI enhanced thumbnail border color')).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
+    await waitFor(() => expect(setThumbnailStatusBorders).toHaveBeenCalledWith({
+      favorite: { enabled: true, color: '#facc15' },
+      enhanced: { enabled: true, color: 'rainbow' },
+    }));
   });
 
   it('shows conflicting fields inline and never saves the invalid draft on close', async () => {

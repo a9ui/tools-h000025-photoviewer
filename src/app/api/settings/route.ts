@@ -148,7 +148,7 @@ function validateIncomingDocument(value: unknown):
     && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
     return {
       ok: false,
-      error: 'thumbnailStatusBorders must contain boolean enabled values and six-digit hex colors.',
+      error: 'thumbnailStatusBorders must contain boolean enabled values, six-digit hex colors, or the enhanced rainbow preset.',
     };
   }
   if (!Object.hasOwn(value, 'confirmBeforeDelete')

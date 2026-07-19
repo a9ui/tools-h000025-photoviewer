@@ -65,13 +65,14 @@ const ThumbnailStatusBorderOverlay = React.memo(function ThumbnailStatusBorderOv
   placement: 'grid' | 'list';
 }) {
   const presentation = getThumbnailStatusBorderPresentation({ favorite, enhanced, settings });
-  if (!presentation.favoriteColor && !presentation.enhancedColor) return null;
+  if (!presentation.favoriteColor && !presentation.enhancedColor && !presentation.enhancedRainbow) return null;
 
   const className = [
     statusBorderStyles.overlay,
     statusBorderStyles[placement],
     presentation.favoriteColor ? statusBorderStyles.hasFavorite : '',
-    presentation.enhancedColor ? statusBorderStyles.hasEnhanced : '',
+    presentation.enhancedColor || presentation.enhancedRainbow ? statusBorderStyles.hasEnhanced : '',
+    presentation.enhancedRainbow ? statusBorderStyles.enhancedRainbow : '',
   ].filter(Boolean).join(' ');
   const style = {
     '--favorite-thumbnail-border-color': presentation.favoriteColor ?? 'transparent',
@@ -84,7 +85,8 @@ const ThumbnailStatusBorderOverlay = React.memo(function ThumbnailStatusBorderOv
       style={style}
       data-testid="thumbnail-status-borders"
       data-favorite-border={presentation.favoriteColor ?? undefined}
-      data-enhanced-border={presentation.enhancedColor ?? undefined}
+      data-enhanced-border={presentation.enhancedRainbow ? 'rainbow' : presentation.enhancedColor ?? undefined}
+      data-enhanced-border-mode={presentation.enhancedRainbow ? 'rainbow' : presentation.enhancedColor ? 'solid' : undefined}
       aria-hidden="true"
     />
   );

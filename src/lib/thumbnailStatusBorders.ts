@@ -1,5 +1,6 @@
 import {
   DEFAULT_THUMBNAIL_STATUS_BORDERS,
+  THUMBNAIL_STATUS_BORDER_RAINBOW,
   type ThumbnailStatusBorderPreference,
   type ThumbnailStatusBorderSettings,
 } from './types';
@@ -10,27 +11,35 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function isValidPreference(value: unknown): value is Partial<ThumbnailStatusBorderPreference> & Record<string, unknown> {
+function isValidPreference(
+  value: unknown,
+  { allowRainbow }: { allowRainbow: boolean },
+): value is Partial<ThumbnailStatusBorderPreference> & Record<string, unknown> {
   if (!isObject(value)) return false;
   if (Object.hasOwn(value, 'enabled') && typeof value.enabled !== 'boolean') return false;
-  if (Object.hasOwn(value, 'color') && (typeof value.color !== 'string' || !HEX_COLOR_PATTERN.test(value.color))) {
-    return false;
+  if (Object.hasOwn(value, 'color')) {
+    if (typeof value.color !== 'string') return false;
+    if (!HEX_COLOR_PATTERN.test(value.color)
+      && !(allowRainbow && value.color.toLowerCase() === THUMBNAIL_STATUS_BORDER_RAINBOW)) {
+      return false;
+    }
   }
   return true;
 }
 
 export function isValidThumbnailStatusBordersDocument(value: unknown): value is Record<string, unknown> {
   if (!isObject(value)) return false;
-  if (Object.hasOwn(value, 'favorite') && !isValidPreference(value.favorite)) return false;
-  if (Object.hasOwn(value, 'enhanced') && !isValidPreference(value.enhanced)) return false;
+  if (Object.hasOwn(value, 'favorite') && !isValidPreference(value.favorite, { allowRainbow: false })) return false;
+  if (Object.hasOwn(value, 'enhanced') && !isValidPreference(value.enhanced, { allowRainbow: true })) return false;
   return true;
 }
 
 function normalizePreference(
   value: unknown,
   fallback: ThumbnailStatusBorderPreference,
+  { allowRainbow }: { allowRainbow: boolean },
 ): ThumbnailStatusBorderPreference {
-  if (!isValidPreference(value)) return { ...fallback };
+  if (!isValidPreference(value, { allowRainbow })) return { ...fallback };
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : fallback.enabled,
     color: typeof value.color === 'string' ? value.color.toLowerCase() : fallback.color,
@@ -40,14 +49,23 @@ function normalizePreference(
 export function normalizeThumbnailStatusBorders(value: unknown): ThumbnailStatusBorderSettings {
   const document = isValidThumbnailStatusBordersDocument(value) ? value : {};
   return {
-    favorite: normalizePreference(document.favorite, DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite),
-    enhanced: normalizePreference(document.enhanced, DEFAULT_THUMBNAIL_STATUS_BORDERS.enhanced),
+    favorite: normalizePreference(
+      document.favorite,
+      DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite,
+      { allowRainbow: false },
+    ),
+    enhanced: normalizePreference(
+      document.enhanced,
+      DEFAULT_THUMBNAIL_STATUS_BORDERS.enhanced,
+      { allowRainbow: true },
+    ),
   };
 }
 
 export interface ThumbnailStatusBorderPresentation {
   favoriteColor: string | null;
   enhancedColor: string | null;
+  enhancedRainbow: boolean;
 }
 
 export function getThumbnailStatusBorderPresentation({
@@ -59,8 +77,12 @@ export function getThumbnailStatusBorderPresentation({
   enhanced: boolean;
   settings: ThumbnailStatusBorderSettings;
 }): ThumbnailStatusBorderPresentation {
+  const showEnhanced = enhanced && settings.enhanced.enabled;
+  const enhancedRainbow = showEnhanced
+    && settings.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW;
   return {
     favoriteColor: favorite && settings.favorite.enabled ? settings.favorite.color : null,
-    enhancedColor: enhanced && settings.enhanced.enabled ? settings.enhanced.color : null,
+    enhancedColor: showEnhanced && !enhancedRainbow ? settings.enhanced.color : null,
+    enhancedRainbow,
   };
 }

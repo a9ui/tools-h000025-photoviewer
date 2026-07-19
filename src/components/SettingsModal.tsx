@@ -5,6 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import {
   DEFAULT_KEY_BINDINGS,
   DEFAULT_THUMBNAIL_STATUS_BORDERS,
+  THUMBNAIL_STATUS_BORDER_RAINBOW,
   type KeyBindings,
   type ThumbnailStatusBorderSettings,
 } from '../lib/types';
@@ -305,6 +306,8 @@ export default function SettingsModal() {
           {(['favorite', 'enhanced'] as const).map((status) => {
             const label = status === 'favorite' ? 'Favorite' : 'AI enhanced';
             const preference = thumbnailBordersDraft[status];
+            const isEnhanced = status === 'enhanced';
+            const isRainbow = isEnhanced && preference.color === THUMBNAIL_STATUS_BORDER_RAINBOW;
             return (
               <div className="setting-row" key={status}>
                 <span className="setting-label">{label} thumbnail border</span>
@@ -319,15 +322,40 @@ export default function SettingsModal() {
                     />
                     <span>{preference.enabled ? 'Enabled' : 'Disabled'}</span>
                   </label>
+                  {isEnhanced && (
+                    <select
+                      className={statusBorderStyles.styleSelect}
+                      aria-label="AI enhanced thumbnail border style"
+                      value={isRainbow ? THUMBNAIL_STATUS_BORDER_RAINBOW : 'solid'}
+                      disabled={!preference.enabled || savingThumbnailBorders}
+                      onChange={(event) => updateThumbnailBorderDraft('enhanced', {
+                        color: event.target.value === THUMBNAIL_STATUS_BORDER_RAINBOW
+                          ? THUMBNAIL_STATUS_BORDER_RAINBOW
+                          : '#facc15',
+                      })}
+                    >
+                      <option value={THUMBNAIL_STATUS_BORDER_RAINBOW}>Rainbow</option>
+                      <option value="solid">Single color</option>
+                    </select>
+                  )}
+                  {isRainbow && (
+                    <span
+                      className={statusBorderStyles.rainbowSwatch}
+                      aria-label="Rainbow border preview"
+                      role="img"
+                    />
+                  )}
                   <input
                     className={statusBorderStyles.colorInput}
                     aria-label={`${label} thumbnail border color`}
                     type="color"
-                    value={preference.color}
-                    disabled={!preference.enabled || savingThumbnailBorders}
+                    value={isRainbow ? '#facc15' : preference.color}
+                    disabled={!preference.enabled || savingThumbnailBorders || isRainbow}
                     onChange={(event) => updateThumbnailBorderDraft(status, { color: event.target.value })}
                   />
-                  <code className={statusBorderStyles.colorValue}>{preference.color}</code>
+                  <code className={statusBorderStyles.colorValue}>
+                    {isRainbow ? 'Rainbow' : preference.color}
+                  </code>
                 </div>
               </div>
             );

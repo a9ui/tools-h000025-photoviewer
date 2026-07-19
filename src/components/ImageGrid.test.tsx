@@ -274,6 +274,29 @@ describe("ImageGrid keyboard primary controls", () => {
     ).toBeInTheDocument();
   });
 
+  it.each(["grid", "list"] as const)(
+    "renders the default enhanced rainbow outer ring with the favorite yellow inner ring in %s view",
+    (viewMode) => {
+      vi.mocked(useImageStore).mockReturnValue({
+        ...createStore(viewMode),
+        favorites: { [firstImage.id]: 2 },
+        enhancedSourceIds: { [firstImage.id]: true },
+        thumbnailStatusBorders: DEFAULT_THUMBNAIL_STATUS_BORDERS,
+      });
+      renderGrid();
+
+      const overlay = screen.getByTestId("thumbnail-status-borders");
+      expect(overlay).toHaveAttribute("data-favorite-border", "#facc15");
+      expect(overlay).toHaveAttribute("data-enhanced-border", "rainbow");
+      expect(overlay).toHaveAttribute("data-enhanced-border-mode", "rainbow");
+      expect(overlay.className).toContain("hasFavorite");
+      expect(overlay.className).toContain("hasEnhanced");
+      expect(overlay.className).toContain("enhancedRainbow");
+      expect(overlay.style.getPropertyValue("--favorite-thumbnail-border-color")).toBe("#facc15");
+      expect(overlay.style.getPropertyValue("--enhanced-thumbnail-border-color")).toBe("transparent");
+    },
+  );
+
   it("keeps custom favorite and enhanced thumbnail borders independently visible when combined", () => {
     const store = createStore("grid", { selectedIds: [firstImage.id] });
     vi.mocked(useImageStore).mockReturnValue({
@@ -292,6 +315,9 @@ describe("ImageGrid keyboard primary controls", () => {
     const overlay = screen.getByTestId("thumbnail-status-borders");
     expect(overlay).toHaveAttribute("data-favorite-border", "#112233");
     expect(overlay).toHaveAttribute("data-enhanced-border", "#abcdef");
+    expect(overlay).toHaveAttribute("data-enhanced-border-mode", "solid");
+    expect(overlay.className).not.toContain("enhancedRainbow");
+    expect(overlay.style.getPropertyValue("--enhanced-thumbnail-border-color")).toBe("#abcdef");
     expect(firstGroup).toHaveClass("is-selected");
     expect(firstGroup).toHaveClass("is-unseen");
   });

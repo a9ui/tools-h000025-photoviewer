@@ -29,6 +29,30 @@
   border: 3px solid var(--enhanced-thumbnail-border-color);
 }
 
+.enhancedRainbow::before {
+  padding: 3px;
+  border: 0;
+  background: conic-gradient(
+    from 0deg,
+    #ff1744 0deg,
+    #ff9100 51deg,
+    #ffea00 103deg,
+    #00e676 154deg,
+    #00b8d4 206deg,
+    #2979ff 257deg,
+    #aa00ff 309deg,
+    #ff1744 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  mask-composite: exclude;
+}
+
 .hasFavorite::after {
   inset: 0;
   border: 2px solid var(--favorite-thumbnail-border-color);

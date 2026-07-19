@@ -58,7 +58,7 @@ describe('settings route write safety', () => {
     const response = await PUT(putRequest(JSON.stringify({
       thumbnailStatusBorders: {
         favorite: { enabled: false, color: '#112233' },
-        enhanced: { color: '#AABBCC' },
+        enhanced: { color: 'rainbow' },
       },
     })));
     const body = await response.json();
@@ -69,17 +69,51 @@ describe('settings route write safety', () => {
       ok: true,
       thumbnailStatusBorders: {
         favorite: { enabled: false, color: '#112233' },
-        enhanced: { enabled: true, color: '#aabbcc' },
+        enhanced: { enabled: true, color: 'rainbow' },
       },
     });
     expect(stored).toMatchObject({
       futureSetting: true,
       thumbnailStatusBorders: {
         favorite: { enabled: false, color: '#112233', futureWidth: 4 },
-        enhanced: { enabled: true, color: '#AABBCC' },
+        enhanced: { enabled: true, color: 'rainbow' },
         futureStatus: { enabled: true },
       },
     });
+  });
+
+  it('keeps a legacy enhanced hex color solid and defaults only a missing color to rainbow without rewriting', async () => {
+    const legacy = {
+      thumbnailStatusBorders: {
+        enhanced: { enabled: true, color: '#AABBCC', futureWidth: 5 },
+      },
+    };
+    await fs.writeFile(target, JSON.stringify(legacy), 'utf8');
+
+    const legacyResponse = await GET();
+    expect(await legacyResponse.json()).toMatchObject({
+      thumbnailStatusBorders: {
+        enhanced: { enabled: true, color: '#aabbcc' },
+      },
+      malformed: false,
+    });
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual(legacy);
+
+    const missingColor = {
+      thumbnailStatusBorders: {
+        enhanced: { enabled: false, futureWidth: 7 },
+      },
+    };
+    await fs.writeFile(target, JSON.stringify(missingColor), 'utf8');
+
+    const defaultResponse = await GET();
+    expect(await defaultResponse.json()).toMatchObject({
+      thumbnailStatusBorders: {
+        enhanced: { enabled: false, color: 'rainbow' },
+      },
+      malformed: false,
+    });
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual(missingColor);
   });
 
   it('atomically merges a partial update while preserving unknown future fields', async () => {
@@ -141,6 +175,7 @@ describe('settings route write safety', () => {
     ['invalid binding value', JSON.stringify({ keyBindings: { nextImage: 7 } })],
     ['empty binding value', JSON.stringify({ keyBindings: { nextImage: '' } })],
     ['invalid favorite border toggle', JSON.stringify({ thumbnailStatusBorders: { favorite: { enabled: 'yes' } } })],
+    ['rainbow favorite border color', JSON.stringify({ thumbnailStatusBorders: { favorite: { color: 'rainbow' } } })],
     ['invalid enhanced border color', JSON.stringify({ thumbnailStatusBorders: { enhanced: { color: 'yellow' } } })],
   ])('rejects %s without replacing the existing file', async (_name, body) => {
     const original = '{"confirmBeforeDelete":true}\n';
