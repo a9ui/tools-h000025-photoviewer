@@ -5,8 +5,9 @@
 監査基準日: 2026-07-19 JST
 
 実装基準: このマシンの `refs/heads/main` に採用された実装commit
-`792716f9863dd145e028648405c29c340f7a4336`。この文書を更新するdocs-only descendantは
-実装基準を変更しない。`origin/main` はこの文書の実装基準ではない。
+`792716f9863dd145e028648405c29c340f7a4336` と、そのrepository hardening descendant
+`4c81cca3efc80363568d0d9af35297ff3285b48c`。WPF gallery zoom候補 `4a22b61` は専用branch上で
+検証済みだが、local main採用前なのでSection 14の`pending adoption`として扱う。`origin/main` は基準ではない。
 
 現在の実装状況と証拠は [current-implementation-truth.md](./current-implementation-truth.md) を参照する。
 
@@ -367,7 +368,7 @@ Headerはsidebar、logo/landing、Refresh、Search、count、Settings/right prev
 
 click single、Ctrl toggle、Shift range、Ctrl+Shift additive range。Ctrl+Aはfiltered result全path、Ctrl+Shift+Aはclear。canonical selectionはpath setで保持し、100,000件のWPF SelectedItemsをmaterializeしない。Grid/List/preview/tab/modalは同じprimary pathを共有する。
 
-Grid/List切替、Standard/Compact/Poster、Original/1:1/2:3を持つ。現行zoomは40〜600、20px step、reset 200。Ctrl+wheel、Ctrl `+/-/0`。zoom anchorはpath+offsetで保持し、sidebar/header/font/right panel/List rowを変えない。
+Grid/List切替、Standard/Compact/Poster、Original/1:1/2:3を持つ。local mainの現行zoomは40〜600、20px step、reset 200。Ctrl+wheel、Ctrl `+/-/0`。zoom anchorはpath+offsetで保持し、sidebar/header/font/right panel/List rowを変えない。候補commit `4a22b61` は20〜600、600=正確な1列、旧state safe migration、canonical full path+viewport offsetをzoom/Sidebar/right panel/window resize/DPI/selection有無で保持し、専用gate済みである。
 
 現行mainではGrid/List itemのdouble-clickでModalを開く。Enterを一覧の正式なModal open keyとして定義するkey actionはないため、一覧Enter要件はSection 14のPENDINGである。
 
@@ -594,8 +595,8 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 
 | Requirement | Browser local main | WPF local main | Canonical status / acceptance |
 | --- | --- | --- | --- |
-| WPF 20px〜最大1列 parity | Browserはimplemented | 40〜600、step 20 | **実装確認待ち / pending**。WPFにも要求する場合はXAML/state/virtual panel/100k gateが必要 |
-| WPF Sidebar開閉アンカー parity | Browserはimplemented | width 240/0 toggle、anchor補正なし | **実装確認待ち / pending**。path+offset、resize/DPI、List非破壊 |
+| WPF 20px〜最大1列 parity | Browserはimplemented | local mainは40〜600。候補commit `4a22b61` は20〜600、600=1列、旧40維持・範囲外clamp、Grid/List virtualization gate済み | **pending adoption**。focused、53-check aggregate、exact 100k/100folderはgreen。local main採用と通常launcher/runtime確認後に昇格 |
+| WPF Sidebar開閉アンカー parity | Browserはimplemented | local mainはwidth 240/0 toggleのみ。候補commitはcanonical full path+viewport offsetをSidebar/right panel/window resize/DPI/selection有無で保持 | **pending adoption**。同名別folder fixtureを含めdrift 0px、List非破壊。local main採用前はimplementedと報告しない |
 | Enhancement枠色設定 | schema/UIなし、固定status色のみ | schema/UIなし | **実装確認待ち / pending**。設定surface、validation、保存、Original/Enhanced/成功失敗との優先規則 |
 | 表示中Original/EnhancedをEnterで開く | Enterはsource固定 | external openはsource固定 | **実装確認待ち / pending**。表示中assetをguardして開き、missing outputはsource fallback/明示status |
 | 一覧EnterでModal | source+unit testに現行挙動あり | double-clickだけ | **実装確認待ち**。WPF parity、current order、focus return、overlay isolationを確認するまで新要件全体を完了扱いしない |
@@ -645,7 +646,7 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | unit/component | `pnpm test:unit` | headless app smoke群 | Browser 61 files / 521 tests green、3 files / 3 tests skip at `792716f...` |
 | type/lint/build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | `dotnet build -c Release` | Browser typecheck/build green、lint 0 errors（unrelated Claude worktree 1 warning）、WPF 0 warning・0 error |
 | Landing/recent/runtime | `e2e/home.spec.ts`, `verify-browser-runtime.ps1` | landing/recent verifier、launcher freshness | Browser isolated production Playwright 7/7。通常runtime evidenceはtruth tableへ記録 |
-| Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | gallery zoom/scroll/date/layout verifier | Browser 20〜600/1列/Sidebar anchor採用。WPFは40〜600/sidebar parity未採用 |
+| Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | `verify-wpf-gallery-zoom-anchor.ps1`、catalog stress、gallery zoom/scroll/date/layout verifier | Browser 20〜600/1列/Sidebar anchor採用。WPF候補commitはfocused/aggregate/exact100k green、local main採用待ち |
 | Modal/Delete | `ImageModal.test.tsx`, `RightPreviewPanel.test.tsx`, `favoriteDeleteProtection.test.ts`, delete integration/route tests | modal/delete verifier | Favorite source mandatory confirmation採用。displayed Enhanced openは未gate |
 | Modal filmstrip | `ModalFilmstrip.test.tsx`, `ImageModal.test.tsx`, `ImageContext.test.tsx`, settings tests、`e2e/viewer-modal-filmstrip.spec.ts` | 今回scope外 | 100k bounded DOM、current follow、click/Arrow/Delete/persistence、console 0を要求 |
 | Search History | route/SearchBar tests、API live-lock timeout | `verify-wpf-search-history.ps1`, `verify-cross-runtime-search-history.ps1` | async UI、keyboard/a11y、max50、malformed/future保護、Busy writes 0、lost 0 |
