@@ -210,6 +210,13 @@ public partial class MainWindow : Window
     private string _loadPhase = "idle";
     private int _scanEnumerationDelayForSmokeMs;
     private int _scanMetadataDelayForSmokeMs;
+    private string? _metadataIndexPath;
+    private string _metadataIndexStatus = "idle";
+    private int _metadataIndexProgress;
+    private int _metadataIndexCompleted;
+    private int _metadataIndexTotal;
+    private int _metadataIndexCacheHits;
+    private int _metadataIndexCacheMisses;
     private int _catalogPreparationBatchSizeForSmoke = 256;
     private Action<string, int>? _catalogPreparationBatchHookForSmoke;
     private Action? _beforeMaterializeFilesForSmoke;
@@ -1187,6 +1194,7 @@ public partial class MainWindow : Window
 
         Task<ImageMetadataLoadMetrics> metadataTask = LoadImageMetadataProgressivelyAsync(
             _allTiles.ToList(),
+            unavailableFolderSet,
             generation,
             cts,
             metadataDelayForSmokeMs);
@@ -1245,6 +1253,14 @@ public partial class MainWindow : Window
         LastLoadMetrics.InitialFilterMs = initialFilterMs;
         LastLoadMetrics.CatalogStatsMs = catalogStatsMs;
         LastLoadMetrics.CatalogReadyMs = catalogReadyMs;
+        LastLoadMetrics.MetadataCacheHits = metadata.CacheHits;
+        LastLoadMetrics.MetadataCacheMisses = metadata.CacheMisses;
+        LastLoadMetrics.MetadataIndexReadMs = metadata.IndexReadMs;
+        LastLoadMetrics.MetadataIndexWriteMs = metadata.IndexWriteMs;
+        LastLoadMetrics.MetadataIndexLoadState = metadata.IndexLoadState;
+        LastLoadMetrics.MetadataIndexSaveSucceeded = metadata.IndexSaveSucceeded;
+        LastLoadMetrics.MetadataIndexWritten = metadata.IndexWritten;
+        LastLoadMetrics.MetadataIndexSaveError = metadata.IndexSaveError;
         UpdateGridMetrics(LastLoadMetrics);
         FinishCurrentLoad(generation, cts);
         }
@@ -1290,6 +1306,7 @@ public partial class MainWindow : Window
             return false;
 
         CancellationTokenSource canceled = _loadCts;
+        bool canceledMetadata = string.Equals(_loadPhase, "background-metadata", StringComparison.Ordinal);
         _scanCancelable = false;
         _loadPhase = "canceled";
         _loadGeneration++;
@@ -1304,6 +1321,14 @@ public partial class MainWindow : Window
         ScanPercent.Text = "";
         ScanLabel.Text = "Scan canceled";
         ScanMessage.Text = "Folder set kept. Ready to scan again.";
+        if (canceledMetadata)
+        {
+            _metadataIndexStatus = "canceled";
+            RenderMetadataIndexProgress(
+                "Prompt metadata canceled - the last complete index was kept.",
+                _metadataIndexProgress,
+                showProgress: false);
+        }
         RefreshLandingFolderSetUi();
         Dispatcher.BeginInvoke(OpenFolderSetButton.Focus, DispatcherPriority.Input);
         return true;
@@ -1901,6 +1926,9 @@ public partial class MainWindow : Window
             CardWidth = width,
             ModifiedUtc = file.LastWriteTimeUtc,
             CreatedUtc = file.CreationTimeUtc,
+            SourceLength = file.Length,
+            SourceLastWriteUtcTicks = file.LastWriteTimeUtc.Ticks,
+            SourceCreationUtcTicks = file.CreationTimeUtc.Ticks,
             Prompt = indexedPrompt ?? "",
             Path = file.FullName,
             IsRealFile = true,
@@ -3871,6 +3899,7 @@ public partial class MainWindow : Window
 
     private async Task<ImageMetadataLoadMetrics> LoadImageMetadataProgressivelyAsync(
         IReadOnlyList<Tile> tiles,
+        IReadOnlyList<string> unavailableFolderSet,
         long generation,
         CancellationTokenSource cts,
         int initialDelayMilliseconds)
@@ -3878,31 +3907,62 @@ public partial class MainWindow : Window
         if (tiles.Count == 0)
             return ImageMetadataLoadMetrics.Empty;
 
+        long sourceRecycleGenerationAtStart = _sourceRecycleGeneration;
+        string metadataIndexPath = MetadataIndexStore.ResolvePath(_currentFolderSet, ResolvedStatePath);
+        _metadataIndexPath = metadataIndexPath;
+        BeginMetadataIndexProgress(tiles.Count);
+
         // Give the first visible thumbnail batch a short uncontended head
         // start. Bulk metadata reads are lower priority than pixels currently
         // on screen.
         await Task.Delay(Math.Max(250, initialDelayMilliseconds), cts.Token);
 
         var watch = Stopwatch.StartNew();
+        var indexReadWatch = Stopwatch.StartNew();
+        MetadataIndexLoadResult index = await Task.Run(
+            () => MetadataIndexStore.Load(metadataIndexPath, cts.Token),
+            cts.Token);
+        indexReadWatch.Stop();
+
         var decoded = new ConcurrentQueue<DecodedImageMetadata>();
         int metadataWorkerBudget = tiles.Count >= 10_000 ? 2 : MaxMetadataReadWorkers;
         int workers = Math.Max(1, Math.Min(Math.Min(metadataWorkerBudget, Environment.ProcessorCount), tiles.Count));
+        var refreshedEntries = new ConcurrentDictionary<string, MetadataIndexEntry>(
+            workers,
+            tiles.Count,
+            StringComparer.OrdinalIgnoreCase);
         int completed = 0;
         int decodeFailures = 0;
+        int cacheHits = 0;
+        int cacheMisses = 0;
         int uiBatchSize = Math.Clamp(tiles.Count / 128, 96, 512);
 
-        try
-        {
-            await Parallel.ForEachAsync(
-                tiles,
-                new ParallelOptions
+        await Parallel.ForEachAsync(
+            tiles,
+            new ParallelOptions
+            {
+                CancellationToken = cts.Token,
+                MaxDegreeOfParallelism = workers,
+            },
+            async (tile, itemToken) =>
+            {
+                itemToken.ThrowIfCancellationRequested();
+                bool cacheHit = index.Entries.TryGetValue(tile.Path, out MetadataIndexEntry? cached)
+                    && cached.Matches(tile);
+                int width;
+                int height;
+                string prompt;
+                if (cacheHit)
                 {
-                    CancellationToken = cts.Token,
-                    MaxDegreeOfParallelism = workers,
-                },
-                async (tile, itemToken) =>
+                    width = cached!.Width;
+                    height = cached.Height;
+                    prompt = cached.Prompt;
+                    refreshedEntries[tile.Path] = cached;
+                    Interlocked.Increment(ref cacheHits);
+                }
+                else
                 {
-                    itemToken.ThrowIfCancellationRequested();
+                    Interlocked.Increment(ref cacheMisses);
                     // Bulk prompt/dimension indexing is never allowed to race
                     // a viewport thumbnail batch for disk access. Continuous
                     // scrolling can postpone this background work; visible
@@ -3913,33 +3973,47 @@ public partial class MainWindow : Window
                     bool sizeRead = TryReadCatalogImageMetadata(
                         tile.Path,
                         itemToken,
-                        out int width,
-                        out int height,
+                        out width,
+                        out height,
                         out PngParametersMetadata? pngMetadata);
                     if (!sizeRead)
-                        Interlocked.Increment(ref decodeFailures);
-                    var imageDimensions = new ImageDimensions(width, height);
-                    string prompt = pngMetadata?.Prompt ?? "";
-
-                    decoded.Enqueue(new DecodedImageMetadata(tile, imageDimensions, prompt));
-                    int done = Interlocked.Increment(ref completed);
-                    if (done % uiBatchSize == 0 || done == tiles.Count)
                     {
-                        await Dispatcher.InvokeAsync(
-                            () =>
-                            {
-                                if (IsCurrentLoad(generation, cts))
-                                    DrainDecodedImageMetadata(decoded);
-                            },
-                            DispatcherPriority.Background,
-                            itemToken);
+                        Interlocked.Increment(ref decodeFailures);
                     }
-                });
-        }
-        finally
-        {
-            watch.Stop();
-        }
+                    else
+                    {
+                        refreshedEntries[tile.Path] = new MetadataIndexEntry(
+                            tile.Path,
+                            tile.SourceLength,
+                            tile.SourceLastWriteUtcTicks,
+                            tile.SourceCreationUtcTicks,
+                            width,
+                            height,
+                            pngMetadata?.Prompt ?? "");
+                    }
+                    prompt = pngMetadata?.Prompt ?? "";
+                }
+
+                decoded.Enqueue(new DecodedImageMetadata(tile, new ImageDimensions(width, height), prompt));
+                int done = Interlocked.Increment(ref completed);
+                if (done % uiBatchSize == 0 || done == tiles.Count)
+                {
+                    await Dispatcher.InvokeAsync(
+                        () =>
+                        {
+                            if (!IsCurrentLoad(generation, cts))
+                                return;
+                            DrainDecodedImageMetadata(decoded);
+                            UpdateMetadataIndexProgress(
+                                done,
+                                tiles.Count,
+                                Volatile.Read(ref cacheHits),
+                                Volatile.Read(ref cacheMisses));
+                        },
+                        DispatcherPriority.Background,
+                        itemToken);
+                }
+            });
 
         await Dispatcher.InvokeAsync(
             () =>
@@ -3948,11 +4022,95 @@ public partial class MainWindow : Window
                     return;
 
                 DrainDecodedImageMetadata(decoded);
+                UpdateMetadataIndexProgress(completed, tiles.Count, cacheHits, cacheMisses, saving: true);
                 // Prompt-only matches become available after the background
                 // index is complete. Filename/date/favorite filtering was
                 // already usable from the first published catalog frame.
                 if (!string.IsNullOrWhiteSpace(SearchInput.Text))
                     ApplyFilters(selectFirst: false);
+            },
+            DispatcherPriority.Background,
+            cts.Token);
+
+        MetadataIndexSaveResult save;
+        var indexWriteWatch = Stopwatch.StartNew();
+        bool catalogChanged = _sourceRecycleGeneration != sourceRecycleGenerationAtStart
+            || _allTiles.Count != tiles.Count;
+        MetadataIndexSnapshotPlan? snapshotPlan = null;
+        bool completeMetadataSet = !catalogChanged
+            && decodeFailures == 0
+            && refreshedEntries.Count == tiles.Count;
+        bool exactLoadedWarmSnapshot = completeMetadataSet
+            && index.State == MetadataIndexLoadState.Loaded
+            && cacheMisses == 0
+            && unavailableFolderSet.Count == 0
+            && index.Entries.Count == tiles.Count;
+        if (index.State != MetadataIndexLoadState.Unsupported
+            && completeMetadataSet
+            && !exactLoadedWarmSnapshot)
+        {
+            snapshotPlan = await Task.Run(
+                () => BuildMetadataIndexSnapshot(
+                    unavailableFolderSet,
+                    index.Entries,
+                    refreshedEntries,
+                    cts.Token),
+                cts.Token);
+        }
+        if (index.State == MetadataIndexLoadState.Unsupported)
+        {
+            save = MetadataIndexSaveResult.Preserved(
+                metadataIndexPath,
+                refreshedEntries.Count,
+                "a newer metadata index version was preserved",
+                MetadataIndexSaveDisposition.Protected);
+        }
+        else if (catalogChanged)
+        {
+            save = MetadataIndexSaveResult.Preserved(
+                metadataIndexPath,
+                index.Entries.Count,
+                "the catalog changed during indexing; the last complete index was preserved",
+                MetadataIndexSaveDisposition.CatalogChanged);
+        }
+        else if (decodeFailures > 0 || refreshedEntries.Count != tiles.Count)
+        {
+            save = MetadataIndexSaveResult.Preserved(
+                metadataIndexPath,
+                index.Entries.Count,
+                $"{decodeFailures:N0} source metadata read(s) failed; the last complete index was preserved",
+                MetadataIndexSaveDisposition.Incomplete);
+        }
+        else if (index.State == MetadataIndexLoadState.Loaded
+            && cacheMisses == 0
+            && decodeFailures == 0
+            && refreshedEntries.Count == tiles.Count
+            && (exactLoadedWarmSnapshot || snapshotPlan?.DurableEntrySetExact == true))
+        {
+            // A pure warm hit is already the exact durable snapshot. Keeping
+            // its bytes and timestamp unchanged makes restart reuse observable
+            // and avoids an unnecessary 100k-entry rewrite.
+            save = MetadataIndexSaveResult.Preserved(
+                metadataIndexPath,
+                refreshedEntries.Count,
+                "the complete index was reused byte-for-byte");
+        }
+        else
+        {
+            MetadataIndexEntry[] snapshot = snapshotPlan?.Entries
+                ?? throw new InvalidOperationException("metadata index snapshot was unavailable");
+            save = await Task.Run(
+                () => MetadataIndexStore.Save(metadataIndexPath, snapshot, cts.Token),
+                cts.Token);
+        }
+        indexWriteWatch.Stop();
+        watch.Stop();
+
+        await Dispatcher.InvokeAsync(
+            () =>
+            {
+                if (IsCurrentLoad(generation, cts))
+                    CompleteMetadataIndexProgress(tiles.Count, cacheHits, cacheMisses, index.State, save);
             },
             DispatcherPriority.Background,
             cts.Token);
@@ -3963,7 +4121,148 @@ public partial class MainWindow : Window
             workers,
             completed,
             watch.ElapsedMilliseconds,
-            decodeFailures);
+            decodeFailures,
+            cacheHits,
+            cacheMisses,
+            indexReadWatch.ElapsedMilliseconds,
+            indexWriteWatch.ElapsedMilliseconds,
+            index.State.ToString(),
+            save.Ok,
+            save.Written,
+            save.Error);
+    }
+
+    private static MetadataIndexSnapshotPlan BuildMetadataIndexSnapshot(
+        IReadOnlyList<string> unavailableFolderSet,
+        IReadOnlyDictionary<string, MetadataIndexEntry> priorEntries,
+        ConcurrentDictionary<string, MetadataIndexEntry> refreshedEntries,
+        CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        string[] normalizedUnavailableRoots = unavailableFolderSet
+            .Select(static root => Path.GetFullPath(root)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar))
+            .ToArray();
+        var unavailablePriorEntries = new List<MetadataIndexEntry>();
+        int checkedEntries = 0;
+        foreach (MetadataIndexEntry entry in priorEntries.Values)
+        {
+            if ((checkedEntries++ & 255) == 0)
+                token.ThrowIfCancellationRequested();
+            if (refreshedEntries.ContainsKey(entry.Path))
+                continue;
+
+            string normalizedPath;
+            try
+            {
+                normalizedPath = Path.GetFullPath(entry.Path);
+            }
+            catch
+            {
+                continue;
+            }
+
+            foreach (string root in normalizedUnavailableRoots)
+            {
+                if (string.Equals(normalizedPath, root, StringComparison.OrdinalIgnoreCase)
+                    || normalizedPath.StartsWith(root + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)
+                    || normalizedPath.StartsWith(root + Path.AltDirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))
+                {
+                    unavailablePriorEntries.Add(entry);
+                    break;
+                }
+            }
+        }
+        token.ThrowIfCancellationRequested();
+        bool durableEntrySetExact = priorEntries.Count == refreshedEntries.Count + unavailablePriorEntries.Count;
+        var snapshotByPath = new Dictionary<string, MetadataIndexEntry>(
+            refreshedEntries,
+            StringComparer.OrdinalIgnoreCase);
+        // A selected drive/root can be temporarily unavailable. Keep its
+        // still-derived entries so reconnecting the same explicit folder set
+        // remains warm, while available-root removals are pruned by the exact
+        // current catalog snapshot.
+        foreach (MetadataIndexEntry prior in unavailablePriorEntries)
+            snapshotByPath.TryAdd(prior.Path, prior);
+        token.ThrowIfCancellationRequested();
+        return new MetadataIndexSnapshotPlan(snapshotByPath.Values.ToArray(), durableEntrySetExact);
+    }
+
+    private void BeginMetadataIndexProgress(int total)
+    {
+        _metadataIndexStatus = "loading";
+        _metadataIndexProgress = 0;
+        _metadataIndexCompleted = 0;
+        _metadataIndexTotal = total;
+        _metadataIndexCacheHits = 0;
+        _metadataIndexCacheMisses = 0;
+        RenderMetadataIndexProgress(
+            $"Prompt metadata: checking saved index for {total:N0} images...",
+            0,
+            showProgress: true);
+    }
+
+    private void UpdateMetadataIndexProgress(int completed, int total, int cacheHits, int cacheMisses, bool saving = false)
+    {
+        int percent = total <= 0 ? 100 : (int)Math.Clamp(completed * 100L / total, 0, 100);
+        _metadataIndexStatus = saving ? "saving" : "loading";
+        _metadataIndexProgress = percent;
+        _metadataIndexCompleted = completed;
+        _metadataIndexTotal = total;
+        _metadataIndexCacheHits = cacheHits;
+        _metadataIndexCacheMisses = cacheMisses;
+        string text = saving
+            ? $"Prompt metadata: saving safe index ({completed:N0} / {total:N0})..."
+            : $"Prompt metadata: {completed:N0} / {total:N0} ({percent}%) - {cacheHits:N0} reused";
+        RenderMetadataIndexProgress(text, percent, showProgress: true);
+    }
+
+    private void CompleteMetadataIndexProgress(
+        int total,
+        int cacheHits,
+        int cacheMisses,
+        MetadataIndexLoadState loadState,
+        MetadataIndexSaveResult save)
+    {
+        _metadataIndexStatus = save.Disposition switch
+        {
+            MetadataIndexSaveDisposition.Protected => "protected",
+            MetadataIndexSaveDisposition.Incomplete => "incomplete",
+            MetadataIndexSaveDisposition.CatalogChanged => "superseded",
+            MetadataIndexSaveDisposition.Failed => "save-failed",
+            _ => "ready",
+        };
+        _metadataIndexProgress = 100;
+        _metadataIndexCompleted = total;
+        _metadataIndexTotal = total;
+        _metadataIndexCacheHits = cacheHits;
+        _metadataIndexCacheMisses = cacheMisses;
+        string rebuilt = loadState == MetadataIndexLoadState.Invalid ? " - damaged index rebuilt safely" : "";
+        bool hadCompleteIndex = loadState == MetadataIndexLoadState.Loaded;
+        string text = save.Disposition == MetadataIndexSaveDisposition.Protected
+            ? $"Prompt metadata ready - newer saved index preserved - {cacheMisses:N0} read from source"
+            : save.Disposition == MetadataIndexSaveDisposition.Incomplete
+                ? hadCompleteIndex
+                    ? $"Prompt metadata incomplete - {cacheMisses:N0} refreshed, unread files will retry - last complete index kept"
+                    : $"Prompt metadata incomplete - {cacheMisses:N0} refreshed, index not written - unread files will retry"
+            : save.Disposition == MetadataIndexSaveDisposition.CatalogChanged
+                ? "Prompt metadata changed during indexing - saved index update skipped; refreshing current catalog"
+            : save.Ok
+                ? $"Prompt metadata ready - {total:N0} indexed - {cacheHits:N0} reused, {cacheMisses:N0} refreshed{rebuilt}"
+                : $"Prompt metadata ready - cache save failed - {cacheMisses:N0} read from source";
+        RenderMetadataIndexProgress(text, 100, showProgress: false);
+    }
+
+    private void RenderMetadataIndexProgress(string text, int percent, bool showProgress)
+    {
+        MetadataIndexStatusText.Text = text;
+        MetadataIndexStatusText.Visibility = Visibility.Visible;
+        MetadataIndexProgressBar.Value = percent;
+        MetadataIndexProgressBar.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
+        MetadataIndexFooterStatusText.Text = text;
+        MetadataIndexFooterProgressBar.Value = percent;
+        MetadataIndexFooterProgressBar.Visibility = showProgress ? Visibility.Visible : Visibility.Collapsed;
+        MetadataIndexFooterPanel.Visibility = Visibility.Visible;
     }
 
     private static bool TryReadCatalogImageMetadata(
@@ -10829,6 +11128,15 @@ public partial class MainWindow : Window
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public string? MetadataIndexPathForSmoke => _metadataIndexPath;
+    public string MetadataIndexStatusForSmoke => _metadataIndexStatus;
+    public int MetadataIndexProgressForSmoke => _metadataIndexProgress;
+    public int MetadataIndexCompletedForSmoke => _metadataIndexCompleted;
+    public int MetadataIndexTotalForSmoke => _metadataIndexTotal;
+    public int MetadataIndexCacheHitsForSmoke => _metadataIndexCacheHits;
+    public int MetadataIndexCacheMissesForSmoke => _metadataIndexCacheMisses;
+    public string MetadataIndexStatusTextForSmoke => MetadataIndexStatusText.Text;
+    public bool MetadataIndexProgressVisibleForSmoke => MetadataIndexProgressBar.Visibility == Visibility.Visible;
     public static string ResolveSharedProjectRootForSmoke(string start)
     {
         string fullStart = Path.GetFullPath(start);
@@ -11149,6 +11457,28 @@ public partial class MainWindow : Window
             && string.Equals(AutomationProperties.GetName(ScanMessage), "Scan status", StringComparison.Ordinal)
             && AutomationProperties.GetLiveSetting(ScanMessage) == AutomationLiveSetting.Polite;
     public bool CancelActiveScanForSmoke() => CancelActiveScan();
+    public bool CancelBackgroundMetadataForSmoke()
+    {
+        if (!string.Equals(_loadPhase, "background-metadata", StringComparison.Ordinal)
+            || _loadCts is null
+            || _loadCts.IsCancellationRequested)
+        {
+            return false;
+        }
+
+        CancellationTokenSource canceled = _loadCts;
+        _loadGeneration++;
+        _loadCts = null;
+        _scanCancelable = false;
+        _loadPhase = "metadata-canceled";
+        canceled.Cancel();
+        _metadataIndexStatus = "canceled";
+        RenderMetadataIndexProgress(
+            "Prompt metadata canceled - the Viewer and last complete index were kept.",
+            _metadataIndexProgress,
+            showProgress: false);
+        return true;
+    }
     public int LoadCtsCreatedCountForSmoke => _loadCtsCreatedCount;
     public int LoadCtsRetiredCountForSmoke => _loadCtsRetiredCount;
     public void ConfigureScanPhaseDelaysForSmoke(int enumerationMilliseconds, int metadataMilliseconds)
@@ -12989,6 +13319,14 @@ public sealed class LoadMetrics
     public long MetadataMs { get; set; }
     public int MetadataWorkers { get; set; }
     public int MetadataCompleted { get; set; }
+    public int MetadataCacheHits { get; set; }
+    public int MetadataCacheMisses { get; set; }
+    public long MetadataIndexReadMs { get; set; }
+    public long MetadataIndexWriteMs { get; set; }
+    public string MetadataIndexLoadState { get; set; } = "";
+    public bool MetadataIndexSaveSucceeded { get; set; }
+    public bool MetadataIndexWritten { get; set; }
+    public string? MetadataIndexSaveError { get; set; }
     public long ThumbnailMs { get; set; }
     public int ThumbnailWorkers { get; set; }
     public int ThumbnailsCompleted { get; set; }
@@ -13183,7 +13521,15 @@ public readonly record struct ImageMetadataLoadMetrics(
     int Workers,
     int Completed,
     long ElapsedMs,
-    int DecodeFailures)
+    int DecodeFailures,
+    int CacheHits = 0,
+    int CacheMisses = 0,
+    long IndexReadMs = 0,
+    long IndexWriteMs = 0,
+    string IndexLoadState = "Missing",
+    bool IndexSaveSucceeded = false,
+    bool IndexWritten = false,
+    string? IndexSaveError = null)
 {
     public static ImageMetadataLoadMetrics Empty => new(
         new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase),
@@ -13206,6 +13552,10 @@ internal readonly record struct DecodedImageMetadata(
     Tile Tile,
     ImageDimensions Dimensions,
     string Prompt);
+
+internal sealed record MetadataIndexSnapshotPlan(
+    MetadataIndexEntry[] Entries,
+    bool DurableEntrySetExact);
 
 internal sealed class ResettableObservableCollection<T> : ObservableCollection<T>
 {
@@ -13239,6 +13589,9 @@ public sealed class Tile : INotifyPropertyChanged
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
+    public long SourceLength { get; set; }
+    public long SourceLastWriteUtcTicks { get; set; }
+    public long SourceCreationUtcTicks { get; set; }
     public string SizeText { get; set; } = "";
     public string ModifiedText { get; set; } = "";
 

@@ -274,6 +274,44 @@ if ($result.staleCancelled -ne $true -or $result.heartbeatCount -lt 4) { $struct
 if ($result.sourceCountAfter -ne $Count) { $structuralFailures += "source count changed to $($result.sourceCountAfter)" }
 if ($result.enhancementJobsRead -ne 0 -or $result.enhancementCandidates -ne 0) { $structuralFailures += 'enhancement state was touched' }
 if ($result.browserThumbnailCacheCandidateCount -ne 2 -or $result.browserThumbnailPreciseCandidateCreated -ne $true -or $result.browserThumbnailCacheHits -lt 1) { $structuralFailures += "precise/integer Browser thumbnail cache fallback or fake-cache hit failed ($($result.browserThumbnailCacheCandidateCount)/$($result.browserThumbnailCacheHits))" }
+if ($null -eq $result.warm) {
+    $structuralFailures += 'warm separate-MainWindow result was missing'
+}
+else {
+    if ($result.warm.ok -ne $true) { $structuralFailures += "warm separate-MainWindow gate failed: $($result.warm.message)" }
+    if ($result.warm.loadedFolderCount -ne $FolderCount) { $structuralFailures += "warm loaded folder count was $($result.warm.loadedFolderCount)" }
+    if ($result.warm.catalogCount -ne $Count -or $result.warm.filteredCount -ne $Count) { $structuralFailures += "warm catalog/filtered counts were $($result.warm.catalogCount)/$($result.warm.filteredCount)" }
+    if ($result.warm.sourceCountAfter -ne $Count) { $structuralFailures += "warm source count changed to $($result.warm.sourceCountAfter)" }
+    if ($result.warm.metadataIndexLoadState -ne 'Loaded') { $structuralFailures += "warm metadata index load state was $($result.warm.metadataIndexLoadState)" }
+    if ($result.warm.metadataCacheHits -ne $Count -or $result.warm.metadataCacheMisses -ne 0) { $structuralFailures += "warm metadata index hit/miss counts were $($result.warm.metadataCacheHits)/$($result.warm.metadataCacheMisses)" }
+    if ($result.warm.metadataIndexSaveSucceeded -ne $true -or $result.warm.metadataIndexWritten -ne $false) { $structuralFailures += "warm metadata index save/written state was $($result.warm.metadataIndexSaveSucceeded)/$($result.warm.metadataIndexWritten): $($result.warm.metadataIndexSaveError)" }
+    if ($result.warm.indexPathUnchanged -ne $true -or [string]::IsNullOrWhiteSpace($result.warm.coldIndexPath) -or [string]::IsNullOrWhiteSpace($result.warm.warmIndexPath)) { $structuralFailures += "warm metadata index path changed ($($result.warm.coldIndexPath) -> $($result.warm.warmIndexPath))" }
+    if ($null -ne $cleanupRootFull -and -not [string]::IsNullOrWhiteSpace($result.warm.warmIndexPath)) {
+        $warmIndexFull = [IO.Path]::GetFullPath([string]$result.warm.warmIndexPath)
+        $cleanupRootPrefix = $cleanupRootFull.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+        if (-not $warmIndexFull.StartsWith($cleanupRootPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            $structuralFailures += "warm metadata index escaped the generated TEMP fixture: $warmIndexFull"
+        }
+    }
+    if ($result.warm.indexSha256Unchanged -ne $true -or [string]::IsNullOrWhiteSpace($result.warm.indexSha256Before) -or $result.warm.indexSha256Before -ne $result.warm.indexSha256After) { $structuralFailures += 'warm metadata index SHA-256 changed' }
+    if ($result.warm.indexLastWriteUtcUnchanged -ne $true -or $result.warm.indexLastWriteUtcTicksBefore -ne $result.warm.indexLastWriteUtcTicksAfter) { $structuralFailures += "warm metadata index mtime changed ($($result.warm.indexLastWriteUtcTicksBefore) -> $($result.warm.indexLastWriteUtcTicksAfter))" }
+    if ($result.warm.gridRealized -gt $result.warm.gridMaximum) { $structuralFailures += "warm grid realization exceeded bound ($($result.warm.gridRealized) > $($result.warm.gridMaximum))" }
+    if ($result.warm.gridDeferred -ne ($Count - $result.warm.gridRealized)) { $structuralFailures += "warm grid deferred count was $($result.warm.gridDeferred)" }
+    if ($result.warm.gridItemsSourceCount -ne $Count -or $result.warm.gridUsesFullExtentVirtualization -ne $true) { $structuralFailures += "warm grid full-extent source/virtualization was $($result.warm.gridItemsSourceCount)/$($result.warm.gridUsesFullExtentVirtualization)" }
+    if ($result.warm.gridExtentHeight -le $result.warm.gridViewportHeight -or $result.warm.gridInitialFirstVisible -ne 0) { $structuralFailures += "warm grid initial extent/visible range was $($result.warm.gridExtentHeight)/$($result.warm.gridViewportHeight), first $($result.warm.gridInitialFirstVisible)" }
+    if ($result.warm.listMode -ne $true -or $result.warm.listUsesRecyclingVirtualization -ne $true -or $result.warm.listBounded -ne $true -or $result.warm.listRealized -lt 1 -or $result.warm.listRealized -gt [Math]::Min($Count, 512)) { $structuralFailures += "warm List recycling/realization bound failed ($($result.warm.listRealized))" }
+    if ($result.warm.gridModeAfterList -ne $true) { $structuralFailures += 'warm Grid mode was not restored after List virtualization probe' }
+    if ($result.warm.selectedTail -ne $true -or $result.warm.tailCanonicalSelected -ne $true -or $result.warm.tailGridWindowContains -ne $true -or $result.warm.tailCardsSelectedItemsContains -ne $true -or $result.warm.tailGridContainerRealized -ne $true -or $result.warm.tailGridContainerSelected -ne $true -or $result.warm.tailGridLastVisible -ne ($Count - 1)) { $structuralFailures += "warm tail visual reachability failed (last visible $($result.warm.tailGridLastVisible))" }
+    if ($result.warm.zoomRoundTrip -ne $true -or $result.warm.zoomInAnchorKept -ne $true -or $result.warm.zoomOutAnchorKept -ne $true -or $result.warm.zoomInDrift -gt 8 -or $result.warm.zoomOutDrift -gt 8) { $structuralFailures += "warm Grid zoom anchor round trip failed (drift $($result.warm.zoomInDrift)/$($result.warm.zoomOutDrift))" }
+    if ($result.warm.heartbeatCount -lt 4) { $structuralFailures += "warm dispatcher heartbeat count was $($result.warm.heartbeatCount)" }
+    if ($null -eq $result.warm.dispatcherHeartbeatMaxGapMs -or $result.warm.dispatcherHeartbeatMaxGapMs -gt $UnresponsiveStreakLimitMs) { $structuralFailures += "warm dispatcher heartbeat gap was $($result.warm.dispatcherHeartbeatMaxGapMs) ms (limit $UnresponsiveStreakLimitMs ms)" }
+    if ($result.warm.enhancementJobsRead -ne 0 -or $result.warm.enhancementCandidates -ne 0) { $structuralFailures += 'warm load touched enhancement state' }
+    foreach ($timingName in @('loadElapsedMs', 'loadMetricsTotalElapsedMs', 'scanElapsedMs', 'materializeElapsedMs', 'catalogReadyElapsedMs', 'metadataElapsedMs', 'metadataIndexReadMs', 'metadataIndexWriteMs')) {
+        if ($null -eq $result.warm.$timingName -or [double]$result.warm.$timingName -lt 0) {
+            $structuralFailures += "warm timing $timingName was missing or negative"
+        }
+    }
+}
 if ($null -eq $windowHandleSeenMs -or $probeCount -lt 1) { $structuralFailures += 'external WM_NULL probe never observed the WPF window' }
 if ($longestUnresponsiveStreakMs -gt $UnresponsiveStreakLimitMs) { $structuralFailures += "external WM_NULL unresponsive streak was $longestUnresponsiveStreakMs ms (limit $UnresponsiveStreakLimitMs ms)" }
 if ($null -eq $result.dispatcherHeartbeatMaxGapMs -or $result.dispatcherHeartbeatMaxGapMs -gt $UnresponsiveStreakLimitMs) { $structuralFailures += "dispatcher heartbeat gap was $($result.dispatcherHeartbeatMaxGapMs) ms (limit $UnresponsiveStreakLimitMs ms)" }

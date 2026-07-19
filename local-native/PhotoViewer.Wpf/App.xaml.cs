@@ -223,6 +223,13 @@ public partial class App : Application
             return;
         }
 
+        int metadataIndexSmokeIdx = Array.IndexOf(e.Args, "--metadata-index-smoke");
+        if (metadataIndexSmokeIdx >= 0 && metadataIndexSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureMetadataIndexSmoke(e.Args[metadataIndexSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int promptTagSearchSmokeIdx = Array.IndexOf(e.Args, "--prompt-tag-search-smoke");
         if (promptTagSearchSmokeIdx >= 0 && promptTagSearchSmokeIdx + 1 < e.Args.Length)
         {
@@ -5758,14 +5765,18 @@ public partial class App : Application
         string seenPath = Path.Combine(smokeRoot, "seen.json");
         string recentPath = Path.Combine(smokeRoot, "recent.json");
         string jobsPath = Path.Combine(smokeRoot, "jobs.json");
+        string metadataIndexDirectory = Path.Combine(smokeRoot, "metadata-index-v1");
         string previousCurrentDirectory = Environment.CurrentDirectory;
         string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
         string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
         string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
         string? previousRecentPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH");
         string? previousJobsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH");
+        string? previousMetadataIndexDirectory = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_METADATA_INDEX_DIRECTORY");
         var fixtureWatch = Stopwatch.StartNew();
         Directory.CreateDirectory(smokeRoot);
+        File.WriteAllText(Path.Combine(smokeRoot, "project.toml"), "# isolated catalog stress project root");
+        Directory.CreateDirectory(Path.Combine(smokeRoot, "local-native"));
         foreach (string folder in folders)
             Directory.CreateDirectory(folder);
         WriteSmokePng(seedPath, 4, 3, Color.FromRgb(70, 130, 210));
@@ -5787,6 +5798,7 @@ public partial class App : Application
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_METADATA_INDEX_DIRECTORY", metadataIndexDirectory);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         var win = HiddenWindow();
         win.Show();
@@ -6005,7 +6017,215 @@ public partial class App : Application
                     && string.Equals(win.SelectedFileNameForSmoke, tailName, StringComparison.OrdinalIgnoreCase);
                 bool staleCancelled = earlierCompletions.All(static completion => completion.Discarded);
                 bool heartbeatAdvanced = heartbeatCount >= 4;
-                heartbeatStage = "source-count-after";
+                heartbeatStage = "source-count-after-cold";
+                int sourceCountAfterCold = await Task.Run(
+                    () => folders.Sum(folder => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count()));
+
+                heartbeatStage = "warm-index-probe";
+                string? coldIndexPath = win.MetadataIndexPathForSmoke;
+                if (string.IsNullOrWhiteSpace(coldIndexPath) || !File.Exists(coldIndexPath))
+                    throw new InvalidOperationException("cold catalog load did not publish a metadata index");
+                string indexSha256BeforeWarm = FileSha256ForSmoke(coldIndexPath);
+                long indexLastWriteUtcTicksBeforeWarm = File.GetLastWriteTimeUtc(coldIndexPath).Ticks;
+
+                var warm = new WarmCatalogStressSmokeResult();
+                var warmWin = HiddenWindow();
+                var warmHeartbeat = new DispatcherTimer(DispatcherPriority.Input) { Interval = TimeSpan.FromMilliseconds(15) };
+                var warmHeartbeatWatch = Stopwatch.StartNew();
+                int warmHeartbeatCount = 0;
+                long warmLastHeartbeatMs = 0;
+                long warmMaxHeartbeatGapMs = 0;
+                warmHeartbeat.Tick += (_, _) =>
+                {
+                    long nowMs = warmHeartbeatWatch.ElapsedMilliseconds;
+                    warmMaxHeartbeatGapMs = Math.Max(warmMaxHeartbeatGapMs, nowMs - warmLastHeartbeatMs);
+                    warmLastHeartbeatMs = nowMs;
+                    warmHeartbeatCount++;
+                };
+                try
+                {
+                    warmWin.Show();
+                    warmWin.SuppressStatePersistence();
+                    warmHeartbeat.Start();
+                    heartbeatStage = "warm-load";
+                    var warmLoadWatch = Stopwatch.StartNew();
+                    await warmWin.LoadFolderSetAsync(folders, commitRecent: false);
+                    warmLoadWatch.Stop();
+
+                    heartbeatStage = "warm-grid-layout";
+                    await warmWin.Dispatcher.InvokeAsync(warmWin.UpdateLayout, DispatcherPriority.Render);
+                    int warmCatalogCount = warmWin.CatalogCountForSmoke;
+                    int warmFilteredCount = warmWin.FilteredCountForSmoke;
+                    int warmGridRealized = warmWin.GridRealizedCountForSmoke;
+                    int warmGridMaximum = warmWin.GridMaxRealizationCountForSmoke;
+                    int warmGridDeferred = warmWin.GridDeferredCountForSmoke;
+                    int warmGridItemsSourceCount = warmWin.GridItemsSourceCountForSmoke;
+                    bool warmGridUsesFullExtentVirtualization = warmWin.GridUsesFullExtentVirtualizationForSmoke;
+                    double warmGridExtentHeight = warmWin.GridExtentHeightForSmoke;
+                    double warmGridViewportHeight = warmWin.GridViewportHeightForSmoke;
+                    int warmGridInitialFirstVisible = warmWin.GridFirstVisibleIndexForSmoke;
+
+                    heartbeatStage = "warm-list-switch";
+                    bool warmListMode = warmWin.SetListModeForSmoke();
+                    await warmWin.Dispatcher.InvokeAsync(warmWin.UpdateLayout, DispatcherPriority.Render);
+                    int warmListRealized = warmWin.ListRealizedContainerCountForSmoke;
+                    bool warmListUsesRecyclingVirtualization = warmWin.ListUsesRecyclingVirtualizationForSmoke;
+                    bool warmListBounded = warmListMode
+                        && warmListUsesRecyclingVirtualization
+                        && warmListRealized is > 0
+                        && warmListRealized <= Math.Min(count, 512);
+                    bool warmGridMode = warmWin.SetGridModeForSmoke();
+                    await warmWin.Dispatcher.InvokeAsync(warmWin.UpdateLayout, DispatcherPriority.Render);
+
+                    heartbeatStage = "warm-tail-select";
+                    bool warmSelectedTail = warmWin.SelectFileNameForSmoke(tailName);
+                    GridSelectionVisualSmokeSnapshot warmTailVisual = await warmWin.WaitForGridSelectionVisualForSmokeAsync(tailName);
+                    int warmTailFirstVisible = warmWin.GridFirstVisibleIndexForSmoke;
+                    int warmTailLastVisible = warmWin.GridLastVisibleIndexForSmoke;
+
+                    heartbeatStage = "warm-grid-zoom";
+                    bool warmZoomMiddle = await warmWin.ScrollGridToMiddleForSmokeAsync();
+                    string? warmZoomAnchor = warmWin.CaptureGridViewportAnchorForSmoke();
+                    double warmZoomInitialWidth = warmWin.CardWidthForSmoke;
+                    bool warmZoomIn = warmWin.ZoomInForSmoke();
+                    await warmWin.WaitForGridZoomAnchorForSmokeAsync();
+                    double warmZoomInDrift = warmWin.LastGridZoomAnchorDriftForSmoke;
+                    bool warmZoomInAnchorKept = !string.IsNullOrWhiteSpace(warmZoomAnchor)
+                        && string.Equals(Path.GetFileName(warmWin.LastGridZoomAnchorPathForSmoke), warmZoomAnchor, StringComparison.OrdinalIgnoreCase);
+                    bool warmZoomOut = warmWin.ZoomOutForSmoke();
+                    await warmWin.WaitForGridZoomAnchorForSmokeAsync();
+                    double warmZoomOutDrift = warmWin.LastGridZoomAnchorDriftForSmoke;
+                    bool warmZoomOutAnchorKept = string.Equals(Path.GetFileName(warmWin.LastGridZoomAnchorPathForSmoke), warmZoomAnchor, StringComparison.OrdinalIgnoreCase);
+                    bool warmZoomRoundTrip = warmZoomMiddle
+                        && warmZoomIn
+                        && warmZoomOut
+                        && Math.Abs(warmWin.CardWidthForSmoke - warmZoomInitialWidth) < 0.01
+                        && warmZoomInAnchorKept
+                        && warmZoomOutAnchorKept
+                        && warmZoomInDrift <= 8
+                        && warmZoomOutDrift <= 8;
+
+                    heartbeatStage = "warm-heartbeat-settle";
+                    await Task.Delay(90);
+                    warmHeartbeat.Stop();
+                    long warmHeartbeatEndMs = warmHeartbeatWatch.ElapsedMilliseconds;
+                    warmMaxHeartbeatGapMs = Math.Max(warmMaxHeartbeatGapMs, warmHeartbeatEndMs - warmLastHeartbeatMs);
+
+                    LoadMetrics? warmLoadMetrics = warmWin.LastLoadMetrics;
+                    string? warmIndexPath = warmWin.MetadataIndexPathForSmoke;
+                    string indexSha256AfterWarm = FileSha256ForSmoke(coldIndexPath);
+                    long indexLastWriteUtcTicksAfterWarm = File.GetLastWriteTimeUtc(coldIndexPath).Ticks;
+                    int warmSourceCountAfter = await Task.Run(
+                        () => folders.Sum(folder => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count()));
+
+                    warm = new WarmCatalogStressSmokeResult
+                    {
+                        LoadedFolderCount = warmWin.CurrentFolderSetForSmoke.Count,
+                        CatalogCount = warmCatalogCount,
+                        FilteredCount = warmFilteredCount,
+                        SourceCountAfter = warmSourceCountAfter,
+                        LoadElapsedMs = warmLoadWatch.ElapsedMilliseconds,
+                        LoadMetricsTotalElapsedMs = warmLoadMetrics?.TotalMs,
+                        ScanElapsedMs = warmLoadMetrics?.ScanMs,
+                        MaterializeElapsedMs = warmLoadMetrics?.MaterializeMs,
+                        CatalogReadyElapsedMs = warmLoadMetrics?.CatalogReadyMs,
+                        MetadataElapsedMs = warmLoadMetrics?.MetadataMs,
+                        MetadataIndexReadMs = warmLoadMetrics?.MetadataIndexReadMs,
+                        MetadataIndexWriteMs = warmLoadMetrics?.MetadataIndexWriteMs,
+                        MetadataIndexLoadState = warmLoadMetrics?.MetadataIndexLoadState ?? "",
+                        MetadataCacheHits = warmLoadMetrics?.MetadataCacheHits ?? -1,
+                        MetadataCacheMisses = warmLoadMetrics?.MetadataCacheMisses ?? -1,
+                        MetadataIndexSaveSucceeded = warmLoadMetrics?.MetadataIndexSaveSucceeded ?? false,
+                        MetadataIndexWritten = warmLoadMetrics?.MetadataIndexWritten ?? true,
+                        MetadataIndexSaveError = warmLoadMetrics?.MetadataIndexSaveError,
+                        ColdIndexPath = coldIndexPath,
+                        WarmIndexPath = warmIndexPath,
+                        IndexPathUnchanged = string.Equals(coldIndexPath, warmIndexPath, StringComparison.OrdinalIgnoreCase),
+                        IndexSha256Before = indexSha256BeforeWarm,
+                        IndexSha256After = indexSha256AfterWarm,
+                        IndexSha256Unchanged = string.Equals(indexSha256BeforeWarm, indexSha256AfterWarm, StringComparison.Ordinal),
+                        IndexLastWriteUtcTicksBefore = indexLastWriteUtcTicksBeforeWarm,
+                        IndexLastWriteUtcTicksAfter = indexLastWriteUtcTicksAfterWarm,
+                        IndexLastWriteUtcUnchanged = indexLastWriteUtcTicksBeforeWarm == indexLastWriteUtcTicksAfterWarm,
+                        GridRealized = warmGridRealized,
+                        GridMaximum = warmGridMaximum,
+                        GridDeferred = warmGridDeferred,
+                        GridItemsSourceCount = warmGridItemsSourceCount,
+                        GridUsesFullExtentVirtualization = warmGridUsesFullExtentVirtualization,
+                        GridExtentHeight = warmGridExtentHeight,
+                        GridViewportHeight = warmGridViewportHeight,
+                        GridInitialFirstVisible = warmGridInitialFirstVisible,
+                        ListMode = warmListMode,
+                        ListRealized = warmListRealized,
+                        ListUsesRecyclingVirtualization = warmListUsesRecyclingVirtualization,
+                        ListBounded = warmListBounded,
+                        GridModeAfterList = warmGridMode,
+                        TailName = tailName,
+                        SelectedTail = warmSelectedTail,
+                        TailCanonicalSelected = warmTailVisual.CanonicalSelected,
+                        TailGridWindowContains = warmTailVisual.GridWindowContains,
+                        TailCardsSelectedItemsContains = warmTailVisual.SelectedItemsContains,
+                        TailGridContainerRealized = warmTailVisual.ContainerRealized,
+                        TailGridContainerSelected = warmTailVisual.ContainerSelected,
+                        TailGridFirstVisible = warmTailFirstVisible,
+                        TailGridLastVisible = warmTailLastVisible,
+                        ZoomAnchor = warmZoomAnchor,
+                        ZoomMiddle = warmZoomMiddle,
+                        ZoomInChanged = warmZoomIn,
+                        ZoomOutChanged = warmZoomOut,
+                        ZoomInAnchorKept = warmZoomInAnchorKept,
+                        ZoomOutAnchorKept = warmZoomOutAnchorKept,
+                        ZoomInDrift = warmZoomInDrift,
+                        ZoomOutDrift = warmZoomOutDrift,
+                        ZoomRoundTrip = warmZoomRoundTrip,
+                        HeartbeatCount = warmHeartbeatCount,
+                        DispatcherHeartbeatMaxGapMs = warmMaxHeartbeatGapMs,
+                        EnhancementJobsRead = warmWin.EnhancementJobsReadForSmoke,
+                        EnhancementCandidates = warmWin.EnhancedCandidateCountForSmoke,
+                    };
+                    warm.Ok = warm.LoadedFolderCount == folderCount
+                        && warm.CatalogCount == count
+                        && warm.FilteredCount == count
+                        && warm.SourceCountAfter == count
+                        && string.Equals(warm.MetadataIndexLoadState, MetadataIndexLoadState.Loaded.ToString(), StringComparison.Ordinal)
+                        && warm.MetadataCacheHits == count
+                        && warm.MetadataCacheMisses == 0
+                        && warm.MetadataIndexSaveSucceeded
+                        && !warm.MetadataIndexWritten
+                        && warm.IndexPathUnchanged
+                        && warm.IndexSha256Unchanged
+                        && warm.IndexLastWriteUtcUnchanged
+                        && warm.GridRealized <= warm.GridMaximum
+                        && warm.GridDeferred == count - warm.GridRealized
+                        && warm.GridItemsSourceCount == count
+                        && warm.GridUsesFullExtentVirtualization
+                        && warm.GridExtentHeight > warm.GridViewportHeight
+                        && warm.GridInitialFirstVisible == 0
+                        && warm.ListBounded
+                        && warm.GridModeAfterList
+                        && warm.SelectedTail
+                        && warm.TailCanonicalSelected
+                        && warm.TailGridWindowContains
+                        && warm.TailCardsSelectedItemsContains
+                        && warm.TailGridContainerRealized
+                        && warm.TailGridContainerSelected
+                        && warm.TailGridLastVisible == count - 1
+                        && warm.ZoomRoundTrip
+                        && warm.HeartbeatCount >= 4
+                        && warm.DispatcherHeartbeatMaxGapMs <= 750
+                        && warm.EnhancementJobsRead == 0
+                        && warm.EnhancementCandidates == 0;
+                    warm.Message = warm.Ok
+                        ? "a separate MainWindow reused the complete metadata index without rewriting it and kept the full catalog structurally reachable"
+                        : "warm catalog/index structural gate did not meet the expected result";
+                }
+                finally
+                {
+                    warmHeartbeat.Stop();
+                    warmWin.Close();
+                }
+
+                heartbeatStage = "source-count-after-warm";
                 int sourceCountAfter = await Task.Run(
                     () => folders.Sum(folder => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly).Count()));
                 heartbeat.Stop();
@@ -6150,7 +6370,9 @@ public partial class App : Application
                     BrowserThumbnailCacheCandidateCount = browserCacheCandidatePaths.Count,
                     BrowserThumbnailPreciseCandidateCreated = File.Exists(browserCacheCandidatePaths[0]),
                     BrowserThumbnailCacheHits = win.ThumbnailBrowserCacheHitsForSmoke,
+                    Warm = warm,
                     Ok = sourceCountBefore == count
+                        && sourceCountAfterCold == count
                         && win.CurrentFolderSetForSmoke.Count == folderCount
                         && catalogCount == count
                         && filteredCount == count
@@ -6200,10 +6422,11 @@ public partial class App : Application
                         && win.EnhancementJobsReadForSmoke == 0
                         && win.EnhancedCandidateCountForSmoke == 0
                         && browserCacheCandidatePaths.Count == 2
-                        && win.ThumbnailBrowserCacheHitsForSmoke >= 1,
+                        && win.ThumbnailBrowserCacheHitsForSmoke >= 1
+                        && warm.Ok,
                 };
                 result.Message = result.Ok
-                    ? $"{count:N0}-image catalog stayed exact and structurally bounded while canonical and visual tail selection survived Grid/List round trips, modal, stale cancellation, and dispatcher responsiveness"
+                    ? $"{count:N0}-image cold catalog stayed exact and structurally bounded, then a separate MainWindow reused its persistent metadata index without rewrite while tail, virtualization, zoom-anchor, and dispatcher gates remained green"
                     : "catalog stress structural gate did not meet the expected result";
             }
             catch (Exception ex)
@@ -6241,6 +6464,7 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", previousRecentPath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_METADATA_INDEX_DIRECTORY", previousMetadataIndexDirectory);
             }
 
             result.CleanupAttempted = true;
@@ -13414,6 +13638,666 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureMetadataIndexSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string tempRootPrefix = Path.GetFullPath(Path.GetTempPath())
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!resultFullPath.StartsWith(tempRootPrefix, StringComparison.OrdinalIgnoreCase))
+        {
+            Environment.ExitCode = 1;
+            Shutdown(1);
+            return;
+        }
+
+        int count = Math.Clamp(ArgInt(args, "--count", 256), 32, 2048);
+        int folderCount = Math.Clamp(ArgInt(args, "--folder-count", 4), 2, Math.Min(8, count));
+        string resultDirectory = Path.GetDirectoryName(resultFullPath)
+            ?? throw new InvalidOperationException("metadata index result directory was unavailable");
+        string smokeRoot = Path.Combine(resultDirectory, "fixture");
+        string indexDirectory = Path.Combine(smokeRoot, "metadata-index");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhance", "jobs.json");
+        var folders = Enumerable.Range(0, folderCount)
+            .Select(index => Path.Combine(smokeRoot, $"images-{index:D2}"))
+            .ToList();
+        string previousCurrentDirectory = Environment.CurrentDirectory;
+        string[] environmentNames =
+        [
+            "PHOTOVIEWER_WPF_STATE_PATH",
+            "PHOTOVIEWER_WPF_FAVORITES_PATH",
+            "PHOTOVIEWER_WPF_SEEN_PATH",
+            "PHOTOVIEWER_WPF_RECENT_PATH",
+            "PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH",
+            "PHOTOVIEWER_WPF_METADATA_INDEX_DIRECTORY",
+        ];
+        var previousEnvironment = environmentNames.ToDictionary(
+            static name => name,
+            Environment.GetEnvironmentVariable,
+            StringComparer.Ordinal);
+        var windows = new List<MainWindow>();
+        var result = new Dictionary<string, object?>(StringComparer.Ordinal)
+        {
+            ["ok"] = false,
+            ["message"] = "metadata index smoke did not complete",
+            ["count"] = count,
+            ["folderCount"] = folderCount,
+            ["smokeRoot"] = smokeRoot,
+        };
+        string sourceFingerprintBefore = "not-captured";
+        string stateFingerprintBefore = "not-captured";
+        string favoritesFingerprintBefore = "not-captured";
+        string seenFingerprintBefore = "not-captured";
+        string recentFingerprintBefore = "not-captured";
+        string jobsFingerprintBefore = "not-captured";
+        string? mutatedPath = null;
+        byte[]? originalMutatedBytes = null;
+        DateTime originalMutatedCreationUtc = default;
+        DateTime originalMutatedWriteUtc = default;
+        bool scenarioContractPassed = false;
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            try
+            {
+                Directory.CreateDirectory(smokeRoot);
+                File.WriteAllText(Path.Combine(smokeRoot, "project.toml"), "# isolated metadata index smoke project root");
+                Directory.CreateDirectory(Path.Combine(smokeRoot, "local-native"));
+                Directory.CreateDirectory(indexDirectory);
+                Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+                foreach (string folder in folders)
+                    Directory.CreateDirectory(folder);
+
+                Environment.CurrentDirectory = smokeRoot;
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_METADATA_INDEX_DIRECTORY", indexDirectory);
+
+                // A future viewer-state schema is intentionally read-only.
+                // This proves metadata indexing cannot rewrite user settings,
+                // including the explicit close-time state flush.
+                File.WriteAllText(statePath, "{\"Version\":999,\"metadataIndexMarker\":\"preserve-state\"}");
+                File.WriteAllText(favoritesPath, JsonSerializer.Serialize(new Dictionary<string, int>
+                {
+                    [Path.Combine(smokeRoot, "unrelated-favorite.png")] = 3,
+                }));
+                File.WriteAllText(seenPath, JsonSerializer.Serialize(new Dictionary<string, bool>
+                {
+                    [Path.Combine(smokeRoot, "unrelated-seen.png")] = true,
+                }));
+                File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"2026-07-19T00:00:00.0000000Z\",\"metadataIndexMarker\":\"preserve-recent\"}");
+                File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[],\"metadataIndexMarker\":\"preserve-enhancement\"}");
+
+                static string PromptFor(int index) => $"metadata-index-prompt-{index:D4}, common-smoke-tag";
+                static string ParametersFor(string prompt)
+                    => $"{prompt}\nNegative prompt: metadata-index-negative\nSteps: 20, Sampler: Euler, CFG scale: 7, Seed: 1234";
+                for (int index = 0; index < count; index++)
+                {
+                    string path = Path.Combine(folders[index % folders.Count], $"metadata-{index:D4}.png");
+                    WritePngTextFixture(
+                        path,
+                        "parameters",
+                        ParametersFor(PromptFor(index)),
+                        Color.FromRgb(
+                            (byte)(55 + index % 150),
+                            (byte)(75 + index * 3 % 150),
+                            (byte)(95 + index * 7 % 140)));
+                }
+
+                // Selection is a real Seen action in the product. Seed every
+                // fixture path as already seen so this focused cache test can
+                // prove the metadata pipeline itself is passive.
+                var seenSeed = folders
+                    .SelectMany(static folder => Directory.EnumerateFiles(folder, "*.png", SearchOption.TopDirectoryOnly))
+                    .ToDictionary(static path => path, static _ => true, StringComparer.OrdinalIgnoreCase);
+                seenSeed[Path.Combine(smokeRoot, "unrelated-seen.png")] = true;
+                File.WriteAllText(seenPath, JsonSerializer.Serialize(seenSeed));
+
+                string CombinedSourceFingerprint()
+                    => string.Join("|", folders.Select(FolderFingerprint));
+
+                sourceFingerprintBefore = CombinedSourceFingerprint();
+                stateFingerprintBefore = FileFingerprint(statePath);
+                favoritesFingerprintBefore = FileFingerprint(favoritesPath);
+                seenFingerprintBefore = FileFingerprint(seenPath);
+                recentFingerprintBefore = FileFingerprint(recentPath);
+                jobsFingerprintBefore = FileFingerprint(jobsPath);
+                string resolvedProjectRoot = PhotoViewer.Wpf.MainWindow.ResolveSharedProjectRootForSmoke(smokeRoot);
+                bool isolatedProjectRoot = string.Equals(
+                    Path.GetFullPath(resolvedProjectRoot),
+                    Path.GetFullPath(smokeRoot),
+                    StringComparison.OrdinalIgnoreCase);
+
+                MainWindow CreateSmokeWindow()
+                {
+                    MainWindow window = HiddenWindow();
+                    window.SuppressStatePersistence();
+                    windows.Add(window);
+                    window.Show();
+                    return window;
+                }
+
+                async Task<(List<int> Samples, bool WasVisible, bool Monotonic)> LoadAndObserveAsync(MainWindow window)
+                {
+                    window.ConfigureScanPhaseDelaysForSmoke(0, 0);
+                    Task load = window.LoadFolderSetAsync(folders, commitRecent: false);
+                    var samples = new List<int>();
+                    bool wasVisible = false;
+                    while (!load.IsCompleted)
+                    {
+                        if (!string.IsNullOrWhiteSpace(window.MetadataIndexStatusForSmoke))
+                        {
+                            samples.Add(window.MetadataIndexProgressForSmoke);
+                            wasVisible |= window.MetadataIndexProgressVisibleForSmoke;
+                        }
+                        await Task.Delay(5);
+                    }
+                    await load;
+                    samples.Add(window.MetadataIndexProgressForSmoke);
+                    bool monotonic = samples.Count > 0
+                        && samples.Zip(samples.Skip(1), static (left, right) => right >= left).All(static value => value);
+                    return (samples, wasVisible, monotonic);
+                }
+
+                static Dictionary<string, object?> LoadSnapshot(
+                    MainWindow window,
+                    (List<int> Samples, bool WasVisible, bool Monotonic) observation)
+                {
+                    LoadMetrics? metrics = window.LastLoadMetrics;
+                    return new Dictionary<string, object?>(StringComparer.Ordinal)
+                    {
+                        ["catalogCount"] = window.CatalogCountForSmoke,
+                        ["loadState"] = metrics?.MetadataIndexLoadState,
+                        ["cacheHits"] = metrics?.MetadataCacheHits ?? -1,
+                        ["cacheMisses"] = metrics?.MetadataCacheMisses ?? -1,
+                        ["completed"] = metrics?.MetadataCompleted ?? -1,
+                        ["indexReadMs"] = metrics?.MetadataIndexReadMs ?? -1,
+                        ["indexWriteMs"] = metrics?.MetadataIndexWriteMs ?? -1,
+                        ["indexSaveSucceeded"] = metrics?.MetadataIndexSaveSucceeded ?? false,
+                        ["indexSaveMessage"] = metrics?.MetadataIndexSaveError,
+                        ["status"] = window.MetadataIndexStatusForSmoke,
+                        ["statusText"] = window.MetadataIndexStatusTextForSmoke,
+                        ["progress"] = window.MetadataIndexProgressForSmoke,
+                        ["progressVisibleAtEnd"] = window.MetadataIndexProgressVisibleForSmoke,
+                        ["progressWasVisible"] = observation.WasVisible,
+                        ["progressMonotonic"] = observation.Monotonic,
+                        ["progressSamples"] = observation.Samples,
+                    };
+                }
+
+                var coldWindow = CreateSmokeWindow();
+                var coldObservation = await LoadAndObserveAsync(coldWindow);
+                string indexPath = coldWindow.MetadataIndexPathForSmoke
+                    ?? throw new InvalidOperationException("cold load did not resolve a metadata index path");
+                Dictionary<string, object?> cold = LoadSnapshot(coldWindow, coldObservation);
+                bool coldPromptReady = string.Equals(
+                    coldWindow.PromptForFileNameForSmoke("metadata-0000.png"),
+                    PromptFor(0),
+                    StringComparison.Ordinal);
+                MetadataIndexLoadResult coldIndex = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                bool coldPassed = string.Equals(cold["loadState"] as string, MetadataIndexLoadState.Missing.ToString(), StringComparison.Ordinal)
+                    && Convert.ToInt32(cold["cacheHits"]) == 0
+                    && Convert.ToInt32(cold["cacheMisses"]) == count
+                    && Convert.ToInt32(cold["catalogCount"]) == count
+                    && Convert.ToInt32(cold["completed"]) == count
+                    && Convert.ToBoolean(cold["indexSaveSucceeded"])
+                    && string.Equals(cold["status"] as string, "ready", StringComparison.Ordinal)
+                    && Convert.ToInt32(cold["progress"]) == 100
+                    && !Convert.ToBoolean(cold["progressVisibleAtEnd"])
+                    && Convert.ToBoolean(cold["progressWasVisible"])
+                    && Convert.ToBoolean(cold["progressMonotonic"])
+                    && coldPromptReady
+                    && coldIndex.State == MetadataIndexLoadState.Loaded
+                    && coldIndex.Entries.Count == count;
+                cold["passed"] = coldPassed;
+                cold["promptReady"] = coldPromptReady;
+                cold["durableEntryCount"] = coldIndex.Entries.Count;
+                coldWindow.Close();
+
+                string coldIndexFingerprint = FileFingerprint(indexPath);
+                long coldIndexWriteTicks = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                var warmWindow = CreateSmokeWindow();
+                var warmObservation = await LoadAndObserveAsync(warmWindow);
+                Dictionary<string, object?> warm = LoadSnapshot(warmWindow, warmObservation);
+                string warmIndexFingerprint = FileFingerprint(indexPath);
+                long warmIndexWriteTicks = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                bool warmPassed = string.Equals(warm["loadState"] as string, MetadataIndexLoadState.Loaded.ToString(), StringComparison.Ordinal)
+                    && Convert.ToInt32(warm["cacheHits"]) == count
+                    && Convert.ToInt32(warm["cacheMisses"]) == 0
+                    && Convert.ToInt32(warm["completed"]) == count
+                    && string.Equals(coldIndexFingerprint, warmIndexFingerprint, StringComparison.Ordinal)
+                    && coldIndexWriteTicks == warmIndexWriteTicks
+                    && string.Equals(warmWindow.PromptForFileNameForSmoke("metadata-0000.png"), PromptFor(0), StringComparison.Ordinal);
+                warm["passed"] = warmPassed;
+                warm["indexHashUnchanged"] = string.Equals(coldIndexFingerprint, warmIndexFingerprint, StringComparison.Ordinal);
+                warm["indexMtimeUnchanged"] = coldIndexWriteTicks == warmIndexWriteTicks;
+                warmWindow.Close();
+
+                int mutatedIndex = count / 2;
+                string mutatedName = $"metadata-{mutatedIndex:D4}.png";
+                mutatedPath = Path.Combine(folders[mutatedIndex % folders.Count], mutatedName);
+                originalMutatedBytes = File.ReadAllBytes(mutatedPath);
+                originalMutatedCreationUtc = File.GetCreationTimeUtc(mutatedPath);
+                originalMutatedWriteUtc = File.GetLastWriteTimeUtc(mutatedPath);
+                const string refreshedPrompt = "metadata-index-refreshed-prompt, exact-partial-invalidation";
+                WritePngTextFixture(
+                    mutatedPath,
+                    "parameters",
+                    ParametersFor(refreshedPrompt),
+                    Color.FromRgb(240, 130, 70));
+                File.SetLastWriteTimeUtc(mutatedPath, originalMutatedWriteUtc.AddMinutes(2));
+                bool controlledSourceMutationObserved = !string.Equals(
+                    sourceFingerprintBefore,
+                    CombinedSourceFingerprint(),
+                    StringComparison.Ordinal);
+
+                var partialWindow = CreateSmokeWindow();
+                var partialObservation = await LoadAndObserveAsync(partialWindow);
+                Dictionary<string, object?> partial = LoadSnapshot(partialWindow, partialObservation);
+                bool refreshedPromptReady = string.Equals(
+                    partialWindow.PromptForFileNameForSmoke(mutatedName),
+                    refreshedPrompt,
+                    StringComparison.Ordinal);
+                bool partialPassed = string.Equals(partial["loadState"] as string, MetadataIndexLoadState.Loaded.ToString(), StringComparison.Ordinal)
+                    && Convert.ToInt32(partial["cacheHits"]) == count - 1
+                    && Convert.ToInt32(partial["cacheMisses"]) == 1
+                    && refreshedPromptReady
+                    && controlledSourceMutationObserved;
+                partial["passed"] = partialPassed;
+                partial["mutatedName"] = mutatedName;
+                partial["refreshedPromptReady"] = refreshedPromptReady;
+                partial["controlledSourceMutationObserved"] = controlledSourceMutationObserved;
+                partialWindow.Close();
+
+                byte[] cleanRebuiltBytes = File.ReadAllBytes(indexPath);
+                byte[] corruptedBytes = cleanRebuiltBytes.ToArray();
+                if (corruptedBytes.Length <= 52)
+                    throw new InvalidDataException("metadata index was too small for a payload corruption probe");
+                corruptedBytes[52] ^= 0x5a;
+                File.WriteAllBytes(indexPath, corruptedBytes);
+                MetadataIndexLoadResult corruptProbe = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                bool checksumDetected = corruptProbe.State == MetadataIndexLoadState.Invalid
+                    && (corruptProbe.Error?.Contains("checksum", StringComparison.OrdinalIgnoreCase) ?? false);
+                var corruptWindow = CreateSmokeWindow();
+                var corruptObservation = await LoadAndObserveAsync(corruptWindow);
+                Dictionary<string, object?> corruption = LoadSnapshot(corruptWindow, corruptObservation);
+                MetadataIndexLoadResult rebuiltProbe = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                bool corruptionPassed = checksumDetected
+                    && string.Equals(corruption["loadState"] as string, MetadataIndexLoadState.Invalid.ToString(), StringComparison.Ordinal)
+                    && Convert.ToInt32(corruption["cacheHits"]) == 0
+                    && Convert.ToInt32(corruption["cacheMisses"]) == count
+                    && Convert.ToBoolean(corruption["indexSaveSucceeded"])
+                    && rebuiltProbe.State == MetadataIndexLoadState.Loaded
+                    && rebuiltProbe.Entries.Count == count
+                    && (corruption["statusText"] as string)?.Contains("damaged index rebuilt", StringComparison.OrdinalIgnoreCase) == true;
+                corruption["passed"] = corruptionPassed;
+                corruption["checksumDetected"] = checksumDetected;
+                corruption["probeError"] = corruptProbe.Error;
+                corruption["rebuiltEntryCount"] = rebuiltProbe.Entries.Count;
+                corruptWindow.Close();
+
+                byte[] validIndexBytes = File.ReadAllBytes(indexPath);
+                byte[] futureVersionBytes = validIndexBytes.ToArray();
+                Buffer.BlockCopy(BitConverter.GetBytes(2), 0, futureVersionBytes, sizeof(int), sizeof(int));
+                File.WriteAllBytes(indexPath, futureVersionBytes);
+                string futureFingerprintBefore = FileFingerprint(indexPath);
+                long futureWriteTicksBefore = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                MetadataIndexLoadResult futureProbeBefore = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                var futureWindow = CreateSmokeWindow();
+                var futureObservation = await LoadAndObserveAsync(futureWindow);
+                Dictionary<string, object?> future = LoadSnapshot(futureWindow, futureObservation);
+                string futureFingerprintAfter = FileFingerprint(indexPath);
+                long futureWriteTicksAfter = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                MetadataIndexLoadResult futureProbeAfter = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                bool futurePassed = futureProbeBefore.State == MetadataIndexLoadState.Unsupported
+                    && string.Equals(future["loadState"] as string, MetadataIndexLoadState.Unsupported.ToString(), StringComparison.Ordinal)
+                    && Convert.ToInt32(future["cacheHits"]) == 0
+                    && Convert.ToInt32(future["cacheMisses"]) == count
+                    && string.Equals(future["status"] as string, "protected", StringComparison.Ordinal)
+                    && string.Equals(futureFingerprintBefore, futureFingerprintAfter, StringComparison.Ordinal)
+                    && futureWriteTicksBefore == futureWriteTicksAfter
+                    && futureProbeAfter.State == MetadataIndexLoadState.Unsupported;
+                future["passed"] = futurePassed;
+                future["bytesUnchanged"] = string.Equals(futureFingerprintBefore, futureFingerprintAfter, StringComparison.Ordinal);
+                future["mtimeUnchanged"] = futureWriteTicksBefore == futureWriteTicksAfter;
+                future["probeError"] = futureProbeAfter.Error;
+                futureWindow.Close();
+
+                MetadataIndexSaveResult guardedSave = MetadataIndexStore.Save(
+                    indexPath,
+                    rebuiltProbe.Entries.Values.ToArray(),
+                    CancellationToken.None);
+                string commitGuardFingerprintAfter = FileFingerprint(indexPath);
+                long commitGuardWriteTicksAfter = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                bool commitGuardResidueFree = NoPersistenceResidue(indexDirectory);
+                bool commitGuardPassed = guardedSave.Ok
+                    && !guardedSave.Written
+                    && (guardedSave.Error?.Contains("commit time", StringComparison.OrdinalIgnoreCase) ?? false)
+                    && string.Equals(futureFingerprintAfter, commitGuardFingerprintAfter, StringComparison.Ordinal)
+                    && futureWriteTicksAfter == commitGuardWriteTicksAfter
+                    && MetadataIndexStore.Load(indexPath, CancellationToken.None).State == MetadataIndexLoadState.Unsupported
+                    && commitGuardResidueFree;
+                var commitTimeFutureGuard = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["passed"] = commitGuardPassed,
+                    ["saveOk"] = guardedSave.Ok,
+                    ["written"] = guardedSave.Written,
+                    ["message"] = guardedSave.Error,
+                    ["bytesUnchanged"] = string.Equals(futureFingerprintAfter, commitGuardFingerprintAfter, StringComparison.Ordinal),
+                    ["mtimeUnchanged"] = futureWriteTicksAfter == commitGuardWriteTicksAfter,
+                    ["residueFree"] = commitGuardResidueFree,
+                };
+
+                const int metadataIndexHeaderBytes = sizeof(int) * 3 + sizeof(long) + 32;
+                const int metadataIndexPayloadHashOffset = sizeof(int) * 3 + sizeof(long);
+                string malformedPath = Path.Combine(indexDirectory, "checksum-valid-bounded-length.pvmi");
+                byte[] malformedBytes = validIndexBytes.ToArray();
+                Buffer.BlockCopy(
+                    BitConverter.GetBytes(128 * 1024 + 1),
+                    0,
+                    malformedBytes,
+                    metadataIndexHeaderBytes,
+                    sizeof(int));
+                byte[] malformedPayloadHash = System.Security.Cryptography.SHA256.HashData(
+                    malformedBytes.AsSpan(metadataIndexHeaderBytes));
+                Buffer.BlockCopy(
+                    malformedPayloadHash,
+                    0,
+                    malformedBytes,
+                    metadataIndexPayloadHashOffset,
+                    malformedPayloadHash.Length);
+                MetadataIndexLoadResult? malformedProbe = null;
+                string? malformedEscapedException = null;
+                try
+                {
+                    File.WriteAllBytes(malformedPath, malformedBytes);
+                    try
+                    {
+                        malformedProbe = MetadataIndexStore.Load(malformedPath, CancellationToken.None);
+                    }
+                    catch (Exception ex)
+                    {
+                        malformedEscapedException = ex.ToString();
+                    }
+                }
+                finally
+                {
+                    if (File.Exists(malformedPath))
+                        File.Delete(malformedPath);
+                }
+                bool malformedPassed = malformedEscapedException is null
+                    && malformedProbe?.State == MetadataIndexLoadState.Invalid
+                    && (malformedProbe.Error?.Contains("outside the safe bound", StringComparison.OrdinalIgnoreCase) ?? false)
+                    && !File.Exists(malformedPath);
+                var checksumValidMalformed = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["passed"] = malformedPassed,
+                    ["loadState"] = malformedProbe?.State.ToString(),
+                    ["error"] = malformedProbe?.Error,
+                    ["escapedException"] = malformedEscapedException,
+                    ["fixtureRemoved"] = !File.Exists(malformedPath),
+                };
+
+                File.WriteAllBytes(indexPath, validIndexBytes);
+                int failureIndex = (mutatedIndex + 1) % count;
+                string failureName = $"metadata-{failureIndex:D4}.png";
+                string failurePath = Path.Combine(folders[failureIndex % folders.Count], failureName);
+                byte[] failureSourceBytes = File.ReadAllBytes(failurePath);
+                DateTime failureSourceCreationUtc = File.GetCreationTimeUtc(failurePath);
+                DateTime failureSourceWriteUtc = File.GetLastWriteTimeUtc(failurePath);
+                string failureIndexFingerprintBefore = FileFingerprint(indexPath);
+                long failureIndexWriteTicksBefore = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                Dictionary<string, object?> failurePreservation = new(StringComparer.Ordinal);
+                bool failurePreservationPassed = false;
+                try
+                {
+                    File.WriteAllBytes(failurePath, Encoding.UTF8.GetBytes("not-a-decodable-image-metadata-fixture"));
+                    File.SetLastWriteTimeUtc(failurePath, failureSourceWriteUtc.AddMinutes(3));
+                    var failureWindow = CreateSmokeWindow();
+                    var failureObservation = await LoadAndObserveAsync(failureWindow);
+                    failurePreservation = LoadSnapshot(failureWindow, failureObservation);
+                    string failureIndexFingerprintAfter = FileFingerprint(indexPath);
+                    long failureIndexWriteTicksAfter = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                    MetadataIndexLoadResult failureIndexProbe = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                    bool oneFailureReported = (failurePreservation["indexSaveMessage"] as string)?.Contains(
+                        "1 source metadata read",
+                        StringComparison.OrdinalIgnoreCase) == true;
+                    failurePreservationPassed = string.Equals(
+                            failurePreservation["loadState"] as string,
+                            MetadataIndexLoadState.Loaded.ToString(),
+                            StringComparison.Ordinal)
+                        && Convert.ToInt32(failurePreservation["cacheHits"]) == count - 1
+                        && Convert.ToInt32(failurePreservation["cacheMisses"]) == 1
+                        && Convert.ToInt32(failurePreservation["completed"]) == count
+                        && oneFailureReported
+                        && string.Equals(failureIndexFingerprintBefore, failureIndexFingerprintAfter, StringComparison.Ordinal)
+                        && failureIndexWriteTicksBefore == failureIndexWriteTicksAfter
+                        && failureIndexProbe.State == MetadataIndexLoadState.Loaded
+                        && failureIndexProbe.Entries.Count == count;
+                    failurePreservation["passed"] = failurePreservationPassed;
+                    failurePreservation["failureName"] = failureName;
+                    failurePreservation["oneFailureReported"] = oneFailureReported;
+                    failurePreservation["indexHashUnchanged"] = string.Equals(failureIndexFingerprintBefore, failureIndexFingerprintAfter, StringComparison.Ordinal);
+                    failurePreservation["indexMtimeUnchanged"] = failureIndexWriteTicksBefore == failureIndexWriteTicksAfter;
+                    failurePreservation["durableEntryCount"] = failureIndexProbe.Entries.Count;
+                    failureWindow.Close();
+                }
+                finally
+                {
+                    File.WriteAllBytes(failurePath, failureSourceBytes);
+                    File.SetCreationTimeUtc(failurePath, failureSourceCreationUtc);
+                    File.SetLastWriteTimeUtc(failurePath, failureSourceWriteUtc);
+                }
+
+                File.WriteAllBytes(indexPath, validIndexBytes);
+                int deletedIndex = (mutatedIndex + 3) % count;
+                string deletedName = $"metadata-{deletedIndex:D4}.png";
+                string deletedPath = Path.Combine(folders[deletedIndex % folders.Count], deletedName);
+                byte[] deletedSourceBytes = File.ReadAllBytes(deletedPath);
+                DateTime deletedSourceCreationUtc = File.GetCreationTimeUtc(deletedPath);
+                DateTime deletedSourceWriteUtc = File.GetLastWriteTimeUtc(deletedPath);
+                string pruneIndexFingerprintBefore = FileFingerprint(indexPath);
+                Dictionary<string, object?> staleEntryPrune = new(StringComparer.Ordinal);
+                bool staleEntryPrunePassed = false;
+                try
+                {
+                    File.Delete(deletedPath);
+                    var pruneWindow = CreateSmokeWindow();
+                    var pruneObservation = await LoadAndObserveAsync(pruneWindow);
+                    staleEntryPrune = LoadSnapshot(pruneWindow, pruneObservation);
+                    string pruneIndexFingerprintAfter = FileFingerprint(indexPath);
+                    MetadataIndexLoadResult prunedIndexProbe = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                    bool deletedEntryPruned = !prunedIndexProbe.Entries.ContainsKey(deletedPath);
+                    staleEntryPrunePassed = string.Equals(
+                            staleEntryPrune["loadState"] as string,
+                            MetadataIndexLoadState.Loaded.ToString(),
+                            StringComparison.Ordinal)
+                        && Convert.ToInt32(staleEntryPrune["catalogCount"]) == count - 1
+                        && Convert.ToInt32(staleEntryPrune["cacheHits"]) == count - 1
+                        && Convert.ToInt32(staleEntryPrune["cacheMisses"]) == 0
+                        && Convert.ToBoolean(staleEntryPrune["indexSaveSucceeded"])
+                        && prunedIndexProbe.State == MetadataIndexLoadState.Loaded
+                        && prunedIndexProbe.Entries.Count == count - 1
+                        && deletedEntryPruned
+                        && !string.Equals(pruneIndexFingerprintBefore, pruneIndexFingerprintAfter, StringComparison.Ordinal);
+                    staleEntryPrune["passed"] = staleEntryPrunePassed;
+                    staleEntryPrune["deletedName"] = deletedName;
+                    staleEntryPrune["durableEntryCount"] = prunedIndexProbe.Entries.Count;
+                    staleEntryPrune["deletedEntryPruned"] = deletedEntryPruned;
+                    staleEntryPrune["indexHashChanged"] = !string.Equals(pruneIndexFingerprintBefore, pruneIndexFingerprintAfter, StringComparison.Ordinal);
+                    pruneWindow.Close();
+                }
+                finally
+                {
+                    File.WriteAllBytes(deletedPath, deletedSourceBytes);
+                    File.SetCreationTimeUtc(deletedPath, deletedSourceCreationUtc);
+                    File.SetLastWriteTimeUtc(deletedPath, deletedSourceWriteUtc);
+                }
+
+                File.WriteAllBytes(indexPath, validIndexBytes);
+                DateTime cancelBaselineWriteTimeUtc = DateTime.UtcNow.AddMinutes(-5);
+                File.SetLastWriteTimeUtc(indexPath, cancelBaselineWriteTimeUtc);
+                string cancelFingerprintBefore = FileFingerprint(indexPath);
+                long cancelWriteTicksBefore = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                var cancelWindow = CreateSmokeWindow();
+                cancelWindow.ConfigureScanPhaseDelaysForSmoke(0, 5000);
+                Task cancelLoad = cancelWindow.LoadFolderSetAsync(folders, commitRecent: false);
+                var cancelWait = Stopwatch.StartNew();
+                bool backgroundReached = false;
+                bool cancelProgressVisible = false;
+                while (cancelWait.ElapsedMilliseconds < 5000 && !cancelLoad.IsCompleted)
+                {
+                    backgroundReached = string.Equals(cancelWindow.LoadPhaseForSmoke, "background-metadata", StringComparison.Ordinal);
+                    cancelProgressVisible |= cancelWindow.MetadataIndexProgressVisibleForSmoke;
+                    if (backgroundReached && cancelProgressVisible)
+                        break;
+                    await Task.Delay(5);
+                }
+                bool cancelAccepted = backgroundReached && cancelWindow.CancelBackgroundMetadataForSmoke();
+                await cancelLoad;
+                await Task.Delay(50);
+                string cancelFingerprintAfter = FileFingerprint(indexPath);
+                long cancelWriteTicksAfter = File.GetLastWriteTimeUtc(indexPath).Ticks;
+                MetadataIndexLoadResult cancelProbe = MetadataIndexStore.Load(indexPath, CancellationToken.None);
+                bool cancelResidueFree = NoPersistenceResidue(indexDirectory);
+                bool cancelPassed = backgroundReached
+                    && cancelProgressVisible
+                    && cancelAccepted
+                    && string.Equals(cancelWindow.MetadataIndexStatusForSmoke, "canceled", StringComparison.Ordinal)
+                    && !cancelWindow.MetadataIndexProgressVisibleForSmoke
+                    && string.Equals(cancelFingerprintBefore, cancelFingerprintAfter, StringComparison.Ordinal)
+                    && cancelWriteTicksBefore == cancelWriteTicksAfter
+                    && cancelProbe.State == MetadataIndexLoadState.Loaded
+                    && cancelProbe.Entries.Count == count
+                    && cancelResidueFree;
+                var cancellation = new Dictionary<string, object?>(StringComparer.Ordinal)
+                {
+                    ["passed"] = cancelPassed,
+                    ["backgroundReached"] = backgroundReached,
+                    ["progressVisible"] = cancelProgressVisible,
+                    ["cancelAccepted"] = cancelAccepted,
+                    ["status"] = cancelWindow.MetadataIndexStatusForSmoke,
+                    ["statusText"] = cancelWindow.MetadataIndexStatusTextForSmoke,
+                    ["indexHashUnchanged"] = string.Equals(cancelFingerprintBefore, cancelFingerprintAfter, StringComparison.Ordinal),
+                    ["indexMtimeUnchanged"] = cancelWriteTicksBefore == cancelWriteTicksAfter,
+                    ["durableEntryCount"] = cancelProbe.Entries.Count,
+                    ["residueFree"] = cancelResidueFree,
+                };
+                cancelWindow.Close();
+
+                result["indexPath"] = indexPath;
+                result["isolatedProjectRoot"] = isolatedProjectRoot;
+                result["resolvedProjectRoot"] = resolvedProjectRoot;
+                result["cold"] = cold;
+                result["warm"] = warm;
+                result["partialInvalidation"] = partial;
+                result["corruptionRecovery"] = corruption;
+                result["futureVersionProtection"] = future;
+                result["commitTimeFutureGuard"] = commitTimeFutureGuard;
+                result["checksumValidMalformed"] = checksumValidMalformed;
+                result["decodeFailurePreservation"] = failurePreservation;
+                result["staleEntryPrune"] = staleEntryPrune;
+                result["cancellation"] = cancellation;
+                scenarioContractPassed = isolatedProjectRoot
+                    && coldPassed
+                    && warmPassed
+                    && partialPassed
+                    && corruptionPassed
+                    && futurePassed
+                    && commitGuardPassed
+                    && malformedPassed
+                    && failurePreservationPassed
+                    && staleEntryPrunePassed
+                    && cancelPassed;
+            }
+            catch (Exception ex)
+            {
+                result["message"] = ex.Message;
+                result["exception"] = ex.ToString();
+            }
+            finally
+            {
+                foreach (MainWindow window in windows.AsEnumerable().Reverse())
+                {
+                    try { if (window.IsLoaded) window.Close(); } catch { }
+                }
+
+                if (mutatedPath is not null && originalMutatedBytes is not null)
+                {
+                    try
+                    {
+                        File.WriteAllBytes(mutatedPath, originalMutatedBytes);
+                        File.SetCreationTimeUtc(mutatedPath, originalMutatedCreationUtc);
+                        File.SetLastWriteTimeUtc(mutatedPath, originalMutatedWriteUtc);
+                    }
+                    catch (Exception ex)
+                    {
+                        result["sourceRestoreError"] = ex.Message;
+                    }
+                }
+
+                string sourceFingerprintAfter = Directory.Exists(smokeRoot)
+                    ? string.Join("|", folders.Select(FolderFingerprint))
+                    : "missing";
+                bool sourceUnchanged = string.Equals(sourceFingerprintBefore, sourceFingerprintAfter, StringComparison.Ordinal);
+                bool stateUnchanged = string.Equals(stateFingerprintBefore, FileFingerprint(statePath), StringComparison.Ordinal);
+                bool favoritesUnchanged = string.Equals(favoritesFingerprintBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal);
+                bool seenUnchanged = string.Equals(seenFingerprintBefore, FileFingerprint(seenPath), StringComparison.Ordinal);
+                bool recentUnchanged = string.Equals(recentFingerprintBefore, FileFingerprint(recentPath), StringComparison.Ordinal);
+                bool jobsUnchanged = string.Equals(jobsFingerprintBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                bool residueFree = Directory.Exists(indexDirectory) && NoPersistenceResidue(indexDirectory);
+
+                Environment.CurrentDirectory = previousCurrentDirectory;
+                foreach (string name in environmentNames)
+                    Environment.SetEnvironmentVariable(name, previousEnvironment[name]);
+                bool environmentRestored = string.Equals(Environment.CurrentDirectory, previousCurrentDirectory, StringComparison.OrdinalIgnoreCase)
+                    && environmentNames.All(name => string.Equals(
+                        Environment.GetEnvironmentVariable(name),
+                        previousEnvironment[name],
+                        StringComparison.Ordinal));
+
+                bool storesUnchanged = stateUnchanged
+                    && favoritesUnchanged
+                    && seenUnchanged
+                    && recentUnchanged
+                    && jobsUnchanged;
+                bool allPassed = scenarioContractPassed
+                    && sourceUnchanged
+                    && storesUnchanged
+                    && residueFree
+                    && environmentRestored;
+                result["sourceUnchanged"] = sourceUnchanged;
+                result["stateUnchanged"] = stateUnchanged;
+                result["favoritesUnchanged"] = favoritesUnchanged;
+                result["seenUnchanged"] = seenUnchanged;
+                result["recentUnchanged"] = recentUnchanged;
+                result["enhancementJobsUnchanged"] = jobsUnchanged;
+                result["storesUnchanged"] = storesUnchanged;
+                result["residueFree"] = residueFree;
+                result["environmentRestored"] = environmentRestored;
+                result["ok"] = allPassed;
+                result["message"] = allPassed
+                    ? "Persistent metadata index cold, warm, partial invalidation, corruption, bounded malformed input, future-version commit guard, decode failure preservation, stale-entry pruning, cancellation, progress, and isolation contracts passed."
+                    : result["message"] is string message && !string.Equals(message, "metadata index smoke did not complete", StringComparison.Ordinal)
+                        ? message
+                        : "one or more metadata index contracts failed";
+
+                Directory.CreateDirectory(resultDirectory);
+                File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+                Environment.ExitCode = allPassed ? 0 : 1;
+                Shutdown(Environment.ExitCode);
+            }
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CapturePngMetadataSmoke(string resultPath)
     {
         string smokeRoot = Path.Combine(Path.GetTempPath(), "photoviewer-wpf-png-metadata-smoke-" + Guid.NewGuid().ToString("N"));
@@ -14726,6 +15610,18 @@ public partial class App : Application
 
         byte[] bytes = File.ReadAllBytes(path);
         return $"{bytes.LongLength}:{Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(bytes))}";
+    }
+
+    private static string FileSha256ForSmoke(string path)
+    {
+        using var stream = new FileStream(
+            path,
+            FileMode.Open,
+            FileAccess.Read,
+            FileShare.Read | FileShare.Delete,
+            64 * 1024,
+            FileOptions.SequentialScan);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream));
     }
 
     private static string FolderFingerprint(string path)
@@ -16778,6 +17674,75 @@ public partial class App : Application
         public int BrowserThumbnailCacheCandidateCount { get; set; }
         public bool BrowserThumbnailPreciseCandidateCreated { get; set; }
         public int BrowserThumbnailCacheHits { get; set; }
+        public WarmCatalogStressSmokeResult Warm { get; set; } = new();
+    }
+
+    private sealed class WarmCatalogStressSmokeResult
+    {
+        public bool Ok { get; set; }
+        public string Message { get; set; } = "";
+        public int LoadedFolderCount { get; set; }
+        public int CatalogCount { get; set; }
+        public int FilteredCount { get; set; }
+        public int SourceCountAfter { get; set; }
+        public long LoadElapsedMs { get; set; }
+        public double? LoadMetricsTotalElapsedMs { get; set; }
+        public double? ScanElapsedMs { get; set; }
+        public double? MaterializeElapsedMs { get; set; }
+        public double? CatalogReadyElapsedMs { get; set; }
+        public double? MetadataElapsedMs { get; set; }
+        public double? MetadataIndexReadMs { get; set; }
+        public double? MetadataIndexWriteMs { get; set; }
+        public string MetadataIndexLoadState { get; set; } = "";
+        public int MetadataCacheHits { get; set; }
+        public int MetadataCacheMisses { get; set; }
+        public bool MetadataIndexSaveSucceeded { get; set; }
+        public bool MetadataIndexWritten { get; set; }
+        public string? MetadataIndexSaveError { get; set; }
+        public string? ColdIndexPath { get; set; }
+        public string? WarmIndexPath { get; set; }
+        public bool IndexPathUnchanged { get; set; }
+        public string IndexSha256Before { get; set; } = "";
+        public string IndexSha256After { get; set; } = "";
+        public bool IndexSha256Unchanged { get; set; }
+        public long IndexLastWriteUtcTicksBefore { get; set; }
+        public long IndexLastWriteUtcTicksAfter { get; set; }
+        public bool IndexLastWriteUtcUnchanged { get; set; }
+        public int GridRealized { get; set; }
+        public int GridMaximum { get; set; }
+        public int GridDeferred { get; set; }
+        public int GridItemsSourceCount { get; set; }
+        public bool GridUsesFullExtentVirtualization { get; set; }
+        public double GridExtentHeight { get; set; }
+        public double GridViewportHeight { get; set; }
+        public int GridInitialFirstVisible { get; set; }
+        public bool ListMode { get; set; }
+        public int ListRealized { get; set; }
+        public bool ListUsesRecyclingVirtualization { get; set; }
+        public bool ListBounded { get; set; }
+        public bool GridModeAfterList { get; set; }
+        public string TailName { get; set; } = "";
+        public bool SelectedTail { get; set; }
+        public bool TailCanonicalSelected { get; set; }
+        public bool TailGridWindowContains { get; set; }
+        public bool TailCardsSelectedItemsContains { get; set; }
+        public bool TailGridContainerRealized { get; set; }
+        public bool TailGridContainerSelected { get; set; }
+        public int TailGridFirstVisible { get; set; }
+        public int TailGridLastVisible { get; set; }
+        public string? ZoomAnchor { get; set; }
+        public bool ZoomMiddle { get; set; }
+        public bool ZoomInChanged { get; set; }
+        public bool ZoomOutChanged { get; set; }
+        public bool ZoomInAnchorKept { get; set; }
+        public bool ZoomOutAnchorKept { get; set; }
+        public double ZoomInDrift { get; set; }
+        public double ZoomOutDrift { get; set; }
+        public bool ZoomRoundTrip { get; set; }
+        public int HeartbeatCount { get; set; }
+        public long DispatcherHeartbeatMaxGapMs { get; set; }
+        public int EnhancementJobsRead { get; set; }
+        public int EnhancementCandidates { get; set; }
     }
 
     private sealed class DispatcherGapSmokeSegment

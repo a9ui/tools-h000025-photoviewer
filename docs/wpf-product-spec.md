@@ -202,6 +202,11 @@ PNGは最大4MiBのparameters text chunkを読み、次を抽出する。
 - 軽量catalogを先にpublishしてViewerへ移り、dimension/PNG prompt metadataは250ms以上遅延したbackground streamで反映する。metadata全件完了を「一覧を開ける」条件にしない。
 - scanで列挙済みのpathへcatalog publish前の全件`File.Exists`を重複実行しない。`FileInfo` materialize時の例外guardとpublish直前の存在snapshotで、列挙後に消えたsourceは従来どおり除外する。
 - background PNG indexは同じbounded pre-IDAT streamからIHDR寸法と`parameters` tEXtを1回で読み、返却後に使わない全件metadata dictionaryを保持しない。複数の`parameters` chunkがある時はPreview/Modal readerと同じく最初のchunkだけを採用し、最初が空でも後続へfall throughしない。viewport thumbnail decodeが走っている間はbulk metadata readを待機し、scroll中の可視pixelを優先する。
+- background indexの完了snapshotはWPF専用のderived binary indexへ永続化する。既定pathはWPF stateと同じowner directory配下の`metadata-index-v1`で、normalized folder-set hashごとに1 fileとする。BrowserのFavorite、Seen、Recent、thumbnail cache、Enhancement jobsおよびsource画像をindexの所有対象にしない。
+- entryはabsolute source path、length、last-write UTC、creation UTC、dimension、検索用Promptを持つ。hitは全source identity一致時だけ許し、1 fileだけ変わった時はそのentryだけsourceから再取得する。Preview/Modalの完全なPNG Settings読取は従来どおりactive imageのlazy readerを正本とする。
+- file headerはmagic、schema version、entry count、payload length、SHA-256 checksumを持ち、entry/path/prompt/payloadへ上限を設ける。checksum不一致、truncation、malformed length、invalid UTF-8はexceptionをUIへ漏らさずInvalidとしてsource fallbackする。認識できるfuture versionは読まず、commit時にも再確認してdowngrade overwriteしない。
+- 書込みはfolder-set単位writer lock、同一directoryのunique temp、flush-to-disk、atomic replaceで行う。current generationの全source metadataが揃った時だけcommitし、decode failure、catalog mutation、supersession、close、cancelは直前のcomplete indexを保持する。available rootから消えたsourceは次のcomplete snapshotでpruneし、一時的にunavailableな明示rootの既存entryは再接続のため保持する。
+- restart後のexact all-hitはindex bytes/mtimeを書き換えず、100,000 entry snapshotの再構築も行わない。Viewerはcatalog公開後も閲覧可能なまま、sidebarとsidebar非表示時のfooterへmonotonic progressを表示し、完了時にreused/refreshed/incomplete/protectedを区別する。
 - Browserのversioned thumbnail cacheはread-onlyでprecise `mtimeMs` keyを先に、整数mtime fallbackを次に照合する。cache missまたはdecode failure時だけsourceをbounded decodeし、WPFからBrowser cacheを削除・上書きしない。
 - current selection/previewをbackground thumbnailより優先する。
 - decode resultはpath/generationを照合し、古いcompletionが新selectionを上書きしない。
@@ -651,6 +656,7 @@ Accessibility:
 | Smoke process/environment isolation | `powershell -File scripts/verify-wpf-automation-isolation.ps1` |
 | Formats | `powershell -File scripts/verify-wpf-formats.ps1` |
 | PNG parameters first-chunk consistency | `powershell -File scripts/verify-wpf-png-metadata.ps1` |
+| Persistent prompt metadata index / restart / corruption / cancellation | `powershell -File scripts/verify-wpf-metadata-index.ps1` |
 | Oversized/high-aspect decode bounds | `powershell -File scripts/verify-wpf-decode-bounds.ps1` |
 | Right panel | `powershell -File scripts/verify-wpf-right-panel.ps1` |
 | Bulk Favorite | `powershell -File scripts/verify-wpf-bulk-favorite.ps1` |
@@ -715,11 +721,15 @@ Browser基準のWPF viewer workflowは実装・専用smoke済み。Bulk Favorite
 
 現行ledgerには、監査した主要journeyの既知P0/P1実装残はない。100,000件/2.9〜3.2 MiBで再現していた同期shared Favorite/Seenのdispatcher停止はgeneration-aware single-writer actorで解消した。2026-07-18の最終aggregateは47 checks / 264,857msで、20,000件stressと24-cycle reload soakを含め全result greenである。shared state/recent cross-runtime各20反復も別途greenで、Favorite/Seen各40 path、unknown field、last-writer policy、lock/tmp cleanupを確認した。
 
+2026-07-19のpersistent metadata index closeoutではfocused restart/corruption/cancel gateをaggregateへ追加し、現行50 checksを20,000件cold→warm stressと24-cycle reload soak込みで全greenにした。shared Favorite/Seenとshared Recentのcross-runtime各20反復も再実行し、Favorite/Seen各40 path、Recent 3 owner set、valid JSON、lock/tmp residue 0、real port/user cache非使用を再確認した。
+
 large-catalog最終gateではexact 100,000 images / 100 foldersをcatalog・filtered・Grid ItemsSourceへ全件publishし、silent truncate 0、Grid/Listの同時realize 15/9、末尾index 99,999のGrid/List/Created/Modal到達とcanonical/visual selectionを確認した。List末尾thumbnailは165ms、flat zoom 35/50ms、Created zoom 43/60ms、anchor driftはすべて0pxだった。Viewerは4,975msで開き、metadataはbackgroundで継続して全load 33,792ms、dispatcher heartbeat最大gap 584ms、external WM_NULL最大停止522msで750ms gate内、working setは143,036,416→321,769,472 bytes、fixture cleanup成功である。FoldersはUI Automation `ExpandCollapse`によるExpanded→Collapsed→Expandedとvisual/persistence migrationをfocused gateで通している。
+
+persistent index後の同一shape再測定はcold catalog ready 3,809ms / metadata 26,659ms / full load 30,850msでbaselineを悪化させず、同じfixture/indexを別`MainWindow`で開いたwarm phaseはcatalog ready 3,396ms / metadata 213ms / full load 3,928msだった。warmは100,000 hits / 0 misses、index read/write 65/0ms、SHA-256とmtime不変、Grid/List 15/9、末尾99,999、zoom drift 0px、warm dispatcher gap 245ms、overall WM_NULL最大停止387ms、Enhancement 0でgreen。fresh baseline比でmetadata 99.2%、full load 87.4%短縮した。
 
 editable key binding focused gateは独立process 2回でwrite/hot applyとreload/resetを確認する。追加の100,000件logical selection fixtureの最終runではCtrl+Aが20ms、exact 100,000 selected、materialized visual 15件、Ctrl+Shift+A clearが13msだった。これは観測値であり、gateは各1,500ms以内、canonical count exact、visual projection 2,048件未満を要求する。同じgateがSettings/input/Delete/metadata wheel isolation、Landing中のCtrl+Plus/Ctrl+A/F/Delete/reopen無効化、nested unknownの外部delete/add mergeも固定する。
 
-1280×820 / 1024×700の実WPF screenshotでLanding、Viewer、Settings、Folders collapsed、Unseen dots、Modal metadataを目視し、sidebar固定幅、crop/overflow、panel境界、黒backdrop、control配置を確認した。これはfunctional verifierの代替ではなく、47-check aggregateと組み合わせたvisual evidenceである。
+1280×820 / 1024×700の実WPF screenshotでLanding、Viewer、Settings、Folders collapsed、Unseen dots、Modal metadataを目視し、sidebar固定幅、crop/overflow、panel境界、黒backdrop、control配置を確認した。persistent metadata statusはsidebarとfooterで狭幅でも欠けず、進捗中はpolite live regionを1つだけ公開する。これはfunctional verifierの代替ではなく、現行50-check aggregateと組み合わせたvisual evidenceである。
 
 自動化で未証明なのは、実利用環境のscreen reader、高contrast、200% text/DPIを人が連続操作するmanual evidenceであり、既知の機能欠落とは区別する。UIA `ExpandCollapse`、Modal focus cycle、Automation Name/HelpTextは自動gate済みだが、screenshotだけをaccessibility合格証拠にはしない。
 

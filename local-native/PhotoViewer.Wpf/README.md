@@ -19,6 +19,7 @@ implementation. The normative current behavior is documented in
 - manual Created/Birth From/To date filter; runtime/write state is only `none|manual`, while legacy relative tokens migrate once to a fixed manual range; no Quick Search or Today/7d/30d/year presets
 - persisted collapsible Folders section, Ctrl/Shift bucket selection, and Show/Hide selected/all/invert controls
 - full catalog with bounded/recycling Grid and List realization (no 1,200-image product cap)
+- WPF-owned persistent, checksummed Prompt/dimension index with source-identity validation, restart reuse, partial refresh, safe corruption fallback, and visible Viewer progress
 - anchored 40..600 gallery zoom that leaves sidebar/text/List dimensions unchanged
 - guarded Windows Recycle Bin-only source Delete with confirmation and adjacent-image continuation
 - resizable/persisted right preview panel and multi-selection actions
@@ -47,6 +48,7 @@ implementation. The normative current behavior is documented in
 - `--preview-tab-reorder-smoke <path>` drag/keyboard reorder, middle-close, focus/Automation, and reload-order smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--png-metadata-smoke <path>` lazy active-preview and read-only modal Prompt / Negative / Settings tab plus PNG `parameters` metadata smoke
+- `--metadata-index-smoke <path>` TEMP-only cold/warm/partial/corrupt/future/decode-failure/prune/cancel persistent-index smoke
 - `--explorer-reveal-smoke <path>` temp-only injected Explorer `/select,` action, guard, focus, and isolation smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
@@ -99,6 +101,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
 - `scripts/verify-wpf-key-bindings.ps1` two-process editable key binding, reserved/conflict rejection, wheel/Landing isolation, 100k logical selection, latest-writer unknown merge, hot-apply, reset, Escape rescue, and passive-enhancement verifier
+- `scripts/verify-wpf-metadata-index.ps1` TEMP-only persistent metadata index safety gate plus two-process cold→warm restart proof
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
 - `scripts/verify-wpf-product.ps1` aggregate every focused WPF verifier (`-SkipStress` for the short loop)
 - `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
@@ -166,11 +169,37 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 ```
 
 The perf log separates `MetadataMs`, `MetadataWorkers`, and
-`MetadataCompleted` from UI-thread `MaterializeMs`, so large-folder header
-reads remain measurable without hiding them inside tile creation time. PNG
-catalog indexing reads IHDR dimensions and the bounded pre-IDAT `parameters`
-chunk from one stream, does not retain redundant full-catalog result maps, and
-waits behind active viewport-thumbnail work so scrolling pixels keep priority.
+`MetadataCompleted` from UI-thread `MaterializeMs`, and also records persistent
+index hit/miss, read/write, load-state, and write-result metrics. PNG catalog
+indexing reads IHDR dimensions and the bounded pre-IDAT `parameters` chunk from
+one stream, does not retain redundant full-catalog result maps, and waits behind
+active viewport-thumbnail work so scrolling pixels keep priority.
+
+The durable Prompt/dimension index is WPF-owned derived data under the WPF state
+owner directory's `metadata-index-v1` folder, keyed by normalized folder set.
+It never owns or rewrites Browser Favorite, Seen, Recent, thumbnail cache,
+Enhancement jobs, or source images. Restart all-hits reuse the exact index bytes;
+source identity changes refresh only stale entries. Corrupt or malformed data
+falls back to source reads, future schema is preserved, and incomplete/canceled
+runs keep the last complete index. Progress and the final reused/refreshed result
+remain visible in the Viewer sidebar or footer.
+
+Focused persistence and separate-process restart verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-metadata-index.ps1
+```
+
+The 2026-07-19 exact 100,000-image / 100-folder closeout measured the cold
+metadata phase at 26,659 ms and a separate-window warm reuse at 213 ms. Warm
+full load was 3,928 ms with 100,000 hits, zero misses, zero index-write time,
+unchanged SHA-256/mtime, Grid/List realization 15/9, far-tail index 99,999,
+zero-pixel zoom-anchor drift, and no Enhancement reads/candidates. The
+TEMP-only command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-catalog-stress.ps1 -Count 100000 -FolderCount 100 -OverallTimeoutSeconds 180
+```
 
 Preview decode smoke selects one fixture image and immediately selects another,
 then verifies that the deferred decode applies only to the latest selection:

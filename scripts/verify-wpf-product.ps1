@@ -21,6 +21,7 @@ $orderedNames = @(
     'verify-wpf-bulk-recycle.ps1',
     'verify-wpf-folder-buckets.ps1',
     'verify-wpf-search-stall.ps1',
+    'verify-wpf-metadata-index.ps1',
     'verify-wpf-preview-tabs.ps1',
     'verify-wpf-preview-tab-hover.ps1',
     'verify-wpf-preview-tab-reorder.ps1',

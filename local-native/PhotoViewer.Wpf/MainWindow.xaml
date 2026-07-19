@@ -114,7 +114,11 @@
                   <TextBlock Text="FOLDER" Style="{StaticResource SectionHeader}"/>
                 </StackPanel>
                 <TextBlock x:Name="FolderPathText" Text="D:\SD\outputs  (+3)" Foreground="{StaticResource TextPrimary}" FontSize="13" FontWeight="Medium" TextTrimming="CharacterEllipsis" Margin="0,0,0,3"/>
-                <TextBlock x:Name="FolderCountText" Text="12,480 images indexed" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,7"/>
+                <TextBlock x:Name="FolderCountText" Text="12,480 images indexed" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="0,0,0,3"/>
+                <TextBlock x:Name="MetadataIndexStatusText" Text="" Foreground="{StaticResource TextTertiary}" FontSize="10.5" Margin="0,0,0,3" TextWrapping="Wrap" Visibility="Collapsed"
+                           AutomationProperties.Name="Prompt metadata index status"/>
+                <ProgressBar x:Name="MetadataIndexProgressBar" Height="3" Minimum="0" Maximum="100" Value="0" Margin="0,0,0,7" Visibility="Collapsed"
+                             AutomationProperties.Name="Prompt metadata index progress"/>
                 <StackPanel Orientation="Horizontal">
                   <Button Style="{StaticResource SidebarLink}" Content="Add folder" Margin="0,0,14,0" Click="AddFolderToViewer_Click"/>
                   <Button Style="{StaticResource SidebarLink}" Content="Change folder" Click="ChangeFolderSet_Click"/>
@@ -514,6 +518,15 @@
           <Button x:Name="RestorePreviewTabButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Reopen" Margin="0,0,6,0" ToolTip="Reopen last closed (Ctrl+Shift+T)" Click="RestorePreviewTab_Click" AutomationProperties.Name="Reopen last closed preview tab"/>
           <Button x:Name="CloseAllPreviewTabsButton" Style="{StaticResource GhostButton}" Height="26" FontSize="11" Content="Close all" Click="CloseAllPreviewTabs_Click" AutomationProperties.Name="Close all preview tabs"/>
         </StackPanel>
+        <Border x:Name="MetadataIndexFooterPanel" DockPanel.Dock="Right" Visibility="Collapsed" MinWidth="190" MaxWidth="340" Margin="8,5,10,5" Padding="10,3" CornerRadius="7"
+                Background="{StaticResource AccentGlass}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" IsHitTestVisible="False">
+          <Grid>
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <TextBlock x:Name="MetadataIndexFooterStatusText" Grid.Row="0" Foreground="{StaticResource TextSecondary}" FontSize="10.5" TextTrimming="CharacterEllipsis"
+                       AutomationProperties.Name="Prompt metadata footer status" AutomationProperties.LiveSetting="Polite"/>
+            <ProgressBar x:Name="MetadataIndexFooterProgressBar" Grid.Row="1" Height="2" Minimum="0" Maximum="100" Value="0" Margin="0,2,0,0"/>
+          </Grid>
+        </Border>
         <Grid>
           <TextBlock x:Name="PreviewTabsEmptyText" Text="No preview tabs" Foreground="{StaticResource TextTertiary}" FontSize="12" VerticalAlignment="Center" Margin="8,0"/>
           <ScrollViewer HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled">
