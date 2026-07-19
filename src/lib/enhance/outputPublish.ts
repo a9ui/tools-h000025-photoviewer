@@ -35,10 +35,12 @@ export async function publishEnhancementOutput(
   options: {
     dependencies?: Partial<EnhancementOutputPublishDependencies>;
     retryDelaysMs?: readonly number[];
+    cleanupRetryDelaysMs?: readonly number[];
   } = {},
-): Promise<'rename' | 'copy'> {
+): Promise<'rename' | 'copy' | 'copy-with-stale-temporary'> {
   const dependencies = { ...defaultDependencies, ...options.dependencies };
   const retryDelaysMs = options.retryDelaysMs ?? DEFAULT_WINDOWS_RETRY_DELAYS_MS;
+  const cleanupRetryDelaysMs = options.cleanupRetryDelaysMs ?? retryDelaysMs;
   let lastTransientError: unknown = null;
 
   for (let attempt = 0; ; attempt += 1) {
@@ -55,16 +57,35 @@ export async function publishEnhancementOutput(
 
   try {
     await dependencies.copyFile(temporaryPath, destinationPath);
-    await dependencies.remove(temporaryPath);
-    return 'copy';
   } catch (copyError) {
     const error = new Error(
-      `Could not publish the enhanced output after Windows released neither rename nor copy access: ${
+      `Could not publish the enhanced output: rename remained locked after retries and the copy fallback failed: ${
         copyError instanceof Error ? copyError.message : String(copyError)
       }`,
-      { cause: lastTransientError ?? copyError },
+      { cause: copyError },
     );
     (error as NodeJS.ErrnoException).code = (copyError as NodeJS.ErrnoException)?.code;
+    (error as NodeJS.ErrnoException & { renameError?: unknown }).renameError = lastTransientError;
     throw error;
+  }
+
+  // The destination is fully published once copyFile resolves. Cleanup is a
+  // separate best-effort concern: a decoder or scanner can keep the source
+  // temporary open on Windows even though the completed destination is safe
+  // to use. Retry that residue without turning a valid output into a failed
+  // job, and report when a later sweep still needs to remove it.
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      await dependencies.remove(temporaryPath);
+      return 'copy';
+    } catch (cleanupError) {
+      if (
+        !isTransientEnhancementPublishError(cleanupError) ||
+        attempt >= cleanupRetryDelaysMs.length
+      ) {
+        return 'copy-with-stale-temporary';
+      }
+      await dependencies.wait(cleanupRetryDelaysMs[attempt]);
+    }
   }
 }

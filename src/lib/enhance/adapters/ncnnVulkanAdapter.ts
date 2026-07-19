@@ -152,18 +152,17 @@ async function normalizeOutput(
   if (sizeMatches && extMatches) {
     await fs.promises.copyFile(ncnnOutputPath, tempFinalOutputPath);
     notes.push('copied ncnn output without Sharp re-encode');
-    const finalMeta = await sharp(tempFinalOutputPath, { failOn: 'none' }).metadata();
-    if (!finalMeta.width || !finalMeta.height) {
+    if (!meta.width || !meta.height) {
       throw new Error('Real-ESRGAN final output could not be read.');
     }
-    if (targetWidth && targetHeight && (finalMeta.width !== targetWidth || finalMeta.height !== targetHeight)) {
-      throw new Error(`Real-ESRGAN final output size mismatch: expected ${targetWidth}x${targetHeight}, got ${finalMeta.width}x${finalMeta.height}.`);
+    if (targetWidth && targetHeight && (meta.width !== targetWidth || meta.height !== targetHeight)) {
+      throw new Error(`Real-ESRGAN final output size mismatch: expected ${targetWidth}x${targetHeight}, got ${meta.width}x${meta.height}.`);
     }
     return {
       postprocessMs: elapsedMs(started),
-      outputWidth: finalMeta.width,
-      outputHeight: finalMeta.height,
-      outputMP: megapixels(finalMeta.width, finalMeta.height),
+      outputWidth: meta.width,
+      outputHeight: meta.height,
+      outputMP: megapixels(meta.width, meta.height),
       notes,
     };
   }
@@ -183,19 +182,18 @@ async function normalizeOutput(
   } else {
     pipeline = pipeline.png();
   }
-  await pipeline.toFile(tempFinalOutputPath);
-  const finalMeta = await sharp(tempFinalOutputPath, { failOn: 'none' }).metadata();
-  if (!finalMeta.width || !finalMeta.height) {
+  const finalInfo = await pipeline.toFile(tempFinalOutputPath);
+  if (!finalInfo.width || !finalInfo.height) {
     throw new Error('Real-ESRGAN final output could not be read after postprocess.');
   }
-  if (targetWidth && targetHeight && (finalMeta.width !== targetWidth || finalMeta.height !== targetHeight)) {
-    throw new Error(`Real-ESRGAN final output size mismatch after postprocess: expected ${targetWidth}x${targetHeight}, got ${finalMeta.width}x${finalMeta.height}.`);
+  if (targetWidth && targetHeight && (finalInfo.width !== targetWidth || finalInfo.height !== targetHeight)) {
+    throw new Error(`Real-ESRGAN final output size mismatch after postprocess: expected ${targetWidth}x${targetHeight}, got ${finalInfo.width}x${finalInfo.height}.`);
   }
   return {
     postprocessMs: elapsedMs(started),
-    outputWidth: finalMeta.width,
-    outputHeight: finalMeta.height,
-    outputMP: megapixels(finalMeta.width, finalMeta.height),
+    outputWidth: finalInfo.width,
+    outputHeight: finalInfo.height,
+    outputMP: megapixels(finalInfo.width, finalInfo.height),
     notes,
   };
 }
@@ -303,8 +301,11 @@ export const ncnnVulkanAdapter: EnhancementAdapter = {
         notes: [
           ...notes,
           ...(outputDiagnostics.notes || []),
-          ...(publishMethod === 'copy'
+          ...(publishMethod !== 'rename'
             ? ['Windows file lock required safe copy fallback while publishing output']
+            : []),
+          ...(publishMethod === 'copy-with-stale-temporary'
+            ? ['Enhanced output published; temporary cleanup was deferred because Windows still held the source file']
             : []),
         ],
         totalMs: elapsedMs(totalStarted),

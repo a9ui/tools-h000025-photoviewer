@@ -63,6 +63,55 @@ describe('enhancement output publishing', () => {
     expect(deps.remove).toHaveBeenCalledWith('output.tmp');
   });
 
+  it('retries a locked temporary cleanup after the completed copy is published', async () => {
+    const remove = vi.fn()
+      .mockRejectedValueOnce(fileError('EBUSY'))
+      .mockRejectedValueOnce(fileError('EPERM'))
+      .mockResolvedValue(undefined);
+    const deps = dependencies({
+      rename: vi.fn(async () => { throw fileError('EBUSY'); }),
+      remove,
+    });
+    await expect(publishEnhancementOutput('output.tmp', 'output.webp', {
+      dependencies: deps,
+      retryDelaysMs: [],
+      cleanupRetryDelaysMs: [10, 20],
+    })).resolves.toBe('copy');
+    expect(deps.copyFile).toHaveBeenCalledWith('output.tmp', 'output.webp');
+    expect(remove).toHaveBeenCalledTimes(3);
+    expect(deps.wait).toHaveBeenNthCalledWith(1, 10);
+    expect(deps.wait).toHaveBeenNthCalledWith(2, 20);
+  });
+
+  it('keeps a completed copy successful when Windows holds the temporary indefinitely', async () => {
+    const remove = vi.fn(async () => { throw fileError('EBUSY'); });
+    const deps = dependencies({
+      rename: vi.fn(async () => { throw fileError('EBUSY'); }),
+      remove,
+    });
+    await expect(publishEnhancementOutput('output.tmp', 'output.webp', {
+      dependencies: deps,
+      retryDelaysMs: [],
+      cleanupRetryDelaysMs: [10, 20],
+    })).resolves.toBe('copy-with-stale-temporary');
+    expect(deps.copyFile).toHaveBeenCalledTimes(1);
+    expect(remove).toHaveBeenCalledTimes(3);
+  });
+
+  it('reports a copy failure separately from temporary cleanup', async () => {
+    const deps = dependencies({
+      rename: vi.fn(async () => { throw fileError('EBUSY'); }),
+      copyFile: vi.fn(async () => { throw fileError('EACCES'); }),
+    });
+    await expect(publishEnhancementOutput('output.tmp', 'output.webp', {
+      dependencies: deps,
+      retryDelaysMs: [],
+    })).rejects.toThrow(
+      'Could not publish the enhanced output: rename remained locked after retries and the copy fallback failed: EACCES',
+    );
+    expect(deps.remove).not.toHaveBeenCalled();
+  });
+
   it('does not hide a non-locking filesystem error', async () => {
     const deps = dependencies({
       rename: vi.fn(async () => { throw fileError('ENOENT'); }),
