@@ -6,24 +6,75 @@ param(
 $ErrorActionPreference = "Stop"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $project = Join-Path $repoRoot "local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj"
-$exe = Join-Path $repoRoot "local-native\PhotoViewer.Wpf\bin\$Configuration\net8.0-windows\PhotoViewer.Wpf.exe"
+$tempRoot = [IO.Path]::GetFullPath([IO.Path]::GetTempPath()).TrimEnd('\', '/')
+$tempPrefix = $tempRoot + [IO.Path]::DirectorySeparatorChar
+$runRoot = [IO.Path]::GetFullPath((Join-Path $tempRoot ('photoviewer-wpf-modal-interaction-verifier-' + [guid]::NewGuid().ToString('N'))))
+$buildRoot = Join-Path $runRoot 'build'
+$fullOutputPath = [IO.Path]::GetFullPath($OutputPath)
 
-dotnet build $project -c $Configuration
-if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-
-if (Test-Path -LiteralPath $OutputPath) {
-    Remove-Item -LiteralPath $OutputPath -Force
+if (-not $runRoot.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+    throw "Verifier root must stay under TEMP."
 }
 
-$process = Start-Process -FilePath $exe `
-    -ArgumentList @('--modal-interaction-smoke', ('"{0}"' -f $OutputPath)) `
-    -WindowStyle Hidden `
-    -PassThru `
-    -Wait
+try {
+    New-Item -ItemType Directory -Path $buildRoot -Force | Out-Null
+    $buildOutput = $buildRoot.TrimEnd('\', '/') + [IO.Path]::DirectorySeparatorChar
+    & dotnet build $project -c $Configuration "-p:OutputPath=$buildOutput" --nologo -v:minimal
+    if ($LASTEXITCODE -ne 0) { throw "WPF build failed with exit code $LASTEXITCODE." }
 
-if (Test-Path -LiteralPath $OutputPath) {
-    $result = Get-Content -Raw -LiteralPath $OutputPath | ConvertFrom-Json
+    $exe = Join-Path $buildRoot 'PhotoViewer.Wpf.exe'
+    if (-not (Test-Path -LiteralPath $exe -PathType Leaf)) {
+        throw "WPF executable was not found: $exe"
+    }
+    if (Test-Path -LiteralPath $fullOutputPath) {
+        Remove-Item -LiteralPath $fullOutputPath -Force
+    }
+
+    $process = Start-Process -FilePath $exe `
+        -ArgumentList @('--modal-interaction-smoke', ('"{0}"' -f $fullOutputPath)) `
+        -WindowStyle Hidden `
+        -PassThru `
+        -Wait
+
+    if (-not (Test-Path -LiteralPath $fullOutputPath -PathType Leaf)) {
+        throw "Modal interaction smoke produced no result. Process exit code: $($process.ExitCode)"
+    }
+
+    $result = Get-Content -Raw -LiteralPath $fullOutputPath | ConvertFrom-Json
     $result | ConvertTo-Json -Depth 8
-    if ($result.ok -ne $true -or -not $result.swipeNext -or -not $result.zoomedSwipeBlocked) { exit 1 }
+    $required = @(
+        'accessibility',
+        'zoomIndicator',
+        'filmstripLayout',
+        'manualVisiblePersistent',
+        'chromeHidden',
+        'transientReveal',
+        'transientExpired',
+        'hiddenZoomReveal',
+        'filmstripOverlay',
+        'filmstripOverlayStableGeometry',
+        'chromeShown',
+        'focusedButtonShortcuts',
+        'nativeButtonKeys',
+        'textInputIsolated',
+        'hiddenEnhancedPersistence',
+        'hiddenNavigationPersistence',
+        'hiddenDeletePersistence',
+        'swipeNext',
+        'zoomedSwipeBlocked',
+        'backdropClosed'
+    )
+    $missing = @($required | Where-Object { $result.$_ -ne $true })
+    if ($process.ExitCode -ne 0 -or $result.ok -ne $true -or $missing.Count -gt 0) {
+        throw "Modal interaction contract failed (exit $($process.ExitCode)): $($missing -join ', ')"
+    }
 }
-if ($process.ExitCode -ne 0) { exit $process.ExitCode }
+finally {
+    if (Test-Path -LiteralPath $runRoot) {
+        $resolvedRunRoot = [IO.Path]::GetFullPath($runRoot)
+        if (-not $resolvedRunRoot.StartsWith($tempPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw "Refusing to clean a verifier path outside TEMP: $resolvedRunRoot"
+        }
+        Remove-Item -LiteralPath $resolvedRunRoot -Recurse -Force
+    }
+}

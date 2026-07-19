@@ -38,6 +38,7 @@ internal enum ViewerKeyAction
     ModalZoomIn,
     ModalZoomOut,
     ModalZoomReset,
+    ToggleModalFilmstrip,
 }
 
 internal sealed record KeyBindingDefinition(
@@ -316,6 +317,7 @@ internal static class KeyBindingSettings
         Def(ViewerKeyAction.ModalZoomIn, "modalZoomIn", "Modal zoom in", "Increase modal image zoom.", ShortcutContext.Modal, Key.OemPlus),
         Def(ViewerKeyAction.ModalZoomOut, "modalZoomOut", "Modal zoom out", "Decrease modal image zoom.", ShortcutContext.Modal, Key.OemMinus),
         Def(ViewerKeyAction.ModalZoomReset, "modalZoomReset", "Reset modal zoom", "Reset modal zoom, pan, and flip state.", ShortcutContext.Modal, Key.D0),
+        Def(ViewerKeyAction.ToggleModalFilmstrip, "toggleModalFilmstrip", "Toggle modal filmstrip", "Pin or unpin the modal thumbnail filmstrip. Bottom-edge hover remains transient.", ShortcutContext.Modal, Key.T),
     ];
 
     private static readonly Dictionary<ViewerKeyAction, KeyBindingDefinition> ByAction =

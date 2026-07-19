@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Net;
 using System.Net.Http;
@@ -59,6 +60,13 @@ public partial class App : Application
         if (settingsUnseenDotsSmokeIdx >= 0 && settingsUnseenDotsSmokeIdx + 1 < e.Args.Length)
         {
             CaptureSettingsUnseenDotsSmoke(e.Args[settingsUnseenDotsSmokeIdx + 1]);
+            return;
+        }
+
+        int thumbnailStatusBordersSmokeIdx = Array.IndexOf(e.Args, "--thumbnail-status-borders-smoke");
+        if (thumbnailStatusBordersSmokeIdx >= 0 && thumbnailStatusBordersSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureThumbnailStatusBordersSmoke(e.Args[thumbnailStatusBordersSmokeIdx + 1]);
             return;
         }
 
@@ -1189,6 +1197,7 @@ public partial class App : Application
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", Path.Combine(root, "recent-folders.json"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEARCH_HISTORY_PATH", Path.Combine(root, "search-history.json"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", Path.Combine(root, "enhance", "jobs.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SETTINGS_PATH", Path.Combine(root, "settings.json"));
     }
 
     private static void ValidateAutomationPathArguments(IReadOnlyList<string> args)
@@ -1275,6 +1284,287 @@ public partial class App : Application
             win.Close();
             Shutdown(ok ? 0 : 1);
             }, DispatcherPriority.Input);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureThumbnailStatusBordersSmoke(string resultPath)
+    {
+        string settingsPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SETTINGS_PATH")
+            ?? throw new InvalidOperationException("automation settings path was not configured");
+        string smokeRoot = Path.GetDirectoryName(Path.GetFullPath(settingsPath))
+            ?? throw new InvalidOperationException("automation settings root was unavailable");
+        Directory.CreateDirectory(smokeRoot);
+        File.WriteAllText(settingsPath, """
+        {
+          "confirmBeforeDelete": true,
+          "keyBindings": { "nextImage": "ArrowRight", "futureChord": { "mode": "preserve" } },
+          "futureRoot": { "owner": "browser" },
+          "thumbnailStatusBorders": {
+            "futureStatus": "preserve",
+            "favorite": { "enabled": false, "color": "#112233", "futureFavorite": 17 },
+            "enhanced": { "enabled": true, "color": "#445566", "futureEnhanced": { "mode": "keep" } }
+          }
+        }
+        """);
+
+        static bool UnknownFieldsArePreserved(string path)
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement root = document.RootElement;
+            JsonElement borders = root.GetProperty("thumbnailStatusBorders");
+            return root.GetProperty("confirmBeforeDelete").GetBoolean()
+                && root.GetProperty("keyBindings").GetProperty("nextImage").GetString() == "ArrowRight"
+                && root.GetProperty("keyBindings").GetProperty("futureChord").GetProperty("mode").GetString() == "preserve"
+                && root.GetProperty("futureRoot").GetProperty("owner").GetString() == "browser"
+                && borders.GetProperty("futureStatus").GetString() == "preserve"
+                && borders.GetProperty("favorite").GetProperty("futureFavorite").GetInt32() == 17
+                && borders.GetProperty("enhanced").GetProperty("futureEnhanced").GetProperty("mode").GetString() == "keep";
+        }
+
+        static bool PersistedContractMatches(
+            string path,
+            bool favoriteEnabled,
+            string favoriteColor,
+            bool enhancedEnabled,
+            string enhancedColor)
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(path));
+            JsonElement borders = document.RootElement.GetProperty("thumbnailStatusBorders");
+            JsonElement favorite = borders.GetProperty("favorite");
+            JsonElement enhanced = borders.GetProperty("enhanced");
+            return favorite.GetProperty("enabled").GetBoolean() == favoriteEnabled
+                && string.Equals(favorite.GetProperty("color").GetString(), favoriteColor, StringComparison.Ordinal)
+                && enhanced.GetProperty("enabled").GetBoolean() == enhancedEnabled
+                && string.Equals(enhanced.GetProperty("color").GetString(), enhancedColor, StringComparison.Ordinal);
+        }
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var windows = new List<MainWindow>();
+        var first = HiddenWindow();
+        windows.Add(first);
+        first.Show();
+        first.Dispatcher.InvokeAsync(() =>
+        {
+            object result;
+            bool ok = false;
+            try
+            {
+                first.OpenAppSettingsForSmoke();
+                bool surfaceContract = first.ThumbnailStatusBorderSurfaceContractForSmoke;
+                bool seededSettingsLoaded = !first.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && first.FavoriteThumbnailStatusBorderColorForSmoke == "#112233"
+                    && first.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && first.EnhancedThumbnailStatusBorderColorForSmoke == "#445566"
+                    && !first.FavoriteThumbnailStatusBorderCheckedForSmoke
+                    && first.FavoriteThumbnailStatusBorderDraftColorForSmoke == "#112233"
+                    && first.EnhancedThumbnailStatusBorderCheckedForSmoke
+                    && first.EnhancedThumbnailStatusBorderDraftColorForSmoke == "#445566";
+                bool seededResourcesLoaded = !first.FavoriteThumbnailStatusBorderResourceVisibleForSmoke
+                    && first.EnhancedThumbnailStatusBorderResourceVisibleForSmoke
+                    && first.EnhancedThumbnailStatusBorderResourceColorForSmoke == "#445566"
+                    && !first.EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
+                    && first.EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke;
+
+                first.SetThumbnailStatusBorderDraftForSmoke(true, "#ABCDEF", true, "RAINBOW");
+                bool firstSaveSucceeded = first.SaveThumbnailStatusBorderDraftForSmoke();
+                bool normalizedAndApplied = first.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && first.FavoriteThumbnailStatusBorderColorForSmoke == "#abcdef"
+                    && first.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && first.EnhancedThumbnailStatusBorderColorForSmoke == "rainbow"
+                    && first.FavoriteThumbnailStatusBorderResourceVisibleForSmoke
+                    && first.FavoriteThumbnailStatusBorderResourceColorForSmoke == "#abcdef"
+                    && first.EnhancedThumbnailStatusBorderResourceVisibleForSmoke
+                    && first.EnhancedThumbnailStatusBorderResourceColorForSmoke == "rainbow"
+                    && first.EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
+                    && first.EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke;
+                bool rainbowBrushContract = first.EnhancedThumbnailStatusBorderRainbowStopsForSmoke;
+                bool unknownFieldsPreserved = UnknownFieldsArePreserved(settingsPath);
+                bool firstPersisted = PersistedContractMatches(settingsPath, true, "#abcdef", true, "rainbow");
+                first.Close();
+
+                var reload = HiddenWindow();
+                windows.Add(reload);
+                reload.Show();
+                reload.OpenAppSettingsForSmoke();
+                bool reloadPersisted = reload.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && reload.FavoriteThumbnailStatusBorderColorForSmoke == "#abcdef"
+                    && reload.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && reload.EnhancedThumbnailStatusBorderColorForSmoke == "rainbow"
+                    && reload.FavoriteThumbnailStatusBorderCheckedForSmoke
+                    && reload.EnhancedThumbnailStatusBorderCheckedForSmoke
+                    && reload.EnhancedThumbnailStatusBorderRainbowModeForSmoke
+                    && !reload.EnhancedThumbnailStatusBorderSolidModeForSmoke
+                    && !reload.EnhancedThumbnailStatusBorderSolidColorEnabledForSmoke
+                    && reload.EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
+                    && reload.EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke;
+
+                reload.ResetThumbnailStatusBorderDraftForSmoke();
+                bool resetIsDraftOnly = reload.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && reload.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && reload.FavoriteThumbnailStatusBorderDraftColorForSmoke == ThumbnailStatusBorderSettings.DefaultFavoriteColor
+                    && reload.EnhancedThumbnailStatusBorderDraftColorForSmoke == ThumbnailStatusBorderSettings.RainbowColor
+                    && reload.EnhancedThumbnailStatusBorderRainbowModeForSmoke
+                    && reload.ThumbnailStatusBorderSettingsStatusForSmoke.Contains("ready", StringComparison.OrdinalIgnoreCase);
+                reload.SetThumbnailStatusBorderDraftForSmoke(true, "red", true, "#010203");
+                string beforeInvalid = File.ReadAllText(settingsPath);
+                bool invalidColorProtected = !reload.SaveThumbnailStatusBorderDraftForSmoke()
+                    && reload.ThumbnailStatusBorderSaveShowsRetryForSmoke
+                    && string.Equals(beforeInvalid, File.ReadAllText(settingsPath), StringComparison.Ordinal);
+
+                reload.SetThumbnailStatusBorderDraftForSmoke(true, "#010203", true, "#040506");
+                string beforeBusy = File.ReadAllText(settingsPath);
+                string lockPath = settingsPath + ".lock";
+                bool busyWriteProtected;
+                using (var lockStream = new FileStream(lockPath, FileMode.CreateNew, FileAccess.ReadWrite, FileShare.Read))
+                {
+                    byte[] lockPayload = Encoding.UTF8.GetBytes(JsonSerializer.Serialize(new
+                    {
+                        pid = Environment.ProcessId,
+                        createdAtUtc = DateTimeOffset.UtcNow.ToString("O"),
+                    }));
+                    lockStream.Write(lockPayload);
+                    lockStream.Flush(flushToDisk: true);
+                    busyWriteProtected = !reload.SaveThumbnailStatusBorderDraftForSmoke()
+                        && reload.ThumbnailStatusBorderSaveShowsRetryForSmoke
+                        && string.Equals(beforeBusy, File.ReadAllText(settingsPath), StringComparison.Ordinal);
+                }
+                File.Delete(lockPath);
+                bool retrySucceeded = reload.SaveThumbnailStatusBorderDraftForSmoke()
+                    && PersistedContractMatches(settingsPath, true, "#010203", true, "#040506")
+                    && UnknownFieldsArePreserved(settingsPath);
+                reload.Close();
+
+                var retryReload = HiddenWindow();
+                windows.Add(retryReload);
+                retryReload.Show();
+                bool retryReloaded = retryReload.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && retryReload.FavoriteThumbnailStatusBorderColorForSmoke == "#010203"
+                    && retryReload.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && retryReload.EnhancedThumbnailStatusBorderColorForSmoke == "#040506"
+                    && retryReload.FavoriteThumbnailStatusBorderResourceVisibleForSmoke
+                    && retryReload.EnhancedThumbnailStatusBorderResourceVisibleForSmoke;
+                retryReload.Close();
+
+                const string malformedJson = "{\"thumbnailStatusBorders\": {\"favorite\": ";
+                File.WriteAllText(settingsPath, malformedJson);
+                var malformed = HiddenWindow();
+                windows.Add(malformed);
+                malformed.Show();
+                malformed.OpenAppSettingsForSmoke();
+                malformed.SetThumbnailStatusBorderDraftForSmoke(true, "#111111", true, "#222222");
+                bool malformedProtected = malformed.ThumbnailStatusBorderSettingsProtectedForSmoke
+                    && !malformed.SaveThumbnailStatusBorderDraftForSmoke()
+                    && malformed.ThumbnailStatusBorderSaveShowsRetryForSmoke
+                    && string.Equals(File.ReadAllText(settingsPath), malformedJson, StringComparison.Ordinal);
+                malformed.Close();
+
+                ThumbnailStatusBorderLoadResult invalidSchema = ThumbnailStatusBorderSettingsStore.Parse(
+                    "{\"thumbnailStatusBorders\":{\"favorite\":{\"enabled\":\"yes\"}}}");
+                ThumbnailStatusBorderLoadResult invalidConfirm = ThumbnailStatusBorderSettingsStore.Parse(
+                    "{\"confirmBeforeDelete\":\"yes\"}");
+                ThumbnailStatusBorderLoadResult invalidBinding = ThumbnailStatusBorderSettingsStore.Parse(
+                    "{\"keyBindings\":{\"nextImage\":false}}");
+                ThumbnailStatusBorderLoadResult normalizedRainbow = ThumbnailStatusBorderSettingsStore.Parse(
+                    "{\"thumbnailStatusBorders\":{\"enhanced\":{\"enabled\":true,\"color\":\"RAINBOW\"}}}");
+                ThumbnailStatusBorderLoadResult invalidFavoriteRainbow = ThumbnailStatusBorderSettingsStore.Parse(
+                    "{\"thumbnailStatusBorders\":{\"favorite\":{\"enabled\":true,\"color\":\"rainbow\"}}}");
+                bool invalidSchemaProtected = invalidSchema.IsProtected
+                    && invalidConfirm.IsProtected
+                    && invalidBinding.IsProtected
+                    && invalidFavoriteRainbow.IsProtected;
+                bool rainbowSchemaAccepted = !normalizedRainbow.IsProtected
+                    && normalizedRainbow.Settings.Enhanced.Color == ThumbnailStatusBorderSettings.RainbowColor;
+                ThumbnailStatusBorderLoadResult missing = ThumbnailStatusBorderSettingsStore.Parse("{}");
+                bool missingDefaults = missing.Settings == ThumbnailStatusBorderSettings.Default
+                    && missing.Settings.Favorite.Color == ThumbnailStatusBorderSettings.DefaultFavoriteColor
+                    && missing.Settings.Enhanced.Color == ThumbnailStatusBorderSettings.RainbowColor;
+
+                File.Delete(settingsPath);
+                var missingWindow = HiddenWindow();
+                windows.Add(missingWindow);
+                missingWindow.Show();
+                missingWindow.OpenAppSettingsForSmoke();
+                bool missingDefaultsApplied = missingWindow.FavoriteThumbnailStatusBorderEnabledForSmoke
+                    && missingWindow.FavoriteThumbnailStatusBorderColorForSmoke == ThumbnailStatusBorderSettings.DefaultFavoriteColor
+                    && missingWindow.EnhancedThumbnailStatusBorderEnabledForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderColorForSmoke == ThumbnailStatusBorderSettings.RainbowColor
+                    && missingWindow.FavoriteThumbnailStatusBorderCheckedForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderCheckedForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderRainbowModeForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke
+                    && missingWindow.EnhancedThumbnailStatusBorderRainbowStopsForSmoke;
+                missingWindow.Close();
+
+                var tile = new Tile();
+                bool enhancedNotified = false;
+                bool favoriteNotified = false;
+                tile.PropertyChanged += (_, args) =>
+                {
+                    enhancedNotified |= args.PropertyName == nameof(Tile.Enhanced);
+                    favoriteNotified |= args.PropertyName == nameof(Tile.Fav);
+                };
+                tile.Enhanced = true;
+                tile.Fav = 3;
+                var boolVisibility = new BoolToVisibilityConverter();
+                var countVisibility = new CountToVisibilityConverter();
+                bool existingO1StatusBindings = enhancedNotified
+                    && favoriteNotified
+                    && boolVisibility.Convert(tile.Enhanced, typeof(Visibility), null, CultureInfo.InvariantCulture) is Visibility.Visible
+                    && countVisibility.Convert(tile.Fav, typeof(Visibility), null, CultureInfo.InvariantCulture) is Visibility.Visible;
+
+                bool noSettingsResidue = !File.Exists(settingsPath + ".lock")
+                    && !Directory.EnumerateFiles(smokeRoot, $".{Path.GetFileName(settingsPath)}.*.tmp", SearchOption.TopDirectoryOnly).Any();
+                ok = surfaceContract && seededSettingsLoaded && seededResourcesLoaded
+                    && firstSaveSucceeded && normalizedAndApplied && rainbowBrushContract
+                    && unknownFieldsPreserved && firstPersisted
+                    && reloadPersisted && resetIsDraftOnly && invalidColorProtected && busyWriteProtected
+                    && retrySucceeded && retryReloaded && malformedProtected && invalidSchemaProtected
+                    && rainbowSchemaAccepted && missingDefaults && missingDefaultsApplied
+                    && existingO1StatusBindings && noSettingsResidue;
+                result = new
+                {
+                    ok,
+                    message = ok
+                        ? "WPF thumbnail status borders share the browser rainbow schema, preserve future fields, update visible bindings, and protect failed writes"
+                        : "WPF thumbnail status border smoke did not meet its shared-schema and presentation contract",
+                    surfaceContract,
+                    seededSettingsLoaded,
+                    seededResourcesLoaded,
+                    firstSaveSucceeded,
+                    normalizedAndApplied,
+                    rainbowBrushContract,
+                    unknownFieldsPreserved,
+                    firstPersisted,
+                    reloadPersisted,
+                    resetIsDraftOnly,
+                    invalidColorProtected,
+                    busyWriteProtected,
+                    retrySucceeded,
+                    retryReloaded,
+                    malformedProtected,
+                    invalidSchemaProtected,
+                    rainbowSchemaAccepted,
+                    missingDefaults,
+                    missingDefaultsApplied,
+                    existingO1StatusBindings,
+                    noSettingsResidue,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.ToString() };
+            }
+            finally
+            {
+                foreach (MainWindow window in windows)
+                {
+                    try { window.Close(); } catch { }
+                }
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, result);
+            Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
     }
 
@@ -12074,12 +12364,26 @@ public partial class App : Application
         const string firstName = "a-modal.png";
         const string secondName = "b-modal.png";
         const string thirdName = "c-modal.png";
-        WriteSmokePng(Path.Combine(folder, firstName), 48, 36, Color.FromRgb(80, 130, 210));
-        WriteSmokePng(Path.Combine(folder, secondName), 48, 36, Color.FromRgb(230, 100, 130));
-        WriteSmokePng(Path.Combine(folder, thirdName), 48, 36, Color.FromRgb(100, 200, 130));
+        string firstPath = Path.Combine(folder, firstName);
+        string secondPath = Path.Combine(folder, secondName);
+        string thirdPath = Path.Combine(folder, thirdName);
+        WriteSmokePng(firstPath, 48, 36, Color.FromRgb(80, 130, 210));
+        WriteSmokePng(secondPath, 48, 36, Color.FromRgb(230, 100, 130));
+        WriteSmokePng(thirdPath, 48, 36, Color.FromRgb(100, 200, 130));
+        string enhancedOutputPath = Path.Combine(smokeRoot, "enhanced-a-modal.png");
+        File.Copy(firstPath, enhancedOutputPath, overwrite: true);
+        WriteEnhancedJobsFixture(
+            jobsPath,
+            firstPath,
+            enhancedOutputPath,
+            secondPath,
+            Path.Combine(smokeRoot, "missing-enhanced.png"),
+            thirdPath,
+            Path.Combine(smokeRoot, "missing-source.png"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var win = HiddenWindow();
@@ -12094,15 +12398,70 @@ public partial class App : Application
                 bool selected = win.SelectFileNameForSmoke(secondName);
                 bool opened = win.OpenModalForSmoke();
                 bool accessibility = win.ModalEdgeZonesAccessibleForSmoke;
+                bool zoomIndicator = win.ModalZoomIndicatorContractForSmoke;
+                win.UpdateLayout();
+                double layoutImageHeight = win.ModalImageAreaHeightForSmoke;
+                bool filmstripLayout = win.ModalFilmstripLayoutVisibleForSmoke
+                    && win.ModalFilmstripPinnedForSmoke;
+
+                await Task.Delay(1050);
+                bool manualVisiblePersistent = win.ModalManualChromeVisibleForSmoke
+                    && win.ModalChromeVisibleForSmoke
+                    && win.ModalFilmstripLayoutVisibleForSmoke;
 
                 win.ScheduleModalChromeToggleForSmoke();
                 await Task.Delay(230);
                 bool chromeHidden = !win.ModalChromeVisibleForSmoke
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && win.ModalCursorHiddenForSmoke
+                    && !win.ModalFilmstripLayoutVisibleForSmoke
                     && win.ModalInteractionFeedbackVisibleForSmoke
                     && win.ModalInteractionFeedbackForSmoke.Contains("hidden", StringComparison.OrdinalIgnoreCase);
+                win.UpdateLayout();
+                double hiddenImageHeight = win.ModalImageAreaHeightForSmoke;
+
+                win.RevealModalChromeTransientForSmoke();
+                bool transientReveal = win.ModalChromeVisibleForSmoke
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && win.ModalTransientChromeVisibleForSmoke
+                    && !win.ModalCursorHiddenForSmoke
+                    && !win.ModalFilmstripLayoutVisibleForSmoke;
+                await Task.Delay(1050);
+                bool transientExpired = !win.ModalChromeVisibleForSmoke
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalTransientChromeVisibleForSmoke
+                    && win.ModalCursorHiddenForSmoke;
+
+                bool hiddenZoomReveal = win.ModalZoomShortcutForSmoke("plus")
+                    && win.ModalChromeVisibleForSmoke
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && win.ModalTransientChromeVisibleForSmoke
+                    && !win.ModalCursorHiddenForSmoke;
+                win.ResetModalTransformForSmoke();
+                win.ExpireModalChromeTransientForSmoke();
+
+                double overlayHeightBefore = win.ModalImageAreaHeightForSmoke;
+                win.SetModalBottomHoverForSmoke(true);
+                win.UpdateLayout();
+                double overlayHeightDuring = win.ModalImageAreaHeightForSmoke;
+                bool filmstripOverlay = win.ModalFilmstripOverlayVisibleForSmoke
+                    && !win.ModalFilmstripLayoutVisibleForSmoke
+                    && !win.ModalCursorHiddenForSmoke;
+                win.SetModalBottomHoverForSmoke(false);
+                win.UpdateLayout();
+                bool filmstripOverlayDismissed = !win.ModalFilmstripOverlayVisibleForSmoke
+                    && win.ModalCursorHiddenForSmoke;
+                bool filmstripOverlayStableGeometry = Math.Abs(overlayHeightBefore - overlayHeightDuring) < 0.5;
+
                 win.ScheduleModalChromeToggleForSmoke();
                 await Task.Delay(230);
+                win.UpdateLayout();
                 bool chromeShown = win.ModalChromeVisibleForSmoke
+                    && win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalCursorHiddenForSmoke
+                    && win.ModalFilmstripLayoutVisibleForSmoke
+                    && win.ModalImageAreaHeightForSmoke < hiddenImageHeight
+                    && layoutImageHeight < hiddenImageHeight
                     && win.ModalInteractionFeedbackForSmoke.Contains("shown", StringComparison.OrdinalIgnoreCase);
 
                 bool controlDidNotToggle = win.ToggleModalMetadataForSmoke();
@@ -12127,19 +12486,117 @@ public partial class App : Application
                 bool zoomedSwipeBlocked = !win.ModalSwipeForSmoke(-200)
                     && string.Equals(win.SelectedFileNameForSmoke, beforeBlockedSwipe, StringComparison.OrdinalIgnoreCase);
                 bool reset = win.ResetModalTransformForSmoke();
+
+                bool focusedButton = win.FocusModalFavoriteIncreaseForSmoke();
+                string? beforeButtonArrow = win.SelectedFileNameForSmoke;
+                bool buttonArrow = win.InvokePreviewKeyForSmoke(Key.Right);
+                string? afterButtonArrow = win.SelectedFileNameForSmoke;
+                focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
+                bool flippedBeforeButton = win.ModalTransformForSmoke().Flipped;
+                bool buttonFlip = win.InvokePreviewKeyForSmoke(Key.H)
+                    && win.ModalTransformForSmoke().Flipped != flippedBeforeButton;
+                focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
+                int favoriteBeforeButton = win.SelectedFavoriteLevelForSmoke;
+                bool buttonFavorite = win.InvokePreviewKeyForSmoke(Key.F)
+                    && win.SelectedFavoriteLevelForSmoke == Math.Min(5, favoriteBeforeButton + 1);
+                if (win.SelectedFavoriteLevelForSmoke > favoriteBeforeButton)
+                    win.AdjustSelectedFavoriteForSmoke(-1);
+
+                win.SetConfirmBeforeDeleteForSmoke(true);
+                focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
+                bool buttonDelete = win.InvokePreviewKeyForSmoke(Key.Delete)
+                    && win.DeleteConfirmationVisibleForSmoke;
+                if (win.DeleteConfirmationVisibleForSmoke)
+                    win.CancelDeleteForSmoke();
+
+                bool filmstripPinnedBeforeKey = win.ModalFilmstripPinnedForSmoke;
+                focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
+                bool buttonFilmstrip = win.InvokePreviewKeyForSmoke(Key.T)
+                    && win.ModalFilmstripPinnedForSmoke != filmstripPinnedBeforeKey;
+                if (!win.ModalFilmstripPinnedForSmoke)
+                    win.ToggleModalFilmstripForSmoke();
+                focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
+                bool nativeButtonKeys = !win.InvokePreviewKeyForSmoke(Key.Enter)
+                    && !win.InvokePreviewKeyForSmoke(Key.Space);
+                bool focusedButtonShortcuts = focusedButton
+                    && buttonArrow
+                    && !string.Equals(beforeButtonArrow, afterButtonArrow, StringComparison.OrdinalIgnoreCase)
+                    && buttonFlip
+                    && buttonFavorite
+                    && buttonDelete
+                    && buttonFilmstrip;
+
+                bool textFocused = win.FocusSearchInputForSmoke();
+                bool flippedBeforeTextKey = win.ModalTransformForSmoke().Flipped;
+                bool textInputIsolated = textFocused
+                    && !win.InvokePreviewKeyForSmoke(Key.H)
+                    && win.ModalTransformForSmoke().Flipped == flippedBeforeTextKey;
+
+                bool selectedEnhanced = win.SelectFileNameForSmoke(firstName);
+                bool reopenedEnhanced = win.OpenModalForSmoke();
+                bool enhancedAvailable = win.ModalEnhancedToggleAvailableForSmoke;
+                win.SetModalChromeVisibleForSmoke(false);
+                bool hiddenBeforeEnhancedToggle = !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalChromeVisibleForSmoke;
+                bool toggledEnhanced = win.ToggleModalEnhancedForSmoke();
+                bool hiddenAfterEnhanced = !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalChromeVisibleForSmoke
+                    && win.ModalShowingEnhancedForSmoke
+                    && string.Equals(win.ModalDisplayPathForSmoke, enhancedOutputPath, StringComparison.OrdinalIgnoreCase);
+                bool toggledOriginal = win.ToggleModalEnhancedForSmoke();
+                bool hiddenAfterOriginal = !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalChromeVisibleForSmoke
+                    && !win.ModalShowingEnhancedForSmoke
+                    && string.Equals(win.ModalDisplayPathForSmoke, firstPath, StringComparison.OrdinalIgnoreCase);
+                bool hiddenEnhancedPersistence = selectedEnhanced && reopenedEnhanced && enhancedAvailable
+                    && hiddenBeforeEnhancedToggle && toggledEnhanced && hiddenAfterEnhanced
+                    && toggledOriginal && hiddenAfterOriginal;
+
+                string? beforeHiddenNavigation = win.SelectedFileNameForSmoke;
+                bool movedWhileHidden = win.ModalEdgeNavigateForSmoke(1);
+                string? afterHiddenNavigation = win.SelectedFileNameForSmoke;
+                bool hiddenNavigationPersistence = movedWhileHidden
+                    && string.Equals(beforeHiddenNavigation, firstName, StringComparison.OrdinalIgnoreCase)
+                    && string.Equals(afterHiddenNavigation, secondName, StringComparison.OrdinalIgnoreCase)
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalChromeVisibleForSmoke;
+
+                win.SetConfirmBeforeDeleteForSmoke(false);
+                win.SetRecycleBinDeleteBackendForSmoke(_ => new RecycleBinDeleteResult(true, ""));
+                bool deletedWhileHidden = win.RequestDeleteSelectedForSmoke();
+                bool hiddenDeletePersistence = deletedWhileHidden
+                    && string.Equals(win.SelectedFileNameForSmoke, thirdName, StringComparison.OrdinalIgnoreCase)
+                    && win.ModalVisibleForSmoke
+                    && !win.ModalManualChromeVisibleForSmoke
+                    && !win.ModalChromeVisibleForSmoke;
+
                 bool backdropClosed = win.CloseModalFromBackdropForSmoke();
 
                 bool ok = selected && opened && accessibility
-                    && chromeHidden && chromeShown && controlDidNotToggle && doubleClickMetadata
+                    && zoomIndicator && filmstripLayout && manualVisiblePersistent
+                    && chromeHidden && transientReveal && transientExpired && hiddenZoomReveal
+                    && filmstripOverlay && filmstripOverlayDismissed && filmstripOverlayStableGeometry
+                    && chromeShown && controlDidNotToggle && doubleClickMetadata
                     && edgeNext && !string.Equals(beforeEdge, afterEdge, StringComparison.OrdinalIgnoreCase) && edgeFeedback
                     && swipeNext && !string.Equals(beforeSwipe, afterSwipe, StringComparison.OrdinalIgnoreCase) && smallSwipeIgnored
-                    && zoomed && zoomFeedback && zoomedSwipeBlocked && reset && backdropClosed && !win.ModalVisibleForSmoke;
+                    && zoomed && zoomFeedback && zoomedSwipeBlocked && reset
+                    && focusedButtonShortcuts && nativeButtonKeys && textInputIsolated
+                    && hiddenEnhancedPersistence && hiddenNavigationPersistence && hiddenDeletePersistence
+                    && backdropClosed && !win.ModalVisibleForSmoke;
                 result = new ModalInteractionSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "modal chrome, edge navigation, swipe threshold, feedback, metadata double-click, and zoom/pan isolation passed" : "modal interaction parity did not meet the expected contract",
+                    Message = ok ? "modal manual/transient chrome, cursor, filmstrip geometry, top zoom, focused-button shortcuts, hidden-state navigation/enhanced/delete persistence, and existing interaction parity passed" : "modal interaction parity did not meet the expected contract",
                     Accessibility = accessibility,
+                    ZoomIndicator = zoomIndicator,
+                    FilmstripLayout = filmstripLayout,
+                    ManualVisiblePersistent = manualVisiblePersistent,
                     ChromeHidden = chromeHidden,
+                    TransientReveal = transientReveal,
+                    TransientExpired = transientExpired,
+                    HiddenZoomReveal = hiddenZoomReveal,
+                    FilmstripOverlay = filmstripOverlay && filmstripOverlayDismissed,
+                    FilmstripOverlayStableGeometry = filmstripOverlayStableGeometry,
                     ChromeShown = chromeShown,
                     ControlDidNotToggle = controlDidNotToggle,
                     DoubleClickMetadata = doubleClickMetadata,
@@ -12148,6 +12605,23 @@ public partial class App : Application
                     SmallSwipeIgnored = smallSwipeIgnored,
                     ZoomedSwipeBlocked = zoomedSwipeBlocked,
                     Feedback = edgeFeedback && zoomFeedback,
+                    FocusedButtonShortcuts = focusedButtonShortcuts,
+                    NativeButtonKeys = nativeButtonKeys,
+                    TextInputIsolated = textInputIsolated,
+                    HiddenEnhancedPersistence = hiddenEnhancedPersistence,
+                    EnhancedAvailable = enhancedAvailable,
+                    HiddenBeforeEnhancedToggle = hiddenBeforeEnhancedToggle,
+                    ToggledEnhanced = toggledEnhanced,
+                    HiddenAfterEnhanced = hiddenAfterEnhanced,
+                    ToggledOriginal = toggledOriginal,
+                    HiddenAfterOriginal = hiddenAfterOriginal,
+                    HiddenNavigationPersistence = hiddenNavigationPersistence,
+                    BeforeHiddenNavigation = beforeHiddenNavigation,
+                    AfterHiddenNavigation = afterHiddenNavigation,
+                    MovedWhileHidden = movedWhileHidden,
+                    HiddenDeletePersistence = hiddenDeletePersistence,
+                    DeletedWhileHidden = deletedWhileHidden,
+                    AfterHiddenDelete = win.SelectedFileNameForSmoke,
                     EscapeClosed = backdropClosed && !win.ModalVisibleForSmoke,
                     BackdropClosed = backdropClosed && !win.ModalVisibleForSmoke,
                 };
@@ -12162,6 +12636,7 @@ public partial class App : Application
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", previousStatePath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", previousSeenPath);
                 Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", previousFavoritesPath);
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", previousJobsPath);
             }
 
             WriteModalInteractionSmokeResult(resultFullPath, result);
@@ -17379,7 +17854,15 @@ public partial class App : Application
         public bool Ok { get; init; }
         public string Message { get; init; } = "";
         public bool Accessibility { get; init; }
+        public bool ZoomIndicator { get; init; }
+        public bool FilmstripLayout { get; init; }
+        public bool ManualVisiblePersistent { get; init; }
         public bool ChromeHidden { get; init; }
+        public bool TransientReveal { get; init; }
+        public bool TransientExpired { get; init; }
+        public bool HiddenZoomReveal { get; init; }
+        public bool FilmstripOverlay { get; init; }
+        public bool FilmstripOverlayStableGeometry { get; init; }
         public bool ChromeShown { get; init; }
         public bool ControlDidNotToggle { get; init; }
         public bool DoubleClickMetadata { get; init; }
@@ -17388,6 +17871,23 @@ public partial class App : Application
         public bool SmallSwipeIgnored { get; init; }
         public bool ZoomedSwipeBlocked { get; init; }
         public bool Feedback { get; init; }
+        public bool FocusedButtonShortcuts { get; init; }
+        public bool NativeButtonKeys { get; init; }
+        public bool TextInputIsolated { get; init; }
+        public bool HiddenEnhancedPersistence { get; init; }
+        public bool EnhancedAvailable { get; init; }
+        public bool HiddenBeforeEnhancedToggle { get; init; }
+        public bool ToggledEnhanced { get; init; }
+        public bool HiddenAfterEnhanced { get; init; }
+        public bool ToggledOriginal { get; init; }
+        public bool HiddenAfterOriginal { get; init; }
+        public bool HiddenNavigationPersistence { get; init; }
+        public string? BeforeHiddenNavigation { get; init; }
+        public string? AfterHiddenNavigation { get; init; }
+        public bool MovedWhileHidden { get; init; }
+        public bool HiddenDeletePersistence { get; init; }
+        public bool DeletedWhileHidden { get; init; }
+        public string? AfterHiddenDelete { get; init; }
         public bool EscapeClosed { get; init; }
         public bool BackdropClosed { get; init; }
     }

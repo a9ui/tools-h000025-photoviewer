@@ -66,6 +66,8 @@ public partial class MainWindow : Window
     private const double ModalZoomMax = 10;
     private const double ModalZoomKeyboardStep = 1.15;
     private const double ModalZoomWheelStep = 1.1;
+    private const int ModalChromeTransientMilliseconds = 900;
+    private const double ModalFilmstripHoverZone = 128;
     private const string DisplayStyleStandard = "standard";
     private const string DisplayStyleCompact = "compact";
     private const string DisplayStylePoster = "poster";
@@ -197,9 +199,14 @@ public partial class MainWindow : Window
     private Vector _modalPanStartOffset;
     private Point? _modalPointerStartPoint;
     private bool _modalPointerMoved;
-    private bool _modalChromeVisible = true;
+    private bool _modalManualChromeVisible = true;
+    private bool _modalTransientChromeVisible;
+    private bool _modalFilmstripOpen = true;
+    private bool _modalFilmstripHoverVisible;
+    private bool _syncingModalFilmstripSelection;
     private long _modalSingleClickGeneration;
     private readonly DispatcherTimer _modalFeedbackTimer;
+    private readonly DispatcherTimer _modalChromeTransientTimer;
     private readonly DispatcherTimer _modalEnhancementPollTimer;
     private bool _modalEnhancementPolling;
     private bool _modalEnhancementRequestPending;
@@ -280,6 +287,12 @@ public partial class MainWindow : Window
     private readonly HashSet<int> _favoriteFilterLevels = [];
     private bool _showUnseenDots;
     private bool _syncingUnseenDotsControls;
+    private ThumbnailStatusBorderSettings _thumbnailStatusBorderSettings = ThumbnailStatusBorderSettings.Default;
+    private ThumbnailStatusBorderSettings _draftThumbnailStatusBorderSettings = ThumbnailStatusBorderSettings.Default;
+    private bool _thumbnailStatusBorderSettingsProtected;
+    private string? _thumbnailStatusBorderSettingsError;
+    private bool _syncingThumbnailStatusBorderControls;
+    private bool _lastThumbnailStatusBorderSaveSucceeded;
     private bool _foldersSectionExpanded = true;
     private bool _syncingFolderBucketSelection;
     private string? _primarySelectedFolderBucketKey;
@@ -353,6 +366,11 @@ public partial class MainWindow : Window
             if (ModalInteractionFeedback is not null)
                 ModalInteractionFeedback.Visibility = Visibility.Collapsed;
         };
+        _modalChromeTransientTimer = new DispatcherTimer(DispatcherPriority.Background)
+        {
+            Interval = TimeSpan.FromMilliseconds(ModalChromeTransientMilliseconds),
+        };
+        _modalChromeTransientTimer.Tick += (_, _) => ExpireModalChromeTransient();
         _modalEnhancementPollTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromSeconds(1),
@@ -363,7 +381,10 @@ public partial class MainWindow : Window
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
         PreviewTabList.ItemsSource = _previewTabs;
         SearchHistoryList.ItemsSource = _searchHistoryEntries;
+        ModalFilmstripLayoutList.ItemsSource = _tiles;
+        ModalFilmstripOverlayList.ItemsSource = _tiles;
         RestoreState();
+        LoadThumbnailStatusBorderSettings();
         BuildSampleTiles();
         _allTiles.AddRange(_tiles);
         _tiles.Clear();
@@ -390,6 +411,7 @@ public partial class MainWindow : Window
             CancelThumbnailViewportLoading();
             _favoriteWriterPumpTimer?.Stop();
             _seenWriterPumpTimer?.Stop();
+            _modalChromeTransientTimer.Stop();
             _modalEnhancementPollTimer.Stop();
             _modalEnhancementGeneration++;
         };
@@ -767,6 +789,7 @@ public partial class MainWindow : Window
         _modalDecodeCompletion?.TrySetResult(false);
         _modalSingleClickGeneration++;
         _modalFeedbackTimer.Stop();
+        _modalChromeTransientTimer.Stop();
         CancelPreviewTabHoverDecode();
 
         // Closing flushes only the viewer state. Folder recents, favorites,
@@ -8672,6 +8695,7 @@ public partial class MainWindow : Window
         ScheduleModalFitUpdate();
         if (opening)
             SetModalChromeVisible(true, showFeedback: false);
+        SyncModalFilmstripSelection(t);
         SyncModalMetadataSidebar();
         watch.Stop();
 
@@ -9286,6 +9310,7 @@ public partial class MainWindow : Window
         _modalEnhancementJobStatus = null;
         _modalEnhancementProgress = 0;
         _modalEnhancementError = null;
+        _modalChromeTransientTimer.Stop();
         UpdateModalEnhancedControls(false);
         UpdateModalEnhancementActionControls();
         SetModalChromeVisible(true, showFeedback: false);
@@ -9343,6 +9368,7 @@ public partial class MainWindow : Window
         _modalZoom = next;
         ClampModalPan();
         UpdateModalTransform();
+        RevealModalChromeTransient();
         ShowModalInteractionFeedback($"Zoom {Math.Round(_modalZoom * 100):0}%");
         return true;
     }
@@ -9443,7 +9469,7 @@ public partial class MainWindow : Window
         bool preserveUserZoom = Math.Abs(_modalZoom - 1) > 0.0001;
         double metadataWidth = ModalMetadataSidebar.Visibility == Visibility.Visible ? ModalMetadataSidebar.Width + ModalMetadataSidebar.Margin.Right + 84 : 0;
         double availableWidth = Math.Max(240, Modal.ActualWidth - 144 - metadataWidth - 32);
-        double availableHeight = Math.Max(240, Modal.ActualHeight - ModalTopBar.ActualHeight - 64);
+        double availableHeight = Math.Max(240, (ModalImageArea.ActualHeight > 0 ? ModalImageArea.ActualHeight : Modal.ActualHeight - ModalTopBar.ActualHeight) - 32);
         _modalFitScale = Math.Min(1, Math.Min(availableWidth / sourceWidth, availableHeight / sourceHeight));
         ModalImage.Width = Math.Max(1, sourceWidth * _modalFitScale);
         ModalImage.Height = Math.Max(1, sourceHeight * _modalFitScale);
@@ -9566,7 +9592,7 @@ public partial class MainWindow : Window
                 && Modal.Visibility == Visibility.Visible
                 && _modalZoom <= 1)
             {
-                SetModalChromeVisible(!_modalChromeVisible, showFeedback: true);
+                SetModalChromeVisible(!_modalManualChromeVisible, showFeedback: true);
             }
         }, DispatcherPriority.Background);
     }
@@ -9575,14 +9601,141 @@ public partial class MainWindow : Window
 
     private void SetModalChromeVisible(bool visible, bool showFeedback)
     {
-        _modalChromeVisible = visible;
-        Visibility visibility = visible ? Visibility.Visible : Visibility.Collapsed;
-        ModalTopBar.Visibility = visibility;
-        ModalFooter.Visibility = visibility;
-        ModalPreviousButton.Visibility = visibility;
-        ModalNextButton.Visibility = visibility;
+        _modalChromeTransientTimer.Stop();
+        _modalManualChromeVisible = visible;
+        _modalTransientChromeVisible = false;
+        _modalFilmstripHoverVisible = false;
+        UpdateModalChromePresentation();
         if (showFeedback)
             ShowModalInteractionFeedback(visible ? "Controls shown" : "Controls hidden");
+    }
+
+    private bool ModalChromeEffectivelyVisible => _modalManualChromeVisible || _modalTransientChromeVisible;
+
+    private void RevealModalChromeTransient()
+    {
+        if (Modal.Visibility != Visibility.Visible || _modalManualChromeVisible)
+            return;
+
+        if (!_modalTransientChromeVisible)
+        {
+            _modalTransientChromeVisible = true;
+            UpdateModalChromePresentation();
+        }
+        _modalChromeTransientTimer.Stop();
+        _modalChromeTransientTimer.Start();
+    }
+
+    private void ExpireModalChromeTransient()
+    {
+        _modalChromeTransientTimer.Stop();
+        if (!_modalTransientChromeVisible)
+            return;
+        _modalTransientChromeVisible = false;
+        UpdateModalChromePresentation();
+    }
+
+    private void Modal_PreviewMouseMove(object sender, MouseEventArgs e)
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return;
+
+        RevealModalChromeTransient();
+        Point position = e.GetPosition(Modal);
+        double distanceFromBottom = Modal.ActualHeight - position.Y;
+        SetModalFilmstripHoverVisible(distanceFromBottom >= 0 && distanceFromBottom <= ModalFilmstripHoverZone);
+    }
+
+    private void Modal_MouseLeave(object sender, MouseEventArgs e) => SetModalFilmstripHoverVisible(false);
+
+    private void SetModalFilmstripHoverVisible(bool visible)
+    {
+        if (_modalFilmstripHoverVisible == visible)
+            return;
+        _modalFilmstripHoverVisible = visible;
+        UpdateModalChromePresentation();
+    }
+
+    private void ToggleModalFilmstrip_Click(object sender, RoutedEventArgs e) => ToggleModalFilmstrip();
+
+    private bool ToggleModalFilmstrip()
+    {
+        if (Modal.Visibility != Visibility.Visible)
+            return false;
+        _modalFilmstripOpen = !_modalFilmstripOpen;
+        _modalFilmstripHoverVisible = false;
+        UpdateModalChromePresentation();
+        return true;
+    }
+
+    private void ModalFilmstrip_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        if (_syncingModalFilmstripSelection || sender is not ListBox list || list.SelectedItem is not Tile tile)
+            return;
+        if (ReferenceEquals(tile, SelectedTile()))
+            return;
+
+        _syncingModalFilmstripSelection = true;
+        try
+        {
+            ModalFilmstripLayoutList.SelectedItem = tile;
+            ModalFilmstripOverlayList.SelectedItem = tile;
+        }
+        finally
+        {
+            _syncingModalFilmstripSelection = false;
+        }
+        SelectTile(tile);
+        SaveState();
+        OpenModal();
+    }
+
+    private void SyncModalFilmstripSelection(Tile tile)
+    {
+        _syncingModalFilmstripSelection = true;
+        try
+        {
+            ModalFilmstripLayoutList.SelectedItem = tile;
+            ModalFilmstripOverlayList.SelectedItem = tile;
+            if (ModalFilmstripLayout.Visibility == Visibility.Visible)
+                ModalFilmstripLayoutList.ScrollIntoView(tile);
+            if (ModalFilmstripOverlay.Visibility == Visibility.Visible)
+                ModalFilmstripOverlayList.ScrollIntoView(tile);
+        }
+        finally
+        {
+            _syncingModalFilmstripSelection = false;
+        }
+    }
+
+    private void UpdateModalFilmstripPresentation()
+    {
+        bool layoutVisible = _modalManualChromeVisible && _modalFilmstripOpen;
+        bool overlayVisible = _modalFilmstripHoverVisible && !layoutVisible;
+        bool layoutChanged = (ModalFilmstripLayout.Visibility == Visibility.Visible) != layoutVisible;
+        ModalFilmstripLayout.Visibility = layoutVisible ? Visibility.Visible : Visibility.Collapsed;
+        ModalFilmstripOverlay.Visibility = overlayVisible ? Visibility.Visible : Visibility.Collapsed;
+        ModalFilmstripToggleButton.ToolTip = $"{(_modalFilmstripOpen ? "Hide" : "Show")} image filmstrip ({BindingText(ViewerKeyAction.ToggleModalFilmstrip)})";
+        AutomationProperties.SetName(ModalFilmstripToggleButton, $"{(_modalFilmstripOpen ? "Hide" : "Show")} image filmstrip");
+        if (SelectedTile() is Tile selected)
+            SyncModalFilmstripSelection(selected);
+        if (layoutChanged)
+            ScheduleModalFitUpdate();
+    }
+
+    private void UpdateModalChromePresentation()
+    {
+        Visibility visibility = ModalChromeEffectivelyVisible ? Visibility.Visible : Visibility.Collapsed;
+        ModalTopBar.Visibility = visibility;
+        ModalFooter.Visibility = visibility;
+        ModalZoomIndicator.Visibility = visibility;
+        ModalPreviousButton.Visibility = visibility;
+        ModalNextButton.Visibility = visibility;
+        UpdateModalFilmstripPresentation();
+
+        bool cursorHidden = !ModalChromeEffectivelyVisible && ModalFilmstripOverlay.Visibility != Visibility.Visible;
+        Modal.Cursor = cursorHidden ? Cursors.None : Cursors.Arrow;
+        Modal.ForceCursor = cursorHidden;
     }
 
     private void ShowModalInteractionFeedback(string message)
@@ -9976,6 +10129,7 @@ public partial class MainWindow : Window
         ModalZoomOutButton.ToolTip = $"Zoom out ({BindingText(ViewerKeyAction.ModalZoomOut)})";
         ModalZoomResetButton.ToolTip = $"Reset to fit ({BindingText(ViewerKeyAction.ModalZoomReset)})";
         ModalZoomInButton.ToolTip = $"Zoom in ({BindingText(ViewerKeyAction.ModalZoomIn)})";
+        ModalFilmstripToggleButton.ToolTip = $"{(_modalFilmstripOpen ? "Hide" : "Show")} image filmstrip ({BindingText(ViewerKeyAction.ToggleModalFilmstrip)})";
         ModalShortcutHintText.Text = $"   {BindingText(ViewerKeyAction.PreviousImage)} / {BindingText(ViewerKeyAction.NextImage)} navigate   ·   {BindingText(ViewerKeyAction.CloseModal)} close";
     }
 
@@ -9984,10 +10138,299 @@ public partial class MainWindow : Window
             ? chord.DisplayText
             : KeyBindingSettings.Definition(action).DefaultChord.DisplayText;
 
+    private static string ThumbnailStatusBorderSettingsPath
+    {
+        get
+        {
+            string? overridePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SETTINGS_PATH");
+            return string.IsNullOrWhiteSpace(overridePath)
+                ? ProjectCachePath("settings.json")
+                : Path.GetFullPath(overridePath);
+        }
+    }
+
+    private void LoadThumbnailStatusBorderSettings()
+    {
+        ThumbnailStatusBorderLoadResult loaded;
+        try
+        {
+            loaded = ThumbnailStatusBorderSettingsStore.Read(ThumbnailStatusBorderSettingsPath);
+        }
+        catch (Exception ex)
+        {
+            loaded = new ThumbnailStatusBorderLoadResult(
+                ThumbnailStatusBorderSettings.Default,
+                true,
+                $"Shared settings path is unavailable: {ex.Message}");
+        }
+
+        _thumbnailStatusBorderSettings = loaded.Settings;
+        _draftThumbnailStatusBorderSettings = loaded.Settings;
+        _thumbnailStatusBorderSettingsProtected = loaded.IsProtected;
+        _thumbnailStatusBorderSettingsError = loaded.Error;
+        ApplyThumbnailStatusBorderResources(loaded.Settings);
+    }
+
+    private static void ApplyThumbnailStatusBorderResources(ThumbnailStatusBorderSettings settings)
+    {
+        if (Application.Current is null)
+            return;
+        Application.Current.Resources["FavoriteThumbnailStatusBorderBrush"] = CreateThumbnailStatusBorderBrush(
+            settings.Favorite,
+            allowRainbow: false);
+        Application.Current.Resources["EnhancedThumbnailStatusBorderBrush"] = CreateThumbnailStatusBorderBrush(
+            settings.Enhanced,
+            allowRainbow: true);
+    }
+
+    private static Brush CreateThumbnailStatusBorderBrush(
+        ThumbnailStatusBorderPreference preference,
+        bool allowRainbow)
+    {
+        if (!preference.Enabled)
+            return Brushes.Transparent;
+
+        if (allowRainbow
+            && string.Equals(
+                preference.Color,
+                ThumbnailStatusBorderSettings.RainbowColor,
+                StringComparison.OrdinalIgnoreCase))
+        {
+            var rainbow = new LinearGradientBrush
+            {
+                StartPoint = new Point(0, 0),
+                EndPoint = new Point(1, 1),
+            };
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x17, 0x44), 0));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x91, 0x00), 0.142857));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0xea, 0x00), 0.285714));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x00, 0xe6, 0x76), 0.428571));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x00, 0xb8, 0xd4), 0.571429));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x29, 0x79, 0xff), 0.714286));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xaa, 0x00, 0xff), 0.857143));
+            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x17, 0x44), 1));
+            rainbow.Freeze();
+            return rainbow;
+        }
+
+        if (!ThumbnailStatusBorderSettingsStore.TryNormalizeColor(preference.Color, out string color))
+            return Brushes.Transparent;
+
+        byte red = byte.Parse(color.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        byte green = byte.Parse(color.AsSpan(3, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        byte blue = byte.Parse(color.AsSpan(5, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
+        var brush = new SolidColorBrush(Color.FromRgb(red, green, blue));
+        brush.Freeze();
+        return brush;
+    }
+
+    private void BeginThumbnailStatusBorderEdit()
+    {
+        _draftThumbnailStatusBorderSettings = _thumbnailStatusBorderSettings;
+        PopulateThumbnailStatusBorderControls(_draftThumbnailStatusBorderSettings);
+        SaveThumbnailBordersButton.Content = _thumbnailStatusBorderSettingsProtected ? "Retry save" : "Save borders";
+        ThumbnailBordersStatusText.Text = _thumbnailStatusBorderSettingsProtected
+            ? $"Shared settings are protected and were not changed. {_thumbnailStatusBorderSettingsError}"
+            : "Favorite and AI-enhanced borders can be changed independently.";
+    }
+
+    private void PopulateThumbnailStatusBorderControls(ThumbnailStatusBorderSettings settings)
+    {
+        _syncingThumbnailStatusBorderControls = true;
+        try
+        {
+            FavoriteThumbnailBorderCheckBox.IsChecked = settings.Favorite.Enabled;
+            FavoriteThumbnailBorderColorTextBox.Text = settings.Favorite.Color;
+            EnhancedThumbnailBorderCheckBox.IsChecked = settings.Enhanced.Enabled;
+            bool useRainbow = string.Equals(
+                settings.Enhanced.Color,
+                ThumbnailStatusBorderSettings.RainbowColor,
+                StringComparison.OrdinalIgnoreCase);
+            EnhancedThumbnailBorderColorTextBox.Text = useRainbow
+                ? ThumbnailStatusBorderSettings.DefaultFavoriteColor
+                : settings.Enhanced.Color;
+            EnhancedThumbnailBorderRainbowRadioButton.IsChecked = useRainbow;
+            EnhancedThumbnailBorderSolidRadioButton.IsChecked = !useRainbow;
+        }
+        finally
+        {
+            _syncingThumbnailStatusBorderControls = false;
+        }
+        RefreshThumbnailStatusBorderColorPreviews();
+    }
+
+    private bool RefreshThumbnailStatusBorderColorPreviews()
+    {
+        if (FavoriteThumbnailBorderColorPreview is null || EnhancedThumbnailBorderColorPreview is null)
+            return false;
+        bool favoriteValid = ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+            FavoriteThumbnailBorderColorTextBox?.Text,
+            out string favoriteColor);
+        bool useRainbow = EnhancedThumbnailBorderRainbowRadioButton?.IsChecked == true;
+        bool enhancedValid = useRainbow || ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+            EnhancedThumbnailBorderColorTextBox?.Text,
+            out _);
+        string enhancedColor = useRainbow
+            ? ThumbnailStatusBorderSettings.RainbowColor
+            : EnhancedThumbnailBorderColorTextBox?.Text ?? "";
+        FavoriteThumbnailBorderColorPreview.Background = favoriteValid
+            ? CreateThumbnailStatusBorderBrush(
+                new ThumbnailStatusBorderPreference(true, favoriteColor),
+                allowRainbow: false)
+            : Brushes.Transparent;
+        EnhancedThumbnailBorderColorPreview.Background = enhancedValid
+            ? CreateThumbnailStatusBorderBrush(
+                new ThumbnailStatusBorderPreference(true, enhancedColor),
+                allowRainbow: true)
+            : Brushes.Transparent;
+        return favoriteValid && enhancedValid;
+    }
+
+    private void ThumbnailBorderColor_TextChanged(object sender, TextChangedEventArgs e)
+    {
+        if (_initializing || _syncingThumbnailStatusBorderControls)
+            return;
+        bool valid = RefreshThumbnailStatusBorderColorPreviews();
+        ThumbnailBordersStatusText.Text = valid
+            ? "Ready to save."
+            : "Use a six-digit hex color such as #facc15 for each Single color field.";
+    }
+
+    private void EnhancedThumbnailBorderMode_Changed(object sender, RoutedEventArgs e)
+    {
+        if (_initializing || _syncingThumbnailStatusBorderControls
+            || EnhancedThumbnailBorderColorTextBox is null
+            || ThumbnailBordersStatusText is null)
+        {
+            return;
+        }
+        bool valid = RefreshThumbnailStatusBorderColorPreviews();
+        ThumbnailBordersStatusText.Text = valid
+            ? EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true
+                ? "Rainbow AI-enhanced border is ready to save."
+                : "Single-color AI-enhanced border is ready to save."
+            : "Use a six-digit hex color such as #facc15 for Single color mode.";
+    }
+
+    private void ResetThumbnailBorders_Click(object sender, RoutedEventArgs e)
+    {
+        _draftThumbnailStatusBorderSettings = ThumbnailStatusBorderSettings.Default;
+        PopulateThumbnailStatusBorderControls(_draftThumbnailStatusBorderSettings);
+        SaveThumbnailBordersButton.Content = "Save borders";
+        ThumbnailBordersStatusText.Text = "Default yellow Favorite and rainbow AI-enhanced borders are ready. Save to apply them.";
+    }
+
+    private void SaveThumbnailBorders_Click(object sender, RoutedEventArgs e)
+    {
+        _lastThumbnailStatusBorderSaveSucceeded = false;
+        if (!TryReadThumbnailStatusBorderDraft(out ThumbnailStatusBorderSettings draft))
+        {
+            SaveThumbnailBordersButton.Content = "Retry save";
+            ThumbnailBordersStatusText.Text = "Favorite needs a six-digit hex color. AI-enhanced needs Rainbow or a six-digit hex color. Nothing was changed.";
+            return;
+        }
+
+        _draftThumbnailStatusBorderSettings = draft;
+        if (!TryPersistThumbnailStatusBorderSettings(draft, out string? error))
+        {
+            _thumbnailStatusBorderSettingsProtected = true;
+            _thumbnailStatusBorderSettingsError = error;
+            SaveThumbnailBordersButton.Content = "Retry save";
+            ThumbnailBordersStatusText.Text = $"Could not save shared settings. Nothing was overwritten. {error}";
+            return;
+        }
+
+        _thumbnailStatusBorderSettings = draft;
+        _thumbnailStatusBorderSettingsProtected = false;
+        _thumbnailStatusBorderSettingsError = null;
+        ApplyThumbnailStatusBorderResources(draft);
+        _lastThumbnailStatusBorderSaveSucceeded = true;
+        SaveThumbnailBordersButton.Content = "Save borders";
+        ThumbnailBordersStatusText.Text = "Saved. Gallery and list borders updated without reloading thumbnails.";
+    }
+
+    private bool TryReadThumbnailStatusBorderDraft(out ThumbnailStatusBorderSettings settings)
+    {
+        settings = ThumbnailStatusBorderSettings.Default;
+        if (!ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+                FavoriteThumbnailBorderColorTextBox.Text,
+                out string favoriteColor))
+        {
+            return false;
+        }
+        string enhancedColor;
+        if (EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true)
+        {
+            enhancedColor = ThumbnailStatusBorderSettings.RainbowColor;
+        }
+        else if (EnhancedThumbnailBorderSolidRadioButton.IsChecked != true
+            || !ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+                EnhancedThumbnailBorderColorTextBox.Text,
+                out enhancedColor))
+        {
+            return false;
+        }
+        settings = new ThumbnailStatusBorderSettings(
+            new ThumbnailStatusBorderPreference(FavoriteThumbnailBorderCheckBox.IsChecked == true, favoriteColor),
+            new ThumbnailStatusBorderPreference(EnhancedThumbnailBorderCheckBox.IsChecked == true, enhancedColor));
+        return true;
+    }
+
+    private static bool TryPersistThumbnailStatusBorderSettings(
+        ThumbnailStatusBorderSettings settings,
+        out string? error)
+    {
+        error = null;
+        string path;
+        try
+        {
+            path = ThumbnailStatusBorderSettingsPath;
+        }
+        catch (Exception ex)
+        {
+            error = $"Shared settings path is unavailable: {ex.Message}";
+            return false;
+        }
+
+        string? operationError = null;
+        bool operationStarted = false;
+        bool saved = TryWithPersistenceLock(path, () =>
+        {
+            operationStarted = true;
+            string? existingJson;
+            try
+            {
+                existingJson = File.Exists(path) ? File.ReadAllText(path) : null;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+            {
+                operationError = $"Shared settings could not be read: {ex.Message}";
+                return false;
+            }
+
+            if (!ThumbnailStatusBorderSettingsStore.TryMerge(existingJson, settings, out string mergedJson, out operationError))
+                return false;
+            if (!TryWriteAtomicText(path, mergedJson))
+            {
+                operationError = "Windows did not allow the atomic settings replacement.";
+                return false;
+            }
+            return true;
+        });
+
+        if (saved)
+            return true;
+        error = operationError ?? (operationStarted
+            ? "The shared settings write failed."
+            : "The shared settings file is busy. Try again.");
+        return false;
+    }
+
     private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
     {
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         BeginKeyBindingEdit();
+        BeginThumbnailStatusBorderEdit();
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         SetShowUnseenDots(_showUnseenDots, persist: false);
         DiagnosticsText.Text = BuildDiagnosticsText();
@@ -9999,6 +10442,7 @@ public partial class MainWindow : Window
     private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
     {
         CancelKeyBindingEdit();
+        _draftThumbnailStatusBorderSettings = _thumbnailStatusBorderSettings;
         AppSettingsDialog.Visibility = Visibility.Collapsed;
         RestoreOverlayFocus(_settingsFocusBeforeDialog);
     }
@@ -10192,6 +10636,7 @@ public partial class MainWindow : Window
             return false;
         }
 
+        bool modalManualChromeWasVisible = _modalManualChromeVisible;
         bool refreshModal = ReconcileSuccessfulSourceRecycle([tile]);
         ApplyFilters(selectFirst: false);
 
@@ -10206,7 +10651,10 @@ public partial class MainWindow : Window
         {
             SelectTile(neighbor);
             if (refreshModal)
+            {
                 OpenModal();
+                SetModalChromeVisible(modalManualChromeWasVisible, showFeedback: false);
+            }
         }
         else
         {
@@ -10252,6 +10700,7 @@ public partial class MainWindow : Window
             return false;
         }
 
+        bool modalManualChromeWasVisible = _modalManualChromeVisible;
         bool refreshModal = ReconcileSuccessfulSourceRecycle(succeeded);
         ApplyFilters(selectFirst: false);
 
@@ -10265,13 +10714,19 @@ public partial class MainWindow : Window
                 remainingSelected.Add(neighbor);
             SetSelection(remainingSelected, neighbor);
             if (refreshModal)
+            {
                 OpenModal();
+                SetModalChromeVisible(modalManualChromeWasVisible, showFeedback: false);
+            }
         }
         else if (remainingSelected.Count > 0)
         {
             SetSelection(remainingSelected, remainingSelected[^1]);
             if (refreshModal)
+            {
                 OpenModal();
+                SetModalChromeVisible(modalManualChromeWasVisible, showFeedback: false);
+            }
         }
         else
         {
@@ -11171,6 +11626,12 @@ public partial class MainWindow : Window
             return;
         }
 
+        bool modalVisible = Modal.Visibility == Visibility.Visible;
+        bool modalNativeInputFocused = modalVisible && IsModalNativeInputFocused(Keyboard.FocusedElement);
+        bool modalActionButtonFocused = modalVisible && IsModalActionButtonFocused(Keyboard.FocusedElement);
+        if (modalVisible && !modalNativeInputFocused)
+            RevealModalChromeTransient();
+
         // Modal close remains reachable even when a child Button owns focus.
         // Settings and Recycle confirmation use the fixed Escape rescue above.
         if (Modal.Visibility == Visibility.Visible
@@ -11193,7 +11654,13 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsGlobalShortcutInputFocused(Keyboard.FocusedElement))
+        if (modalActionButtonFocused && key is Key.Enter or Key.Space)
+        {
+            base.OnPreviewKeyDown(e);
+            return;
+        }
+
+        if (IsGlobalShortcutInputFocused(Keyboard.FocusedElement) && !modalActionButtonFocused)
         {
             base.OnPreviewKeyDown(e);
             return;
@@ -11241,6 +11708,8 @@ public partial class MainWindow : Window
                 return AdjustModalZoom(1 / ModalZoomKeyboardStep);
             if (MatchesBinding(ViewerKeyAction.ModalZoomReset, key, modifiers))
                 return ResetModalTransform(_modalTransformPath, showFeedback: true);
+            if (MatchesBinding(ViewerKeyAction.ToggleModalFilmstrip, key, modifiers))
+                return ToggleModalFilmstrip();
         }
         else
         {
@@ -11346,6 +11815,38 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private static bool IsModalNativeInputFocused(object? source)
+    {
+        for (DependencyObject? current = source as DependencyObject;
+             current is not null;
+             current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                 ? VisualTreeHelper.GetParent(current)
+                 : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is TextBoxBase or ComboBox or DatePicker)
+                return true;
+        }
+        return false;
+    }
+
+    private bool IsModalActionButtonFocused(object? source)
+    {
+        for (DependencyObject? current = source as DependencyObject;
+             current is not null;
+             current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                 ? VisualTreeHelper.GetParent(current)
+                 : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is not ButtonBase button)
+                continue;
+            return IsDescendantOrSelf(button, ModalTopBar)
+                || IsDescendantOrSelf(button, ModalFooter)
+                || ReferenceEquals(button, ModalPreviousButton)
+                || ReferenceEquals(button, ModalNextButton);
+        }
+        return false;
+    }
+
     private bool IsViewerShortcutSurfaceActive()
         => Landing.Visibility != Visibility.Visible;
 
@@ -11355,6 +11856,7 @@ public partial class MainWindow : Window
             && !IsDescendantOrSelf(source, ModalMetadataSidebar)
             && !IsDescendantOrSelf(source, ModalPreviousButton)
             && !IsDescendantOrSelf(source, ModalNextButton)
+            && !IsDescendantOrSelf(source, ModalFilmstripOverlay)
             && !IsDescendantOrSelf(source, ModalFooter);
 
     private static bool IsDescendantOrSelf(DependencyObject source, DependencyObject ancestor)
@@ -12728,6 +13230,98 @@ public partial class MainWindow : Window
             && string.Equals(AutomationProperties.GetName(AppSettingsUnseenDotsCheckBox), "Show unseen dots in gallery", StringComparison.Ordinal)
             && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(ShowUnseenDots))
             && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(AppSettingsUnseenDotsCheckBox));
+    public bool ThumbnailStatusBorderSurfaceContractForSmoke
+        => string.Equals(AutomationProperties.GetName(FavoriteThumbnailBorderCheckBox), "Show favorite thumbnail border", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderCheckBox), "Show AI-enhanced thumbnail border", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(FavoriteThumbnailBorderColorTextBox), "Favorite thumbnail border color", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderRainbowRadioButton), "Use rainbow AI-enhanced thumbnail border", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderSolidRadioButton), "Use single-color AI-enhanced thumbnail border", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderColorTextBox), "AI-enhanced thumbnail border single color", StringComparison.Ordinal)
+            && FavoriteThumbnailBorderColorTextBox.MaxLength == 7
+            && EnhancedThumbnailBorderColorTextBox.MaxLength == 7
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(FavoriteThumbnailBorderColorTextBox))
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(EnhancedThumbnailBorderColorTextBox));
+    public bool FavoriteThumbnailStatusBorderEnabledForSmoke => _thumbnailStatusBorderSettings.Favorite.Enabled;
+    public string FavoriteThumbnailStatusBorderColorForSmoke => _thumbnailStatusBorderSettings.Favorite.Color;
+    public bool EnhancedThumbnailStatusBorderEnabledForSmoke => _thumbnailStatusBorderSettings.Enhanced.Enabled;
+    public string EnhancedThumbnailStatusBorderColorForSmoke => _thumbnailStatusBorderSettings.Enhanced.Color;
+    public bool FavoriteThumbnailStatusBorderCheckedForSmoke => FavoriteThumbnailBorderCheckBox.IsChecked == true;
+    public string FavoriteThumbnailStatusBorderDraftColorForSmoke => FavoriteThumbnailBorderColorTextBox.Text;
+    public bool EnhancedThumbnailStatusBorderCheckedForSmoke => EnhancedThumbnailBorderCheckBox.IsChecked == true;
+    public string EnhancedThumbnailStatusBorderDraftColorForSmoke
+        => EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true
+            ? ThumbnailStatusBorderSettings.RainbowColor
+            : EnhancedThumbnailBorderColorTextBox.Text;
+    public bool EnhancedThumbnailStatusBorderRainbowModeForSmoke
+        => EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true;
+    public bool EnhancedThumbnailStatusBorderSolidModeForSmoke
+        => EnhancedThumbnailBorderSolidRadioButton.IsChecked == true;
+    public bool EnhancedThumbnailStatusBorderSolidColorEnabledForSmoke
+        => EnhancedThumbnailBorderColorTextBox.IsEnabled;
+    public bool ThumbnailStatusBorderSettingsProtectedForSmoke => _thumbnailStatusBorderSettingsProtected;
+    public string ThumbnailStatusBorderSettingsStatusForSmoke => ThumbnailBordersStatusText.Text;
+    public bool ThumbnailStatusBorderSaveShowsRetryForSmoke
+        => string.Equals(SaveThumbnailBordersButton.Content?.ToString(), "Retry save", StringComparison.Ordinal);
+    public string ThumbnailStatusBorderSettingsPathForSmoke => ThumbnailStatusBorderSettingsPath;
+    public bool FavoriteThumbnailStatusBorderResourceVisibleForSmoke
+        => ThumbnailStatusBorderResourceAlphaForSmoke("FavoriteThumbnailStatusBorderBrush") > 0;
+    public bool EnhancedThumbnailStatusBorderResourceVisibleForSmoke
+        => ThumbnailStatusBorderResourceAlphaForSmoke("EnhancedThumbnailStatusBorderBrush") > 0;
+    public string FavoriteThumbnailStatusBorderResourceColorForSmoke
+        => ThumbnailStatusBorderResourceColorForSmoke("FavoriteThumbnailStatusBorderBrush");
+    public string EnhancedThumbnailStatusBorderResourceColorForSmoke
+        => ThumbnailStatusBorderResourceColorForSmoke("EnhancedThumbnailStatusBorderBrush");
+    public bool EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
+        => Application.Current?.Resources["EnhancedThumbnailStatusBorderBrush"] is LinearGradientBrush;
+    public bool EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke
+        => Application.Current?.Resources["EnhancedThumbnailStatusBorderBrush"] is Brush brush && brush.IsFrozen;
+    public bool EnhancedThumbnailStatusBorderRainbowStopsForSmoke
+        => ThumbnailStatusBorderRainbowStopsForSmoke("EnhancedThumbnailStatusBorderBrush");
+    private static byte ThumbnailStatusBorderResourceAlphaForSmoke(string key)
+        => Application.Current?.Resources[key] switch
+        {
+            SolidColorBrush solid => solid.Color.A,
+            LinearGradientBrush gradient when gradient.GradientStops.Count > 0
+                => gradient.GradientStops.Max(static stop => stop.Color.A),
+            _ => 0,
+        };
+    private static string ThumbnailStatusBorderResourceColorForSmoke(string key)
+        => Application.Current?.Resources[key] switch
+        {
+            SolidColorBrush solid => $"#{solid.Color.R:x2}{solid.Color.G:x2}{solid.Color.B:x2}",
+            LinearGradientBrush => ThumbnailStatusBorderSettings.RainbowColor,
+            _ => "",
+        };
+    private static bool ThumbnailStatusBorderRainbowStopsForSmoke(string key)
+    {
+        if (Application.Current?.Resources[key] is not LinearGradientBrush gradient
+            || gradient.GradientStops.Count != 8)
+        {
+            return false;
+        }
+        Color[] expectedColors =
+        [
+            Color.FromRgb(0xff, 0x17, 0x44),
+            Color.FromRgb(0xff, 0x91, 0x00),
+            Color.FromRgb(0xff, 0xea, 0x00),
+            Color.FromRgb(0x00, 0xe6, 0x76),
+            Color.FromRgb(0x00, 0xb8, 0xd4),
+            Color.FromRgb(0x29, 0x79, 0xff),
+            Color.FromRgb(0xaa, 0x00, 0xff),
+            Color.FromRgb(0xff, 0x17, 0x44),
+        ];
+        double[] expectedOffsets = [0, 0.142857, 0.285714, 0.428571, 0.571429, 0.714286, 0.857143, 1];
+        for (int index = 0; index < expectedColors.Length; index++)
+        {
+            GradientStop stop = gradient.GradientStops[index];
+            if (stop.Color != expectedColors[index]
+                || Math.Abs(stop.Offset - expectedOffsets[index]) > 0.0000001)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
     public bool FocusSidebarUnseenDotsForSmoke() => ShowUnseenDots.Focus();
     public bool FocusAppSettingsUnseenDotsForSmoke() => AppSettingsUnseenDotsCheckBox.Focus();
     public bool IsSidebarUnseenDotsFocusedForSmoke => ShowUnseenDots.IsKeyboardFocused;
@@ -12886,6 +13480,21 @@ public partial class MainWindow : Window
         => SetShowUnseenDots(enabled, persist: true);
     public void SetSidebarUnseenDotsForSmoke(bool enabled) => ShowUnseenDots.IsChecked = enabled;
     public void SetAppSettingsUnseenDotsForSmoke(bool enabled) => AppSettingsUnseenDotsCheckBox.IsChecked = enabled;
+    public void SetThumbnailStatusBorderDraftForSmoke(
+        bool favoriteEnabled,
+        string favoriteColor,
+        bool enhancedEnabled,
+        string enhancedColor)
+        => PopulateThumbnailStatusBorderControls(new ThumbnailStatusBorderSettings(
+            new ThumbnailStatusBorderPreference(favoriteEnabled, favoriteColor),
+            new ThumbnailStatusBorderPreference(enhancedEnabled, enhancedColor)));
+    public bool SaveThumbnailStatusBorderDraftForSmoke()
+    {
+        SaveThumbnailBorders_Click(this, new RoutedEventArgs());
+        return _lastThumbnailStatusBorderSaveSucceeded;
+    }
+    public void ResetThumbnailStatusBorderDraftForSmoke()
+        => ResetThumbnailBorders_Click(this, new RoutedEventArgs());
     public void ToggleFoldersSectionForSmoke() => ToggleFoldersSection_Click(this, new RoutedEventArgs());
     public bool FocusFolderBucketListForSmoke() => SidebarFolderSetList.Focus();
     public bool SelectFolderBucketRangeForSmoke(int firstIndex, int lastIndex)
@@ -12971,11 +13580,34 @@ public partial class MainWindow : Window
     public bool SetModalPanForSmoke(double x, double y) => SetModalPan(x, y);
 
     public bool ModalChromeVisibleForSmoke
-        => _modalChromeVisible
+        => ModalChromeEffectivelyVisible
             && ModalTopBar.Visibility == Visibility.Visible
             && ModalFooter.Visibility == Visibility.Visible
+            && ModalZoomIndicator.Visibility == Visibility.Visible
             && ModalPreviousButton.Visibility == Visibility.Visible
             && ModalNextButton.Visibility == Visibility.Visible;
+    public bool ModalManualChromeVisibleForSmoke => _modalManualChromeVisible;
+    public bool ModalTransientChromeVisibleForSmoke => _modalTransientChromeVisible;
+    public bool ModalCursorHiddenForSmoke
+        => Modal.ForceCursor && ReferenceEquals(Modal.Cursor, Cursors.None);
+    public bool ModalFilmstripLayoutVisibleForSmoke
+        => ModalFilmstripLayout.Visibility == Visibility.Visible;
+    public bool ModalFilmstripOverlayVisibleForSmoke
+        => ModalFilmstripOverlay.Visibility == Visibility.Visible;
+    public bool ModalFilmstripPinnedForSmoke => _modalFilmstripOpen;
+    public double ModalImageAreaHeightForSmoke => ModalImageArea.ActualHeight;
+    public bool ModalZoomIndicatorContractForSmoke
+        => ModalZoomIndicator.VerticalAlignment == VerticalAlignment.Top
+            && Grid.GetRowSpan(ModalZoomIndicator) == 3
+            && ModalZoomIndicator.Margin.Top <= 2
+            && ModalZoomIndicator.Opacity <= 0.65
+            && ModalZoomLabel.FontSize <= 10;
+    public void RevealModalChromeTransientForSmoke() => RevealModalChromeTransient();
+    public void ExpireModalChromeTransientForSmoke() => ExpireModalChromeTransient();
+    public void SetModalChromeVisibleForSmoke(bool visible) => SetModalChromeVisible(visible, showFeedback: false);
+    public void SetModalBottomHoverForSmoke(bool visible) => SetModalFilmstripHoverVisible(visible);
+    public bool ToggleModalFilmstripForSmoke() => ToggleModalFilmstrip();
+    public bool FocusModalFavoriteIncreaseForSmoke() => ModalFavoriteIncreaseButton.Focus();
     public bool ModalEdgeZonesAccessibleForSmoke
         => string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalPreviousButton), "Previous image edge zone", StringComparison.Ordinal)
             && string.Equals(System.Windows.Automation.AutomationProperties.GetName(ModalNextButton), "Next image edge zone", StringComparison.Ordinal)
@@ -14099,7 +14731,6 @@ public sealed class Tile : INotifyPropertyChanged
     public bool IsRealFile { get; set; }
     public string FolderBucketKey { get; set; } = "";
     public string FolderBucketLabel { get; set; } = "";
-    public bool Enhanced { get; set; }
     public string? EnhancedOutputPath { get; set; }
     public DateTime ModifiedUtc { get; set; }
     public DateTime CreatedUtc { get; set; }
@@ -14112,6 +14743,18 @@ public sealed class Tile : INotifyPropertyChanged
     private string _prompt = "";
     private int _imagePixelWidth;
     private int _imagePixelHeight;
+    private bool _enhanced;
+
+    public bool Enhanced
+    {
+        get => _enhanced;
+        set
+        {
+            if (_enhanced == value) return;
+            _enhanced = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enhanced)));
+        }
+    }
 
     public string Prompt
     {

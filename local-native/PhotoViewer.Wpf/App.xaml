@@ -25,6 +25,17 @@
     <SolidColorBrush x:Key="AccentLight" Color="#818CF8"/>
     <SolidColorBrush x:Key="Favorite" Color="#F43F5E"/>
     <SolidColorBrush x:Key="FavoriteText" Color="#FECDD3"/>
+    <SolidColorBrush x:Key="FavoriteThumbnailStatusBorderBrush" Color="#FACC15"/>
+    <LinearGradientBrush x:Key="EnhancedThumbnailStatusBorderBrush" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#FF1744" Offset="0"/>
+      <GradientStop Color="#FF9100" Offset="0.142857"/>
+      <GradientStop Color="#FFEA00" Offset="0.285714"/>
+      <GradientStop Color="#00E676" Offset="0.428571"/>
+      <GradientStop Color="#00B8D4" Offset="0.571429"/>
+      <GradientStop Color="#2979FF" Offset="0.714286"/>
+      <GradientStop Color="#AA00FF" Offset="0.857143"/>
+      <GradientStop Color="#FF1744" Offset="1"/>
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="Success" Color="#10B981"/>
     <SolidColorBrush x:Key="Danger" Color="#EF4444"/>
     <SolidColorBrush x:Key="DangerText" Color="#FECACA"/>
@@ -461,6 +472,12 @@
                       <TextBlock Text="{Binding FileName}" VerticalAlignment="Bottom" Foreground="#EAFFFFFF"
                                  FontSize="12" TextTrimming="CharacterEllipsis"/>
                     </Border>
+
+                    <!-- Status borders stay above hover chrome and bind to the tile's existing O(1) state. -->
+                    <Border CornerRadius="11" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                            IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
+                    <Border CornerRadius="8" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
+                            IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
                   </Grid>
                 </Border>
               </Grid>
@@ -503,6 +520,10 @@
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
                     <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Border CornerRadius="6" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                            IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
+                    <Border CornerRadius="4" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
+                            IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
                     <Ellipse Width="8" Height="8" Margin="7" HorizontalAlignment="Left" VerticalAlignment="Top" Fill="{StaticResource AccentLight}" Visibility="{Binding ShowUnseenDot, Converter={StaticResource BoolToVis}}"/>
                   </Grid>
                 </Border>

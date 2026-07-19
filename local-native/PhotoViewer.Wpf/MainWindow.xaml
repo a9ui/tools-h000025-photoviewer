@@ -807,6 +807,28 @@
           <TextBlock Text="DISPLAY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <CheckBox x:Name="AppSettingsUnseenDotsCheckBox" Content="Unseen dots" Foreground="{StaticResource TextSecondary}" Checked="ShowUnseenDots_Changed" Unchecked="ShowUnseenDots_Changed" AutomationProperties.Name="Show unseen dots in gallery" AutomationProperties.HelpText="Changes dot visibility only. Seen history is not changed."/>
           <TextBlock Text="Shows a dot on images that have not been viewed. This display option never changes seen history." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
+          <TextBlock Text="THUMBNAIL STATUS BORDERS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <Grid Margin="0,0,0,6">
+            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="142"/><ColumnDefinition Width="28"/></Grid.ColumnDefinitions>
+            <CheckBox x:Name="FavoriteThumbnailBorderCheckBox" Grid.Row="0" Grid.Column="0" Content="Favorite border" Foreground="{StaticResource TextSecondary}" Margin="0,4,8,5" AutomationProperties.Name="Show favorite thumbnail border"/>
+            <TextBox x:Name="FavoriteThumbnailBorderColorTextBox" Grid.Row="0" Grid.Column="1" Text="#facc15" MaxLength="7" Margin="0,0,6,5" TextChanged="ThumbnailBorderColor_TextChanged" AutomationProperties.Name="Favorite thumbnail border color" AutomationProperties.HelpText="Six-digit hex color, for example #facc15"/>
+            <Border x:Name="FavoriteThumbnailBorderColorPreview" Grid.Row="0" Grid.Column="2" Width="22" Height="22" CornerRadius="4" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" Background="#FACC15" VerticalAlignment="Center" Margin="0,0,0,5" IsHitTestVisible="False"/>
+            <CheckBox x:Name="EnhancedThumbnailBorderCheckBox" Grid.Row="1" Grid.Column="0" Content="AI-enhanced border" Foreground="{StaticResource TextSecondary}" Margin="0,4,8,0" AutomationProperties.Name="Show AI-enhanced thumbnail border"/>
+            <StackPanel Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" Orientation="Horizontal" VerticalAlignment="Center">
+              <RadioButton x:Name="EnhancedThumbnailBorderRainbowRadioButton" GroupName="EnhancedThumbnailBorderMode" Content="Rainbow" IsChecked="True" Margin="0,0,10,0" Checked="EnhancedThumbnailBorderMode_Changed" AutomationProperties.Name="Use rainbow AI-enhanced thumbnail border"/>
+              <RadioButton x:Name="EnhancedThumbnailBorderSolidRadioButton" GroupName="EnhancedThumbnailBorderMode" Content="Single color" Checked="EnhancedThumbnailBorderMode_Changed" AutomationProperties.Name="Use single-color AI-enhanced thumbnail border"/>
+            </StackPanel>
+            <TextBlock Grid.Row="2" Grid.Column="0" Text="Single color" Foreground="{StaticResource TextTertiary}" FontSize="11.5" Margin="24,5,8,0"/>
+            <TextBox x:Name="EnhancedThumbnailBorderColorTextBox" Grid.Row="2" Grid.Column="1" Text="#facc15" MaxLength="7" Margin="0,5,6,0" TextChanged="ThumbnailBorderColor_TextChanged" IsEnabled="{Binding IsChecked, ElementName=EnhancedThumbnailBorderSolidRadioButton}" AutomationProperties.Name="AI-enhanced thumbnail border single color" AutomationProperties.HelpText="Optional six-digit hex color used in Single color mode, for example #facc15"/>
+            <Border x:Name="EnhancedThumbnailBorderColorPreview" Grid.Row="2" Grid.Column="2" Width="22" Height="22" CornerRadius="4" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" VerticalAlignment="Center" Margin="0,5,0,0" IsHitTestVisible="False"/>
+          </Grid>
+          <TextBlock Text="Favorite uses the yellow inner line. AI-enhanced uses a distinct rainbow outer line by default, or an optional single color, so both remain visible together. Changes are shared with the browser app." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,0,0,8"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,0,0,4">
+            <Button x:Name="ResetThumbnailBordersButton" Style="{StaticResource GhostButton}" Content="Reset borders" Click="ResetThumbnailBorders_Click" MinWidth="112" Margin="0,0,8,0" AutomationProperties.Name="Reset thumbnail borders to defaults"/>
+            <Button x:Name="SaveThumbnailBordersButton" Style="{StaticResource GhostButton}" Content="Save borders" Click="SaveThumbnailBorders_Click" MinWidth="112" AutomationProperties.Name="Save thumbnail border settings"/>
+          </StackPanel>
+          <TextBlock x:Name="ThumbnailBordersStatusText" Foreground="{StaticResource TextTertiary}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,18" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Thumbnail border settings status"/>
           <TextBlock Text="KEY BINDINGS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <TextBlock Text="Choose an action, then press its new key combination. Gallery and modal-only actions may reuse the same key. App Settings and Recycle confirmation always keep Escape as a rescue key." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"/>
           <StackPanel x:Name="KeyBindingsPanel" AutomationProperties.Name="Editable key bindings"/>
@@ -856,13 +878,45 @@
 
     <Grid x:Name="Modal" Grid.RowSpan="3" Panel.ZIndex="300" Visibility="Collapsed" Background="#EB040407"
           Focusable="True" KeyboardNavigation.TabNavigation="Cycle" KeyboardNavigation.ControlTabNavigation="Cycle"
-          MouseLeftButtonDown="ModalBackdrop_MouseLeftButtonDown"
+          MouseLeftButtonDown="ModalBackdrop_MouseLeftButtonDown" PreviewMouseMove="Modal_PreviewMouseMove" MouseLeave="Modal_MouseLeave"
           AutomationProperties.Name="Image preview dialog"
           AutomationProperties.HelpText="Preview the selected image. Use Left and Right to navigate, Escape to close, and Tab to move through preview controls.">
+      <Grid.Resources>
+        <DataTemplate x:Key="ModalFilmstripItemTemplate">
+          <Grid Width="76" Height="64" ToolTip="{Binding FileName}" AutomationProperties.Name="{Binding FileName}">
+            <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="LowQuality"/>
+          </Grid>
+        </DataTemplate>
+        <Style x:Key="ModalFilmstripItemStyle" TargetType="ListBoxItem">
+          <Setter Property="Margin" Value="0,0,8,0"/>
+          <Setter Property="Padding" Value="0"/>
+          <Setter Property="Background" Value="#12FFFFFF"/>
+          <Setter Property="BorderBrush" Value="Transparent"/>
+          <Setter Property="BorderThickness" Value="2"/>
+          <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+          <Setter Property="VerticalContentAlignment" Value="Stretch"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="ListBoxItem">
+                <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" ClipToBounds="True"><ContentPresenter/></Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ItemBorder" Property="BorderBrush" Value="#7AFFFFFF"/></Trigger>
+                  <Trigger Property="IsSelected" Value="True"><Setter TargetName="ItemBorder" Property="BorderBrush" Value="#FF818CF8"/><Setter TargetName="ItemBorder" Property="Background" Value="#306366F1"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </Grid.Resources>
       <Grid.RowDefinitions>
         <RowDefinition Height="Auto"/>
         <RowDefinition Height="*"/>
+        <RowDefinition Height="Auto"/>
       </Grid.RowDefinitions>
+
+      <Border x:Name="ModalZoomIndicator" Grid.RowSpan="3" VerticalAlignment="Top" HorizontalAlignment="Center" CornerRadius="999" Background="#42000000" Padding="7,1" Margin="0,2,0,0" Opacity="0.52" IsHitTestVisible="False" Panel.ZIndex="36">
+        <TextBlock x:Name="ModalZoomLabel" Text="100%" Foreground="#88FFFFFF" FontSize="9.5" MinWidth="36" TextAlignment="Center" VerticalAlignment="Center"/>
+      </Border>
 
       <!-- topbar -->
       <DockPanel x:Name="ModalTopBar" Grid.Row="0" Margin="16,12" LastChildFill="False">
@@ -879,6 +933,9 @@
         </Button>
         <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" AutomationProperties.Name="Toggle metadata sidebar" Width="38" Height="38">
           <TextBlock x:Name="ModalMetadataSidebarToggleLabel" Text="&lt;" Foreground="{StaticResource TextSecondary}" FontSize="15" FontWeight="SemiBold"/>
+        </Button>
+        <Button x:Name="ModalFilmstripToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalFilmstrip_Click" ToolTip="Hide image filmstrip (T)" AutomationProperties.Name="Hide image filmstrip" Width="42" Height="38">
+          <TextBlock x:Name="ModalFilmstripToggleLabel" Text="FS" Foreground="{StaticResource TextSecondary}" FontSize="10.5" FontWeight="SemiBold"/>
         </Button>
         <Button x:Name="ModalOpenExternalButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Open externally" AutomationProperties.Name="Open selected image externally" Width="38" Height="38" Click="OpenSelectedExternally_Click">
           <Path Data="M18,13 v6 a2,2 0 0 1 -2,2 H5 a2,2 0 0 1 -2,-2 V8 a2,2 0 0 1 2,-2 h6 M15,3 h6 v6 M10,14 L21,3" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="15" Height="15"/>
@@ -1005,15 +1062,24 @@
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
             <Button x:Name="ModalZoomOutButton" Style="{StaticResource GhostButton}" Content="−" ToolTip="Zoom out (-)" AutomationProperties.Name="Zoom image out" Height="26" MinWidth="32" Padding="6,0" Click="ModalZoomOut_Click"/>
             <Button x:Name="ModalZoomResetButton" Style="{StaticResource GhostButton}" Content="Fit" ToolTip="Reset to fit (0)" AutomationProperties.Name="Fit image to preview" Height="26" MinWidth="42" Padding="7,0" Margin="4,0" Click="ModalFit_Click"/>
-            <TextBlock x:Name="ModalZoomLabel" Text="100%" Foreground="{StaticResource TextSecondary}" FontSize="12" MinWidth="48" TextAlignment="Center" VerticalAlignment="Center"/>
             <Button x:Name="ModalZoomInButton" Style="{StaticResource GhostButton}" Content="+" ToolTip="Zoom in (+)" AutomationProperties.Name="Zoom image in" Height="26" MinWidth="32" Padding="6,0" Margin="4,0,0,0" Click="ModalZoomIn_Click"/>
             <TextBlock x:Name="ModalShortcutHintText" Text="   ← → navigate   ·   Esc close" Foreground="{StaticResource TextTertiary}" FontSize="11" VerticalAlignment="Center" Margin="6,0,4,0"/>
           </StackPanel>
+        </Border>
+        <Border x:Name="ModalFilmstripOverlay" Grid.ColumnSpan="3" VerticalAlignment="Bottom" Height="104" Margin="14,0,14,10" Padding="8,7" CornerRadius="12" Background="#E606080F" BorderBrush="#24FFFFFF" BorderThickness="1" Visibility="Collapsed" Panel.ZIndex="28">
+          <ListBox x:Name="ModalFilmstripOverlayList" Background="Transparent" BorderThickness="0" ItemTemplate="{StaticResource ModalFilmstripItemTemplate}" ItemContainerStyle="{StaticResource ModalFilmstripItemStyle}" SelectionMode="Single" SelectionChanged="ModalFilmstrip_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Transient image filmstrip">
+            <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+          </ListBox>
         </Border>
         <Border x:Name="ModalInteractionFeedback" Grid.ColumnSpan="3" VerticalAlignment="Top" HorizontalAlignment="Center" CornerRadius="999" Background="{StaticResource AccentGlass}" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" Padding="12,5" Margin="0,18,0,0" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="20">
           <TextBlock x:Name="ModalInteractionFeedbackText" Foreground="{StaticResource TextPrimary}" FontSize="12" FontWeight="SemiBold"/>
         </Border>
       </Grid>
+      <Border x:Name="ModalFilmstripLayout" Grid.Row="2" Height="104" Margin="14,6,14,10" Padding="8,7" CornerRadius="12" Background="#D906080F" BorderBrush="#24FFFFFF" BorderThickness="1" Visibility="Collapsed">
+        <ListBox x:Name="ModalFilmstripLayoutList" Background="Transparent" BorderThickness="0" ItemTemplate="{StaticResource ModalFilmstripItemTemplate}" ItemContainerStyle="{StaticResource ModalFilmstripItemStyle}" SelectionMode="Single" SelectionChanged="ModalFilmstrip_SelectionChanged" ScrollViewer.HorizontalScrollBarVisibility="Auto" ScrollViewer.VerticalScrollBarVisibility="Disabled" ScrollViewer.CanContentScroll="True" VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling" AutomationProperties.Name="Image filmstrip">
+          <ListBox.ItemsPanel><ItemsPanelTemplate><VirtualizingStackPanel Orientation="Horizontal"/></ItemsPanelTemplate></ListBox.ItemsPanel>
+        </ListBox>
+      </Border>
     </Grid>
 
   </Grid>
