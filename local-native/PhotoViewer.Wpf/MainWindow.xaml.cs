@@ -9665,6 +9665,7 @@ public partial class MainWindow : Window
         _modalFilmstripOpen = !_modalFilmstripOpen;
         _modalFilmstripHoverVisible = false;
         UpdateModalChromePresentation();
+        SaveState();
         return true;
     }
 
@@ -11163,6 +11164,7 @@ public partial class MainWindow : Window
         _showUnseenDots = state.ShowUnseenDots;
         _confirmBeforeDelete = state.ConfirmBeforeDelete;
         _foldersSectionExpanded = state.FoldersSectionExpanded ?? true;
+        _modalFilmstripOpen = state.ModalFilmstripOpen ?? true;
         SyncFoldersSectionControls();
         if (ConfirmBeforeDeleteCheckBox is not null) ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         SetShowUnseenDots(_showUnseenDots, persist: false);
@@ -11291,6 +11293,7 @@ public partial class MainWindow : Window
                 ShowUnseenDots = _showUnseenDots,
                 ConfirmBeforeDelete = _confirmBeforeDelete,
                 FoldersSectionExpanded = _foldersSectionExpanded,
+                ModalFilmstripOpen = _modalFilmstripOpen,
                 HiddenFolderBuckets = _hiddenFolderBuckets.Count > 0 ? _hiddenFolderBuckets.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 SelectedFolderBucketKeys = _selectedFolderBucketKeys.Count > 0 ? _selectedFolderBucketKeys.OrderBy(static item => item, StringComparer.OrdinalIgnoreCase).ToList() : null,
                 PrimarySelectedFolderBucketKey = _primarySelectedFolderBucketKey,
@@ -14246,6 +14249,8 @@ public sealed class ViewerState
     public bool ConfirmBeforeDelete { get; set; } = true;
     // Missing in v1 state means expanded, preserving the original sidebar behavior.
     public bool? FoldersSectionExpanded { get; set; }
+    // Missing in older state means open, matching the Browser and original WPF default.
+    public bool? ModalFilmstripOpen { get; set; }
     // Kept only to read pre-P0A scalar state; new writes use FavoriteFilterLevels.
     [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
     public int? FavoriteFilterLevel { get; set; }

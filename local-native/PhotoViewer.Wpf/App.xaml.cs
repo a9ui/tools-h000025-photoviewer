@@ -12513,8 +12513,23 @@ public partial class App : Application
                 focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
                 bool buttonFilmstrip = win.InvokePreviewKeyForSmoke(Key.T)
                     && win.ModalFilmstripPinnedForSmoke != filmstripPinnedBeforeKey;
+                bool filmstripClosedPersisted = false;
+                if (buttonFilmstrip && File.Exists(statePath))
+                {
+                    using JsonDocument persisted = JsonDocument.Parse(File.ReadAllText(statePath));
+                    filmstripClosedPersisted = persisted.RootElement.TryGetProperty("ModalFilmstripOpen", out JsonElement openElement)
+                        && openElement.ValueKind == JsonValueKind.False;
+                }
                 if (!win.ModalFilmstripPinnedForSmoke)
                     win.ToggleModalFilmstripForSmoke();
+                bool filmstripOpenPersisted = false;
+                if (File.Exists(statePath))
+                {
+                    using JsonDocument persisted = JsonDocument.Parse(File.ReadAllText(statePath));
+                    filmstripOpenPersisted = persisted.RootElement.TryGetProperty("ModalFilmstripOpen", out JsonElement openElement)
+                        && openElement.ValueKind == JsonValueKind.True;
+                }
+                bool filmstripPersistence = filmstripClosedPersisted && filmstripOpenPersisted;
                 focusedButton = win.FocusModalFavoriteIncreaseForSmoke() && focusedButton;
                 bool nativeButtonKeys = !win.InvokePreviewKeyForSmoke(Key.Enter)
                     && !win.InvokePreviewKeyForSmoke(Key.Space);
@@ -12580,13 +12595,13 @@ public partial class App : Application
                     && edgeNext && !string.Equals(beforeEdge, afterEdge, StringComparison.OrdinalIgnoreCase) && edgeFeedback
                     && swipeNext && !string.Equals(beforeSwipe, afterSwipe, StringComparison.OrdinalIgnoreCase) && smallSwipeIgnored
                     && zoomed && zoomFeedback && zoomedSwipeBlocked && reset
-                    && focusedButtonShortcuts && nativeButtonKeys && textInputIsolated
+                    && focusedButtonShortcuts && nativeButtonKeys && textInputIsolated && filmstripPersistence
                     && hiddenEnhancedPersistence && hiddenNavigationPersistence && hiddenDeletePersistence
                     && backdropClosed && !win.ModalVisibleForSmoke;
                 result = new ModalInteractionSmokeResult
                 {
                     Ok = ok,
-                    Message = ok ? "modal manual/transient chrome, cursor, filmstrip geometry, top zoom, focused-button shortcuts, hidden-state navigation/enhanced/delete persistence, and existing interaction parity passed" : "modal interaction parity did not meet the expected contract",
+                    Message = ok ? "modal manual/transient chrome, cursor, filmstrip geometry and persistence, top zoom, focused-button shortcuts, hidden-state navigation/enhanced/delete persistence, and existing interaction parity passed" : "modal interaction parity did not meet the expected contract",
                     Accessibility = accessibility,
                     ZoomIndicator = zoomIndicator,
                     FilmstripLayout = filmstripLayout,
@@ -12606,6 +12621,7 @@ public partial class App : Application
                     ZoomedSwipeBlocked = zoomedSwipeBlocked,
                     Feedback = edgeFeedback && zoomFeedback,
                     FocusedButtonShortcuts = focusedButtonShortcuts,
+                    FilmstripPersistence = filmstripPersistence,
                     NativeButtonKeys = nativeButtonKeys,
                     TextInputIsolated = textInputIsolated,
                     HiddenEnhancedPersistence = hiddenEnhancedPersistence,
@@ -17872,6 +17888,7 @@ public partial class App : Application
         public bool ZoomedSwipeBlocked { get; init; }
         public bool Feedback { get; init; }
         public bool FocusedButtonShortcuts { get; init; }
+        public bool FilmstripPersistence { get; init; }
         public bool NativeButtonKeys { get; init; }
         public bool TextInputIsolated { get; init; }
         public bool HiddenEnhancedPersistence { get; init; }
