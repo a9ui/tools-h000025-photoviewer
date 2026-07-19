@@ -80,3 +80,14 @@ one-column and geometry-anchor candidate on top of this shared-history main,
 then focused, aggregate, exact-100k, and normal-launcher verification. Other
 pending product requests remain in the authoritative specification and must not
 be called implemented from branch archaeology alone.
+
+## GitHub reflection status
+
+Draft PR #322 remains open, but its remote head is still `557cfb8...` and does
+not yet contain this local milestone. The exact command
+`git push origin main:codex/wpf-thumbnail-performance-20260719` was rejected
+before process creation because this Codex session requires approval for
+external writes while `AskForApproval` is `Never`. No partial remote mutation
+occurred. SQLite improvement item #45 records the retry command and required
+head verification. Until that succeeds, local main and this task pack are the
+implementation truth; the PR is only a stale Draft pointer.
