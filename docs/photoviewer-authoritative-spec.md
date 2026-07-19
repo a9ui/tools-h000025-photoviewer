@@ -4,10 +4,10 @@
 
 監査基準日: 2026-07-19 JST
 
-実装基準: このマシンの `refs/heads/main` に採用された実装commit
-`792716f9863dd145e028648405c29c340f7a4336` と、そのrepository hardening descendant
-`4c81cca3efc80363568d0d9af35297ff3285b48c`。WPF gallery zoom候補 `4a22b61` は専用branch上で
-検証済みだが、local main採用前なのでSection 14の`pending adoption`として扱う。`origin/main` は基準ではない。
+実装基準: このマシンの `refs/heads/main` に採用されたBrowser/WPF基盤
+`792716f9863dd145e028648405c29c340f7a4336`、repository hardening
+`4c81cca3efc80363568d0d9af35297ff3285b48c`、WPF gallery zoom/geometry anchor
+`e371b482af44e0428d9fe0d5217b236801f29cff`、shared-state latency `5ae1e00` とそのdescendant。`origin/main` は基準ではない。
 
 現在の実装状況と証拠は [current-implementation-truth.md](./current-implementation-truth.md) を参照する。
 
@@ -368,7 +368,7 @@ Headerはsidebar、logo/landing、Refresh、Search、count、Settings/right prev
 
 click single、Ctrl toggle、Shift range、Ctrl+Shift additive range。Ctrl+Aはfiltered result全path、Ctrl+Shift+Aはclear。canonical selectionはpath setで保持し、100,000件のWPF SelectedItemsをmaterializeしない。Grid/List/preview/tab/modalは同じprimary pathを共有する。
 
-Grid/List切替、Standard/Compact/Poster、Original/1:1/2:3を持つ。local mainの現行zoomは40〜600、20px step、reset 200。Ctrl+wheel、Ctrl `+/-/0`。zoom anchorはpath+offsetで保持し、sidebar/header/font/right panel/List rowを変えない。候補commit `4a22b61` は20〜600、600=正確な1列、旧state safe migration、canonical full path+viewport offsetをzoom/Sidebar/right panel/window resize/DPI/selection有無で保持し、専用gate済みである。
+Grid/List切替、Standard/Compact/Poster、Original/1:1/2:3を持つ。現行zoomは20〜600、20px step、reset 200。600 endpointはavailable widthに関係なく正確な1列へ固定する。Ctrl+wheel、Ctrl `+/-/0`。zoom前にvisible selectionを優先したcanonical full path+viewport offsetをcaptureし、selectionなしではviewport centerを使う。zoom、Sidebar、right panel、window resize、DPI change後に同じpath/offsetをclamp復元し、sidebar/header/font/right panel/List rowを拡縮しない。List modeではgallery zoomを拒否してrecycling virtualizationを維持する。
 
 現行mainではGrid/List itemのdouble-clickでModalを開く。Enterを一覧の正式なModal open keyとして定義するkey actionはないため、一覧Enter要件はSection 14のPENDINGである。
 
@@ -489,7 +489,8 @@ queued -> running -> succeeded
 - queued jobはprocess restart直後に自動resumeしない。runningのまま残ったrecordは次回queue処理時にinterrupted failureへ正規化する。
 - cancelはadapterが安全に特定できるjobだけを対象にする。曖昧なglobal interruptはwarningを出す。
 - output decode失敗またはmissingはsource表示へfallbackし、source/modal/navigationを失わない。
-- Windowsでcompleted outputのatomic renameが`EBUSY`、`EPERM`、`EACCES`になった時は25/50/100/200/400/800/1600msで限定retryする。解放されなければdestinationへのfully-awaited copyを完了してからtempを除去する。jobをsucceededにするのはrename/copy完了後だけ。その他のfilesystem errorは隠さずfailedへ返す。
+- Windowsでcompleted outputのatomic renameが`EBUSY`、`EPERM`、`EACCES`になった時は25/50/100/200/400/800/1600msで限定retryする。解放されなければdestinationへのfully-awaited copyを行う。copy完了時点でoutput publishは成功であり、temporary cleanupは別のbounded retryとして扱う。cleanupだけが引き続きlockされた場合はstale temporary residueを診断へ残すが、完成済みdestinationをjob failureへ戻さない。jobをsucceededにするのはrename/copy完了後だけで、copy自体の失敗とcleanup失敗を同じerrorへ偽装しない。その他のfilesystem errorは隠さずfailedへ返す。
+- ncnn-vulkan adapterはnormalize後の寸法を、すでに取得したsource metadataまたはSharp `toFile()`の完了情報から確定する。書き込み直後のtemporaryをmetadata取得だけのために再openしてWindows lock時間を増やさない。
 - queueはjob/errorがある時またはユーザーが明示openした時だけ表示する。
 - user-configurable Enhancement枠色は現行schema/UIにない。固定success/failure status borderを設定機能と数えず、Section 14の実装確認待ちとする。
 
@@ -532,7 +533,7 @@ queued -> running -> succeeded
 
 thumbnail object URL cacheはcompleted 2,400、displayは160、同一fetchはshared pending、最後のconsumer releaseでabortし、LRU evictionでURL revokeする。warmupはfocused > visible > nearby、40ms batch、3,500ms dedupe、pending speculative最大1,200。background warm最大1,200は製品画像件数上限ではない。Sharp concurrencyはCPU基準4〜12、`PV_THUMB_CONCURRENCY`で1〜16。5,000画像は推奨stress protocolで、現行source由来の固定時間閾値ではない。
 
-Modal filmstripは100,000 logical itemsでもviewport + overscanだけをDOMへ出すunit gateを持つ。production E2Eは120-item fixtureで遠方index click、Arrow往復、Delete隣接移動が二重発火しないこと、current追従、chrome hide、close/reopenとlocalStorage保存を確認する。reload hydrationは`ImageContext`のunmount/remount unit gateで確認する。この120-item E2Eを製品件数上限と解釈しない。
+Modal filmstripは100,000 logical itemsでもviewport + overscanだけをDOMへ出すunit gateを持つ。production E2Eは120-item fixtureで遠方index click、Arrow往復、Delete隣接移動が二重発火しないこと、current追従、chrome hide、close/reopenとlocalStorage保存を確認する。`9d8acb0`後のfocused production E2Eは通常runtimeのport 3000を避けて`127.0.0.1:3001`で1/1 PASSし、filmstripがimage viewport bottom以降の専用段にあること、zoom indicatorがstripより上にあること、3秒auto-hide/re-show、console problem 0も確認した。reload hydrationは`ImageContext`のunmount/remount unit gateで確認する。この120-item E2Eを製品件数上限と解釈しない。
 
 ### 12.3 WPF
 
@@ -575,7 +576,7 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 
 ## 14. 採用済み要件と実装確認待ち
 
-2026-07-19にlocal `refs/heads/main`は `792716f9863dd145e028648405c29c340f7a4336` まで採用された。下表のimplementedはこのcommitのsourceと採用gateへ限定する。
+2026-07-19にlocal `refs/heads/main`はWPF gallery zoom/geometry anchor実装 `e371b482af44e0428d9fe0d5217b236801f29cff` とshared-state latency `5ae1e00`を含む後続main変更まで採用された。下表のimplementedはこのsourceと採用gateへ限定する。
 
 ### 14.1 implementedへ昇格したもの
 
@@ -583,20 +584,20 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | --- | --- | --- | --- |
 | Favorite画像のsource削除必須確認 | single/bulk UI + `deleteImage` action boundaryで強制。通常確認OFFでも必須 | single/bulk dialog + execute boundaryで強制 | **implemented**。Favorite level ClearではなくFavorite source Recycle保護。mandatory時Do not ask again不可 |
 | 拡大画像session自動回復 | image 410を1回通知しViewer保持scan、fresh token、失敗時manual recovery | HTTP session非該当 | **implemented (Browser)**。search 410のmanual Rescanは別contract |
-| 20px〜最大1列 | 20〜600、step 20。600で1列、persisted clamp | 40〜600のまま | **implemented (Browser scope)**。WPF parityは未採用 |
-| Sidebar開閉アンカー | geometry changeを検出し同じanchor path/offsetを復元 | width 240/0だけ | **implemented (Browser scope)**。WPF parityは未採用 |
-| Enhancement EBUSY publish retry | transient rename retry→awaited copy fallback | 明示actionはBrowser APIへ委譲 | **implemented**。source非上書き、publish完了前にsucceededにしない |
-| Browser Modal virtualized filmstrip | current追従、direct click、bounded virtualization、T/toolbar開閉、保存、Arrow navigation | 今回scope外 | **implemented (Browser scope)**。100k logical unit + production E2Eでclick/Arrow/Delete/persistenceを確認 |
+| 20px〜最大1列 | 20〜600、step 20。600で1列、persisted clamp | 20〜600、step 20。600で1列、旧40維持・範囲外clamp | **implemented**。両surfaceでGridだけを変更しListを拡縮しない |
+| Sidebar開閉アンカー | geometry changeを検出し同じanchor path/offsetを復元 | canonical full path+viewport offsetをSidebar/right panel/window resize/DPIで復元 | **implemented**。selection有無、同名別folder、List非破壊をfocused/stress gateで確認 |
+| Enhancement EBUSY publish retry | transient rename retry→awaited copy fallback。copy完了後のtemporary cleanupは別にbounded retryし、cleanup-only lockで完成済みoutputをfailedへ戻さない。temporary metadata再openを回避 | 明示actionはBrowser APIへ委譲 | **implemented**。source非上書き、publish完了前にsucceededにしない。focused 4 files / 23 testsはgreenだがfresh real-GPU rerunはpending |
+| Browser Modal virtualized filmstrip | current追従、direct click、bounded virtualization、T/toolbar開閉、保存、Arrow navigation。画像viewport外の専用下段、3秒chrome auto-hide/re-show、上側zoom indicator | 今回scope外 | **implemented (Browser scope)**。100k logical unit + production E2Eでclick/Arrow/Delete/persistenceを確認。`127.0.0.1:3001` focused E2E 1/1で非overlay geometry/auto-hide/console 0も確認 |
 | Browser/WPF shared Search History v1 | focus/click list、whole-query replacement、delete/clear、API、protected status | nonblocking popup、keyboard/list selection、delete/clear、protected/Busy status | **implemented**。version 1/max50/NFKC共通identity、unknown保持、cross-runtime lost 0、WinForms非参加 |
 
-今回追加分の採用gateはBrowser unit 61 files / 521 tests（3 files / 3 tests skip）、typecheck、production build、lint 0 errors、production Playwright 7/7、WPF Search History focused、Browser/WPF 20+20同時writer、Release build 0 warnings / 0 errors、WPF `-SkipStress` aggregate 50/50がgreen。通常Browser/WPF launcherの最終採用は同日のtruth tableに示す。従来のexact 100,000 images / 100 folders gateも維持する。
+今回追加分の採用gateはBrowser unit 61 files / 521 tests（3 files / 3 tests skip）、typecheck、production build、lint 0 errors、production Playwright 7/7、WPF Search History focused、Browser/WPF 20+20同時writer、Release build 0 warnings / 0 errors、WPF zoom promotion aggregate + reload soak 53/53、reload 24/24がgreen。WPF zoom/anchorはfocusedとexact 100,000 images / 100 foldersもcurrent mainで再実行した。後続shared-state latency descendantは`-SkipStress` aggregate 51/51とfocused latency 6/6がgreen。通常Browser/WPF launcherの最終採用は同日のtruth tableに示す。
+
+後続deltaの証拠は上のmilestone件数と混同しない。`9d8acb0`のModal layoutはisolated production port 3001で1/1 PASS、`3654b88`のEnhancement publish/cleanupはfocused 4 files / 23 tests PASS。後者のfresh real-GPU jobは未実施なので、unit証拠を実machineのend-to-end成功へ読み替えない。
 
 ### 14.2 引き続き「実装確認待ち」
 
 | Requirement | Browser local main | WPF local main | Canonical status / acceptance |
 | --- | --- | --- | --- |
-| WPF 20px〜最大1列 parity | Browserはimplemented | local mainは40〜600。候補commit `4a22b61` は20〜600、600=1列、旧40維持・範囲外clamp、Grid/List virtualization gate済み | **pending adoption**。focused、53-check aggregate、exact 100k/100folderはgreen。local main採用と通常launcher/runtime確認後に昇格 |
-| WPF Sidebar開閉アンカー parity | Browserはimplemented | local mainはwidth 240/0 toggleのみ。候補commitはcanonical full path+viewport offsetをSidebar/right panel/window resize/DPI/selection有無で保持 | **pending adoption**。同名別folder fixtureを含めdrift 0px、List非破壊。local main採用前はimplementedと報告しない |
 | Enhancement枠色設定 | schema/UIなし、固定status色のみ | schema/UIなし | **実装確認待ち / pending**。設定surface、validation、保存、Original/Enhanced/成功失敗との優先規則 |
 | 表示中Original/EnhancedをEnterで開く | Enterはsource固定 | external openはsource固定 | **実装確認待ち / pending**。表示中assetをguardして開き、missing outputはsource fallback/明示status |
 | 一覧EnterでModal | source+unit testに現行挙動あり | double-clickだけ | **実装確認待ち**。WPF parity、current order、focus return、overlay isolationを確認するまで新要件全体を完了扱いしない |
@@ -646,13 +647,14 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | unit/component | `pnpm test:unit` | headless app smoke群 | Browser 61 files / 521 tests green、3 files / 3 tests skip at `792716f...` |
 | type/lint/build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | `dotnet build -c Release` | Browser typecheck/build green、lint 0 errors（unrelated Claude worktree 1 warning）、WPF 0 warning・0 error |
 | Landing/recent/runtime | `e2e/home.spec.ts`, `verify-browser-runtime.ps1` | landing/recent verifier、launcher freshness | Browser isolated production Playwright 7/7。通常runtime evidenceはtruth tableへ記録 |
-| Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | `verify-wpf-gallery-zoom-anchor.ps1`、catalog stress、gallery zoom/scroll/date/layout verifier | Browser 20〜600/1列/Sidebar anchor採用。WPF候補commitはfocused/aggregate/exact100k green、local main採用待ち |
+| Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | `verify-wpf-gallery-zoom-anchor.ps1`、catalog stress、gallery zoom/scroll/date/layout verifier | Browser/WPFとも20〜600/1列/geometry anchor採用。WPF current aggregate 53/53 + reload 24/24、exact100k/100folder green |
 | Modal/Delete | `ImageModal.test.tsx`, `RightPreviewPanel.test.tsx`, `favoriteDeleteProtection.test.ts`, delete integration/route tests | modal/delete verifier | Favorite source mandatory confirmation採用。displayed Enhanced openは未gate |
-| Modal filmstrip | `ModalFilmstrip.test.tsx`, `ImageModal.test.tsx`, `ImageContext.test.tsx`, settings tests、`e2e/viewer-modal-filmstrip.spec.ts` | 今回scope外 | 100k bounded DOM、current follow、click/Arrow/Delete/persistence、console 0を要求 |
+| Modal filmstrip | `ModalFilmstrip.test.tsx`, `ImageModal.test.tsx`, `ImageContext.test.tsx`, settings tests、`e2e/viewer-modal-filmstrip.spec.ts` | 今回scope外 | 100k bounded DOM、current follow、click/Arrow/Delete/persistence、非overlay専用下段、3秒auto-hide/re-show、top zoom indicator、console 0。port 3001 focused production E2E 1/1 green |
+| Enhancement Windows publish | `outputPublish.test.ts`、ncnn-vulkan adapter tests | Browser API委譲のみ | copy publishとtemporary cleanupの成否を分離。focused 4 files / 23 tests green、fresh real-GPU rerun pending |
 | Search History | route/SearchBar tests、API live-lock timeout | `verify-wpf-search-history.ps1`, `verify-cross-runtime-search-history.ps1` | async UI、keyboard/a11y、max50、malformed/future保護、Busy writes 0、lost 0 |
 | Favorite/Seen/Recent concurrency | API route tests、2 cross-runtime scripts | same cross-runtime actors | 各20反復green、WinForms actorは含まない |
 | key bindings/accessibility | component tests | `verify-wpf-key-bindings.ps1`等 | WPF editable/reload/reset/100k selection記録済み |
-| reload/state | component hydration/session recovery tests | state/reload aggregate | 今回のWPF `-SkipStress` aggregate 50/50 green。過去のstress/reload-soakとexact 100k記録も維持 |
+| reload/state | component hydration/session recovery tests | state/reload aggregate | WPF zoom promotion aggregate + reload 53/53、reload 24/24、後続shared-state latency descendant `-SkipStress` 51/51 green。exact 100k記録も維持 |
 | large catalog | Browser 5,000推奨stress | 20,000 aggregate + exact 100,000/100 | WPF exact tail/order/realization/index記録済み |
 | Enhancement isolation | API/isolation tests | passive-isolation checks | passive enqueue/start 0を要求 |
 | Section 14採用/残件 | 14.1は`792716f...` gate、14.2は専用test未完 | Favorite source confirmationとSearch Historyは採用、他は未完 | surface単位のstatusを混ぜない |

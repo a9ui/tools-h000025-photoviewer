@@ -744,6 +744,10 @@ large-catalog最終gateではexact 100,000 images / 100 foldersをcatalog・filt
 
 persistent index後の同一shape再測定はcold catalog ready 3,809ms / metadata 26,659ms / full load 30,850msでbaselineを悪化させず、同じfixture/indexを別`MainWindow`で開いたwarm phaseはcatalog ready 3,396ms / metadata 213ms / full load 3,928msだった。warmは100,000 hits / 0 misses、index read/write 65/0ms、SHA-256とmtime不変、Grid/List 15/9、末尾99,999、zoom drift 0px、warm dispatcher gap 245ms、overall WM_NULL最大停止387ms、Enhancement 0でgreen。fresh baseline比でmetadata 99.2%、full load 87.4%短縮した。
 
+2026-07-19のcurrent-main promotionでは、WPF gallery zoom/geometry anchorを`e371b482af44e0428d9fe0d5217b236801f29cff`へ採用した。focused gateは20/600 endpoints、600=1列、旧40維持・範囲外clamp、同名別folderをcanonical pathで分離し、Sidebar/right panel/window resize/DPI/selection有無のdrift 0px、List 9/10/8 boundedを確認した。後続Modal/filmstrip layoutを含むmainでaggregate + reload soak 53/53、reload 24/24、exact 100,000 images / 100 folders、silent truncate 0、Grid/List 15/9、tail 99,999、warm hit 100,000 / miss 0、最大unresponsive 262ms / gate 750msがgreenである。
+
+後続`5ae1e00`はFavorite/Seen writerを固定cadenceでcoalesceし、explicit drainで即時flush、同一windowのFavorite/Seen更新をkernel gateで直列化し、Favorite/Unfavorite filterが無い時の全filter/sort再構築と同一Modal画像の再decodeを避けた。`-SkipStress` aggregate 51/51とfocused latency 6/6がgreenで、large Favorite p95 0.147〜0.190ms、Modal 4.814〜5.506ms、最大dispatcher gap 29.427〜45.155msを記録した。
+
 editable key binding focused gateは独立process 2回でwrite/hot applyとreload/resetを確認する。追加の100,000件logical selection fixtureの最終runではCtrl+Aが20ms、exact 100,000 selected、materialized visual 15件、Ctrl+Shift+A clearが13msだった。これは観測値であり、gateは各1,500ms以内、canonical count exact、visual projection 2,048件未満を要求する。同じgateがSettings/input/Delete/metadata wheel isolation、Landing中のCtrl+Plus/Ctrl+A/F/Delete/reopen無効化、nested unknownの外部delete/add mergeも固定する。
 
 1280×820 / 1024×700の実WPF screenshotでLanding、Viewer、Settings、Folders collapsed、Unseen dots、Modal metadataを目視し、sidebar固定幅、crop/overflow、panel境界、黒backdrop、control配置を確認した。persistent metadata statusはsidebarとfooterで狭幅でも欠けず、進捗中はpolite live regionを1つだけ公開する。これはfunctional verifierの代替ではなく、現行50-check aggregateと組み合わせたvisual evidenceである。
