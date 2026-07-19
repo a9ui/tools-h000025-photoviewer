@@ -13784,8 +13784,14 @@ public partial class App : Application
             // Warm JIT/decode and both synchronous persistence paths outside the samples.
             window.SelectFileNameForSmoke("zz-warmup.png");
             window.SetSelectedFavoriteLevelForSmoke(1);
+            bool modalWarmupOpened = window.OpenModalForSmoke();
+            bool modalWarmupNext = window.NavigateModalForSmoke(1);
+            bool modalWarmupPrevious = window.NavigateModalForSmoke(-1);
             window.SelectFileNameForSmoke("image-00.png");
-            bool modalOpened = window.OpenModalForSmoke();
+            bool modalOpened = modalWarmupOpened
+                && modalWarmupNext
+                && modalWarmupPrevious
+                && window.OpenModalForSmoke();
             long favoriteActionStartBytes = new FileInfo(favoritesPath).Length;
             long seenActionStartBytes = new FileInfo(seenPath).Length;
             int seenActionStartEntries = window.SeenStoreCountForSmoke;

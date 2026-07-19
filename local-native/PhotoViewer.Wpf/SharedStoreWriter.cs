@@ -35,8 +35,9 @@ internal sealed record SharedWriteResult<TDelta>(
 
 /// <summary>
 /// Owns one generation-aware full-file writer. Enqueue only records immutable
-/// deltas; the caller starts the pump after the current dispatcher input turn
-/// so rapid UI mutations can coalesce without an arbitrary timer.
+/// deltas. A scheduled pump writes at most one coalesced batch; the caller owns
+/// the bounded first-event cadence, while explicit drain/reload/close calls run
+/// additional batches immediately until the queue is durable.
 /// </summary>
 internal sealed class SharedStoreWriter<TDelta>
     where TDelta : ISharedStoreDelta
@@ -78,7 +79,7 @@ internal sealed class SharedStoreWriter<TDelta>
             if (_pumpTask is { IsCompleted: false })
                 return _pumpTask;
 
-            _pumpTask = Task.Run(PumpAsync);
+            _pumpTask = Task.Run(WriteNextBatchAsync);
             return _pumpTask;
         }
     }
@@ -110,36 +111,32 @@ internal sealed class SharedStoreWriter<TDelta>
 
     public int BatchWriteCount => Volatile.Read(ref _batchWriteCount);
 
-    private async Task<SharedWriteStatus> PumpAsync()
+    private async Task<SharedWriteStatus> WriteNextBatchAsync()
     {
-        while (true)
+        List<TDelta> batch;
+        lock (_gate)
         {
-            List<TDelta> batch;
-            lock (_gate)
-            {
-                if (_queued.Count == 0)
-                    return SharedWriteStatus.Succeeded;
+            if (_queued.Count == 0)
+                return SharedWriteStatus.Succeeded;
 
-                batch = _queued.Values
-                    .OrderBy(static delta => delta.Generation)
-                    .ToList();
-                _queued.Clear();
-            }
-
-            SharedWriteResult<TDelta> result;
-            try
-            {
-                Interlocked.Increment(ref _batchWriteCount);
-                result = _writeBatch(batch);
-            }
-            catch (Exception ex)
-            {
-                result = new SharedWriteResult<TDelta>(SharedWriteStatus.Failed, batch, ex.Message);
-            }
-
-            await _applyCompletion(result).ConfigureAwait(false);
-            if (result.Status != SharedWriteStatus.Succeeded)
-                return result.Status;
+            batch = _queued.Values
+                .OrderBy(static delta => delta.Generation)
+                .ToList();
+            _queued.Clear();
         }
+
+        SharedWriteResult<TDelta> result;
+        try
+        {
+            Interlocked.Increment(ref _batchWriteCount);
+            result = _writeBatch(batch);
+        }
+        catch (Exception ex)
+        {
+            result = new SharedWriteResult<TDelta>(SharedWriteStatus.Failed, batch, ex.Message);
+        }
+
+        await _applyCompletion(result).ConfigureAwait(false);
+        return result.Status;
     }
 }

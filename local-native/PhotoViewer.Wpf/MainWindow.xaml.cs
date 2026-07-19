@@ -52,7 +52,9 @@ public partial class MainWindow : Window
     private const int PersistenceLockTimeoutMilliseconds = 2_000;
     private const int PersistenceLockRetryMilliseconds = 25;
     private const long AsyncSharedStoreThresholdBytes = 1_048_576;
+    private const int SharedStoreWriterBatchDelayMilliseconds = 300;
     private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
+    private readonly SemaphoreSlim _sharedStoreWriteKernelGate = new(1, 1);
     private const double MinCardWidth = 20;
     private const double MaxCardWidth = 600;
     private const double DefaultCardWidth = 200;
@@ -142,8 +144,8 @@ public partial class MainWindow : Window
     private long _seenMutationGeneration;
     private bool _favoriteWriterAdopted;
     private bool _seenWriterAdopted;
-    private bool _favoritePumpScheduled;
-    private bool _seenPumpScheduled;
+    private DispatcherTimer? _favoriteWriterPumpTimer;
+    private DispatcherTimer? _seenWriterPumpTimer;
     private bool _forceSharedWritersForSmoke;
     private ManualResetEventSlim? _favoriteWriterEnteredForSmoke;
     private ManualResetEventSlim? _favoriteWriterGateForSmoke;
@@ -386,6 +388,8 @@ public partial class MainWindow : Window
         {
             CancelPreviewTabHoverDecode();
             CancelThumbnailViewportLoading();
+            _favoriteWriterPumpTimer?.Stop();
+            _seenWriterPumpTimer?.Stop();
             _modalEnhancementPollTimer.Stop();
             _modalEnhancementGeneration++;
         };
@@ -2563,7 +2567,9 @@ public partial class MainWindow : Window
             return new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Failed, batch, "favorite smoke gate timed out");
         if (Interlocked.Exchange(ref _failNextFavoriteWriterForSmoke, 0) != 0)
             return new SharedWriteResult<FavoriteDelta>(SharedWriteStatus.Failed, batch, "injected Favorite write failure");
-        return WriteFavoriteBatch(ResolvedFavoritesPath, batch);
+        _sharedStoreWriteKernelGate.Wait();
+        try { return WriteFavoriteBatch(ResolvedFavoritesPath, batch); }
+        finally { _sharedStoreWriteKernelGate.Release(); }
     }
 
     private SharedWriteResult<SeenDelta> WriteSeenBatchForActor(IReadOnlyList<SeenDelta> batch)
@@ -2573,7 +2579,9 @@ public partial class MainWindow : Window
             return new SharedWriteResult<SeenDelta>(SharedWriteStatus.Failed, batch, "seen smoke gate timed out");
         if (Interlocked.Exchange(ref _failNextSeenWriterForSmoke, 0) != 0)
             return new SharedWriteResult<SeenDelta>(SharedWriteStatus.Failed, batch, "injected Seen write failure");
-        return WriteSeenBatch(ResolvedSeenPath, batch);
+        _sharedStoreWriteKernelGate.Wait();
+        try { return WriteSeenBatch(ResolvedSeenPath, batch); }
+        finally { _sharedStoreWriteKernelGate.Release(); }
     }
 
     private static SharedWriteResult<FavoriteDelta> WriteFavoriteBatch(string path, IReadOnlyList<FavoriteDelta> batch)
@@ -2637,26 +2645,43 @@ public partial class MainWindow : Window
 
     private void ScheduleFavoriteWriterPump()
     {
-        if (_favoritePumpScheduled)
-            return;
-        _favoritePumpScheduled = true;
-        _ = Dispatcher.InvokeAsync(() =>
+        if (_favoriteWriterPumpTimer is null)
         {
-            _favoritePumpScheduled = false;
-            _ = RunFavoriteWriterPumpAsync();
-        }, DispatcherPriority.SystemIdle);
+            _favoriteWriterPumpTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(SharedStoreWriterBatchDelayMilliseconds),
+            };
+            _favoriteWriterPumpTimer.Tick += (_, _) =>
+            {
+                _favoriteWriterPumpTimer.Stop();
+                _ = RunFavoriteWriterPumpAsync();
+            };
+        }
+
+        // Start one bounded first-event window. Continuous input cannot defer
+        // durability indefinitely; the next batch starts at this cadence.
+        // Explicit drain/reload/close paths still start the actor immediately.
+        if (!_favoriteWriterPumpTimer.IsEnabled)
+            _favoriteWriterPumpTimer.Start();
     }
 
     private void ScheduleSeenWriterPump()
     {
-        if (_seenPumpScheduled)
-            return;
-        _seenPumpScheduled = true;
-        _ = Dispatcher.InvokeAsync(() =>
+        if (_seenWriterPumpTimer is null)
         {
-            _seenPumpScheduled = false;
-            _ = RunSeenWriterPumpAsync();
-        }, DispatcherPriority.SystemIdle);
+            _seenWriterPumpTimer = new DispatcherTimer(DispatcherPriority.Background, Dispatcher)
+            {
+                Interval = TimeSpan.FromMilliseconds(SharedStoreWriterBatchDelayMilliseconds),
+            };
+            _seenWriterPumpTimer.Tick += (_, _) =>
+            {
+                _seenWriterPumpTimer.Stop();
+                _ = RunSeenWriterPumpAsync();
+            };
+        }
+
+        if (!_seenWriterPumpTimer.IsEnabled)
+            _seenWriterPumpTimer.Start();
     }
 
     private async Task RunFavoriteWriterPumpAsync()
@@ -2666,8 +2691,8 @@ public partial class MainWindow : Window
             return;
         try
         {
-            SharedWriteStatus status = await writer.DrainAsync(CancellationToken.None);
-            if (status != SharedWriteStatus.Succeeded && writer.HasPendingOrInFlight)
+            await writer.StartOrJoinPumpAsync();
+            if (writer.HasPendingOrInFlight)
                 ScheduleFavoriteWriterPump();
         }
         catch (Exception ex) { SetStatusToast($"Favorites could not be saved: {ex.Message}", RetryFailedFavoriteBatch); }
@@ -2680,8 +2705,8 @@ public partial class MainWindow : Window
             return;
         try
         {
-            SharedWriteStatus status = await writer.DrainAsync(CancellationToken.None);
-            if (status != SharedWriteStatus.Succeeded && writer.HasPendingOrInFlight)
+            await writer.StartOrJoinPumpAsync();
+            if (writer.HasPendingOrInFlight)
                 ScheduleSeenWriterPump();
         }
         catch (Exception ex) { SetStatusToast($"Seen state could not be saved: {ex.Message}", RetryFailedSeenBatch); }
@@ -2762,11 +2787,7 @@ public partial class MainWindow : Window
         }
 
         if (failed.Count > 0)
-        {
-            ApplyFilters();
-            SyncSelectionActionSurface();
-            RefreshModalFavoriteSurface();
-        }
+            RefreshFavoriteMutationSurface();
 
         if (result.Status == SharedWriteStatus.Protected)
         {
@@ -2878,9 +2899,7 @@ public partial class MainWindow : Window
             SetTileFavoriteLevel(previous.Path, previous.DesiredLevel);
             writer.Enqueue(new FavoriteDelta(previous.Path, durable, previous.DesiredLevel, generation));
         }
-        ApplyFilters();
-        SyncSelectionActionSurface();
-        RefreshModalFavoriteSurface();
+        RefreshFavoriteMutationSurface();
         ScheduleFavoriteWriterPump();
     }
 
@@ -2982,13 +3001,28 @@ public partial class MainWindow : Window
         return true;
     }
 
+    private void RefreshFavoriteMutationSurface()
+    {
+        if (FavoriteOnlyFilter?.IsChecked == true || UnfavoriteOnlyFilter?.IsChecked == true)
+            ApplyFilters();
+        SyncSelectionActionSurface();
+        RefreshModalFavoriteSurface();
+    }
+
     private void RefreshModalFavoriteSurface()
     {
+        if (SelectedTile() is not Tile selected)
+        {
+            if (Modal.Visibility == Visibility.Visible)
+                Modal.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        FavoriteLevelText.Text = selected.Fav.ToString(CultureInfo.InvariantCulture);
+        ModalFavoriteLevelText.Text = selected.Fav.ToString(CultureInfo.InvariantCulture);
         if (Modal.Visibility != Visibility.Visible)
             return;
-        if (SelectedTile() is null)
-            Modal.Visibility = Visibility.Collapsed;
-        else
+        if (!string.Equals(_modalSourceTilePath, selected.Path, StringComparison.OrdinalIgnoreCase))
             OpenModal();
     }
 
@@ -6223,15 +6257,7 @@ public partial class MainWindow : Window
             tile.Fav = nextLevels[key];
         }
 
-        ApplyFilters();
-        SyncSelectionActionSurface();
-        if (Modal.Visibility == Visibility.Visible)
-        {
-            if (SelectedTile() is null)
-                Modal.Visibility = Visibility.Collapsed;
-            else
-                OpenModal();
-        }
+        RefreshFavoriteMutationSurface();
         SaveState();
         SetStatusToast(string.Format(CultureInfo.InvariantCulture, successMessageFormat, selected.Count));
         return true;
@@ -6279,7 +6305,6 @@ public partial class MainWindow : Window
             return QueueFavoriteLevels([(tile, clamped)], $"Set favorite level {clamped}.");
 
         string key = NormalizeFavoritePath(tile.Path);
-        int previousLevel = tile.Fav;
         bool hadStoredLevel = _favorites.TryGetValue(key, out int previousStoredLevel);
 
         if (clamped > 0)
@@ -6299,19 +6324,7 @@ public partial class MainWindow : Window
         }
 
         tile.Fav = clamped;
-        ApplyFilters();
-        if (_tiles.Contains(tile))
-            SelectTile(tile);
-        else if (previousLevel != clamped)
-            UpdateHeaderStats();
-
-        if (Modal.Visibility == Visibility.Visible)
-        {
-            if (SelectedTile() is null)
-                Modal.Visibility = Visibility.Collapsed;
-            else
-                OpenModal();
-        }
+        RefreshFavoriteMutationSurface();
 
         SaveState();
         return true;
@@ -6348,9 +6361,7 @@ public partial class MainWindow : Window
             writer.Enqueue(new FavoriteDelta(key, durable, desired, generation));
         }
 
-        ApplyFilters();
-        SyncSelectionActionSurface();
-        RefreshModalFavoriteSurface();
+        RefreshFavoriteMutationSurface();
         SaveState();
         SetStatusToast($"{successMessage} Saving...");
         ScheduleFavoriteWriterPump();
