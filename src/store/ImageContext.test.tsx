@@ -40,6 +40,8 @@ function SharedSettingsProbe() {
     setKeyBindings,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
+    thumbnailStatusBorders,
+    setThumbnailStatusBorders,
   } = useImageStore();
   const [saveResult, setSaveResult] = React.useState('');
 
@@ -47,6 +49,7 @@ function SharedSettingsProbe() {
     <div>
       <output aria-label="saved next binding">{keyBindings.nextImage}</output>
       <output aria-label="saved delete confirmation">{confirmBeforeDelete ? 'enabled' : 'disabled'}</output>
+      <output aria-label="saved thumbnail borders">{JSON.stringify(thumbnailStatusBorders)}</output>
       <output aria-label="shared settings save result">{saveResult}</output>
       <button type="button" onClick={() => {
         void setKeyBindings({ ...keyBindings, nextImage: 'n' }).then((result) => {
@@ -58,6 +61,14 @@ function SharedSettingsProbe() {
           setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
         });
       }}>Disable delete confirmation</button>
+      <button type="button" onClick={() => {
+        void setThumbnailStatusBorders({
+          favorite: { enabled: false, color: '#112233' },
+          enhanced: { enabled: true, color: '#aabbcc' },
+        }).then((result) => {
+          setSaveResult(result.ok ? 'saved' : `failed:${result.status ?? 'network'}`);
+        });
+      }}>Save thumbnail borders</button>
     </div>
   );
 }
@@ -1829,6 +1840,34 @@ describe('ImageProvider shared settings save failures', () => {
     await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
       .toHaveTextContent('saved'));
     expect(screen.getByRole('status', { name: 'saved next binding' })).toHaveTextContent('n');
+  });
+
+  it('hydrates defaults then commits confirmed shared thumbnail border settings', async () => {
+    const patches: Record<string, unknown>[] = [];
+    renderSharedSettingsProbe(async (patch) => {
+      patches.push(patch);
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ ok: true, ...patch }),
+      } as Response;
+    });
+    const user = userEvent.setup();
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'saved thumbnail borders' }))
+      .toHaveTextContent('#facc15'));
+    await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
+
+    await waitFor(() => expect(screen.getByRole('status', { name: 'shared settings save result' }))
+      .toHaveTextContent('saved'));
+    expect(screen.getByRole('status', { name: 'saved thumbnail borders' })).toHaveTextContent('#112233');
+    expect(screen.getByRole('status', { name: 'saved thumbnail borders' })).toHaveTextContent('#aabbcc');
+    expect(patches).toContainEqual({
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#112233' },
+        enhanced: { enabled: true, color: '#aabbcc' },
+      },
+    });
   });
 
   it('ignores a delayed initial GET after newer shared settings saves succeed', async () => {

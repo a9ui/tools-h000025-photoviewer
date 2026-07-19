@@ -2,6 +2,7 @@
 
 import React, { useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
+import type { ThumbnailStatusBorderSettings } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
 import {
@@ -23,6 +24,7 @@ import {
 } from '../lib/thumbnailSizing';
 import { Minus } from 'lucide-react';
 import { buildImageIndexById } from '../lib/imageListState';
+import { getThumbnailStatusBorderPresentation } from '../lib/thumbnailStatusBorders';
 import {
   buildDateSectionLayout,
   findDateSectionAnchorIndex,
@@ -37,6 +39,7 @@ import {
 } from '../lib/dateSectionLayout';
 import CachedImage from './CachedImage';
 import { ScanErrorNotice } from './ScanErrorNotice';
+import statusBorderStyles from './ImageGridStatusBorders.module.css';
 
 const OVERSCAN_ROWS = 4;
 const SEARCH_PAGE_SIZE = 100;
@@ -49,6 +52,43 @@ const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
 const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
 const VISIBLE_THUMB_RESEND_MS = 900;
+
+const ThumbnailStatusBorderOverlay = React.memo(function ThumbnailStatusBorderOverlay({
+  favorite,
+  enhanced,
+  settings,
+  placement,
+}: {
+  favorite: boolean;
+  enhanced: boolean;
+  settings: ThumbnailStatusBorderSettings;
+  placement: 'grid' | 'list';
+}) {
+  const presentation = getThumbnailStatusBorderPresentation({ favorite, enhanced, settings });
+  if (!presentation.favoriteColor && !presentation.enhancedColor) return null;
+
+  const className = [
+    statusBorderStyles.overlay,
+    statusBorderStyles[placement],
+    presentation.favoriteColor ? statusBorderStyles.hasFavorite : '',
+    presentation.enhancedColor ? statusBorderStyles.hasEnhanced : '',
+  ].filter(Boolean).join(' ');
+  const style = {
+    '--favorite-thumbnail-border-color': presentation.favoriteColor ?? 'transparent',
+    '--enhanced-thumbnail-border-color': presentation.enhancedColor ?? 'transparent',
+  } as React.CSSProperties;
+
+  return (
+    <span
+      className={className}
+      style={style}
+      data-testid="thumbnail-status-borders"
+      data-favorite-border={presentation.favoriteColor ?? undefined}
+      data-enhanced-border={presentation.enhancedColor ?? undefined}
+      aria-hidden="true"
+    />
+  );
+});
 
 function shouldIgnoreGalleryZoomShortcut(target: EventTarget | null): boolean {
   const element = target && typeof (target as Element).closest === 'function'
@@ -178,6 +218,7 @@ export default function ImageGrid() {
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     requestRevealImage, showSettings,
+    thumbnailStatusBorders,
     dirPath, indexToken,
   } = useImageStore();
 
@@ -1227,6 +1268,7 @@ export default function ImageGrid() {
 
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
+    const isEnhanced = Boolean(enhancedSourceIds[image.id]);
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
@@ -1262,7 +1304,7 @@ export default function ImageGrid() {
           }}
           onKeyDown={(event) => handlePrimaryControlKeyDown(event, image, sourceIndex)}
         >
-          <div className="list-thumb">
+          <div className={`list-thumb ${statusBorderStyles.thumbnailHost}`}>
             <CachedImage
               src={image.fileUrl}
               requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
@@ -1272,6 +1314,12 @@ export default function ImageGrid() {
               loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
               decoding="async"
               fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
+            />
+            <ThumbnailStatusBorderOverlay
+              favorite={isFav}
+              enhanced={isEnhanced}
+              settings={thumbnailStatusBorders}
+              placement="list"
             />
           </div>
           <div className="list-info">
@@ -1338,6 +1386,7 @@ export default function ImageGrid() {
 
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
+    const isEnhanced = Boolean(enhancedSourceIds[image.id]);
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
@@ -1394,6 +1443,12 @@ export default function ImageGrid() {
             <span className="card-filename">{image.filename}</span>
           </div>
         </button>
+        <ThumbnailStatusBorderOverlay
+          favorite={isFav}
+          enhanced={isEnhanced}
+          settings={thumbnailStatusBorders}
+          placement="grid"
+        />
         {compactGridActions ? (
           favLevel > 0 && (
             <div className="card-fav-count" title={`Favorite level ${favLevel}`}>

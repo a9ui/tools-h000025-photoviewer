@@ -6,6 +6,10 @@ import { withFileWriteLock } from '@/lib/fileWriteLock';
 import { hasKeyBindingConflicts, normalizeKeyBinding } from '@/lib/keyBindings';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
+import {
+  isValidThumbnailStatusBordersDocument,
+  normalizeThumbnailStatusBorders,
+} from '@/lib/thumbnailStatusBorders';
 
 export const dynamic = 'force-dynamic';
 
@@ -45,6 +49,10 @@ function validateStoredDocument(value: unknown): value is SettingsDocument {
   if (Object.hasOwn(value, 'keyBindings') && !validateKeyBindings(value.keyBindings)) {
     return false;
   }
+  if (Object.hasOwn(value, 'thumbnailStatusBorders')
+    && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
+    return false;
+  }
   return true;
 }
 
@@ -78,6 +86,7 @@ function publicSettings(document: SettingsDocument): AppSettings {
     confirmBeforeDelete: typeof document.confirmBeforeDelete === 'boolean'
       ? document.confirmBeforeDelete
       : true,
+    thumbnailStatusBorders: normalizeThumbnailStatusBorders(document.thumbnailStatusBorders),
   };
 }
 
@@ -135,10 +144,37 @@ function validateIncomingDocument(value: unknown):
   if (Object.hasOwn(value, 'keyBindings') && !validateKeyBindings(value.keyBindings)) {
     return { ok: false, error: 'keyBindings must contain only bounded string bindings.' };
   }
-  if (!Object.hasOwn(value, 'confirmBeforeDelete') && !Object.hasOwn(value, 'keyBindings')) {
+  if (Object.hasOwn(value, 'thumbnailStatusBorders')
+    && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
+    return {
+      ok: false,
+      error: 'thumbnailStatusBorders must contain boolean enabled values and six-digit hex colors.',
+    };
+  }
+  if (!Object.hasOwn(value, 'confirmBeforeDelete')
+    && !Object.hasOwn(value, 'keyBindings')
+    && !Object.hasOwn(value, 'thumbnailStatusBorders')) {
     return { ok: false, error: 'Request body must include a supported setting.' };
   }
   return { ok: true, update: value };
+}
+
+function mergeThumbnailStatusBorders(
+  currentValue: unknown,
+  incomingValue: unknown,
+): SettingsDocument {
+  const current = isObject(currentValue) ? currentValue : {};
+  const incoming = isObject(incomingValue) ? incomingValue : {};
+  const merged: SettingsDocument = { ...current, ...incoming };
+
+  for (const status of ['favorite', 'enhanced'] as const) {
+    const currentPreference = isObject(current[status]) ? current[status] : {};
+    const incomingPreference = isObject(incoming[status]) ? incoming[status] : {};
+    if (Object.hasOwn(current, status) || Object.hasOwn(incoming, status)) {
+      merged[status] = { ...currentPreference, ...incomingPreference };
+    }
+  }
+  return merged;
 }
 
 async function writeSettings(document: SettingsDocument) {
@@ -193,6 +229,7 @@ export async function PUT(request: Request) {
       const currentBindings = isObject(current.document.keyBindings)
         ? current.document.keyBindings
         : {};
+      const hasIncomingStatusBorders = Object.hasOwn(incoming.update, 'thumbnailStatusBorders');
       const updated: SettingsDocument = {
         ...current.document,
         ...incoming.update,
@@ -200,6 +237,12 @@ export async function PUT(request: Request) {
           ...currentBindings,
           ...incomingBindings,
         },
+        ...(hasIncomingStatusBorders ? {
+          thumbnailStatusBorders: mergeThumbnailStatusBorders(
+            current.document.thumbnailStatusBorders,
+            incoming.update.thumbnailStatusBorders,
+          ),
+        } : {}),
       };
       if (Object.hasOwn(incoming.update, 'keyBindings')
         && hasKeyBindingConflicts(publicSettings(updated).keyBindings)) {

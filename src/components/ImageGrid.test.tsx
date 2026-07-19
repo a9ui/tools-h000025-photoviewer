@@ -2,7 +2,7 @@ import React from "react";
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ImageFile } from "../lib/types";
+import { DEFAULT_THUMBNAIL_STATUS_BORDERS, type ImageFile } from "../lib/types";
 import { useImageStore } from "../store/ImageContext";
 import ImageGrid from "./ImageGrid";
 
@@ -101,6 +101,7 @@ function createStore(
     favoriteFilterLevels: [],
     showEnhancedOnly: false,
     enhancedSourceIds: {},
+    thumbnailStatusBorders: DEFAULT_THUMBNAIL_STATUS_BORDERS,
     closeAllPreviews: vi.fn(),
     clearSelection,
     setSearchScrollPosition: vi.fn(),
@@ -272,6 +273,48 @@ describe("ImageGrid keyboard primary controls", () => {
       }),
     ).toBeInTheDocument();
   });
+
+  it("keeps custom favorite and enhanced thumbnail borders independently visible when combined", () => {
+    const store = createStore("grid", { selectedIds: [firstImage.id] });
+    vi.mocked(useImageStore).mockReturnValue({
+      ...store,
+      view: { ...store.view, showUnseenMarkers: true },
+      favorites: { [firstImage.id]: 3 },
+      enhancedSourceIds: { [firstImage.id]: true },
+      thumbnailStatusBorders: {
+        favorite: { enabled: true, color: "#112233" },
+        enhanced: { enabled: true, color: "#abcdef" },
+      },
+    });
+    renderGrid();
+
+    const firstGroup = screen.getByRole("group", { name: "Image first.png" });
+    const overlay = screen.getByTestId("thumbnail-status-borders");
+    expect(overlay).toHaveAttribute("data-favorite-border", "#112233");
+    expect(overlay).toHaveAttribute("data-enhanced-border", "#abcdef");
+    expect(firstGroup).toHaveClass("is-selected");
+    expect(firstGroup).toHaveClass("is-unseen");
+  });
+
+  it.each(["grid", "list"] as const)(
+    "hides a disabled favorite border without hiding the enhanced border in %s view",
+    (viewMode) => {
+      vi.mocked(useImageStore).mockReturnValue({
+        ...createStore(viewMode),
+        favorites: { [firstImage.id]: 5 },
+        enhancedSourceIds: { [firstImage.id]: true },
+        thumbnailStatusBorders: {
+          favorite: { enabled: false, color: "#112233" },
+          enhanced: { enabled: true, color: "#abcdef" },
+        },
+      });
+      renderGrid();
+
+      const overlay = screen.getByTestId("thumbnail-status-borders");
+      expect(overlay).not.toHaveAttribute("data-favorite-border");
+      expect(overlay).toHaveAttribute("data-enhanced-border", "#abcdef");
+    },
+  );
 
   it("moves the roving primary target with arrows and focuses it after the requested reveal", async () => {
     const user = userEvent.setup();

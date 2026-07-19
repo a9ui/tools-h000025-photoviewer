@@ -1,10 +1,10 @@
 import React from 'react';
-import { act, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import SettingsModal from './SettingsModal';
 import { useImageStore } from '../store/ImageContext';
-import { DEFAULT_KEY_BINDINGS } from '../lib/types';
+import { DEFAULT_KEY_BINDINGS, DEFAULT_THUMBNAIL_STATUS_BORDERS } from '../lib/types';
 
 vi.mock('../store/ImageContext', () => ({
   useImageStore: vi.fn(),
@@ -14,6 +14,7 @@ const setView = vi.fn();
 const setKeyBindings = vi.fn();
 const setShowSettings = vi.fn();
 const setConfirmBeforeDelete = vi.fn();
+const setThumbnailStatusBorders = vi.fn();
 const writeText = vi.fn();
 
 const fullRevision = '1234567890abcdef1234567890abcdef12345678';
@@ -40,6 +41,7 @@ function mockSettingsStore(
 ) {
   setKeyBindings.mockResolvedValue({ ok: true });
   setConfirmBeforeDelete.mockResolvedValue({ ok: true });
+  setThumbnailStatusBorders.mockResolvedValue({ ok: true });
   vi.mocked(useImageStore).mockReturnValue({
     showSettings,
     setShowSettings,
@@ -47,6 +49,8 @@ function mockSettingsStore(
     setKeyBindings,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
+    thumbnailStatusBorders: DEFAULT_THUMBNAIL_STATUS_BORDERS,
+    setThumbnailStatusBorders,
     view: {
       modalEdgeRatio: 0.28,
       showUnseenMarkers: true,
@@ -75,6 +79,45 @@ describe('SettingsModal unseen markers setting', () => {
 
     await user.click(checkbox);
     expect(setView).toHaveBeenCalledWith({ showUnseenMarkers: false });
+  });
+
+  it('shows yellow enabled defaults and saves independent off/custom border settings', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    const favoriteToggle = screen.getByRole('checkbox', { name: 'Show favorite thumbnail border' });
+    const enhancedToggle = screen.getByRole('checkbox', { name: 'Show enhanced thumbnail border' });
+    const favoriteColor = screen.getByLabelText('Favorite thumbnail border color');
+    const enhancedColor = screen.getByLabelText('AI enhanced thumbnail border color');
+    expect(favoriteToggle).toBeChecked();
+    expect(enhancedToggle).toBeChecked();
+    expect(favoriteColor).toHaveValue('#facc15');
+    expect(enhancedColor).toHaveValue('#facc15');
+
+    await user.click(favoriteToggle);
+    fireEvent.change(enhancedColor, { target: { value: '#12abef' } });
+    await user.click(screen.getByRole('button', { name: 'Save thumbnail borders' }));
+
+    await waitFor(() => expect(setThumbnailStatusBorders).toHaveBeenCalledWith({
+      favorite: { enabled: false, color: '#facc15' },
+      enhanced: { enabled: true, color: '#12abef' },
+    }));
+  });
+
+  it('restores both thumbnail border controls to the enabled yellow defaults', async () => {
+    const user = userEvent.setup();
+    render(<SettingsModal />);
+
+    await user.click(screen.getByRole('checkbox', { name: 'Show enhanced thumbnail border' }));
+    fireEvent.change(screen.getByLabelText('Favorite thumbnail border color'), {
+      target: { value: '#000000' },
+    });
+    await user.click(screen.getByRole('button', { name: 'Reset border defaults' }));
+
+    expect(screen.getByRole('checkbox', { name: 'Show favorite thumbnail border' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Show enhanced thumbnail border' })).toBeChecked();
+    expect(screen.getByLabelText('Favorite thumbnail border color')).toHaveValue('#facc15');
+    expect(screen.getByLabelText('AI enhanced thumbnail border color')).toHaveValue('#facc15');
   });
 
   it('shows conflicting fields inline and never saves the invalid draft on close', async () => {

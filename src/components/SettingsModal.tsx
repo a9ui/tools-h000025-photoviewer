@@ -2,11 +2,17 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
-import { DEFAULT_KEY_BINDINGS, type KeyBindings } from '../lib/types';
+import {
+  DEFAULT_KEY_BINDINGS,
+  DEFAULT_THUMBNAIL_STATUS_BORDERS,
+  type KeyBindings,
+  type ThumbnailStatusBorderSettings,
+} from '../lib/types';
 import { clampModalEdgeRatio } from '../lib/modalNavigation';
 import { useDialogFocus } from '../lib/useDialogFocus';
 import { getKeyBindingConflicts } from '../lib/keyBindings';
 import RuntimeDiagnosticsSection from './RuntimeDiagnosticsSection';
+import statusBorderStyles from './SettingsModalStatusBorders.module.css';
 
 const KEY_LABELS: Record<keyof KeyBindings, string> = {
   nextImage: 'Next image',
@@ -31,6 +37,8 @@ export default function SettingsModal() {
     setKeyBindings,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
+    thumbnailStatusBorders,
+    setThumbnailStatusBorders,
     view,
     setView,
   } = useImageStore();
@@ -38,29 +46,38 @@ export default function SettingsModal() {
   const [recording, setRecording] = useState<keyof KeyBindings | null>(null);
   const [draftKeyBindings, setDraftKeyBindings] = useState<KeyBindings>(keyBindings);
   const [confirmDraft, setConfirmDraft] = useState(confirmBeforeDelete);
+  const [thumbnailBordersDraft, setThumbnailBordersDraft] = useState<ThumbnailStatusBorderSettings>(thumbnailStatusBorders);
   const [failedConfirmValue, setFailedConfirmValue] = useState<boolean | null>(null);
   const [keyBindingsSaveError, setKeyBindingsSaveError] = useState('');
   const [confirmSaveError, setConfirmSaveError] = useState('');
+  const [thumbnailBordersSaveError, setThumbnailBordersSaveError] = useState('');
   const [savingKeyBindings, setSavingKeyBindings] = useState(false);
   const [savingConfirm, setSavingConfirm] = useState(false);
+  const [savingThumbnailBorders, setSavingThumbnailBorders] = useState(false);
   const modalEdgePercent = Math.round(clampModalEdgeRatio(view.modalEdgeRatio) * 100);
   const panelRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const keyBindingsSaveAttemptRef = useRef(0);
   const confirmSaveAttemptRef = useRef(0);
+  const thumbnailBordersSaveAttemptRef = useRef(0);
   const dirtyKeyBindingActionsRef = useRef<Set<keyof KeyBindings>>(new Set());
+  const thumbnailBordersDraftDirtyRef = useRef(false);
   const close = useCallback(() => {
     keyBindingsSaveAttemptRef.current += 1;
     confirmSaveAttemptRef.current += 1;
+    thumbnailBordersSaveAttemptRef.current += 1;
     setShowSettings(false);
     setRecording(null);
     setDraftKeyBindings(keyBindings);
     setConfirmDraft(confirmBeforeDelete);
+    setThumbnailBordersDraft(thumbnailStatusBorders);
     setFailedConfirmValue(null);
     setKeyBindingsSaveError('');
     setConfirmSaveError('');
+    setThumbnailBordersSaveError('');
     dirtyKeyBindingActionsRef.current.clear();
-  }, [confirmBeforeDelete, keyBindings, setShowSettings]);
+    thumbnailBordersDraftDirtyRef.current = false;
+  }, [confirmBeforeDelete, keyBindings, setShowSettings, thumbnailStatusBorders]);
 
   useEffect(() => {
     if (!showSettings) return;
@@ -84,6 +101,12 @@ export default function SettingsModal() {
     setFailedConfirmValue(null);
     setConfirmSaveError('');
   }, [confirmBeforeDelete, showSettings]);
+
+  useEffect(() => {
+    if (!showSettings || thumbnailBordersDraftDirtyRef.current) return;
+    setThumbnailBordersDraft(thumbnailStatusBorders);
+    setThumbnailBordersSaveError('');
+  }, [showSettings, thumbnailStatusBorders]);
 
   useDialogFocus({
     open: showSettings,
@@ -172,6 +195,49 @@ export default function SettingsModal() {
     }
   }, [confirmBeforeDelete, savingConfirm, setConfirmBeforeDelete]);
 
+  const updateThumbnailBorderDraft = useCallback((
+    status: keyof ThumbnailStatusBorderSettings,
+    patch: Partial<ThumbnailStatusBorderSettings[typeof status]>,
+  ) => {
+    thumbnailBordersDraftDirtyRef.current = true;
+    setThumbnailBordersSaveError('');
+    setThumbnailBordersDraft((current) => ({
+      ...current,
+      [status]: { ...current[status], ...patch },
+    }));
+  }, []);
+
+  const resetThumbnailBorders = useCallback(() => {
+    thumbnailBordersDraftDirtyRef.current = true;
+    setThumbnailBordersSaveError('');
+    setThumbnailBordersDraft({
+      favorite: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite },
+      enhanced: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.enhanced },
+    });
+  }, []);
+
+  const saveThumbnailBorders = useCallback(async () => {
+    if (savingThumbnailBorders) return;
+    const attempt = thumbnailBordersSaveAttemptRef.current + 1;
+    thumbnailBordersSaveAttemptRef.current = attempt;
+    setSavingThumbnailBorders(true);
+    setThumbnailBordersSaveError('');
+    try {
+      const result = await setThumbnailStatusBorders(thumbnailBordersDraft);
+      if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setThumbnailBordersSaveError(`${result.error} Draft preserved; retry when ready.`);
+        return;
+      }
+      thumbnailBordersDraftDirtyRef.current = false;
+    } catch {
+      if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
+      setThumbnailBordersSaveError('Could not reach the local settings service. Draft preserved; retry when ready.');
+    } finally {
+      setSavingThumbnailBorders(false);
+    }
+  }, [savingThumbnailBorders, setThumbnailStatusBorders, thumbnailBordersDraft]);
+
   if (!showSettings) return null;
 
   return (
@@ -233,6 +299,61 @@ export default function SettingsModal() {
               <span>{view.showUnseenMarkers ? 'Enabled' : 'Disabled'}</span>
             </label>
           </div>
+          <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '1rem 0 0.35rem' }}>
+            Thumbnail status borders
+          </h3>
+          {(['favorite', 'enhanced'] as const).map((status) => {
+            const label = status === 'favorite' ? 'Favorite' : 'AI enhanced';
+            const preference = thumbnailBordersDraft[status];
+            return (
+              <div className="setting-row" key={status}>
+                <span className="setting-label">{label} thumbnail border</span>
+                <div className={statusBorderStyles.control}>
+                  <label className="sidebar-toggle">
+                    <input
+                      aria-label={`Show ${status} thumbnail border`}
+                      type="checkbox"
+                      checked={preference.enabled}
+                      disabled={savingThumbnailBorders}
+                      onChange={(event) => updateThumbnailBorderDraft(status, { enabled: event.target.checked })}
+                    />
+                    <span>{preference.enabled ? 'Enabled' : 'Disabled'}</span>
+                  </label>
+                  <input
+                    className={statusBorderStyles.colorInput}
+                    aria-label={`${label} thumbnail border color`}
+                    type="color"
+                    value={preference.color}
+                    disabled={!preference.enabled || savingThumbnailBorders}
+                    onChange={(event) => updateThumbnailBorderDraft(status, { color: event.target.value })}
+                  />
+                  <code className={statusBorderStyles.colorValue}>{preference.color}</code>
+                </div>
+              </div>
+            );
+          })}
+          <div className="sidebar-actions" style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="sidebar-link" onClick={resetThumbnailBorders} disabled={savingThumbnailBorders}>
+              Reset border defaults
+            </button>
+            <button
+              type="button"
+              className="sidebar-link"
+              onClick={() => { void saveThumbnailBorders(); }}
+              disabled={savingThumbnailBorders}
+            >
+              {savingThumbnailBorders
+                ? 'Saving thumbnail borders…'
+                : thumbnailBordersSaveError
+                  ? 'Retry save thumbnail borders'
+                  : 'Save thumbnail borders'}
+            </button>
+          </div>
+          {thumbnailBordersSaveError && (
+            <p className="settings-save-error" role="alert">
+              {thumbnailBordersSaveError}
+            </p>
+          )}
           <div className="setting-row">
             <span className="setting-label">Modal edge navigation zone</span>
             <div className="setting-range-control">

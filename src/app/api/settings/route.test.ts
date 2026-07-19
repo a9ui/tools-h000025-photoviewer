@@ -4,7 +4,7 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
+import { DEFAULT_KEY_BINDINGS, DEFAULT_THUMBNAIL_STATUS_BORDERS } from '@/lib/types';
 import { GET, PUT } from './route';
 
 let root = '';
@@ -39,9 +39,47 @@ describe('settings route write safety', () => {
     expect(body).toMatchObject({
       keyBindings: DEFAULT_KEY_BINDINGS,
       confirmBeforeDelete: true,
+      thumbnailStatusBorders: DEFAULT_THUMBNAIL_STATUS_BORDERS,
       malformed: false,
     });
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('persists independent thumbnail border settings while preserving nested future fields', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      futureSetting: true,
+      thumbnailStatusBorders: {
+        favorite: { enabled: true, color: '#facc15', futureWidth: 4 },
+        enhanced: { enabled: true, color: '#facc15' },
+        futureStatus: { enabled: true },
+      },
+    }), 'utf8');
+
+    const response = await PUT(putRequest(JSON.stringify({
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#112233' },
+        enhanced: { color: '#AABBCC' },
+      },
+    })));
+    const body = await response.json();
+    const stored = JSON.parse(await fs.readFile(target, 'utf8'));
+
+    expect(response.status).toBe(200);
+    expect(body).toMatchObject({
+      ok: true,
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#112233' },
+        enhanced: { enabled: true, color: '#aabbcc' },
+      },
+    });
+    expect(stored).toMatchObject({
+      futureSetting: true,
+      thumbnailStatusBorders: {
+        favorite: { enabled: false, color: '#112233', futureWidth: 4 },
+        enhanced: { enabled: true, color: '#AABBCC' },
+        futureStatus: { enabled: true },
+      },
+    });
   });
 
   it('atomically merges a partial update while preserving unknown future fields', async () => {
@@ -102,6 +140,8 @@ describe('settings route write safety', () => {
     ['invalid bindings map', JSON.stringify({ keyBindings: [] })],
     ['invalid binding value', JSON.stringify({ keyBindings: { nextImage: 7 } })],
     ['empty binding value', JSON.stringify({ keyBindings: { nextImage: '' } })],
+    ['invalid favorite border toggle', JSON.stringify({ thumbnailStatusBorders: { favorite: { enabled: 'yes' } } })],
+    ['invalid enhanced border color', JSON.stringify({ thumbnailStatusBorders: { enhanced: { color: 'yellow' } } })],
   ])('rejects %s without replacing the existing file', async (_name, body) => {
     const original = '{"confirmBeforeDelete":true}\n';
     await fs.writeFile(target, original, 'utf8');

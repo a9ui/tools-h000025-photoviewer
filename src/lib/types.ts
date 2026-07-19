@@ -84,8 +84,24 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   zoomReset: '0',
 };
 
+export interface ThumbnailStatusBorderPreference {
+  enabled: boolean;
+  color: string;
+}
+
+export interface ThumbnailStatusBorderSettings {
+  favorite: ThumbnailStatusBorderPreference;
+  enhanced: ThumbnailStatusBorderPreference;
+}
+
+export const DEFAULT_THUMBNAIL_STATUS_BORDERS: ThumbnailStatusBorderSettings = {
+  favorite: { enabled: true, color: '#facc15' },
+  enhanced: { enabled: true, color: '#facc15' },
+};
+
 // App settings.
 export interface AppSettings {
   keyBindings: KeyBindings;
   confirmBeforeDelete?: boolean;
+  thumbnailStatusBorders?: ThumbnailStatusBorderSettings;
 }

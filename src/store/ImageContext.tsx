@@ -4,8 +4,13 @@ import React, {
   createContext, useContext, useState, useEffect,
   useCallback, useRef, ReactNode
 } from 'react';
-import type { ImageFile, KeyBindings, SearchResponse } from '../lib/types';
-import { DEFAULT_KEY_BINDINGS } from '../lib/types';
+import type {
+  ImageFile,
+  KeyBindings,
+  SearchResponse,
+  ThumbnailStatusBorderSettings,
+} from '../lib/types';
+import { DEFAULT_KEY_BINDINGS, DEFAULT_THUMBNAIL_STATUS_BORDERS } from '../lib/types';
 import {
   getClientFilteredLoadedIds,
   nextAfterClientFilterMutation,
@@ -32,6 +37,10 @@ import {
   type SparseModalNavigationIntent,
 } from '../lib/modalNavigation';
 import { MAX_THUMB_SIZE, MIN_THUMB_SIZE } from '../lib/thumbnailSizing';
+import {
+  isValidThumbnailStatusBordersDocument,
+  normalizeThumbnailStatusBorders,
+} from '../lib/thumbnailStatusBorders';
 
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
@@ -483,7 +492,8 @@ function normalizeScanEventProgress(data: Record<string, unknown>) {
 
 type SharedSettingsPatch =
   | { keyBindings: KeyBindings }
-  | { confirmBeforeDelete: boolean };
+  | { confirmBeforeDelete: boolean }
+  | { thumbnailStatusBorders: ThumbnailStatusBorderSettings };
 
 async function saveSharedSettings(patch: SharedSettingsPatch): Promise<SharedSettingsSaveResult> {
   let response: Response;
@@ -549,6 +559,14 @@ function isMatchingSettingsSaveResponse(payload: unknown, patch: SharedSettingsP
   const record = payload as Record<string, unknown>;
   if ('confirmBeforeDelete' in patch) {
     return record.confirmBeforeDelete === patch.confirmBeforeDelete;
+  }
+  if ('thumbnailStatusBorders' in patch) {
+    if (!isValidThumbnailStatusBordersDocument(record.thumbnailStatusBorders)) return false;
+    const saved = normalizeThumbnailStatusBorders(record.thumbnailStatusBorders);
+    return saved.favorite.enabled === patch.thumbnailStatusBorders.favorite.enabled
+      && saved.favorite.color === patch.thumbnailStatusBorders.favorite.color.toLowerCase()
+      && saved.enhanced.enabled === patch.thumbnailStatusBorders.enhanced.enabled
+      && saved.enhanced.color === patch.thumbnailStatusBorders.enhanced.color.toLowerCase();
   }
   const savedBindings = record.keyBindings;
   if (!savedBindings || typeof savedBindings !== 'object') return false;
@@ -650,6 +668,8 @@ interface Ctx {
   setKeyBindings: (kb: KeyBindings) => Promise<SharedSettingsSaveResult>;
   confirmBeforeDelete: boolean;
   setConfirmBeforeDelete: (v: boolean) => Promise<SharedSettingsSaveResult>;
+  thumbnailStatusBorders: ThumbnailStatusBorderSettings;
+  setThumbnailStatusBorders: (v: ThumbnailStatusBorderSettings) => Promise<SharedSettingsSaveResult>;
   showSettings: boolean;
   setShowSettings: (v: boolean) => void;
 
@@ -712,6 +732,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [closedPreviewById, setClosedPreviewById] = useState<Record<string, ImageFile>>({});
   const [keyBindings, setKeyBindingsState] = useState<KeyBindings>(DEFAULT_KEY_BINDINGS);
   const [confirmBeforeDelete, setConfirmBeforeDeleteState] = useState(true);
+  const [thumbnailStatusBorders, setThumbnailStatusBordersState] = useState<ThumbnailStatusBorderSettings>(() => ({
+    favorite: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite },
+    enhanced: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.enhanced },
+  }));
   const [showSettings, setShowSettings] = useState(false);
   const [totalIndexed, setTotalIndexed] = useState(0);
   const [view, setViewState] = useState<ViewSettings>(DEFAULT_VIEW);
@@ -723,8 +747,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [previewTabsPersistenceReady, setPreviewTabsPersistenceReady] = useState(false);
   const keyBindingsMutationGenerationRef = useRef(0);
   const confirmDeleteMutationGenerationRef = useRef(0);
+  const thumbnailStatusBordersMutationGenerationRef = useRef(0);
   const keyBindingsSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const confirmDeleteSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const thumbnailStatusBordersSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   useEffect(() => {
     const retainedIds = new Set(closedPreviewStack);
@@ -1440,6 +1466,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const controller = new AbortController();
     const keyBindingsGeneration = keyBindingsMutationGenerationRef.current;
     const confirmDeleteGeneration = confirmDeleteMutationGenerationRef.current;
+    const thumbnailStatusBordersGeneration = thumbnailStatusBordersMutationGenerationRef.current;
     let active = true;
 
     fetch('/api/settings', { signal: controller.signal })
@@ -1452,6 +1479,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (confirmDeleteMutationGenerationRef.current === confirmDeleteGeneration
           && typeof data.confirmBeforeDelete === 'boolean') {
           setConfirmBeforeDeleteState(data.confirmBeforeDelete);
+        }
+        if (thumbnailStatusBordersMutationGenerationRef.current === thumbnailStatusBordersGeneration) {
+          setThumbnailStatusBordersState(normalizeThumbnailStatusBorders(data.thumbnailStatusBorders));
         }
       })
       .catch(() => {});
@@ -1485,6 +1515,22 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       return result;
     });
     confirmDeleteSaveQueueRef.current = operation.then(() => undefined, () => undefined);
+    return operation;
+  }, []);
+
+  const setThumbnailStatusBorders = useCallback((
+    value: ThumbnailStatusBorderSettings,
+  ): Promise<SharedSettingsSaveResult> => {
+    const normalized = normalizeThumbnailStatusBorders(value);
+    const operation = thumbnailStatusBordersSaveQueueRef.current.then(async () => {
+      const result = await saveSharedSettings({ thumbnailStatusBorders: normalized });
+      if (result.ok && providerMountedRef.current) {
+        thumbnailStatusBordersMutationGenerationRef.current += 1;
+        setThumbnailStatusBordersState(normalized);
+      }
+      return result;
+    });
+    thumbnailStatusBordersSaveQueueRef.current = operation.then(() => undefined, () => undefined);
     return operation;
   }, []);
 
@@ -2807,7 +2853,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       previewTabIds, activePreviewId, previewById, showPreviewImage, openPreviewTab, setActivePreviewId, closePreviewTab, reorderPreviewTab, closeAllPreviews,
       seenImageIds, markImageSeen, revealImageId, requestRevealImage, consumeRevealImage,
       pinnedPreviewIds, togglePinPreviewTab, closedPreviewTabCount: closedPreviewStack.length, restoreLastClosedPreview,
-      keyBindings, setKeyBindings, confirmBeforeDelete, setConfirmBeforeDelete, showSettings, setShowSettings,
+      keyBindings, setKeyBindings, confirmBeforeDelete, setConfirmBeforeDelete,
+      thumbnailStatusBorders, setThumbnailStatusBorders, showSettings, setShowSettings,
       view, setView,
       setSearchScrollPosition, getSearchScrollPosition,
       perfEnabled, setPerfEnabled, perfStats,
