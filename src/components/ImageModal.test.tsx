@@ -2,7 +2,10 @@ import React from 'react';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_KEY_BINDINGS, type ImageFile } from '../lib/types';
-import ImageModal, { MODAL_CHROME_IDLE_MS } from './ImageModal';
+import ImageModal, {
+  MODAL_CHROME_TRANSIENT_MS,
+  MODAL_FILMSTRIP_HOVER_ZONE_PX,
+} from './ImageModal';
 
 const store = vi.hoisted(() => ({
   deleteImage: vi.fn(),
@@ -11,6 +14,8 @@ const store = vi.hoisted(() => ({
   setModalImageIds: vi.fn(),
   ensureSearchRange: vi.fn(),
   setView: vi.fn(),
+  cycleFavoriteLevel: vi.fn(),
+  decreaseFavoriteLevel: vi.fn(),
   searchResults: [] as Array<Record<string, unknown>>,
   modalImageIds: [] as string[],
   selectedIndex: 0 as number | null,
@@ -66,8 +71,8 @@ vi.mock('../store/ImageContext', () => ({
     setModalImageIds: store.setModalImageIds,
     ensureSearchRange: store.ensureSearchRange,
     resolveModalNavigationTarget: store.resolveModalNavigationTarget,
-    cycleFavoriteLevel: vi.fn(),
-    decreaseFavoriteLevel: vi.fn(),
+    cycleFavoriteLevel: store.cycleFavoriteLevel,
+    decreaseFavoriteLevel: store.decreaseFavoriteLevel,
     favorites: store.favorites,
     markImageSeen: vi.fn(),
     requestRevealImage: vi.fn(),
@@ -91,6 +96,33 @@ vi.mock('../lib/clientImageCache', async (importOriginal) => ({
 const firstImage = fixtures.first as ImageFile;
 const secondImage = fixtures.second as ImageFile;
 const thirdImage = fixtures.third as ImageFile;
+
+function mockRect(element: Element, rect: Partial<DOMRect>) {
+  vi.spyOn(element, 'getBoundingClientRect').mockReturnValue({
+    x: 0,
+    y: 0,
+    top: 0,
+    right: 1000,
+    bottom: 1000,
+    left: 0,
+    width: 1000,
+    height: 1000,
+    toJSON: () => ({}),
+    ...rect,
+  });
+}
+
+function toggleManualChromeFromImage(filename = firstImage.filename) {
+  const area = screen.getByTestId('modal-image-area');
+  mockRect(area, {});
+  const image = screen.getAllByRole('img', { name: filename })
+    .find((candidate) => candidate.classList.contains('modal-full-image'));
+  if (!image) throw new Error('expected the full modal image');
+  fireEvent.click(image, { clientX: 500, clientY: 500, detail: 1 });
+  act(() => {
+    vi.advanceTimersByTime(180);
+  });
+}
 
 describe('ImageModal sparse navigation lock', () => {
   beforeEach(() => {
@@ -117,26 +149,128 @@ describe('ImageModal sparse navigation lock', () => {
     vi.useRealTimers();
   });
 
-  it('auto-hides idle chrome and reveals it again on pointer activity', async () => {
+  it('keeps manually visible chrome open, then briefly reveals manually hidden chrome with its cursor', async () => {
     vi.useFakeTimers();
     render(<ImageModal />);
     const dialog = screen.getByRole('dialog');
+    mockRect(dialog, {});
 
     await act(async () => {
       await Promise.resolve();
     });
     act(() => {
-      vi.advanceTimersByTime(MODAL_CHROME_IDLE_MS);
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS * 10);
     });
-    expect(dialog).toHaveClass('chrome-hidden');
-
-    fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100 });
     expect(dialog).not.toHaveClass('chrome-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'visible');
+
+    toggleManualChromeFromImage();
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
+
+    fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 500 });
+    expect(dialog).not.toHaveClass('chrome-hidden');
+    expect(dialog).not.toHaveClass('cursor-hidden');
 
     act(() => {
-      vi.advanceTimersByTime(MODAL_CHROME_IDLE_MS);
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS);
     });
-    expect(dialog).toHaveClass('chrome-hidden');
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
+  });
+
+  it('keeps the manual hidden choice when navigation changes the selected image', async () => {
+    vi.useFakeTimers();
+    const { rerender } = render(<ImageModal />);
+    const dialog = screen.getByRole('dialog');
+    mockRect(dialog, {});
+    toggleManualChromeFromImage();
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.nextImage });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(0, 'next');
+    expect(store.setSelectedIndex).toHaveBeenCalledWith(1);
+
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS);
+    });
+    store.selectedIndex = 1;
+    rerender(<ImageModal />);
+    expect(screen.getByText('second.png')).toBeVisible();
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
+  });
+
+  it('keeps the manual hidden choice after delete moves to exactly one adjacent image', async () => {
+    vi.useFakeTimers();
+    store.searchResults = [fixtures.first, fixtures.second, fixtures.third];
+    store.selectedIndex = 1;
+    store.deleteImage.mockResolvedValue(true);
+    store.resolveModalNavigationTarget.mockResolvedValue({
+      status: 'found',
+      index: 2,
+      id: thirdImage.id,
+      filteredOrderedIds: null,
+    });
+    const { rerender } = render(<ImageModal />);
+    const dialog = screen.getByRole('dialog');
+    mockRect(dialog, {});
+    toggleManualChromeFromImage(secondImage.filename);
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+    expect(store.deleteImage).toHaveBeenCalledTimes(1);
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1);
+    expect(store.setSelectedIndex).toHaveBeenCalledWith(2);
+
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS);
+    });
+    store.selectedIndex = 2;
+    rerender(<ImageModal />);
+    expect(screen.getByText('third.png')).toBeVisible();
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
+  });
+
+  it('keeps the manual hidden choice while switching original and enhanced output', async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({
+        jobs: [{
+          id: 'enhanced-1',
+          sourceId: firstImage.id,
+          status: 'succeeded',
+          progress: 100,
+          outputPath: 'C:/enhanced/first.webp',
+        }],
+      }),
+    }) as Response));
+    render(<ImageModal />);
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    const dialog = screen.getByRole('dialog');
+    mockRect(dialog, {});
+    const outputToggle = screen.getByRole('button', { name: 'Toggle original or enhanced image' });
+    expect(outputToggle).not.toBeDisabled();
+    toggleManualChromeFromImage();
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+
+    fireEvent.click(outputToggle);
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+    expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
   });
 
   it('releases navigation after a failed delete so next still works', async () => {
@@ -185,6 +319,8 @@ describe('ImageModal sparse navigation lock', () => {
 
     const strip = screen.getByRole('region', { name: 'Image filmstrip' });
     expect(strip).toBeVisible();
+    expect(strip).toHaveClass('is-layout');
+    expect(strip).toHaveAttribute('data-presentation', 'layout');
     expect(within(screen.getByTestId('modal-image-area')).queryByRole('region', { name: 'Image filmstrip' })).toBeNull();
     expect(within(screen.getByTestId('modal-main-column')).getByRole('region', { name: 'Image filmstrip' })).toBe(strip);
     expect(screen.getByRole('option', { name: 'Open first.png, image 1 of 3' }))
@@ -209,6 +345,67 @@ describe('ImageModal sparse navigation lock', () => {
 
     fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.toggleFilmstrip });
     expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
+  });
+
+  it('reveals the filmstrip as a front overlay only inside the bottom hover zone', async () => {
+    vi.useFakeTimers();
+    render(<ImageModal />);
+    const dialog = screen.getByRole('dialog');
+    mockRect(dialog, {});
+    toggleManualChromeFromImage();
+    expect(screen.queryByRole('region', { name: 'Image filmstrip' })).toBeNull();
+
+    fireEvent.pointerMove(dialog, {
+      pointerId: 2,
+      pointerType: 'mouse',
+      clientX: 500,
+      clientY: 1000 - MODAL_FILMSTRIP_HOVER_ZONE_PX + 1,
+    });
+    const overlayStrip = screen.getByRole('region', { name: 'Image filmstrip' });
+    expect(overlayStrip).toHaveClass('is-overlay');
+    expect(overlayStrip).toHaveAttribute('data-presentation', 'overlay');
+    expect(within(screen.getByTestId('modal-main-column')).getByRole('region', { name: 'Image filmstrip' }))
+      .toBe(overlayStrip);
+
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS);
+    });
+    expect(dialog).toHaveClass('chrome-hidden');
+    expect(dialog).not.toHaveClass('cursor-hidden');
+    expect(screen.getByRole('region', { name: 'Image filmstrip' })).toBe(overlayStrip);
+
+    fireEvent.pointerMove(dialog, {
+      pointerId: 2,
+      pointerType: 'mouse',
+      clientX: 500,
+      clientY: 500,
+    });
+    expect(screen.queryByRole('region', { name: 'Image filmstrip' })).toBeNull();
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_TRANSIENT_MS);
+    });
+    expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
+  });
+
+  it('routes modal shortcuts from a focused action button without double navigation', async () => {
+    render(<ImageModal />);
+    const favoriteButton = screen.getByRole('button', { name: 'Increase favorite level' });
+    favoriteButton.focus();
+    fireEvent.click(favoriteButton);
+    expect(store.cycleFavoriteLevel).toHaveBeenCalledTimes(1);
+
+    fireEvent.keyDown(favoriteButton, { key: DEFAULT_KEY_BINDINGS.nextImage });
+    await waitFor(() => expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1));
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(0, 'next');
+
+    fireEvent.keyDown(favoriteButton, { key: DEFAULT_KEY_BINDINGS.toggleFilmstrip });
+    expect(store.setView).toHaveBeenCalledTimes(1);
+    expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
+
+    fireEvent.keyDown(favoriteButton, { key: ' ' });
+    fireEvent.keyDown(favoriteButton, { key: 'Enter' });
+    expect(store.cycleFavoriteLevel).toHaveBeenCalledTimes(1);
+    expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1);
   });
 
   it('always confirms a favorite even when ordinary delete confirmation is disabled', async () => {

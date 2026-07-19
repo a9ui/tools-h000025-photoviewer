@@ -25,6 +25,7 @@ interface ModalFilmstripProps {
   onCollapse: () => void;
   onSessionExpired: () => void;
   toggleShortcut: string;
+  presentation?: 'layout' | 'overlay';
 }
 
 interface FilmstripWindow {
@@ -61,6 +62,7 @@ function ModalFilmstrip({
   onCollapse,
   onSessionExpired,
   toggleShortcut,
+  presentation = 'layout',
 }: ModalFilmstripProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [renderWindow, setRenderWindow] = useState<FilmstripWindow>(() => (
@@ -126,8 +128,9 @@ function ModalFilmstrip({
   return (
     <section
       id="modal-filmstrip"
-      className="modal-filmstrip-shell"
+      className={`modal-filmstrip-shell is-${presentation}`}
       aria-label="Image filmstrip"
+      data-presentation={presentation}
       onClick={stopPropagation}
       onDoubleClick={stopPropagation}
       onPointerDown={stopPropagation}
@@ -137,17 +140,21 @@ function ModalFilmstrip({
     >
       <div className="modal-filmstrip-header">
         <span>{activeIndex >= 0 ? activeIndex + 1 : 0} / {total}</span>
-        <button
-          type="button"
-          className="modal-filmstrip-collapse"
-          onClick={onCollapse}
-          title={`Hide filmstrip (${toggleShortcut})`}
-          aria-label="Hide image filmstrip"
-          aria-controls="modal-filmstrip"
-          aria-keyshortcuts={toggleShortcut}
-        >
-          Hide
-        </button>
+        {presentation === 'layout' ? (
+          <button
+            type="button"
+            className="modal-filmstrip-collapse"
+            onClick={onCollapse}
+            title={`Hide filmstrip (${toggleShortcut})`}
+            aria-label="Hide image filmstrip"
+            aria-controls="modal-filmstrip"
+            aria-keyshortcuts={toggleShortcut}
+          >
+            Hide
+          </button>
+        ) : (
+          <span className="modal-filmstrip-transient-label">Move away to hide</span>
+        )}
       </div>
       <div
         ref={scrollerRef}

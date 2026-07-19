@@ -81,7 +81,8 @@ function formatEnhancementDetails(job: ModalEnhancementJob | null) {
 
 const MAX_READY_FULL_IMAGE_IDS = 120;
 const FULL_IMAGE_KEY_SEPARATOR = '\u0000';
-export const MODAL_CHROME_IDLE_MS = 3000;
+export const MODAL_CHROME_TRANSIENT_MS = 900;
+export const MODAL_FILMSTRIP_HOVER_ZONE_PX = 128;
 
 function splitPromptTags(prompt: string): string[] {
   const seen = new Set<string>();
@@ -148,6 +149,16 @@ function formatShortcutKey(key: string) {
   return map[key] || key.toUpperCase();
 }
 
+function shouldKeepNativeInteractiveKey(target: EventTarget | null, key: string) {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+  if (!element || !isInteractiveShortcutTarget(target)) return false;
+  const button = element.closest('button');
+  if (!button) return true;
+  return key === 'Enter' || key === ' ';
+}
+
 function getFullImageKey(id: string, fullUrl: string) {
   return `${id}${FULL_IMAGE_KEY_SEPARATOR}${fullUrl}`;
 }
@@ -186,7 +197,9 @@ export default function ImageModal() {
   const [isMobileSheet, setIsMobileSheet] = useState(false);
   const [copied, setCopied] = useState(false);
   const [flipped, setFlipped] = useState(false);
-  const [chromeHidden, setChromeHidden] = useState(false);
+  const [manualChromeVisible, setManualChromeVisible] = useState(true);
+  const [transientChromeVisible, setTransientChromeVisible] = useState(false);
+  const [filmstripHoverVisible, setFilmstripHoverVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [showEnhanced, setShowEnhanced] = useState(false);
@@ -222,7 +235,9 @@ export default function ImageModal() {
       setZoom(1);
       setPan({ x: 0, y: 0 });
       setSwipeOffset(0);
-      setChromeHidden(false);
+      setManualChromeVisible(true);
+      setTransientChromeVisible(false);
+      setFilmstripHoverVisible(false);
       setSidebarCollapsed(true);
       pointerGesture.current = null;
       if (pendingSingleClick.current !== null) {
@@ -335,7 +350,9 @@ export default function ImageModal() {
     setSelectedIndex(null);
     setModalImageIds([]);
     setFlipped(false);
-    setChromeHidden(false);
+    setManualChromeVisible(true);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
   }, [requestRevealImage, searchResults, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   useDialogFocus({
@@ -371,6 +388,10 @@ export default function ImageModal() {
     ? `${modalOrderIndex + 1} / ${modalImageIds.length}`
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
   const filmstripOpen = view.modalFilmstripOpen !== false;
+  const chromeHidden = !manualChromeVisible && !transientChromeVisible && !showConfirmDelete;
+  const filmstripInLayout = manualChromeVisible && filmstripOpen;
+  const filmstripOverlayVisible = filmstripHoverVisible && !filmstripInLayout;
+  const cursorHidden = chromeHidden && !filmstripOverlayVisible;
   const filmstripTotal = modalImageIds.length > 0 ? modalImageIds.length : searchTotal;
   const filmstripActiveIndex = modalOrderIndex >= 0 ? modalOrderIndex : (selectedIndex ?? -1);
   const favLevel = img ? (favorites[img.id] ?? 0) : 0;
@@ -617,7 +638,9 @@ export default function ImageModal() {
         setSelectedIndex(null);
         setModalImageIds([]);
         setFlipped(false);
-        setChromeHidden(false);
+        setManualChromeVisible(true);
+        setTransientChromeVisible(false);
+        setFilmstripHoverVisible(false);
       }
       // A stale result belongs to a replaced query/index window. Do not let it
       // close or move the newer window.
@@ -626,7 +649,9 @@ export default function ImageModal() {
         setSelectedIndex(null);
         setModalImageIds([]);
         setFlipped(false);
-        setChromeHidden(false);
+        setManualChromeVisible(true);
+        setTransientChromeVisible(false);
+        setFilmstripHoverVisible(false);
       }
     } finally {
       navigationPendingRef.current = false;
@@ -683,20 +708,42 @@ export default function ImageModal() {
     chromeIdleTimer.current = null;
   }, []);
 
-  const scheduleChromeAutoHide = useCallback(() => {
+  const scheduleTransientChromeHide = useCallback(() => {
     clearChromeIdleTimer();
-    if (selectedIndex === null || showConfirmDelete) return;
+    if (selectedIndex === null || showConfirmDelete || manualChromeVisible) return;
     chromeIdleTimer.current = window.setTimeout(() => {
       chromeIdleTimer.current = null;
-      setChromeHidden(true);
-    }, MODAL_CHROME_IDLE_MS);
-  }, [clearChromeIdleTimer, selectedIndex, showConfirmDelete]);
+      setTransientChromeVisible(false);
+    }, MODAL_CHROME_TRANSIENT_MS);
+  }, [clearChromeIdleTimer, manualChromeVisible, selectedIndex, showConfirmDelete]);
 
   const revealChromeForActivity = useCallback(() => {
+    if (selectedIndex === null || showConfirmDelete || manualChromeVisible) return;
+    setTransientChromeVisible(true);
+    scheduleTransientChromeHide();
+  }, [manualChromeVisible, scheduleTransientChromeHide, selectedIndex, showConfirmDelete]);
+
+  const toggleManualChrome = useCallback(() => {
+    clearChromeIdleTimer();
+    const nextVisible = !manualChromeVisible;
+    setManualChromeVisible(nextVisible);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
+  }, [clearChromeIdleTimer, manualChromeVisible]);
+
+  const handleModalPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
     if (selectedIndex === null || showConfirmDelete) return;
-    setChromeHidden(false);
-    scheduleChromeAutoHide();
-  }, [scheduleChromeAutoHide, selectedIndex, showConfirmDelete]);
+    revealChromeForActivity();
+    if (event.pointerType === 'touch') return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const distanceFromBottom = rect.bottom - event.clientY;
+    const isNearBottom = distanceFromBottom >= 0 && distanceFromBottom <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
+    setFilmstripHoverVisible(isNearBottom);
+  }, [revealChromeForActivity, selectedIndex, showConfirmDelete]);
+
+  const handleModalPointerLeave = useCallback(() => {
+    setFilmstripHoverVisible(false);
+  }, []);
 
   useEffect(() => {
     if (selectedIndex === null) {
@@ -705,16 +752,21 @@ export default function ImageModal() {
     }
     if (showConfirmDelete) {
       clearChromeIdleTimer();
-      setChromeHidden(false);
+      setFilmstripHoverVisible(false);
       return;
     }
-    if (chromeHidden) {
+    if (manualChromeVisible) {
+      clearChromeIdleTimer();
+      setTransientChromeVisible(false);
+      return;
+    }
+    if (!transientChromeVisible) {
       clearChromeIdleTimer();
       return;
     }
-    scheduleChromeAutoHide();
+    scheduleTransientChromeHide();
     return clearChromeIdleTimer;
-  }, [chromeHidden, clearChromeIdleTimer, scheduleChromeAutoHide, selectedIndex, showConfirmDelete]);
+  }, [clearChromeIdleTimer, manualChromeVisible, scheduleTransientChromeHide, selectedIndex, showConfirmDelete, transientChromeVisible]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -723,7 +775,7 @@ export default function ImageModal() {
       close();
       return;
     }
-    if (isInteractiveShortcutTarget(e.target)) return;
+    if (shouldKeepNativeInteractiveKey(e.target, key)) return;
     if (showConfirmDelete || isDeleting) return;
     revealChromeForActivity();
 
@@ -876,11 +928,11 @@ export default function ImageModal() {
   }, []);
 
   const runModalClickAction = useCallback((action: ModalClickAction) => {
-    if (action === 'toggleChrome') setChromeHidden((hidden) => !hidden);
+    if (action === 'toggleChrome') toggleManualChrome();
     else if (action === 'prev') goPrev();
     else if (action === 'next') goNext();
     else close();
-  }, [close, goNext, goPrev]);
+  }, [close, goNext, goPrev, toggleManualChrome]);
 
   const scheduleSingleClickAction = useCallback((action: ModalClickAction) => {
     if (pendingSingleClick.current !== null) {
@@ -985,7 +1037,9 @@ export default function ImageModal() {
     setSelectedIndex(null);
     setModalImageIds([]);
     setFlipped(false);
-    setChromeHidden(false);
+    setManualChromeVisible(true);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
     setSearchQuery([...currentTags, tag].join(', '));
   };
 
@@ -994,7 +1048,17 @@ export default function ImageModal() {
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
 
-        <div ref={modalBodyRef} className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`} tabIndex={-1} onPointerMove={revealChromeForActivity}>
+        <div
+          ref={modalBodyRef}
+          className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''} ${cursorHidden ? 'cursor-hidden' : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Image preview: ${img.filename}`}
+          tabIndex={-1}
+          onPointerMove={handleModalPointerMove}
+          onPointerLeave={handleModalPointerLeave}
+          data-manual-chrome={manualChromeVisible ? 'visible' : 'hidden'}
+        >
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
@@ -1225,7 +1289,7 @@ export default function ImageModal() {
               )}
             </div>
 
-            {filmstripOpen && (
+            {filmstripInLayout && (
               <ModalFilmstrip
                 total={filmstripTotal}
                 activeIndex={filmstripActiveIndex}
@@ -1239,6 +1303,25 @@ export default function ImageModal() {
                 onCollapse={toggleFilmstrip}
                 onSessionExpired={reportImageSessionExpired}
                 toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
+                presentation="layout"
+              />
+            )}
+
+            {filmstripOverlayVisible && (
+              <ModalFilmstrip
+                total={filmstripTotal}
+                activeIndex={filmstripActiveIndex}
+                getItem={getFilmstripItem}
+                onNeedRange={requestFilmstripRange}
+                onSelect={selectFilmstripItem}
+                onNavigate={(intent) => {
+                  if (intent === 'prev') goPrev();
+                  else goNext();
+                }}
+                onCollapse={() => setFilmstripHoverVisible(false)}
+                onSessionExpired={reportImageSessionExpired}
+                toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
+                presentation="overlay"
               />
             )}
           </div>

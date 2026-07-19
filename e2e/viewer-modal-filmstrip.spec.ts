@@ -175,7 +175,8 @@ test.describe('modal filmstrip runtime contract', () => {
     });
     await clickModalImageCenter();
     await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
-    await expect(page.locator('.modal-filmstrip-shell')).toHaveCSS('pointer-events', 'none');
+    await expect(page.locator('.modal-body')).toHaveClass(/cursor-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCount(0);
     await clickModalImageCenter();
     await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
     await expect(listbox).toBeVisible();
@@ -222,13 +223,36 @@ test.describe('modal filmstrip runtime contract', () => {
     ).modalFilmstripOpen)).toBe(true);
 
     await page.waitForTimeout(3_200);
+    await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveClass(/is-layout/);
+
+    await clickModalImageCenter();
     await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
-    await expect(page.locator('.modal-filmstrip-shell')).toHaveCSS('pointer-events', 'none');
+    await expect(page.locator('.modal-body')).toHaveClass(/cursor-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCount(0);
+    const imageAreaBeforeTransientStrip = await page.locator('.modal-image-area').boundingBox();
+
     const dialogBox = await dialog.boundingBox();
     if (!dialogBox) throw new Error('Expected visible modal bounds');
     await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2);
     await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCount(0);
+    await page.waitForTimeout(1_000);
+    await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-body')).toHaveClass(/cursor-hidden/);
+
+    await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height - 20);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveClass(/is-overlay/);
     await expect(listbox).toBeVisible();
+    const imageAreaWithTransientStrip = await page.locator('.modal-image-area').boundingBox();
+    expect(imageAreaWithTransientStrip).toEqual(imageAreaBeforeTransientStrip);
+    await page.waitForTimeout(1_000);
+    await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-body')).not.toHaveClass(/cursor-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveClass(/is-overlay/);
+
+    await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCount(0);
 
     expect(consoleProblems).toEqual([]);
   });

@@ -1353,24 +1353,27 @@ a { color: inherit; text-decoration: none; }
 /* Zoom indicator (modal) */
 .zoom-indicator {
   position: absolute;
-  top: 72px;
+  top: 6px;
   bottom: auto;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 0.5rem;
-  padding: 0.35rem 0.75rem;
-  background: rgba(0,0,0,0.7);
-  -webkit-backdrop-filter: blur(8px);
-  backdrop-filter: blur(8px);
+  gap: 0.3rem;
+  padding: 0.18rem 0.45rem;
+  background: rgba(0,0,0,0.34);
+  -webkit-backdrop-filter: blur(5px);
+  backdrop-filter: blur(5px);
   border-radius: var(--radius-full);
-  color: var(--text-secondary);
-  font-size: 0.8rem;
+  color: rgba(255,255,255,0.56);
+  font-size: 0.68rem;
   font-weight: 500;
   z-index: 10;
+  opacity: 0.62;
   transition: opacity var(--transition-fast);
 }
+.zoom-indicator:hover,
+.zoom-indicator:focus-within { opacity: 0.92; }
 .zoom-reset {
   display: flex;
   align-items: center;
@@ -2301,6 +2304,29 @@ a { color: inherit; text-decoration: none; }
   cursor: default;
 }
 
+.modal-filmstrip-shell.is-overlay {
+  position: absolute;
+  right: 14px;
+  bottom: 10px;
+  left: 14px;
+  width: auto;
+  margin: 0;
+  z-index: 28;
+  flex: none;
+  animation: modalFilmstripRise var(--transition-fast) ease-out;
+}
+
+.modal-filmstrip-transient-label {
+  color: rgba(255, 255, 255, 0.42);
+}
+
+@keyframes modalFilmstripRise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+}
+
 .modal-filmstrip-header {
   height: 20px;
   display: flex;
@@ -2542,12 +2568,12 @@ a { color: inherit; text-decoration: none; }
 
 .modal-body.chrome-hidden .modal-topbar,
 .modal-body.chrome-hidden .zoom-indicator,
-.modal-body.chrome-hidden .modal-filmstrip-shell {
+.modal-body.chrome-hidden .modal-filmstrip-shell.is-layout {
   opacity: 0;
   pointer-events: none;
 }
 
-.modal-body.chrome-hidden .modal-filmstrip-shell {
+.modal-body.chrome-hidden .modal-filmstrip-shell.is-layout {
   flex-basis: 0;
   height: 0;
   margin-top: 0;
@@ -2557,6 +2583,11 @@ a { color: inherit; text-decoration: none; }
   border-width: 0;
   overflow: hidden;
   transform: translateY(8px);
+}
+
+.modal-body.cursor-hidden,
+.modal-body.cursor-hidden * {
+  cursor: none !important;
 }
 
 .modal-body.chrome-hidden .modal-edge-zone {
@@ -3130,7 +3161,7 @@ a { color: inherit; text-decoration: none; }
     padding: 0.65rem 0.75rem;
   }
   .zoom-indicator {
-    top: 104px;
+    top: 4px;
   }
   .modal-topbar-left {
     min-width: 0;
