@@ -632,10 +632,15 @@ describe('normalizeStoredView', () => {
 describe('ImageProvider browser UI preferences', () => {
   beforeEach(() => {
     localStorage.clear();
-    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+    let sharedFavorites: Record<string, number> = {};
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body || '{}')) as { favorites?: Record<string, number> };
+        sharedFavorites = body.favorites ?? {};
+      }
       const payload = url.includes('/api/favorites')
-        ? { favorites: {} }
+        ? { favorites: sharedFavorites }
         : url.includes('/api/enhance/jobs')
           ? { jobs: [] }
           : {};
@@ -1018,6 +1023,242 @@ describe('ImageProvider browser UI preferences', () => {
     });
   });
 
+  it('uses the shared exact level and migrates local-only legacy favorites once', async () => {
+    localStorage.setItem('pvu_favorites', JSON.stringify({
+      overlap: 5,
+      'legacy-local-only': 4,
+    }));
+    let sharedFavorites: Record<string, number> = { overlap: 2, 'wpf-only': 3 };
+    const favoritePuts: Array<{ favorites: Record<string, number>; baseFavorites: Record<string, number> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          favorites: Record<string, number>;
+          baseFavorites: Record<string, number>;
+        };
+        favoritePuts.push(body);
+        for (const id of new Set([...Object.keys(body.baseFavorites), ...Object.keys(body.favorites)])) {
+          const next = body.favorites[id] ?? 0;
+          if (next > 0) sharedFavorites[id] = next;
+          else delete sharedFavorites[id];
+        }
+        return { ok: true, json: async () => ({ favorites: sharedFavorites }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: sharedFavorites }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    const view = render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"overlap":2'));
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"wpf-only":3');
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"legacy-local-only":4');
+    await waitFor(() => expect(favoritePuts).toEqual([{
+      favorites: { 'legacy-local-only': 4 },
+      baseFavorites: {},
+    }]));
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_shared_migration_v1')).toBe('1'));
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_pending')).toBeNull());
+    view.unmount();
+
+    // A later WPF clear/decrease is authoritative. The stale local mirror must
+    // not be re-imported after the one-time migration marker exists.
+    sharedFavorites = { overlap: 1, 'wpf-only': 3 };
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"overlap":1'));
+    expect(screen.getByRole('status', { name: 'favorites state' })).not.toHaveTextContent('legacy-local-only');
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 350)); });
+    expect(favoritePuts).toHaveLength(1);
+  });
+
+  it('retries local-only migration on focus after the initial shared Favorite GET fails', async () => {
+    localStorage.setItem('pvu_favorites', JSON.stringify({ 'legacy-after-outage': 4 }));
+    let favoriteGets = 0;
+    let sharedFavorites: Record<string, number> = { 'wpf-existing': 2 };
+    const favoritePuts: Array<{ favorites: Record<string, number>; baseFavorites: Record<string, number> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          favorites: Record<string, number>;
+          baseFavorites: Record<string, number>;
+        };
+        favoritePuts.push(body);
+        sharedFavorites = { ...sharedFavorites, ...body.favorites };
+        return { ok: true, json: async () => ({ favorites: sharedFavorites }) } as Response;
+      }
+      if (url.includes('/api/favorites')) {
+        favoriteGets += 1;
+        if (favoriteGets === 1) {
+          return { ok: false, status: 503, json: async () => ({}) } as Response;
+        }
+        return { ok: true, json: async () => ({ favorites: sharedFavorites }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(favoriteGets).toBe(1));
+    expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"legacy-after-outage":4');
+
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(favoriteGets).toBe(2));
+    await waitFor(() => expect(favoritePuts).toEqual([{
+      favorites: { 'legacy-after-outage': 4 },
+      baseFavorites: {},
+    }]));
+    expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"wpf-existing":2');
+    expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"legacy-after-outage":4');
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_shared_migration_v1')).toBe('1'));
+  });
+
+  it('waits for a real shared snapshot before flushing an edit made after initial GET failure', async () => {
+    let favoriteGets = 0;
+    const favoritePuts: Array<{ favorites: Record<string, number>; baseFavorites: Record<string, number> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          favorites: Record<string, number>;
+          baseFavorites: Record<string, number>;
+        };
+        favoritePuts.push(body);
+        return { ok: true, json: async () => ({ favorites: { 'clicked-before-hydration': 1 } }) } as Response;
+      }
+      if (url.includes('/api/favorites')) {
+        favoriteGets += 1;
+        if (favoriteGets === 1) {
+          return { ok: false, status: 503, json: async () => ({}) } as Response;
+        }
+        return {
+          ok: true,
+          json: async () => ({ favorites: { 'clicked-before-hydration': 5 } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(favoriteGets).toBe(1));
+    fireEvent.click(screen.getByRole('button', { name: 'Favorite before hydration' }));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+    expect(favoritePuts).toEqual([]);
+
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(favoriteGets).toBe(2));
+    await waitFor(() => expect(favoritePuts).toEqual([{
+      favorites: { 'clicked-before-hydration': 1 },
+      baseFavorites: { 'clicked-before-hydration': 5 },
+    }]));
+  });
+
+  it('fills a pre-hydration Favorite mutation base on focus recovery and flushes the exact delta', async () => {
+    let resolveFirstFavoriteGet: ((response: Response) => void) | null = null;
+    const firstFavoriteGet = new Promise<Response>((resolve) => { resolveFirstFavoriteGet = resolve; });
+    let favoriteGets = 0;
+    const favoritePuts: Array<{ favorites: Record<string, number>; baseFavorites: Record<string, number> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          favorites: Record<string, number>;
+          baseFavorites: Record<string, number>;
+        };
+        favoritePuts.push(body);
+        return {
+          ok: true,
+          json: async () => ({ favorites: { 'clicked-before-hydration': body.favorites['clicked-before-hydration'] } }),
+        } as Response;
+      }
+      if (url.includes('/api/favorites')) {
+        favoriteGets += 1;
+        if (favoriteGets === 1) return firstFavoriteGet;
+        return {
+          ok: true,
+          json: async () => ({ favorites: { 'clicked-before-hydration': 3 } }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    fireEvent.click(screen.getByRole('button', { name: 'Favorite before hydration' }));
+    expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"clicked-before-hydration":1');
+    act(() => resolveFirstFavoriteGet?.({
+      ok: false,
+      status: 503,
+      json: async () => ({}),
+    } as Response));
+    await waitFor(() => expect(favoriteGets).toBe(1));
+
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(favoriteGets).toBe(2));
+    await waitFor(() => expect(favoritePuts).toEqual([{
+      favorites: { 'clicked-before-hydration': 1 },
+      baseFavorites: { 'clicked-before-hydration': 3 },
+    }]));
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_pending')).toBeNull());
+  });
+
+  it('refreshes exact shared favorites on focus and visible recovery without polling', async () => {
+    localStorage.setItem('pvu_favorites_shared_migration_v1', '1');
+    localStorage.setItem('pvu_favorites', JSON.stringify({ stale: 5, clearedByWpf: 4 }));
+    let sharedFavorites: Record<string, number> = { stale: 2, clearedByWpf: 1 };
+    let favoriteGets = 0;
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/favorites')) {
+        favoriteGets += 1;
+        return { ok: true, json: async () => ({ favorites: sharedFavorites }) } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"stale":2'));
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"clearedByWpf":1');
+
+    sharedFavorites = { stale: 1, addedByWpf: 5 };
+    fireEvent(window, new Event('focus'));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"stale":1'));
+    expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('"addedByWpf":5');
+    expect(screen.getByRole('status', { name: 'favorites state' })).not.toHaveTextContent('clearedByWpf');
+
+    sharedFavorites = { visibleRecovery: 3 };
+    fireEvent(document, new Event('visibilitychange'));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'favorites state' }))
+        .toHaveTextContent('"visibleRecovery":3');
+    });
+    expect(favoriteGets).toBe(3);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 100)); });
+    expect(favoriteGets).toBe(3);
+  });
+
   it('does not replace an intentionally empty primary with its backup', async () => {
     localStorage.setItem('pvu_favorites', '{}');
     localStorage.setItem('pvu_favorites_backup', JSON.stringify({ 'old-backup': 5 }));
@@ -1051,6 +1292,140 @@ describe('ImageProvider browser UI preferences', () => {
 
     expect(localStorage.getItem('pvu_favorites')).toBe(malformedPrimary);
     expect(localStorage.getItem('pvu_favorites_backup')).toBe(validBackup);
+    expect(localStorage.getItem('pvu_favorites_shared_migration_v1')).toBeNull();
+  });
+
+  it('quarantines a v1 pending journal when its exact local mirror is malformed', async () => {
+    const malformedPrimary = '{not-json';
+    const legacyJournal = JSON.stringify({
+      version: 1,
+      revision: 'legacy-without-desired-values',
+      dirtyIds: ['same-key'],
+      baseFavorites: { 'same-key': 3 },
+      baseKnownIds: ['same-key'],
+    });
+    localStorage.setItem('pvu_favorites', malformedPrimary);
+    localStorage.setItem('pvu_favorites_pending', legacyJournal);
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') favoritePuts.push(init);
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: { 'same-key': 3 } }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"same-key":3'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+
+    expect(favoritePuts).toEqual([]);
+    expect(localStorage.getItem('pvu_favorites')).toBe(malformedPrimary);
+    expect(localStorage.getItem('pvu_favorites_pending')).toBe(legacyJournal);
+    expect(localStorage.getItem('pvu_favorites_shared_migration_v1')).toBeNull();
+  });
+
+  it('preserves an invalid or future pending journal until an explicit mutation', async () => {
+    const futureJournal = '{"version":99,"opaque":"keep-this-evidence"}';
+    localStorage.setItem('pvu_favorites', JSON.stringify({ local: 4 }));
+    localStorage.setItem('pvu_favorites_pending', futureJournal);
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') favoritePuts.push(init);
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: { shared: 2 } }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"shared":2'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+
+    expect(favoritePuts).toEqual([]);
+    expect(localStorage.getItem('pvu_favorites_pending')).toBe(futureJournal);
+    expect(localStorage.getItem('pvu_favorites')).toBe(JSON.stringify({ local: 4 }));
+  });
+
+  it('quarantines a v2 journal with a whitespace-only dirty path', async () => {
+    const invalidJournal = JSON.stringify({
+      version: 2,
+      revision: 'invalid-whitespace-path',
+      dirtyIds: ['   '],
+      baseFavorites: {},
+      baseKnownIds: ['   '],
+      desiredFavorites: { '   ': 4 },
+    });
+    localStorage.setItem('pvu_favorites', JSON.stringify({ local: 4 }));
+    localStorage.setItem('pvu_favorites_pending', invalidJournal);
+    const favoritePuts: RequestInit[] = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') favoritePuts.push(init);
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: { shared: 2 } }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' }))
+      .toHaveTextContent('"shared":2'));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 400)); });
+
+    expect(favoritePuts).toEqual([]);
+    expect(localStorage.getItem('pvu_favorites_pending')).toBe(invalidJournal);
+    expect(localStorage.getItem('pvu_favorites')).toBe(JSON.stringify({ local: 4 }));
+  });
+
+  it('replays an exact v2 clear without resurrecting a stale backup', async () => {
+    localStorage.setItem('pvu_favorites_backup', JSON.stringify({ 'same-key': 5 }));
+    localStorage.setItem('pvu_favorites_pending', JSON.stringify({
+      version: 2,
+      revision: 'exact-clear-after-close',
+      dirtyIds: ['same-key'],
+      baseFavorites: { 'same-key': 5 },
+      baseKnownIds: ['same-key'],
+      desiredFavorites: {},
+    }));
+    let sharedFavorites: Record<string, number> = { 'same-key': 5 };
+    const favoritePuts: Array<{ favorites: Record<string, number>; baseFavorites: Record<string, number> }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/favorites') && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body)) as {
+          favorites: Record<string, number>;
+          baseFavorites: Record<string, number>;
+        };
+        favoritePuts.push(body);
+        sharedFavorites = {};
+      }
+      return {
+        ok: true,
+        json: async () => url.includes('/api/favorites')
+          ? { favorites: sharedFavorites }
+          : url.includes('/api/enhance/jobs') ? { jobs: [] } : {},
+      } as Response;
+    }));
+
+    render(<ImageProvider><FavoritesProbe /></ImageProvider>);
+    await waitFor(() => expect(favoritePuts).toEqual([{
+      favorites: {},
+      baseFavorites: { 'same-key': 5 },
+    }]));
+    await waitFor(() => expect(screen.getByRole('status', { name: 'favorites state' })).toHaveTextContent('{}'));
+    await waitFor(() => expect(localStorage.getItem('pvu_favorites_pending')).toBeNull());
+    expect(localStorage.getItem('pvu_favorites_backup')).toBe(JSON.stringify({ 'same-key': 5 }));
   });
 
   it('keeps a malformed backup read-only when the primary key is missing', async () => {
@@ -1069,6 +1444,7 @@ describe('ImageProvider browser UI preferences', () => {
 
     expect(localStorage.getItem('pvu_favorites')).toBeNull();
     expect(localStorage.getItem('pvu_favorites_backup')).toBe(malformedBackup);
+    expect(localStorage.getItem('pvu_favorites_shared_migration_v1')).toBeNull();
   });
 
   it('persists favorites as a three-way change against the hydrated server base', async () => {

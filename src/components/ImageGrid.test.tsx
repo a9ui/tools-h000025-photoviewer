@@ -36,6 +36,22 @@ const secondImage: ImageFile = {
   fullUrl: "/api/image?second&full=1",
 };
 
+function pagedImage(index: number): ImageFile {
+  return {
+    ...firstImage,
+    id: `C:/images/paged-${index}.png`,
+    filename: `paged-${index}.png`,
+    absolutePath: `C:/images/paged-${index}.png`,
+    fileUrl: `/api/image?paged=${index}`,
+    displayUrl: `/api/image?paged=${index}&display=1`,
+    fullUrl: `/api/image?paged=${index}&full=1`,
+  };
+}
+
+function pagedResults(total: number, loaded: number) {
+  return Array.from({ length: total }, (_, index) => index < loaded ? pagedImage(index) : null);
+}
+
 const selectImage = vi.fn();
 const openPreviewTab = vi.fn();
 const openModalAtImage = vi.fn();
@@ -328,6 +344,158 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
   });
 
+  it("flushes visible thumbnail warmup immediately instead of waiting behind nearby work", () => {
+    renderGrid();
+
+    const visibleWarmup = vi.mocked(fetch).mock.calls.find(([url, init]) => {
+      if (url !== "/api/thumbs/warm" || typeof init?.body !== "string") return false;
+      return JSON.parse(init.body).priority === "visible";
+    });
+    expect(visibleWarmup).toBeDefined();
+  });
+
+  it.each(["favorite", "unrated", "enhanced"] as const)(
+    "keeps scanning source pages when the first loaded page has no %s matches",
+    async (filterMode) => {
+      const ensureSearchRange = vi.fn();
+      const loaded = pagedResults(500, 100);
+      const rated = Object.fromEntries(
+        loaded.slice(0, 100).map((image) => [(image as ImageFile).id, 1]),
+      );
+      vi.mocked(useImageStore).mockReturnValue({
+        ...createStore(),
+        searchResults: loaded,
+        searchTotal: 500,
+        ensureSearchRange,
+        showFavOnly: filterMode === "favorite",
+        showUnfavOnly: filterMode === "unrated",
+        showEnhancedOnly: filterMode === "enhanced",
+        favorites: filterMode === "unrated" ? rated : {},
+        enhancedSourceIds: {},
+      } as unknown as ReturnType<typeof useImageStore>);
+
+      renderGrid();
+
+      await waitFor(() => expect(ensureSearchRange).toHaveBeenCalledWith(100, 299));
+    },
+  );
+
+  it("keeps a bottom paging demand across sparse batches until the final match is reachable", async () => {
+    mockClientWidth = 100;
+    mockClientHeight = 1;
+    const ensureSearchRange = vi.fn();
+    const favorites: Record<string, number> = {};
+    for (let index = 0; index < 30; index += 1) favorites[pagedImage(index).id] = 1;
+    const baseStore = {
+      ...createStore(),
+      searchResults: pagedResults(600, 200),
+      searchTotal: 600,
+      ensureSearchRange,
+      showFavOnly: true,
+      favorites,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(baseStore);
+
+    const { rerender } = renderGrid();
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(ensureSearchRange).not.toHaveBeenCalled();
+
+    const scrollElement = screen.getByTestId("viewer-main");
+    scrollElement.scrollTop = 4700;
+    fireEvent.scroll(scrollElement);
+    await waitFor(() => expect(ensureSearchRange).toHaveBeenCalledWith(200, 399));
+
+    ensureSearchRange.mockClear();
+    for (let index = 200; index < 210; index += 1) favorites[pagedImage(index).id] = 1;
+    vi.mocked(useImageStore).mockReturnValue({
+      ...baseStore,
+      searchResults: pagedResults(600, 400),
+      favorites: { ...favorites },
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+
+    // The ten new sparse matches move the new bottom beyond the old scroll
+    // position. The retained demand must still request the next batch.
+    await waitFor(() => expect(ensureSearchRange).toHaveBeenCalledWith(400, 599));
+
+    ensureSearchRange.mockClear();
+    favorites[pagedImage(599).id] = 1;
+    vi.mocked(useImageStore).mockReturnValue({
+      ...baseStore,
+      searchResults: pagedResults(600, 600),
+      favorites: { ...favorites },
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+    expect(ensureSearchRange).not.toHaveBeenCalled();
+
+    scrollElement.scrollTop = 6500;
+    fireEvent.scroll(scrollElement);
+    expect(await screen.findByRole("button", { name: /select paged-599\.png/i })).toBeInTheDocument();
+  });
+
+  it("resets retained paging demand when the index/filter context becomes stale or is cancelled", async () => {
+    mockClientWidth = 100;
+    mockClientHeight = 1;
+    const ensureSearchRange = vi.fn();
+    const favorites = Object.fromEntries(
+      Array.from({ length: 30 }, (_, index) => [pagedImage(index).id, 1]),
+    );
+    const baseStore = {
+      ...createStore(),
+      searchResults: pagedResults(600, 200),
+      searchTotal: 600,
+      ensureSearchRange,
+      showFavOnly: true,
+      favorites,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(baseStore);
+    const { rerender } = renderGrid();
+    const scrollElement = screen.getByTestId("viewer-main");
+
+    scrollElement.scrollTop = 4700;
+    fireEvent.scroll(scrollElement);
+    await waitFor(() => expect(ensureSearchRange).toHaveBeenCalledWith(200, 399));
+
+    scrollElement.scrollTop = 0;
+    fireEvent.scroll(scrollElement);
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    ensureSearchRange.mockClear();
+    vi.mocked(useImageStore).mockReturnValue({
+      ...baseStore,
+      indexToken: "fresh-index-token",
+      favoriteFilterLevels: [1],
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(ensureSearchRange).not.toHaveBeenCalled();
+
+    ensureSearchRange.mockClear();
+    vi.mocked(useImageStore).mockReturnValue({
+      ...baseStore,
+      showFavOnly: false,
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 30)); });
+    expect(ensureSearchRange).toHaveBeenCalledWith(0, 5);
+    expect(ensureSearchRange).not.toHaveBeenCalledWith(200, 399);
+  });
+
   it("captures Ctrl/Cmd wheel only inside the grid and changes thumbnail size", () => {
     const store = createStore();
     vi.mocked(useImageStore).mockReturnValue(store);
@@ -414,7 +582,60 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(Number.parseFloat(targetAfter.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
   });
 
-  it("leaves native page zoom available outside the grid and in list mode", () => {
+  it("keeps the visible selected image anchored when the sidebar slider changes thumbnail size", async () => {
+    mockClientWidth = 900;
+    const images = Array.from({ length: 80 }, (_, index): ImageFile => ({
+      ...firstImage,
+      id: `C:/images/selected-zoom-${index}.png`,
+      filename: `selected-zoom-${index}.png`,
+      absolutePath: `C:/images/selected-zoom-${index}.png`,
+      fileUrl: `/api/image?selected-zoom=${index}`,
+      displayUrl: `/api/image?selected-zoom=${index}&display=1`,
+      fullUrl: `/api/image?selected-zoom=${index}&full=1`,
+    }));
+    const selectedImage = images[14];
+    const initialStore = {
+      ...createStore("grid", { selectedIds: [selectedImage.id] }),
+      searchResults: images,
+      searchTotal: images.length,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(initialStore);
+
+    const { rerender } = renderGrid();
+    const scrollElement = screen.getByTestId("viewer-main");
+    Object.defineProperty(scrollElement, "scrollHeight", {
+      configurable: true,
+      get: () => 20_000,
+    });
+    scrollElement.scrollTop = 600;
+    fireEvent.scroll(scrollElement);
+    await waitFor(() => {
+      expect(initialStore.setSearchScrollPosition).toHaveBeenCalledWith(
+        expect.any(String),
+        600,
+      );
+    });
+
+    const selectedBefore = screen.getByRole("group", { name: `Image ${selectedImage.filename}` });
+    const offsetBefore = Number.parseFloat(selectedBefore.style.top) - scrollElement.scrollTop;
+
+    vi.mocked(useImageStore).mockReturnValue({
+      ...initialStore,
+      view: { ...initialStore.view, thumbSize: 220 },
+    });
+    rerender(
+      <div className="viewer-main" data-testid="viewer-main">
+        <ImageGrid />
+      </div>,
+    );
+
+    await waitFor(() => {
+      const selectedAfter = screen.getByRole("group", { name: `Image ${selectedImage.filename}` });
+      expect(Number.parseFloat(selectedAfter.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
+    });
+  });
+
+  it("captures gallery zoom across the grid viewer so the sidebar does not page-zoom, but leaves list mode native", () => {
     const gridStore = createStore();
     vi.mocked(useImageStore).mockReturnValue(gridStore);
     const { unmount } = render(
@@ -430,8 +651,8 @@ describe("ImageGrid keyboard primary controls", () => {
       deltaY: -120,
     });
     fireEvent(screen.getByRole("button", { name: "Outside gallery" }), outsideWheel);
-    expect(outsideWheel.defaultPrevented).toBe(false);
-    expect(gridStore.setView).not.toHaveBeenCalled();
+    expect(outsideWheel.defaultPrevented).toBe(true);
+    expect(gridStore.setView).toHaveBeenCalledWith({ thumbSize: 220 });
     unmount();
 
     const listStore = createStore("list");
@@ -448,19 +669,90 @@ describe("ImageGrid keyboard primary controls", () => {
     expect(listStore.setView).not.toHaveBeenCalled();
   });
 
-  it("does not replace browser native keyboard zoom shortcuts", () => {
+  it("maps Ctrl/Cmd keyboard zoom to gallery thumbnails even when the selected image button has focus", () => {
     const store = createStore();
     vi.mocked(useImageStore).mockReturnValue(store);
     renderGrid();
+    const selectedButton = screen.getByRole("button", { name: /select first\.png/i });
+    act(() => selectedButton.focus());
     const keydown = new KeyboardEvent("keydown", {
       bubbles: true,
       cancelable: true,
       ctrlKey: true,
       key: "+",
     });
-    fireEvent(window, keydown);
+    fireEvent(selectedButton, keydown);
 
-    expect(keydown.defaultPrevented).toBe(false);
+    expect(keydown.defaultPrevented).toBe(true);
+    expect(store.setView).toHaveBeenCalledWith({ thumbSize: 220 });
+  });
+
+  it("keeps keyboard gallery zoom away from text editing and supports Ctrl/Cmd+0 reset", () => {
+    const store = {
+      ...createStore(),
+      view: { ...createStore().view, thumbSize: 260 },
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(store);
+    render(
+      <div>
+        <input aria-label="Search editor" />
+        <div className="viewer-main"><ImageGrid /></div>
+      </div>,
+    );
+
+    const input = screen.getByRole("textbox", { name: "Search editor" });
+    const editingZoom = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "+",
+    });
+    fireEvent(input, editingZoom);
+    expect(editingZoom.defaultPrevented).toBe(false);
     expect(store.setView).not.toHaveBeenCalled();
+
+    const reset = new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      key: "0",
+    });
+    fireEvent(window, reset);
+    expect(reset.defaultPrevented).toBe(true);
+    expect(store.setView).toHaveBeenCalledWith({ thumbSize: 200 });
+  });
+
+  it("does not take Ctrl/Cmd wheel from text editing or an active confirmation overlay", () => {
+    const store = createStore();
+    vi.mocked(useImageStore).mockReturnValue(store);
+    render(
+      <div>
+        <input aria-label="Search editor" />
+        <div className="viewer-main"><ImageGrid /></div>
+      </div>,
+    );
+
+    const editingWheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(screen.getByRole("textbox", { name: "Search editor" }), editingWheel);
+    expect(editingWheel.defaultPrevented).toBe(false);
+    expect(store.setView).not.toHaveBeenCalled();
+
+    const confirmOverlay = document.createElement("div");
+    confirmOverlay.className = "confirm-overlay";
+    document.body.appendChild(confirmOverlay);
+    const overlayWheel = new WheelEvent("wheel", {
+      bubbles: true,
+      cancelable: true,
+      ctrlKey: true,
+      deltaY: -120,
+    });
+    fireEvent(screen.getByRole("group", { name: "Image first.png" }), overlayWheel);
+    expect(store.setView).not.toHaveBeenCalled();
+    confirmOverlay.remove();
   });
 });

@@ -41,6 +41,23 @@ const MODAL_WARMUP_SEARCH_RADIUS = 120;
 const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
 const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
+const MIN_THUMB_SIZE = 40;
+const MAX_THUMB_SIZE = 600;
+const DEFAULT_THUMB_SIZE = 200;
+const THUMB_ZOOM_STEP = 20;
+const VISIBLE_THUMB_RESEND_MS = 900;
+
+function shouldIgnoreGalleryZoomShortcut(target: EventTarget | null): boolean {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+  return Boolean(element?.closest([
+    'input:not([type="range"])',
+    'textarea',
+    'select',
+    '[contenteditable]:not([contenteditable="false"])',
+  ].join(', ')));
+}
 
 function withThumbPriorityParams(fileUrl: string, priority: ThumbnailWarmupPriority = 'visible') {
   const separator = fileUrl.includes('?') ? '&' : '?';
@@ -169,7 +186,7 @@ export default function ImageGrid() {
   const [horizontalPadding, setHorizontalPadding] = useState(0);
   const [verticalPaddingTop, setVerticalPaddingTop] = useState(0);
   const preloadRef = useRef<Set<string>>(new Set());
-  const visibleWarmRef = useRef<Set<string>>(new Set());
+  const visibleWarmRef = useRef<Map<string, number>>(new Map());
   const modalWarmCursorRef = useRef(0);
   const restoredScrollKeyRef = useRef<string | null>(null);
   const previousThumbSizeRef = useRef(view.thumbSize);
@@ -177,6 +194,10 @@ export default function ImageGrid() {
   const warmupBatcherRef = useRef<ReturnType<typeof createThumbnailWarmupBatcher> | null>(null);
   const [rovingImageId, setRovingImageId] = useState<string | null>(null);
   const pendingPrimaryFocusIdRef = useRef<string | null>(null);
+  const clientFilterPagingDemandRef = useRef<{
+    contextKey: string;
+    targetMatchCount: number;
+  } | null>(null);
 
   useEffect(() => {
     const batcher = createThumbnailWarmupBatcher({
@@ -252,48 +273,6 @@ export default function ImageGrid() {
     return () => window.clearTimeout(timeoutId);
   }, [scrollMemoryKey, scrollTop, setSearchScrollPosition]);
 
-  useEffect(() => {
-    const commitThumbSize = (next: number) => {
-      if (next === thumbSizeRef.current) return;
-      thumbSizeRef.current = next;
-      setView({ thumbSize: next });
-    };
-
-    const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      const container = containerRef.current;
-      if (!container) return;
-      const target = event.target instanceof Element ? event.target : null;
-      if (
-        view.viewMode !== 'grid' ||
-        selectedIndex !== null ||
-        showSettings ||
-        !target ||
-        !container.contains(target)
-      ) return;
-      if (event.deltaY === 0) return;
-
-      const anchorElement = target.closest<HTMLElement>('[data-grid-index]');
-      const scrollEl = container.closest('.viewer-main') as HTMLElement | null;
-      if (anchorElement && container.contains(anchorElement)) {
-        previousGridMetricsRef.current = withGridPointerAnchor(
-          previousGridMetricsRef.current,
-          Number.parseInt(anchorElement.dataset.gridIndex ?? '', 10),
-          Number.parseFloat(anchorElement.style.top),
-          scrollEl?.scrollTop ?? previousGridMetricsRef.current?.scrollTop ?? 0
-        );
-      }
-
-      event.preventDefault();
-      const next = Math.max(40, Math.min(600, thumbSizeRef.current + (event.deltaY > 0 ? -20 : 20)));
-      commitThumbSize(next);
-    };
-    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
-    return () => {
-      window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
-    };
-  }, [selectedIndex, setView, showSettings, view.viewMode]);
-
   const loadedOrderedIds = useMemo(
     () => searchResults.filter((img): img is ImageFile => Boolean(img)).map((img) => img.id),
     [searchResults]
@@ -353,6 +332,85 @@ export default function ImageGrid() {
     () => buildImageIndexById(searchResults),
     [searchResults]
   );
+  const selectedZoomAnchorIndex = useMemo(() => {
+    const selectedId = selectedIds[selectedIds.length - 1];
+    if (!selectedId) return null;
+    if (isClientFiltered) {
+      const filteredIndex = clientFilteredVisible.findIndex((item) => item.image.id === selectedId);
+      return filteredIndex >= 0 ? filteredIndex : null;
+    }
+    return searchResultIndexById.get(selectedId) ?? null;
+  }, [clientFilteredVisible, isClientFiltered, searchResultIndexById, selectedIds]);
+
+  useEffect(() => {
+    const commitThumbSize = (next: number) => {
+      const clamped = Math.max(MIN_THUMB_SIZE, Math.min(MAX_THUMB_SIZE, next));
+      if (clamped === thumbSizeRef.current) return;
+      thumbSizeRef.current = clamped;
+      setView({ thumbSize: clamped });
+    };
+
+    const canZoomGallery = () => (
+      view.viewMode === 'grid' &&
+      selectedIndex === null &&
+      !showSettings &&
+      Boolean(containerRef.current)
+    );
+
+    const onWheel = (event: WheelEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || !canZoomGallery() || event.deltaY === 0) return;
+      if (
+        shouldIgnoreGalleryZoomShortcut(event.target) ||
+        shouldIgnoreViewerShortcut(document.body)
+      ) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const anchorElement = target?.closest<HTMLElement>('[data-grid-index]') ?? null;
+      const selectedAlreadyAnchored = selectedZoomAnchorIndex !== null &&
+        previousGridMetricsRef.current?.anchorIndex === selectedZoomAnchorIndex;
+      const scrollEl = container.closest('.viewer-main') as HTMLElement | null;
+      if (!selectedAlreadyAnchored && anchorElement && container.contains(anchorElement)) {
+        previousGridMetricsRef.current = withGridPointerAnchor(
+          previousGridMetricsRef.current,
+          Number.parseInt(anchorElement.dataset.gridIndex ?? '', 10),
+          Number.parseFloat(anchorElement.style.top),
+          scrollEl?.scrollTop ?? previousGridMetricsRef.current?.scrollTop ?? 0
+        );
+      }
+
+      event.preventDefault();
+      commitThumbSize(thumbSizeRef.current + (event.deltaY > 0 ? -THUMB_ZOOM_STEP : THUMB_ZOOM_STEP));
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || event.altKey || !canZoomGallery()) return;
+      if (
+        shouldIgnoreGalleryZoomShortcut(event.target) ||
+        shouldIgnoreViewerShortcut(document.body)
+      ) return;
+
+      const key = event.key;
+      const next = key === '+' || key === '='
+        ? thumbSizeRef.current + THUMB_ZOOM_STEP
+        : key === '-' || key === '_'
+          ? thumbSizeRef.current - THUMB_ZOOM_STEP
+          : key === '0'
+            ? DEFAULT_THUMB_SIZE
+            : null;
+      if (next === null) return;
+
+      event.preventDefault();
+      commitThumbSize(next);
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    window.addEventListener('keydown', onKeyDown, { passive: false, capture: true });
+    return () => {
+      window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
+      window.removeEventListener('keydown', onKeyDown, { capture: true } as EventListenerOptions);
+    };
+  }, [selectedIndex, selectedZoomAnchorIndex, setView, showSettings, view.viewMode]);
   const modalImageIdKey = modalImageIds.join('\u0001');
 
   useEffect(() => {
@@ -700,6 +758,12 @@ export default function ImageGrid() {
       : 'nearby'
   );
 
+  const visibleSelectedZoomAnchorIndex = selectedZoomAnchorIndex !== null &&
+    selectedZoomAnchorIndex >= visiblePriorityRange.start &&
+    selectedZoomAnchorIndex <= visiblePriorityRange.end
+    ? selectedZoomAnchorIndex
+    : null;
+
   useLayoutEffect(() => {
     if (view.viewMode !== 'grid') {
       previousThumbSizeRef.current = view.thumbSize;
@@ -712,18 +776,7 @@ export default function ImageGrid() {
     const previousThumbSize = previousThumbSizeRef.current;
     const container = containerRef.current;
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    const anchorIndex = previousThumbSize !== view.thumbSize
-      ? previousMetrics?.anchorIndex ?? getZoomAnchorIndex({
-        sectionLayout,
-        scrollTop,
-        viewportHeight,
-        contentWidth: Math.max(0, viewportWidth - horizontalPadding),
-        contentOffsetTop: verticalPaddingTop,
-        rowHeight,
-        gridColumns,
-        fullCount,
-      }) ?? undefined
-      : getZoomAnchorIndex({
+    const centeredAnchorIndex = getZoomAnchorIndex({
         sectionLayout,
         scrollTop,
         viewportHeight,
@@ -733,6 +786,13 @@ export default function ImageGrid() {
         gridColumns,
         fullCount,
       }) ?? undefined;
+    const previousAnchorWasVisibleSelection = selectedZoomAnchorIndex !== null &&
+      previousMetrics?.anchorIndex === selectedZoomAnchorIndex;
+    const anchorIndex = previousThumbSize !== view.thumbSize
+      ? previousAnchorWasVisibleSelection
+        ? selectedZoomAnchorIndex ?? undefined
+        : previousMetrics?.anchorIndex ?? visibleSelectedZoomAnchorIndex ?? centeredAnchorIndex
+      : visibleSelectedZoomAnchorIndex ?? centeredAnchorIndex;
     const anchorTop = anchorIndex !== undefined
       ? getGridItemTop(sectionLayout, anchorIndex, rowHeight, gridColumns)
       : null;
@@ -773,6 +833,7 @@ export default function ImageGrid() {
     gridCellHeight,
     gridColumns,
     horizontalPadding,
+    selectedZoomAnchorIndex,
     sectionLayout,
     scrollTop,
     view.thumbSize,
@@ -781,6 +842,7 @@ export default function ImageGrid() {
     viewportHeight,
     viewportWidth,
     virtualRange.totalHeight,
+    visibleSelectedZoomAnchorIndex,
   ]);
 
   useEffect(() => {
@@ -823,7 +885,10 @@ export default function ImageGrid() {
   ]);
 
   useEffect(() => {
-    if (!isClientFiltered) return;
+    if (!isClientFiltered) {
+      clientFilterPagingDemandRef.current = null;
+      return;
+    }
     if (searchTotal <= 0) return;
 
     if (loadedSearchCount >= searchTotal) return;
@@ -835,9 +900,26 @@ export default function ImageGrid() {
     const targetMatches = view.viewMode === 'list'
       ? visibleRows + OVERSCAN_ROWS * 6
       : gridColumns * (visibleRows + OVERSCAN_ROWS * 6);
-    const needsMoreMatches = clientFilteredVisible.length < Math.max(24, targetMatches);
+    const matchBuffer = Math.max(24, targetMatches);
     const isNearFilteredEnd = virtualRange.end >= Math.max(0, clientFilteredVisible.length - 1);
-    if (!needsMoreMatches && !isNearFilteredEnd) return;
+    const pagingContextKey = `${scrollMemoryKey}\u0001${indexToken ?? ''}`;
+    const previousDemand = clientFilterPagingDemandRef.current;
+    const sameContext = previousDemand?.contextKey === pagingContextKey;
+    let targetMatchCount = sameContext
+      ? Math.max(matchBuffer, previousDemand.targetMatchCount)
+      : matchBuffer;
+
+    if (isNearFilteredEnd) {
+      // Keep the demand made at the old bottom alive while sparse source pages
+      // arrive. Newly appended matches move the bottom away from scrollTop;
+      // recomputing only `isNearFilteredEnd` would stop after one batch.
+      targetMatchCount = Math.max(
+        targetMatchCount,
+        clientFilteredVisible.length + matchBuffer,
+      );
+    }
+    clientFilterPagingDemandRef.current = { contextKey: pagingContextKey, targetMatchCount };
+    if (clientFilteredVisible.length >= targetMatchCount) return;
 
     const firstMissing = searchResults.findIndex((image) => image === null);
     if (firstMissing < 0) return;
@@ -850,7 +932,9 @@ export default function ImageGrid() {
     loadedSearchCount,
     searchResults,
     searchTotal,
+    indexToken,
     isClientFiltered,
+    scrollMemoryKey,
     view.viewMode,
     viewportHeight,
     virtualRange.end,
@@ -891,14 +975,17 @@ export default function ImageGrid() {
     if (visiblePriorityRange.end < visiblePriorityRange.start) return;
 
     const warmPaths: string[] = [];
+    const now = Date.now();
     for (let i = visiblePriorityRange.start; i <= visiblePriorityRange.end; i++) {
       const image = isClientFiltered
         ? clientFilteredVisible[i]?.image
         : searchResults[i];
       if (!image) continue;
       const key = `${scrollMemoryKey}\u0001${image.id}`;
-      if (visibleWarmRef.current.has(key)) continue;
-      visibleWarmRef.current.add(key);
+      const lastWarmAt = visibleWarmRef.current.get(key);
+      if (lastWarmAt !== undefined && now - lastWarmAt < VISIBLE_THUMB_RESEND_MS) continue;
+      visibleWarmRef.current.delete(key);
+      visibleWarmRef.current.set(key, now);
       warmPaths.push(image.id);
     }
 
@@ -907,9 +994,14 @@ export default function ImageGrid() {
       contextKey: scrollMemoryKey,
       priority: 'visible',
     });
+    if (warmPaths.length > 0) {
+      // Visible cards must preempt the delayed nearby/overscan batch. Their
+      // <img> requests still work independently if this best-effort warmup fails.
+      warmupBatcherRef.current?.flushHighPriority();
+    }
     if (visibleWarmRef.current.size > 1200) {
-      const trimmed = Array.from(visibleWarmRef.current).slice(-800);
-      visibleWarmRef.current = new Set(trimmed);
+      const trimmed = Array.from(visibleWarmRef.current.entries()).slice(-800);
+      visibleWarmRef.current = new Map(trimmed);
     }
   }, [
     clientFilteredVisible,

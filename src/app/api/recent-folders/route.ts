@@ -5,18 +5,13 @@ import { NextResponse } from 'next/server';
 import { withFileWriteLock } from '@/lib/fileWriteLock';
 import { formatDirSet } from '@/lib/pathSet';
 import { buildSharedRecentFolders, normalizeSharedRecentFolders } from '@/lib/recentFolders';
+import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 const MAX_INCOMING_FOLDER_SETS = 100;
 const MAX_FOLDER_SET_LENGTH = 32_768;
 
 function recentFoldersPath() {
-  return process.env.PVU_RECENT_FOLDERS_PATH
-    ? path.resolve(process.env.PVU_RECENT_FOLDERS_PATH)
-    : path.join(
-      /*turbopackIgnore: true*/ process.cwd(),
-      '.cache',
-      'recent-folders.json',
-    );
+  return resolveSharedCachePath('recent-folders.json', process.env.PVU_RECENT_FOLDERS_PATH);
 }
 
 function isStringOrStringArray(value: unknown) {

@@ -58,6 +58,37 @@ describe('shared seen route safety', () => {
     await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('reads WPF legacy stored markers but writes the canonical true-only map', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      'D:\\true.png': true,
+      'D:\\false.png': false,
+      'D:\\one.png': 1,
+      'D:\\zero.png': 0,
+      'D:\\string-true.png': ' TRUE ',
+      'D:\\string-false.png': 'false',
+    }), 'utf8');
+
+    const getResponse = await GET();
+    expect(await getResponse.json()).toMatchObject({
+      ok: true,
+      malformed: false,
+      seen: {
+        'D:\\true.png': true,
+        'D:\\one.png': true,
+        'D:\\string-true.png': true,
+      },
+    });
+
+    const putResponse = await PUT(putRequest(JSON.stringify({ seen: { 'D:\\new.png': true } })));
+    expect(putResponse.status).toBe(200);
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual({
+      'D:\\true.png': true,
+      'D:\\one.png': true,
+      'D:\\string-true.png': true,
+      'D:\\new.png': true,
+    });
+  });
+
   it('serializes concurrent seen clients without losing either true marker', async () => {
     const [first, second] = await Promise.all([
       PUT(putRequest(JSON.stringify({ seen: { 'D:\\browser.png': true } }))),

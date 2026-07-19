@@ -62,6 +62,13 @@ public partial class App : Application
             return;
         }
 
+        int keyBindingsSmokeIdx = Array.IndexOf(e.Args, "--key-bindings-smoke");
+        if (keyBindingsSmokeIdx >= 0 && keyBindingsSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureKeyBindingsSmoke(e.Args[keyBindingsSmokeIdx + 1], e.Args);
+            return;
+        }
+
         int scanCancelSmokeIdx = Array.IndexOf(e.Args, "--scan-cancel-smoke");
         if (scanCancelSmokeIdx >= 0 && scanCancelSmokeIdx + 1 < e.Args.Length)
         {
@@ -1422,6 +1429,529 @@ public partial class App : Application
         }, DispatcherPriority.ContextIdle);
     }
 
+    private void CaptureKeyBindingsSmoke(string resultPath, string[] args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string? rawRoot = ArgValue(args, "--key-root");
+        string phase = (ArgValue(args, "--key-phase") ?? "write").Trim().ToLowerInvariant();
+        if (string.IsNullOrWhiteSpace(rawRoot) || phase is not ("write" or "reload"))
+        {
+            WriteCrossRuntimeSharedStateResult(resultFullPath, new
+            {
+                ok = false,
+                message = "key-binding smoke requires a temp --key-root and --key-phase write|reload",
+                phase,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string generatedAutomationState = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH") ?? "";
+        string generatedAutomationRoot = Path.GetDirectoryName(generatedAutomationState) ?? "";
+        string smokeRoot = Path.GetFullPath(rawRoot);
+        string folder = Path.Combine(smokeRoot, "images");
+        string statePath = Path.Combine(smokeRoot, "state.json");
+        string favoritesPath = Path.Combine(smokeRoot, "favorites.json");
+        string seenPath = Path.Combine(smokeRoot, "seen.json");
+        string recentPath = Path.Combine(smokeRoot, "recent-folders.json");
+        string jobsPath = Path.Combine(smokeRoot, "enhance", "jobs.json");
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", recentPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", jobsPath);
+        if (!string.IsNullOrWhiteSpace(generatedAutomationRoot)
+            && !string.Equals(generatedAutomationRoot, smokeRoot, StringComparison.OrdinalIgnoreCase))
+        {
+            try { if (Directory.Exists(generatedAutomationRoot)) Directory.Delete(generatedAutomationRoot, recursive: true); } catch { }
+        }
+
+        const string firstName = "a-first.png";
+        const string secondName = "b-second.png";
+        const string thirdName = "c-third.png";
+        if (phase == "write")
+        {
+            Directory.CreateDirectory(folder);
+            Directory.CreateDirectory(Path.GetDirectoryName(jobsPath)!);
+            WriteSmokePng(Path.Combine(folder, firstName), 72, 54, Color.FromRgb(70, 125, 205));
+            WriteSmokePng(Path.Combine(folder, secondName), 72, 54, Color.FromRgb(195, 95, 125));
+            WriteSmokePng(Path.Combine(folder, thirdName), 72, 54, Color.FromRgb(95, 185, 115));
+            File.WriteAllText(statePath, "{\"Version\":2,\"futureTop\":{\"mode\":\"preserve\"},\"KeyBindings\":{\"favoriteIncrease\":\"Win+Shift+T\",\"favoriteDecrease\":\"Alt+F4\",\"futureAction\":{\"mode\":\"preserve\"}}}");
+            File.WriteAllText(favoritesPath, "{}");
+            File.WriteAllText(seenPath, "{}");
+            File.WriteAllText(recentPath, "{\"version\":1,\"lastFolderSet\":[],\"recentFolderSets\":[],\"updatedAtUtc\":\"\"}");
+            File.WriteAllText(jobsPath, "{\"version\":1,\"jobs\":[]}");
+        }
+
+        if (!Directory.Exists(folder) || !File.Exists(statePath) || !File.Exists(jobsPath))
+        {
+            WriteCrossRuntimeSharedStateResult(resultFullPath, new
+            {
+                ok = false,
+                message = "key-binding smoke fixture is incomplete; run write before reload",
+                phase,
+                smokeRoot,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        string sourceBefore = FolderFingerprint(folder);
+        string jobsBefore = FileFingerprint(jobsPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.Show();
+        window.Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                await window.LoadFolderAsync(folder);
+                window.SetSortByForSmoke("name");
+                if (phase == "write")
+                {
+                    bool defaultsLoaded = window.KeyBindingTextForSmoke("favoriteIncrease", draft: false) == "F"
+                        && window.KeyBindingTextForSmoke("nextImage", draft: false) == "Right"
+                        && window.KeyBindingTextForSmoke("reopenLastClosedPreviewTab", draft: false) == "Ctrl+Shift+T"
+                        && window.KeyBindingTextForSmoke("movePreviewTabLeft", draft: false) == "Alt+Shift+Left";
+                    bool persistedInvalidFallback = window.KeyBindingTextForSmoke("favoriteIncrease", draft: false) == "F"
+                        && window.KeyBindingTextForSmoke("favoriteDecrease", draft: false) == "U";
+                    window.OpenAppSettingsForSmoke();
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                    bool surfaceContract = window.AppSettingsVisibleForSmoke && window.KeyBindingSurfaceContractForSmoke;
+                    double settingsWheelWidthBefore = window.CardWidthForSmoke;
+                    bool settingsWheelSuppressed = !window.InvokePreviewMouseWheelForSmoke(120, ModifierKeys.Control)
+                        && Math.Abs(window.CardWidthForSmoke - settingsWheelWidthBefore) < 0.01;
+
+                    bool captureStarted = window.BeginKeyBindingCaptureForSmoke("favoriteIncrease");
+                    bool modifierHandled = window.InvokePreviewKeyForSmoke(Key.LeftCtrl, ModifierKeys.Control);
+                    bool modifierRejected = modifierHandled
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("non-modifier", StringComparison.OrdinalIgnoreCase);
+                    bool tabRejected = window.InvokePreviewKeyForSmoke(Key.Tab, ModifierKeys.Shift)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("reserved", StringComparison.OrdinalIgnoreCase);
+                    bool altF4Rejected = window.InvokePreviewKeyForSmoke(Key.F4, ModifierKeys.Alt)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("reserved", StringComparison.OrdinalIgnoreCase);
+                    bool winLRejected = window.InvokePreviewKeyForSmoke(Key.L, ModifierKeys.Windows)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("operating system", StringComparison.OrdinalIgnoreCase);
+                    bool winShiftTRejected = window.InvokePreviewKeyForSmoke(Key.T, ModifierKeys.Windows | ModifierKeys.Shift)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("operating system", StringComparison.OrdinalIgnoreCase);
+                    bool ctrlEscapeRejected = window.InvokePreviewKeyForSmoke(Key.Escape, ModifierKeys.Control)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("reserved", StringComparison.OrdinalIgnoreCase);
+                    bool altEscapeRejected = window.InvokePreviewKeyForSmoke(Key.Escape, ModifierKeys.Alt)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("reserved", StringComparison.OrdinalIgnoreCase);
+                    bool extraModifierSecureAttentionRejected = window.InvokePreviewKeyForSmoke(
+                            Key.Delete,
+                            ModifierKeys.Control | ModifierKeys.Alt | ModifierKeys.Shift)
+                        && window.KeyBindingRecordingForSmoke
+                        && window.KeyBindingStatusForSmoke.Contains("reserved", StringComparison.OrdinalIgnoreCase);
+                    bool reservedRejected = tabRejected && altF4Rejected && winLRejected && winShiftTRejected
+                        && ctrlEscapeRejected && altEscapeRejected && extraModifierSecureAttentionRejected;
+                    bool recordingCanceled = window.InvokePreviewKeyForSmoke(Key.Escape, ModifierKeys.None)
+                        && !window.KeyBindingRecordingForSmoke
+                        && window.AppSettingsVisibleForSmoke;
+
+                    window.ResetKeyBindingsForSmoke();
+                    bool conflictDrafted = window.SetKeyBindingDraftForSmoke("favoriteIncrease", Key.G, ModifierKeys.None)
+                        && window.SetKeyBindingDraftForSmoke("favoriteDecrease", Key.G, ModifierKeys.None);
+                    bool overlappingConflictRejected = conflictDrafted
+                        && window.KeyBindingConflictCountForSmoke >= 2
+                        && !window.KeyBindingSaveEnabledForSmoke
+                        && !window.SaveKeyBindingsForSmoke()
+                        && window.KeyBindingTextForSmoke("favoriteIncrease", draft: false) == "F";
+
+                    window.ResetKeyBindingsForSmoke();
+                    bool contextReuseDrafted = window.SetKeyBindingDraftForSmoke("galleryZoomIn", Key.Z, ModifierKeys.None)
+                        && window.SetKeyBindingDraftForSmoke("modalZoomIn", Key.Z, ModifierKeys.None);
+                    bool contextAwareReuseAllowed = contextReuseDrafted
+                        && window.KeyBindingConflictCountForSmoke == 0
+                        && window.KeyBindingSaveEnabledForSmoke;
+
+                    window.ResetKeyBindingsForSmoke();
+                    bool customDrafted = window.SetKeyBindingDraftForSmoke("favoriteIncrease", Key.G, ModifierKeys.None)
+                        && window.SetKeyBindingDraftForSmoke("favoriteLevel3", Key.L, ModifierKeys.Control)
+                        && window.SetKeyBindingDraftForSmoke("nextImage", Key.N, ModifierKeys.None)
+                        && window.SetKeyBindingDraftForSmoke("closeModal", Key.Q, ModifierKeys.None)
+                        && window.SetKeyBindingDraftForSmoke("reopenLastClosedPreviewTab", Key.R, ModifierKeys.Control | ModifierKeys.Shift)
+                        && window.SetKeyBindingDraftForSmoke("movePreviewTabLeft", Key.J, ModifierKeys.Alt | ModifierKeys.Shift)
+                        && window.SetKeyBindingDraftForSmoke("movePreviewTabRight", Key.K, ModifierKeys.Alt | ModifierKeys.Shift);
+                    bool saved = customDrafted && window.KeyBindingConflictCountForSmoke == 0 && window.SaveKeyBindingsForSmoke();
+                    bool hintsHot = saved && window.KeyBindingHintsMatchForSmoke;
+                    bool settingsClosed = window.CloseTopmostOverlayForSmoke() && !window.AppSettingsVisibleForSmoke;
+                    double inputWheelWidthBefore = window.CardWidthForSmoke;
+                    bool inputWheelSuppressed = window.FocusSearchInputForSmoke()
+                        && !window.InvokePreviewMouseWheelForSmoke(120, ModifierKeys.Control)
+                        && Math.Abs(window.CardWidthForSmoke - inputWheelWidthBefore) < 0.01;
+                    double inputVisualChildWheelWidthBefore = window.CardWidthForSmoke;
+                    bool inputVisualChildWheelSuppressed = window.SearchInputWheelVisualChildAvailableForSmoke
+                        && !window.InvokeSearchInputVisualChildMouseWheelForSmoke(120, ModifierKeys.Control)
+                        && Math.Abs(window.CardWidthForSmoke - inputVisualChildWheelWidthBefore) < 0.01;
+                    bool galleryFocusedForButtonWheel = window.FocusCardsListForSmoke();
+                    double buttonVisualChildWheelWidthBefore = window.CardWidthForSmoke;
+                    bool buttonVisualChildWheelSuppressed = galleryFocusedForButtonWheel
+                        && window.ViewerButtonWheelVisualChildAvailableForSmoke
+                        && !window.InvokeViewerButtonVisualChildMouseWheelForSmoke(120, ModifierKeys.Control)
+                        && Math.Abs(window.CardWidthForSmoke - buttonVisualChildWheelWidthBefore) < 0.01;
+
+                    bool selectedFirst = window.SelectFileNameForSmoke(firstName) && window.FocusCardsListForSmoke();
+                    int favoriteBefore = window.SelectedFavoriteLevelForSmoke;
+                    bool oldFavoriteDisabled = !window.InvokePreviewKeyForSmoke(Key.F, ModifierKeys.None)
+                        && window.SelectedFavoriteLevelForSmoke == favoriteBefore;
+                    bool newFavoriteHot = window.InvokePreviewKeyForSmoke(Key.G, ModifierKeys.None)
+                        && window.SelectedFavoriteLevelForSmoke == 1;
+                    bool exactFavoriteHot = window.InvokePreviewKeyForSmoke(Key.L, ModifierKeys.Control)
+                        && window.SelectedFavoriteLevelForSmoke == 3;
+                    bool selectAllHot = window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control)
+                        && window.SelectedCountForSmoke == 3;
+                    bool clearSelectionHot = window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control | ModifierKeys.Shift)
+                        && window.SelectedCountForSmoke == 0;
+
+                    bool hiddenListSelectionFixture = window.SelectFileNameForSmoke(secondName)
+                        && window.SetListModeForSmoke();
+                    await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                    hiddenListSelectionFixture = hiddenListSelectionFixture && window.RowsSelectedCountForSmoke > 0;
+                    bool hiddenSelectionReturnedToGrid = window.SetGridModeForSmoke();
+                    await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                    bool hiddenSelectionClearHandled = window.FocusCardsListForSmoke()
+                        && window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control | ModifierKeys.Shift)
+                        && window.SelectedCountForSmoke == 0;
+                    int hiddenRowsSelectionAfterClear = window.RowsSelectedCountForSmoke;
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+                    string staleFavoriteBefore = FileFingerprint(favoritesPath);
+                    string staleSeenBefore = FileFingerprint(seenPath);
+                    string staleRecentBefore = FileFingerprint(recentPath);
+                    string staleJobsBefore = FileFingerprint(jobsPath);
+                    bool staleFavoriteSuppressed = !window.InvokePreviewKeyForSmoke(Key.G, ModifierKeys.None);
+                    bool staleDeleteSuppressed = !window.InvokePreviewKeyForSmoke(Key.Delete, ModifierKeys.None)
+                        && !window.DeleteConfirmationVisibleForSmoke;
+                    bool staleSharedStateUntouched = string.Equals(staleFavoriteBefore, FileFingerprint(favoritesPath), StringComparison.Ordinal)
+                        && string.Equals(staleSeenBefore, FileFingerprint(seenPath), StringComparison.Ordinal)
+                        && string.Equals(staleRecentBefore, FileFingerprint(recentPath), StringComparison.Ordinal)
+                        && string.Equals(staleJobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                    bool staleSourceUntouched = File.Exists(Path.Combine(folder, secondName))
+                        && string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                    bool staleHiddenSelectionSuppressed = hiddenListSelectionFixture
+                        && hiddenSelectionReturnedToGrid
+                        && hiddenSelectionClearHandled
+                        && staleFavoriteSuppressed
+                        && staleDeleteSuppressed
+                        && staleSharedStateUntouched
+                        && staleSourceUntouched;
+
+                    bool modalSelected = window.SelectFileNameForSmoke(firstName) && window.OpenModalForSmoke();
+                    string? modalBefore = window.SelectedFileNameForSmoke;
+                    bool oldNextDisabled = !window.InvokePreviewKeyForSmoke(Key.Right, ModifierKeys.None)
+                        && string.Equals(window.SelectedFileNameForSmoke, modalBefore, StringComparison.OrdinalIgnoreCase);
+                    bool nextHot = window.InvokePreviewKeyForSmoke(Key.N, ModifierKeys.None)
+                        && !string.Equals(window.SelectedFileNameForSmoke, modalBefore, StringComparison.OrdinalIgnoreCase);
+                    double modalWheelZoomBefore = window.ModalTransformForSmoke().Zoom;
+                    bool modalMetadataWheelNative = !window.InvokeModalMetadataMouseWheelForSmoke(120)
+                        && Math.Abs(window.ModalTransformForSmoke().Zoom - modalWheelZoomBefore) < 0.0001;
+                    bool modalImageWheelZooms = window.InvokeModalImageMouseWheelForSmoke(120)
+                        && window.ModalTransformForSmoke().Zoom > modalWheelZoomBefore;
+                    _ = window.ResetModalTransformForSmoke();
+                    _ = window.InvokePreviewKeyForSmoke(Key.E, ModifierKeys.None);
+                    bool togglePassive = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                    bool closeHot = window.InvokePreviewKeyForSmoke(Key.Q, ModifierKeys.None) && !window.ModalVisibleForSmoke;
+
+                    bool openedFirst = window.SelectFileNameForSmoke(firstName) && window.OpenSelectedPreviewTabForSmoke();
+                    bool openedSecond = window.SelectFileNameForSmoke(secondName) && window.OpenSelectedPreviewTabForSmoke();
+                    bool openedThird = window.SelectFileNameForSmoke(thirdName) && window.OpenSelectedPreviewTabForSmoke();
+                    await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                    List<string> orderBefore = window.PreviewTabNamesForSmoke;
+                    bool focusedSecond = window.FocusPreviewTabForSmoke(secondName);
+                    bool oldReorderDisabled = !window.InvokePreviewKeyForSmoke(Key.Left, ModifierKeys.Alt | ModifierKeys.Shift)
+                        && window.PreviewTabNamesForSmoke.SequenceEqual(orderBefore, StringComparer.OrdinalIgnoreCase);
+                    bool reorderHot = window.InvokePreviewKeyForSmoke(Key.J, ModifierKeys.Alt | ModifierKeys.Shift)
+                        && !window.PreviewTabNamesForSmoke.SequenceEqual(orderBefore, StringComparer.OrdinalIgnoreCase);
+                    bool closedFirst = window.ClosePreviewTabForSmoke(firstName);
+                    int countAfterClose = window.PreviewTabCountForSmoke;
+                    bool cardsFocused = window.FocusCardsListForSmoke();
+                    bool oldReopenDisabled = !window.InvokePreviewKeyForSmoke(Key.T, ModifierKeys.Control | ModifierKeys.Shift)
+                        && window.PreviewTabCountForSmoke == countAfterClose;
+                    bool reopenHot = window.InvokePreviewKeyForSmoke(Key.R, ModifierKeys.Control | ModifierKeys.Shift)
+                        && window.PreviewTabNamesForSmoke.Contains(firstName, StringComparer.OrdinalIgnoreCase);
+
+                    ViewerState? stateWithOriginalUnknown = ReadPersistedState(statePath);
+                    bool nestedUnknownPreservedExactly = stateWithOriginalUnknown?.KeyBindings is not null
+                        && stateWithOriginalUnknown.KeyBindings.TryGetValue("futureAction", out JsonElement originalUnknown)
+                        && originalUnknown.ValueKind == JsonValueKind.Object
+                        && originalUnknown.EnumerateObject().Count() == 1
+                        && originalUnknown.TryGetProperty("mode", out JsonElement originalMode)
+                        && originalMode.GetString() == "preserve";
+
+                    ViewerState externalDeletion = stateWithOriginalUnknown
+                        ?? throw new InvalidOperationException("Key-binding state could not be read before external deletion merge smoke.");
+                    externalDeletion.KeyBindings?.Remove("futureAction");
+                    File.WriteAllText(statePath, JsonSerializer.Serialize(externalDeletion, new JsonSerializerOptions { WriteIndented = true }));
+                    window.FlushStateForSmoke();
+                    ViewerState? stateAfterExternalDeletion = ReadPersistedState(statePath);
+                    bool externalUnknownDeletionPreserved = stateAfterExternalDeletion?.KeyBindings is not null
+                        && !stateAfterExternalDeletion.KeyBindings.ContainsKey("futureAction");
+
+                    ViewerState externalAddition = stateAfterExternalDeletion
+                        ?? throw new InvalidOperationException("Key-binding state could not be read before external addition merge smoke.");
+                    externalAddition.KeyBindings ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
+                    externalAddition.KeyBindings["externalAdded"] = JsonSerializer.SerializeToElement(new { mode = "exact", count = 7 });
+                    File.WriteAllText(statePath, JsonSerializer.Serialize(externalAddition, new JsonSerializerOptions { WriteIndented = true }));
+                    window.FlushStateForSmoke();
+                    ViewerState? stateAfterExternalAddition = ReadPersistedState(statePath);
+                    bool externalUnknownAdditionPreserved = stateAfterExternalAddition?.KeyBindings is not null
+                        && stateAfterExternalAddition.KeyBindings.TryGetValue("externalAdded", out JsonElement externalUnknown)
+                        && externalUnknown.ValueKind == JsonValueKind.Object
+                        && externalUnknown.EnumerateObject().Count() == 2
+                        && externalUnknown.TryGetProperty("mode", out JsonElement externalMode)
+                        && externalMode.GetString() == "exact"
+                        && externalUnknown.TryGetProperty("count", out JsonElement externalCount)
+                        && externalCount.GetInt32() == 7;
+                    bool topLevelUnknownPreserved = stateAfterExternalAddition?.ExtensionData is not null
+                        && stateAfterExternalAddition.ExtensionData.ContainsKey("futureTop");
+
+                    window.ActivateViewerForSmoke();
+                    window.SeedLargeSelectionCatalogForSmoke(100_000, Path.Combine(folder, firstName));
+                    await window.Dispatcher.InvokeAsync(window.UpdateLayout, DispatcherPriority.Render);
+                    bool largeSelectionFocused = window.FocusCardsListForSmoke();
+                    var selectAllWatch = Stopwatch.StartNew();
+                    bool largeSelectAllHandled = window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control);
+                    selectAllWatch.Stop();
+                    int largeSelectedCount = window.SelectedCountForSmoke;
+                    int largeSelectionVisualCount = window.SelectionVisualItemCountForSmoke;
+                    bool largeSelectionVisualsBounded = largeSelectionVisualCount < window.MaterializedSelectionVisualLimitForSmoke;
+                    var clearAllWatch = Stopwatch.StartNew();
+                    bool largeClearHandled = window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control | ModifierKeys.Shift);
+                    clearAllWatch.Stop();
+                    bool largeSelectionFast = largeSelectionFocused
+                        && largeSelectAllHandled
+                        && largeSelectedCount == 100_000
+                        && largeSelectionVisualsBounded
+                        && selectAllWatch.ElapsedMilliseconds <= 1_500
+                        && largeClearHandled
+                        && window.SelectedCountForSmoke == 0
+                        && window.SelectionVisualItemCountForSmoke == 0
+                        && clearAllWatch.ElapsedMilliseconds <= 1_500;
+                    bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                    bool enhancementPassive = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                    bool residueFree = NoPersistenceResidue(smokeRoot);
+                    ok = defaultsLoaded && persistedInvalidFallback && surfaceContract && settingsWheelSuppressed && captureStarted
+                        && modifierRejected && reservedRejected && winShiftTRejected && recordingCanceled
+                        && overlappingConflictRejected && contextAwareReuseAllowed && saved && hintsHot && settingsClosed
+                        && inputWheelSuppressed && inputVisualChildWheelSuppressed && buttonVisualChildWheelSuppressed
+                        && selectedFirst && oldFavoriteDisabled && newFavoriteHot && exactFavoriteHot
+                        && selectAllHot && clearSelectionHot && staleHiddenSelectionSuppressed
+                        && modalSelected && oldNextDisabled && nextHot
+                        && modalMetadataWheelNative && modalImageWheelZooms && togglePassive && closeHot && openedFirst && openedSecond && openedThird
+                        && focusedSecond && oldReorderDisabled && reorderHot && closedFirst && cardsFocused
+                        && oldReopenDisabled && reopenHot && nestedUnknownPreservedExactly
+                        && externalUnknownDeletionPreserved && externalUnknownAdditionPreserved && topLevelUnknownPreserved
+                        && largeSelectionFast && sourceUntouched
+                        && enhancementPassive && residueFree;
+                    result = new
+                    {
+                        ok,
+                        phase,
+                        message = ok
+                            ? "editable key bindings rejected invalid/conflicting input and hot-applied every exercised action"
+                            : "key-binding write/hot-apply contract failed",
+                        defaultsLoaded,
+                        persistedInvalidFallback,
+                        surfaceContract,
+                        settingsWheelSuppressed,
+                        modifierRejected,
+                        reservedRejected,
+                        winShiftTRejected,
+                        recordingCanceled,
+                        overlappingConflictRejected,
+                        contextAwareReuseAllowed,
+                        saved,
+                        hintsHot,
+                        inputWheelSuppressed,
+                        inputVisualChildWheelSuppressed,
+                        buttonVisualChildWheelSuppressed,
+                        oldFavoriteDisabled,
+                        newFavoriteHot,
+                        exactFavoriteHot,
+                        selectAllHot,
+                        clearSelectionHot,
+                        staleHiddenSelectionSuppressed,
+                        hiddenRowsSelectionAfterClear,
+                        staleFavoriteSuppressed,
+                        staleDeleteSuppressed,
+                        staleSharedStateUntouched,
+                        staleSourceUntouched,
+                        oldNextDisabled,
+                        nextHot,
+                        modalMetadataWheelNative,
+                        modalImageWheelZooms,
+                        closeHot,
+                        oldReorderDisabled,
+                        reorderHot,
+                        oldReopenDisabled,
+                        reopenHot,
+                        togglePassive,
+                        nestedUnknownPreservedExactly,
+                        externalUnknownDeletionPreserved,
+                        externalUnknownAdditionPreserved,
+                        topLevelUnknownPreserved,
+                        largeSelectionFast,
+                        largeSelectedCount,
+                        largeSelectionVisualCount,
+                        selectAllMs = selectAllWatch.ElapsedMilliseconds,
+                        clearSelectionMs = clearAllWatch.ElapsedMilliseconds,
+                        sourceUntouched,
+                        enhancementPassive,
+                        residueFree,
+                    };
+                }
+                else
+                {
+                    bool persistedBindingsReloaded = window.KeyBindingTextForSmoke("favoriteIncrease", draft: false) == "G"
+                        && window.KeyBindingTextForSmoke("favoriteLevel3", draft: false) == "Ctrl+L"
+                        && window.KeyBindingTextForSmoke("nextImage", draft: false) == "N"
+                        && window.KeyBindingTextForSmoke("closeModal", draft: false) == "Q"
+                        && window.KeyBindingTextForSmoke("reopenLastClosedPreviewTab", draft: false) == "Ctrl+Shift+R"
+                        && window.KeyBindingTextForSmoke("movePreviewTabLeft", draft: false) == "Alt+Shift+J";
+                    bool persistedHintsReloaded = persistedBindingsReloaded && window.KeyBindingHintsMatchForSmoke;
+                    bool selectedSecond = window.SelectFileNameForSmoke(secondName) && window.FocusCardsListForSmoke();
+                    int before = window.SelectedFavoriteLevelForSmoke;
+                    bool reloadHotApplied = window.InvokePreviewKeyForSmoke(Key.G, ModifierKeys.None)
+                        && window.SelectedFavoriteLevelForSmoke == Math.Min(5, before + 1);
+                    bool reloadExactApplied = window.InvokePreviewKeyForSmoke(Key.L, ModifierKeys.Control)
+                        && window.SelectedFavoriteLevelForSmoke == 3;
+
+                    bool modalOpened = window.SelectFileNameForSmoke(firstName) && window.OpenModalForSmoke();
+                    string? modalBefore = window.SelectedFileNameForSmoke;
+                    bool reloadNextApplied = window.InvokePreviewKeyForSmoke(Key.N, ModifierKeys.None)
+                        && !string.Equals(window.SelectedFileNameForSmoke, modalBefore, StringComparison.OrdinalIgnoreCase);
+                    bool reloadCloseApplied = window.InvokePreviewKeyForSmoke(Key.Q, ModifierKeys.None) && !window.ModalVisibleForSmoke;
+
+                    window.OpenAppSettingsForSmoke();
+                    await window.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Input);
+                    bool settingsEscapeRescue = window.InvokePreviewKeyForSmoke(Key.Escape, ModifierKeys.None)
+                        && !window.AppSettingsVisibleForSmoke;
+                    bool deleteSelected = window.SelectFileNameForSmoke(thirdName) && window.FocusCardsListForSmoke();
+                    bool deleteOpened = window.InvokePreviewKeyForSmoke(Key.Delete, ModifierKeys.None)
+                        && window.DeleteConfirmationVisibleForSmoke;
+                    double deleteWheelWidthBefore = window.CardWidthForSmoke;
+                    bool deleteWheelSuppressed = !window.InvokePreviewMouseWheelForSmoke(120, ModifierKeys.Control)
+                        && Math.Abs(window.CardWidthForSmoke - deleteWheelWidthBefore) < 0.01;
+                    bool deleteEscapeRescue = window.InvokePreviewKeyForSmoke(Key.Escape, ModifierKeys.None)
+                        && !window.DeleteConfirmationVisibleForSmoke
+                        && File.Exists(Path.Combine(folder, thirdName));
+
+                    window.OpenAppSettingsForSmoke();
+                    window.ResetKeyBindingsForSmoke();
+                    bool resetDraft = window.KeyBindingTextForSmoke("favoriteIncrease", draft: true) == "F"
+                        && window.KeyBindingTextForSmoke("nextImage", draft: true) == "Right"
+                        && window.KeyBindingTextForSmoke("closeModal", draft: true) == "Escape"
+                        && window.KeyBindingTextForSmoke("reopenLastClosedPreviewTab", draft: true) == "Ctrl+Shift+T"
+                        && window.KeyBindingTextForSmoke("movePreviewTabLeft", draft: true) == "Alt+Shift+Left";
+                    bool resetSaved = resetDraft && window.SaveKeyBindingsForSmoke();
+                    bool resetHints = resetSaved && window.KeyBindingHintsMatchForSmoke;
+                    bool resetClosed = window.CloseTopmostOverlayForSmoke();
+                    bool resetSelected = window.SelectFileNameForSmoke(thirdName) && window.FocusCardsListForSmoke();
+                    int resetBefore = window.SelectedFavoriteLevelForSmoke;
+                    bool customKeyDisabledAfterReset = !window.InvokePreviewKeyForSmoke(Key.G, ModifierKeys.None)
+                        && window.SelectedFavoriteLevelForSmoke == resetBefore;
+                    bool defaultKeyHotAfterReset = window.InvokePreviewKeyForSmoke(Key.F, ModifierKeys.None)
+                        && window.SelectedFavoriteLevelForSmoke == Math.Min(5, resetBefore + 1);
+
+                    string? tabToCloseForLanding = window.PreviewTabNamesForSmoke.FirstOrDefault();
+                    bool landingReopenFixture = tabToCloseForLanding is not null
+                        && window.ClosePreviewTabForSmoke(tabToCloseForLanding);
+                    int landingPreviewCountBefore = window.PreviewTabCountForSmoke;
+                    int landingClosedCountBefore = window.ClosedPreviewTabCountForSmoke;
+                    int landingSelectedCountBefore = window.SelectedCountForSmoke;
+                    int landingFavoriteBefore = window.SelectedFavoriteLevelForSmoke;
+                    double landingCardWidthBefore = window.CardWidthForSmoke;
+                    bool landed = window.ActivateLogoForSmoke();
+                    bool landingPlusHandled = window.InvokePreviewKeyForSmoke(Key.OemPlus, ModifierKeys.Control);
+                    bool landingSelectAllHandled = window.InvokePreviewKeyForSmoke(Key.A, ModifierKeys.Control);
+                    bool landingFavoriteHandled = window.InvokePreviewKeyForSmoke(Key.F, ModifierKeys.None);
+                    bool landingDeleteHandled = window.InvokePreviewKeyForSmoke(Key.Delete, ModifierKeys.None);
+                    bool landingReopenHandled = window.InvokePreviewKeyForSmoke(Key.T, ModifierKeys.Control | ModifierKeys.Shift);
+                    bool landingWheelHandled = window.InvokePreviewMouseWheelForSmoke(120, ModifierKeys.Control);
+                    bool landingShortcutsSuppressed = landingReopenFixture && landed
+                        && !landingPlusHandled && !landingSelectAllHandled && !landingFavoriteHandled
+                        && !landingDeleteHandled && !landingReopenHandled && !landingWheelHandled
+                        && Math.Abs(window.CardWidthForSmoke - landingCardWidthBefore) < 0.01
+                        && window.SelectedCountForSmoke == landingSelectedCountBefore
+                        && window.SelectedFavoriteLevelForSmoke == landingFavoriteBefore
+                        && !window.DeleteConfirmationVisibleForSmoke
+                        && window.PreviewTabCountForSmoke == landingPreviewCountBefore
+                        && window.ClosedPreviewTabCountForSmoke == landingClosedCountBefore;
+
+                    ViewerState? finalState = ReadPersistedState(statePath);
+                    bool unknownMergeReloaded = finalState?.ExtensionData is not null
+                        && finalState.ExtensionData.ContainsKey("futureTop")
+                        && finalState.KeyBindings is not null
+                        && !finalState.KeyBindings.ContainsKey("futureAction")
+                        && finalState.KeyBindings.TryGetValue("externalAdded", out JsonElement reloadedExternal)
+                        && reloadedExternal.ValueKind == JsonValueKind.Object
+                        && reloadedExternal.TryGetProperty("mode", out JsonElement reloadedMode)
+                        && reloadedMode.GetString() == "exact"
+                        && reloadedExternal.TryGetProperty("count", out JsonElement reloadedCount)
+                        && reloadedCount.GetInt32() == 7;
+                    bool sourceUntouched = string.Equals(sourceBefore, FolderFingerprint(folder), StringComparison.Ordinal);
+                    bool enhancementPassive = string.Equals(jobsBefore, FileFingerprint(jobsPath), StringComparison.Ordinal);
+                    bool residueFree = NoPersistenceResidue(smokeRoot);
+                    ok = persistedBindingsReloaded && persistedHintsReloaded && selectedSecond && reloadHotApplied && reloadExactApplied
+                        && modalOpened && reloadNextApplied && reloadCloseApplied
+                        && settingsEscapeRescue && deleteSelected && deleteOpened && deleteWheelSuppressed && deleteEscapeRescue
+                        && resetDraft && resetSaved && resetHints && resetClosed && resetSelected
+                        && customKeyDisabledAfterReset && defaultKeyHotAfterReset
+                        && landingShortcutsSuppressed && unknownMergeReloaded
+                        && sourceUntouched && enhancementPassive && residueFree;
+                    result = new
+                    {
+                        ok,
+                        phase,
+                        message = ok
+                            ? "a separate process restored custom bindings, used them, retained Escape rescue, and saved defaults"
+                            : "key-binding separate-process reload/reset contract failed",
+                        persistedBindingsReloaded,
+                        persistedHintsReloaded,
+                        reloadHotApplied,
+                        reloadExactApplied,
+                        reloadNextApplied,
+                        reloadCloseApplied,
+                        settingsEscapeRescue,
+                        deleteOpened,
+                        deleteWheelSuppressed,
+                        deleteEscapeRescue,
+                        resetDraft,
+                        resetSaved,
+                        resetHints,
+                        customKeyDisabledAfterReset,
+                        defaultKeyHotAfterReset,
+                        landingShortcutsSuppressed,
+                        unknownMergeReloaded,
+                        sourceUntouched,
+                        enhancementPassive,
+                        residueFree,
+                    };
+                }
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, phase, message = ex.ToString(), smokeRoot };
+            }
+            finally
+            {
+                try { if (window.IsLoaded) window.Close(); } catch { }
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultFullPath, result);
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
     private void CaptureScanCancellationSmoke(string resultPath)
     {
         static async Task<bool> WaitForPhaseAsync(MainWindow window, string phase, int timeoutMilliseconds = 4000)
@@ -2221,13 +2751,16 @@ public partial class App : Application
 
                 bool adjustedToFinalLevel = true;
                 int increaseStepsAfterClear = 0;
+                first.ShowModalForShot();
                 for (int i = 0; i < 4; i++)
                 {
-                    adjustedToFinalLevel &= first.AdjustSelectedFavoriteForSmoke(1);
+                    adjustedToFinalLevel &= first.AdjustModalFavoriteForSmoke(1);
                     increaseStepsAfterClear++;
                 }
 
                 int finalLevel = first.SelectedFavoriteLevelForSmoke;
+                adjustedToFinalLevel &= first.ModalFavoriteLevelForSmoke == finalLevel;
+                first.CloseModalForSmoke();
                 first.SetFavoriteOnlyFilterForSmoke(true);
                 int filteredAfterFinal = first.FilteredCountForSmoke;
                 int storeCountAfterFinal = first.FavoriteStoreCountForSmoke;
@@ -12891,9 +13424,13 @@ public partial class App : Application
         string validName = "metadata.png";
         string missingName = "missing.png";
         string ignoredName = "ignored-text.png";
+        string duplicateName = "duplicate-parameters.png";
+        string emptyFirstName = "empty-first-parameters.png";
         string validPath = Path.Combine(folder, validName);
         string missingPath = Path.Combine(folder, missingName);
         string ignoredPath = Path.Combine(folder, ignoredName);
+        string duplicatePath = Path.Combine(folder, duplicateName);
+        string emptyFirstPath = Path.Combine(folder, emptyFirstName);
         string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
         string? previousSeenPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH");
         string? previousFavoritesPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH");
@@ -12908,6 +13445,20 @@ public partial class App : Application
                 "masterpiece, studio portrait\nNegative prompt: lowres, text\nSteps: 28, Sampler: Euler a, CFG scale: 6.5, Seed: 1234",
                 Color.FromRgb(46, 204, 113));
             WritePngTextFixture(ignoredPath, "not-parameters", "this text must not become image metadata", Color.FromRgb(231, 76, 60));
+            WritePngTextFixture(
+                duplicatePath,
+                "parameters",
+                "first catalog prompt\nNegative prompt: first negative\nSteps: 11, Sampler: Euler",
+                Color.FromRgb(155, 89, 182));
+            InsertPngTextFixture(
+                duplicatePath,
+                "parameters",
+                "second prompt must be ignored\nNegative prompt: second negative\nSteps: 99, Sampler: DPM++");
+            WritePngTextFixture(emptyFirstPath, "parameters", "   ", Color.FromRgb(241, 196, 15));
+            InsertPngTextFixture(
+                emptyFirstPath,
+                "parameters",
+                "later prompt must stay ignored\nNegative prompt: later negative\nSteps: 77, Sampler: DPM++");
             Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH", statePath);
             Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", seenPath);
             Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", favoritesPath);
@@ -12940,6 +13491,20 @@ public partial class App : Application
                 ModalMetadataSmokeSnapshot hiddenModal = win.ToggleModalMetadataSidebarForSmoke();
                 ModalMetadataSmokeSnapshot doubleClickModal = win.DoubleClickModalImageForSmoke();
                 ModalMetadataSmokeSnapshot doubleClickHiddenModal = win.DoubleClickModalImageForSmoke();
+                string? duplicateCatalogPrompt = win.PromptForFileNameForSmoke(duplicateName);
+                string? emptyFirstCatalogPrompt = win.PromptForFileNameForSmoke(emptyFirstName);
+                PngMetadataSmokeSnapshot duplicate = await win.SelectPngMetadataForSmokeAsync(duplicateName);
+                PngMetadataSmokeSnapshot emptyFirst = await win.SelectPngMetadataForSmokeAsync(emptyFirstName);
+                bool duplicateFirstChunkOwned = string.Equals(duplicateCatalogPrompt, "first catalog prompt", StringComparison.Ordinal)
+                    && duplicate.MetadataApplied
+                    && string.Equals(duplicate.Prompt, "first catalog prompt", StringComparison.Ordinal)
+                    && string.Equals(duplicate.NegativePrompt, "first negative", StringComparison.Ordinal)
+                    && string.Equals(duplicate.Sampler, "Euler", StringComparison.Ordinal);
+                bool emptyFirstChunkOwned = string.IsNullOrEmpty(emptyFirstCatalogPrompt)
+                    && emptyFirst.Selected
+                    && !emptyFirst.MetadataApplied
+                    && string.Equals(emptyFirst.Prompt, emptyFirstPath, StringComparison.OrdinalIgnoreCase)
+                    && !emptyFirst.SamplerVisible;
                 PngMetadataSmokeSnapshot missing = await win.SelectPngMetadataForSmokeAsync(missingName);
                 MetadataCopySmokeSnapshot missingCopy = win.CopyCurrentPreviewMetadataForSmoke();
                 MetadataCopySmokeSnapshot missingPromptCopy = win.CopyCurrentPreviewPromptForSmoke(negative: false);
@@ -13030,6 +13595,8 @@ public partial class App : Application
                     && doubleClickHiddenModal.CopyMetadataEnabled
                     && doubleClickHiddenModal.CopyPromptEnabled
                     && doubleClickHiddenModal.CopyNegativeEnabled
+                    && duplicateFirstChunkOwned
+                    && emptyFirstChunkOwned
                     && missing.Selected
                     && !missing.MetadataApplied
                     && !missingCopy.Copied
@@ -13048,13 +13615,15 @@ public partial class App : Application
                 {
                     Ok = ok,
                     Message = ok
-                        ? "lazy PNG parameters metadata survives Prompt/Negative/Settings tab selection plus button and image-double-click sidebar show/hide cycles; missing and unrelated text chunks stay on the safe path fallback"
+                        ? "lazy PNG parameters metadata and catalog indexing share first-parameters-chunk ownership, including empty-first duplicates; Prompt/Negative/Settings surfaces remain synchronized and unrelated text stays on the safe fallback"
                         : "PNG parameters metadata smoke did not meet expected lazy selection behavior",
                     SmokeRoot = smokeRoot,
                     Folder = folder,
                     ValidPath = validPath,
                     MissingPath = missingPath,
                     IgnoredPath = ignoredPath,
+                    DuplicatePath = duplicatePath,
+                    EmptyFirstPath = emptyFirstPath,
                     Valid = valid,
                     ValidCopy = validCopy,
                     InitialModal = initialModal,
@@ -13065,6 +13634,12 @@ public partial class App : Application
                     HiddenModal = hiddenModal,
                     DoubleClickModal = doubleClickModal,
                     DoubleClickHiddenModal = doubleClickHiddenModal,
+                    DuplicateCatalogPrompt = duplicateCatalogPrompt,
+                    EmptyFirstCatalogPrompt = emptyFirstCatalogPrompt,
+                    Duplicate = duplicate,
+                    EmptyFirst = emptyFirst,
+                    DuplicateFirstChunkOwned = duplicateFirstChunkOwned,
+                    EmptyFirstChunkOwned = emptyFirstChunkOwned,
                     Missing = missing,
                     MissingCopy = missingCopy,
                     IgnoredTextSkipped = ignoredTextSkipped,
@@ -14612,6 +15187,11 @@ public partial class App : Application
     private static void WritePngTextFixture(string path, string keyword, string text, Color color)
     {
         WriteSmokePng(path, 128, 96, color);
+        InsertPngTextFixture(path, keyword, text);
+    }
+
+    private static void InsertPngTextFixture(string path, string keyword, string text)
+    {
         byte[] png = File.ReadAllBytes(path);
         int insertOffset = FindPngIdatOffset(png);
         byte[] keywordBytes = System.Text.Encoding.Latin1.GetBytes(keyword);
@@ -15148,6 +15728,8 @@ public partial class App : Application
         public string? ValidPath { get; init; }
         public string? MissingPath { get; init; }
         public string? IgnoredPath { get; init; }
+        public string? DuplicatePath { get; init; }
+        public string? EmptyFirstPath { get; init; }
         public PngMetadataSmokeSnapshot? Valid { get; init; }
         public MetadataCopySmokeSnapshot? ValidCopy { get; init; }
         public ModalMetadataSmokeSnapshot? InitialModal { get; init; }
@@ -15158,6 +15740,12 @@ public partial class App : Application
         public ModalMetadataSmokeSnapshot? HiddenModal { get; init; }
         public ModalMetadataSmokeSnapshot? DoubleClickModal { get; init; }
         public ModalMetadataSmokeSnapshot? DoubleClickHiddenModal { get; init; }
+        public string? DuplicateCatalogPrompt { get; init; }
+        public string? EmptyFirstCatalogPrompt { get; init; }
+        public PngMetadataSmokeSnapshot? Duplicate { get; init; }
+        public PngMetadataSmokeSnapshot? EmptyFirst { get; init; }
+        public bool DuplicateFirstChunkOwned { get; init; }
+        public bool EmptyFirstChunkOwned { get; init; }
         public PngMetadataSmokeSnapshot? Missing { get; init; }
         public MetadataCopySmokeSnapshot? MissingCopy { get; init; }
         public bool IgnoredTextSkipped { get; init; }

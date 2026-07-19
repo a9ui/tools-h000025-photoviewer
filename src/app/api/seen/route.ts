@@ -3,28 +3,53 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 const MAX_SEEN_PATH_LENGTH = 32_768;
 
 function seenPath() {
-  return process.env.PVU_SEEN_PATH
-    ? path.resolve(process.env.PVU_SEEN_PATH)
-    : path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'seen.json');
+  return resolveSharedCachePath('seen.json', process.env.PVU_SEEN_PATH);
 }
 
 function isObjectMap(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeSeenMap(value: unknown): Record<string, true> | null {
+function isValidSeenPath(imagePath: string) {
+  return Boolean(imagePath.trim()) && imagePath.length <= MAX_SEEN_PATH_LENGTH;
+}
+
+function normalizeIncomingSeenMap(value: unknown): Record<string, true> | null {
   if (!isObjectMap(value)) return null;
 
   const seen: Record<string, true> = {};
   for (const [imagePath, marker] of Object.entries(value)) {
-    // `true` is the shared WPF/Browser representation. Treat any other value
-    // as an unsupported future shape so a Browser write cannot erase it.
-    if (!imagePath || imagePath.length > MAX_SEEN_PATH_LENGTH || marker !== true) return null;
+    if (!isValidSeenPath(imagePath) || marker !== true) return null;
     seen[imagePath] = true;
+  }
+  return seen;
+}
+
+function normalizeStoredSeenMap(value: unknown): Record<string, true> | null {
+  if (!isObjectMap(value)) return null;
+
+  const seen: Record<string, true> = {};
+  for (const [imagePath, marker] of Object.entries(value)) {
+    if (!isValidSeenPath(imagePath)) return null;
+    let isSeen: boolean;
+    if (typeof marker === 'boolean') {
+      isSeen = marker;
+    } else if (typeof marker === 'number'
+      && Number.isInteger(marker)
+      && marker >= -2_147_483_648
+      && marker <= 2_147_483_647) {
+      isSeen = marker !== 0;
+    } else if (typeof marker === 'string' && /^(?:true|false)$/i.test(marker.trim())) {
+      isSeen = marker.trim().toLowerCase() === 'true';
+    } else {
+      return null;
+    }
+    if (isSeen) seen[imagePath] = true;
   }
   return seen;
 }
@@ -35,7 +60,7 @@ async function readSeen(): Promise<
 > {
   try {
     const raw = await fs.readFile(seenPath(), 'utf8');
-    const seen = normalizeSeenMap(JSON.parse(raw));
+    const seen = normalizeStoredSeenMap(JSON.parse(raw));
     if (seen === null) {
       return {
         ok: false,
@@ -92,7 +117,7 @@ export async function PUT(req: Request) {
   if (!isObjectMap(body) || !Object.hasOwn(body, 'seen')) {
     return NextResponse.json({ ok: false, error: 'Request body must include a seen map.' }, { status: 400 });
   }
-  const incoming = normalizeSeenMap(body.seen);
+  const incoming = normalizeIncomingSeenMap(body.seen);
   if (incoming === null) {
     return NextResponse.json({ ok: false, error: 'seen must be a true-marker path map.' }, { status: 400 });
   }

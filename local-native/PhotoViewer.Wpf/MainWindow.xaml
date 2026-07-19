@@ -409,9 +409,9 @@
                     <Button Style="{StaticResource GhostButton}" Content="5" Tag="5" Click="BulkFavoriteLevel_Click" ToolTip="Set selected images to favorite level 5" AutomationProperties.Name="Set selected images to favorite level 5"/>
                   </UniformGrid>
                   <UniformGrid Columns="2" Margin="0,8,0,0">
-                    <Button Style="{StaticResource GhostButton}" Content="Decrease all" Click="FavoriteDecrease_Click"
+                    <Button x:Name="BulkFavoriteDecreaseButton" Style="{StaticResource GhostButton}" Content="Decrease all" Click="FavoriteDecrease_Click"
                             ToolTip="Decrease favorite level for selected images (U)" AutomationProperties.Name="Decrease favorite level for selected images" Margin="0,0,4,0"/>
-                    <Button Style="{StaticResource GhostButton}" Content="Increase all" Click="FavoriteIncrease_Click"
+                    <Button x:Name="BulkFavoriteIncreaseButton" Style="{StaticResource GhostButton}" Content="Increase all" Click="FavoriteIncrease_Click"
                             ToolTip="Increase favorite level for selected images" AutomationProperties.Name="Increase favorite level for selected images" Margin="4,0,0,0"/>
                   </UniformGrid>
                   <Button x:Name="BulkDeleteButton" Style="{StaticResource DangerButton}" Content="Move selected to Recycle Bin" Click="BulkDeleteSelected_Click"
@@ -424,14 +424,14 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                 <Border Grid.Column="0" CornerRadius="8" ClipToBounds="True" BorderBrush="#66F43F5E" BorderThickness="1" Margin="0,0,8,0">
                   <StackPanel Orientation="Horizontal">
-                    <Button Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (U)" Click="FavoriteDecrease_Click"/>
+                    <Button x:Name="FavoriteDecreaseButton" Style="{StaticResource StepButton}" Content="−" ToolTip="Decrease (U)" Click="FavoriteDecrease_Click"/>
                     <Border Width="38" Background="#1AF43F5E">
                       <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" VerticalAlignment="Center">
                         <TextBlock x:Name="FavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontWeight="Bold" FontSize="13"/>
                         <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="11" Height="11" Margin="2,0,0,0"/>
                       </StackPanel>
                     </Border>
-                    <Button Style="{StaticResource StepButton}" Content="+" ToolTip="Increase" Click="FavoriteIncrease_Click"/>
+                    <Button x:Name="FavoriteIncreaseButton" Style="{StaticResource StepButton}" Content="+" ToolTip="Increase" Click="FavoriteIncrease_Click"/>
                   </StackPanel>
                 </Border>
                 <Button Grid.Column="1" Style="{StaticResource GhostButton}" Margin="0,0,8,0" Click="OpenSelectedExternally_Click">
@@ -727,6 +727,14 @@
           <TextBlock Text="DISPLAY" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <CheckBox x:Name="AppSettingsUnseenDotsCheckBox" Content="Unseen dots" Foreground="{StaticResource TextSecondary}" Checked="ShowUnseenDots_Changed" Unchecked="ShowUnseenDots_Changed" AutomationProperties.Name="Show unseen dots in gallery" AutomationProperties.HelpText="Changes dot visibility only. Seen history is not changed."/>
           <TextBlock Text="Shows a dot on images that have not been viewed. This display option never changes seen history." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="24,4,0,18"/>
+          <TextBlock Text="KEY BINDINGS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
+          <TextBlock Text="Choose an action, then press its new key combination. Gallery and modal-only actions may reuse the same key. App Settings and Recycle confirmation always keep Escape as a rescue key." Foreground="{StaticResource TextTertiary}" FontSize="11.5" TextWrapping="Wrap" Margin="0,0,0,10"/>
+          <StackPanel x:Name="KeyBindingsPanel" AutomationProperties.Name="Editable key bindings"/>
+          <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,8,0,4">
+            <Button x:Name="ResetKeyBindingsButton" Style="{StaticResource GhostButton}" Content="Reset to defaults" Click="ResetKeyBindings_Click" MinWidth="126" Margin="0,0,8,0" AutomationProperties.Name="Reset key bindings to defaults"/>
+            <Button x:Name="SaveKeyBindingsButton" Style="{StaticResource GhostButton}" Content="Save key bindings" Click="SaveKeyBindings_Click" MinWidth="126" AutomationProperties.Name="Save key bindings"/>
+          </StackPanel>
+          <TextBlock x:Name="KeyBindingsStatusText" Foreground="{StaticResource TextTertiary}" FontSize="11" TextWrapping="Wrap" Margin="0,0,0,18" AutomationProperties.LiveSetting="Polite" AutomationProperties.Name="Key binding status"/>
           <TextBlock Text="ABOUT / DIAGNOSTICS" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontWeight="SemiBold" Margin="0,0,0,6"/>
           <Border Background="#161820" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1" CornerRadius="7" Padding="10" Margin="0,0,0,8">
             <StackPanel>
@@ -786,7 +794,7 @@
         <Button DockPanel.Dock="Right" x:Name="ModalCloseBtn" Style="{StaticResource IconButton}" Click="CloseModal_Click" ToolTip="Close (Esc)" AutomationProperties.Name="Close image preview" Width="38" Height="38">
           <Path Data="M18,6 L6,18 M6,6 L18,18" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.8" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" ToolTip="Move source to Recycle Bin (Delete)" AutomationProperties.Name="Move selected image to Recycle Bin" Width="38" Height="38" Margin="0,0,4,0">
+        <Button x:Name="ModalDeleteButton" DockPanel.Dock="Right" Style="{StaticResource DangerButton}" Click="DeleteSelected_Click" ToolTip="Move source to Recycle Bin (Delete)" AutomationProperties.Name="Move selected image to Recycle Bin" Width="38" Height="38" Margin="0,0,4,0">
           <Path Data="M3,6 h18 M8,6 V4 a2,2 0 0 1 2,-2 h4 a2,2 0 0 1 2,2 v2 M19,6 l-1,14 a2,2 0 0 1 -2,2 H8 a2,2 0 0 1 -2,-2 L5,6" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="14" Height="14"/>
         </Button>
         <Button x:Name="ModalMetadataSidebarToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ToggleModalMetadataSidebar_Click" ToolTip="Show metadata sidebar" AutomationProperties.Name="Toggle metadata sidebar" Width="38" Height="38">
@@ -802,13 +810,13 @@
         <Button x:Name="ModalEnhancedToggleButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="No enhanced output available" AutomationProperties.Name="Toggle enhanced image output" Width="42" Height="38" Click="ToggleModalEnhanced_Click" IsEnabled="False">
           <TextBlock x:Name="ModalEnhancedToggleLabel" Text="OR" Foreground="{StaticResource TextSecondary}" FontSize="10.5" FontWeight="SemiBold"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" AutomationProperties.Name="Flip image horizontally" Width="38" Height="38" Click="ToggleModalFlip_Click">
+        <Button x:Name="ModalFlipButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Flip horizontal (H)" AutomationProperties.Name="Flip image horizontally" Width="38" Height="38" Click="ToggleModalFlip_Click">
           <Path Data="M12,3 v18 M6,8 l-4,4 l4,4 M18,8 l4,4 l-4,4" Stroke="{StaticResource TextSecondary}" StrokeThickness="1.7" Stretch="Uniform" Width="16" Height="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (U)" AutomationProperties.Name="Decrease favorite level" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
+        <Button x:Name="ModalFavoriteDecreaseButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite -1 (U)" AutomationProperties.Name="Decrease favorite level" Width="38" Height="38" Click="ModalFavoriteDecrease_Click">
           <TextBlock Text="−" Foreground="{StaticResource TextSecondary}" FontSize="16"/>
         </Button>
-        <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" AutomationProperties.Name="Increase favorite level" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">
+        <Button x:Name="ModalFavoriteIncreaseButton" DockPanel.Dock="Right" Style="{StaticResource IconButton}" ToolTip="Favorite +1" AutomationProperties.Name="Increase favorite level" Width="46" Height="38" Click="ModalFavoriteIncrease_Click">
           <StackPanel Orientation="Horizontal">
             <TextBlock Text="F" Foreground="{StaticResource FavoriteText}" FontWeight="Bold"/>
             <TextBlock x:Name="ModalFavoriteLevelText" Text="0" Foreground="{StaticResource FavoriteText}" FontSize="11" FontWeight="Bold" Margin="4,0,0,0"/>
@@ -915,11 +923,11 @@
 
         <Border x:Name="ModalFooter" Grid.ColumnSpan="3" VerticalAlignment="Bottom" HorizontalAlignment="Center" CornerRadius="999" Background="#B0000000" Padding="7,4" Margin="0,0,0,10">
           <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-            <Button Style="{StaticResource GhostButton}" Content="−" ToolTip="Zoom out (-)" AutomationProperties.Name="Zoom image out" Height="26" MinWidth="32" Padding="6,0" Click="ModalZoomOut_Click"/>
-            <Button Style="{StaticResource GhostButton}" Content="Fit" ToolTip="Reset to fit (0)" AutomationProperties.Name="Fit image to preview" Height="26" MinWidth="42" Padding="7,0" Margin="4,0" Click="ModalFit_Click"/>
+            <Button x:Name="ModalZoomOutButton" Style="{StaticResource GhostButton}" Content="−" ToolTip="Zoom out (-)" AutomationProperties.Name="Zoom image out" Height="26" MinWidth="32" Padding="6,0" Click="ModalZoomOut_Click"/>
+            <Button x:Name="ModalZoomResetButton" Style="{StaticResource GhostButton}" Content="Fit" ToolTip="Reset to fit (0)" AutomationProperties.Name="Fit image to preview" Height="26" MinWidth="42" Padding="7,0" Margin="4,0" Click="ModalFit_Click"/>
             <TextBlock x:Name="ModalZoomLabel" Text="100%" Foreground="{StaticResource TextSecondary}" FontSize="12" MinWidth="48" TextAlignment="Center" VerticalAlignment="Center"/>
-            <Button Style="{StaticResource GhostButton}" Content="+" ToolTip="Zoom in (+)" AutomationProperties.Name="Zoom image in" Height="26" MinWidth="32" Padding="6,0" Margin="4,0,0,0" Click="ModalZoomIn_Click"/>
-            <TextBlock Text="   ← → navigate   ·   Esc close" Foreground="{StaticResource TextTertiary}" FontSize="11" VerticalAlignment="Center" Margin="6,0,4,0"/>
+            <Button x:Name="ModalZoomInButton" Style="{StaticResource GhostButton}" Content="+" ToolTip="Zoom in (+)" AutomationProperties.Name="Zoom image in" Height="26" MinWidth="32" Padding="6,0" Margin="4,0,0,0" Click="ModalZoomIn_Click"/>
+            <TextBlock x:Name="ModalShortcutHintText" Text="   ← → navigate   ·   Esc close" Foreground="{StaticResource TextTertiary}" FontSize="11" VerticalAlignment="Center" Margin="6,0,4,0"/>
           </StackPanel>
         </Border>
         <Border x:Name="ModalInteractionFeedback" Grid.ColumnSpan="3" VerticalAlignment="Top" HorizontalAlignment="Center" CornerRadius="999" Background="{StaticResource AccentGlass}" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" Padding="12,5" Margin="0,18,0,0" Visibility="Collapsed" IsHitTestVisible="False" Panel.ZIndex="20">

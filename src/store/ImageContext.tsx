@@ -86,6 +86,7 @@ const SEEN_IMAGES_FLUSH_DELAY_MS = 900;
 const FAVORITES_FLUSH_DELAY_MS = 300;
 const VIEW_SETTINGS_FLUSH_DELAY_MS = 300;
 const FAVORITES_PENDING_STORAGE_KEY = 'pvu_favorites_pending';
+const FAVORITES_SHARED_MIGRATION_STORAGE_KEY = 'pvu_favorites_shared_migration_v1';
 const KEEPALIVE_PAYLOAD_LIMIT_BYTES = 60 * 1024;
 const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
@@ -316,16 +317,15 @@ function mergeSeenImageIds(
 }
 
 function mergeFavorites(
-  first: Record<string, number>,
-  second: Record<string, number>,
-  exactSecondIds: ReadonlySet<string> = new Set()
+  sharedFavorites: Record<string, number>,
+  localFavorites: Record<string, number>,
+  localDirtyIds: ReadonlySet<string>,
 ): Record<string, number> {
-  const merged = { ...first };
-  for (const [id, level] of Object.entries(second)) {
-    merged[id] = exactSecondIds.has(id) ? level : Math.max(merged[id] ?? 0, level);
-  }
-  for (const id of exactSecondIds) {
-    if (!(id in second)) delete merged[id];
+  const merged = { ...sharedFavorites };
+  for (const id of localDirtyIds) {
+    const level = localFavorites[id] ?? 0;
+    if (level > 0) merged[id] = level;
+    else delete merged[id];
   }
   return merged;
 }
@@ -355,11 +355,24 @@ function reconcileFavoriteWriteResponse(
 }
 
 interface PendingFavoritesJournal {
-  version: 1;
+  version: 1 | 2;
   revision: string;
   dirtyIds: string[];
   baseFavorites: Record<string, number>;
   baseKnownIds: string[];
+  /** Exact desired levels for dirtyIds; absence means an intentional clear. */
+  desiredFavorites: Record<string, number> | null;
+}
+
+function readExactFavoriteJournalMap(value: unknown): Record<string, number> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const normalized: Record<string, number> = {};
+  for (const [id, rawLevel] of Object.entries(value)) {
+    if (!id.trim() || typeof rawLevel !== 'number' || !Number.isFinite(rawLevel)) return null;
+    const level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(rawLevel)));
+    if (level > 0) normalized[id] = level;
+  }
+  return normalized;
 }
 
 function readPendingFavoritesJournal(serialized: string | null): PendingFavoritesJournal | null {
@@ -368,19 +381,35 @@ function readPendingFavoritesJournal(serialized: string | null): PendingFavorite
     const parsed: unknown = JSON.parse(serialized);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
     const candidate = parsed as Partial<PendingFavoritesJournal>;
-    if (candidate.version !== 1 || typeof candidate.revision !== 'string' || !candidate.revision) return null;
+    if ((candidate.version !== 1 && candidate.version !== 2)
+      || typeof candidate.revision !== 'string' || !candidate.revision) return null;
     if (!Array.isArray(candidate.dirtyIds) || !Array.isArray(candidate.baseKnownIds)) return null;
     if (!candidate.baseFavorites || typeof candidate.baseFavorites !== 'object' || Array.isArray(candidate.baseFavorites)) {
       return null;
     }
-    const dirtyIds = [...new Set(candidate.dirtyIds.filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    if (candidate.dirtyIds.some((id) => typeof id !== 'string' || !id.trim())) return null;
+    const dirtyIds = [...new Set(candidate.dirtyIds as string[])];
     const dirtySet = new Set(dirtyIds);
     const baseKnownIds = [...new Set(candidate.baseKnownIds.filter(
       (id): id is string => typeof id === 'string' && dirtySet.has(id)
     ))];
-    const baseFavorites = normalizeFavorites(candidate.baseFavorites);
+    const baseFavorites = candidate.version === 2
+      ? readExactFavoriteJournalMap(candidate.baseFavorites)
+      : normalizeFavorites(candidate.baseFavorites);
+    if (baseFavorites === null) return null;
+    const desiredFavorites = candidate.version === 2
+      ? readExactFavoriteJournalMap(candidate.desiredFavorites)
+      : null;
+    if (candidate.version === 2 && desiredFavorites === null) return null;
     if (dirtyIds.length === 0) return null;
-    return { version: 1, revision: candidate.revision, dirtyIds, baseFavorites, baseKnownIds };
+    return {
+      version: candidate.version,
+      revision: candidate.revision,
+      dirtyIds,
+      baseFavorites,
+      baseKnownIds,
+      desiredFavorites,
+    };
   } catch {
     return null;
   }
@@ -712,14 +741,22 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const favoritesRef = useRef<Record<string, number>>({});
   const favoriteLocalStorageReadOnlyRef = useRef(false);
   const favoriteServerBaseRef = useRef<Record<string, number>>({});
+  const favoriteSharedSnapshotKnownRef = useRef(false);
   const favoritesHydratedRef = useRef(false);
   const favoriteDirtyIdsRef = useRef<Set<string>>(new Set());
   const favoritePendingBaseRef = useRef<Record<string, number>>({});
   const favoritePendingBaseKnownIdsRef = useRef<Set<string>>(new Set());
   const favoritePendingRevisionRef = useRef<string | null>(null);
+  const favoritePendingJournalQuarantinedRef = useRef(false);
   const favoriteWriteInFlightRef = useRef(false);
   const favoriteFlushRequestedRef = useRef(false);
   const favoriteFlushFunctionRef = useRef<(lifecycle: boolean) => void>(() => {});
+  const favoriteRefreshInFlightRef = useRef(false);
+  const favoriteSharedWriteVersionRef = useRef(0);
+  const favoriteLegacyMigrationIdsRef = useRef<Set<string>>(new Set());
+  const favoriteLegacyMigrationCompleteRef = useRef(false);
+  const favoriteLegacyMigrationSnapshotRef = useRef<Record<string, number>>({});
+  const favoriteLegacyMigrationReadableRef = useRef(false);
   const providerMountedRef = useRef(true);
   const seenSharedDirtyRef = useRef(false);
   const seenLastLifecycleBodyRef = useRef<string | null>(null);
@@ -823,9 +860,19 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       }
     } catch { /* ignore */ }
   }, []);
+  const completeFavoriteLegacyMigration = useCallback(() => {
+    try {
+      localStorage.setItem(FAVORITES_SHARED_MIGRATION_STORAGE_KEY, '1');
+      favoriteLegacyMigrationCompleteRef.current = true;
+      favoriteLegacyMigrationIdsRef.current.clear();
+    } catch { /* retry safely on the next hydration */ }
+  }, []);
   const persistPendingFavoritesJournal = useCallback(() => {
     const dirtyIds = [...favoriteDirtyIdsRef.current];
     if (dirtyIds.length === 0) {
+      // A v1 journal cannot be replayed safely without its exact local mirror.
+      // Preserve it byte-for-byte until an explicit user mutation creates v2.
+      if (favoritePendingJournalQuarantinedRef.current) return;
       favoritePendingRevisionRef.current = null;
       try {
         localStorage.removeItem(FAVORITES_PENDING_STORAGE_KEY);
@@ -834,12 +881,18 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     }
     const revision = favoritePendingRevisionRef.current ?? createPersistenceRevision();
     favoritePendingRevisionRef.current = revision;
+    const desiredFavorites: Record<string, number> = {};
+    for (const id of dirtyIds) {
+      const level = favoritesRef.current[id] ?? 0;
+      if (level > 0) desiredFavorites[id] = level;
+    }
     writeJsonLocalStorage(FAVORITES_PENDING_STORAGE_KEY, {
-      version: 1,
+      version: 2,
       revision,
       dirtyIds,
       baseFavorites: favoritePendingBaseRef.current,
       baseKnownIds: [...favoritePendingBaseKnownIdsRef.current],
+      desiredFavorites,
     } satisfies PendingFavoritesJournal);
   }, []);
   const flushFavoriteToShared = useCallback((lifecycle: boolean) => {
@@ -882,6 +935,13 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (data?.malformed) return;
         const serverFavorites = normalizeFavorites(data?.favorites);
         if (!providerMountedRef.current) return;
+        favoriteSharedWriteVersionRef.current += 1;
+        const migrationIds = favoriteLegacyMigrationIdsRef.current;
+        if (migrationIds.size > 0 && [...migrationIds].every(
+          (id) => (serverFavorites[id] ?? 0) === (snapshot[id] ?? 0)
+        )) {
+          completeFavoriteLegacyMigration();
+        }
         let storedJournal: PendingFavoritesJournal | null = null;
         try {
           storedJournal = readPendingFavoritesJournal(
@@ -894,6 +954,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         if (!currentRevision || storedJournal?.revision !== currentRevision) return;
 
         favoriteServerBaseRef.current = serverFavorites;
+        favoriteSharedSnapshotKnownRef.current = true;
         const reconciled = reconcileFavoriteWriteResponse(
           serverFavorites,
           snapshot,
@@ -941,7 +1002,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           }, FAVORITES_FLUSH_DELAY_MS);
         }
       });
-  }, [persistFavoritesLocal, persistPendingFavoritesJournal]);
+  }, [completeFavoriteLegacyMigration, persistFavoritesLocal, persistPendingFavoritesJournal]);
   useEffect(() => {
     favoriteFlushFunctionRef.current = flushFavoriteToShared;
   }, [flushFavoriteToShared]);
@@ -956,11 +1017,12 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     next: Record<string, number>,
     changedIds: readonly string[],
   ) => {
+    favoritePendingJournalQuarantinedRef.current = false;
     favoritesRef.current = next;
     for (const id of changedIds) {
       if (favoriteDirtyIdsRef.current.has(id)) continue;
       favoriteDirtyIdsRef.current.add(id);
-      if (favoritesHydratedRef.current) {
+      if (favoriteSharedSnapshotKnownRef.current) {
         const baseLevel = favoriteServerBaseRef.current[id] ?? 0;
         if (baseLevel > 0) favoritePendingBaseRef.current[id] = baseLevel;
         favoritePendingBaseKnownIdsRef.current.add(id);
@@ -971,6 +1033,47 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     persistPendingFavoritesJournal();
     if (favoritesHydratedRef.current) scheduleFavoriteFlush();
   }, [persistFavoritesLocal, persistPendingFavoritesJournal, scheduleFavoriteFlush]);
+  const reconcileFavoritesFromShared = useCallback((serverFavorites: Record<string, number>) => {
+    favoriteServerBaseRef.current = serverFavorites;
+    favoriteSharedSnapshotKnownRef.current = true;
+    const dirtyIds = new Set(favoriteDirtyIdsRef.current);
+    for (const id of dirtyIds) {
+      if (favoritePendingBaseKnownIdsRef.current.has(id)) continue;
+      const baseLevel = serverFavorites[id] ?? 0;
+      if (baseLevel > 0) favoritePendingBaseRef.current[id] = baseLevel;
+      favoritePendingBaseKnownIdsRef.current.add(id);
+    }
+
+    // A failed or malformed first GET must not permanently skip the one-time
+    // Browser-local import. The same reconciliation is therefore used by the
+    // first successful hydration and by a later focus/visibility recovery.
+    if (!favoritePendingJournalQuarantinedRef.current
+      && favoriteLegacyMigrationReadableRef.current
+      && !favoriteLegacyMigrationCompleteRef.current) {
+      let addedLegacyFavorite = false;
+      for (const id of Object.keys(favoriteLegacyMigrationSnapshotRef.current)) {
+        if (Object.hasOwn(serverFavorites, id) || dirtyIds.has(id)) continue;
+        dirtyIds.add(id);
+        favoriteDirtyIdsRef.current.add(id);
+        delete favoritePendingBaseRef.current[id];
+        favoritePendingBaseKnownIdsRef.current.add(id);
+        favoriteLegacyMigrationIdsRef.current.add(id);
+        addedLegacyFavorite = true;
+      }
+      if (addedLegacyFavorite) {
+        favoritePendingRevisionRef.current ??= createPersistenceRevision();
+      } else {
+        completeFavoriteLegacyMigration();
+      }
+    }
+
+    const merged = mergeFavorites(serverFavorites, favoritesRef.current, dirtyIds);
+    favoritesRef.current = merged;
+    if (!favoritePendingJournalQuarantinedRef.current) persistFavoritesLocal(merged);
+    setFavorites(merged);
+    persistPendingFavoritesJournal();
+    if (favoriteDirtyIdsRef.current.size > 0) scheduleFavoriteFlush();
+  }, [completeFavoriteLegacyMigration, persistFavoritesLocal, persistPendingFavoritesJournal, scheduleFavoriteFlush]);
   const mergeSharedSeen = useCallback((sharedSeen: Record<string, true>) => {
     const merged = mergeSeenImageIds(sharedSeen, seenImageIdsRef.current);
     seenImageIdsRef.current = merged;
@@ -1007,8 +1110,12 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     migrateLegacyPhotoviewerState();
     let localFavorites: Record<string, number> = {};
-    const stored = localStorage.getItem('pvu_favorites');
+    let localFavoritesReadable = true;
+    let localPrimaryReadable = false;
+    let favoriteLegacyMigrationComplete = false;
     try {
+      favoriteLegacyMigrationComplete = localStorage.getItem(FAVORITES_SHARED_MIGRATION_STORAGE_KEY) === '1';
+      const stored = localStorage.getItem('pvu_favorites');
       // A backup is recovery data only when the primary key is absent. An
       // intentionally empty or malformed primary must never be replaced by it.
       const source = stored === null
@@ -1018,7 +1125,9 @@ export function ImageProvider({ children }: { children: ReactNode }) {
         const parsed = readStoredFavoritesSnapshot(source);
         if (parsed === null) {
           favoriteLocalStorageReadOnlyRef.current = true;
+          localFavoritesReadable = false;
         } else {
+          localPrimaryReadable = stored !== null;
           localFavorites = parsed;
           setFavorites(localFavorites);
           favoritesRef.current = localFavorites;
@@ -1028,32 +1137,54 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       // Preserve corrupt recovery data until a user explicitly changes
       // favorites; automatic hydration must not replace the only evidence.
       favoriteLocalStorageReadOnlyRef.current = true;
+      localFavoritesReadable = false;
     }
-    const pendingJournal = readPendingFavoritesJournal(
-      localStorage.getItem(FAVORITES_PENDING_STORAGE_KEY)
-    );
+    favoriteLegacyMigrationCompleteRef.current = favoriteLegacyMigrationComplete;
+    favoriteLegacyMigrationSnapshotRef.current = localFavorites;
+    favoriteLegacyMigrationReadableRef.current = localFavoritesReadable;
+    let pendingJournal: PendingFavoritesJournal | null = null;
+    let pendingJournalSerialized: string | null = null;
+    favoritePendingJournalQuarantinedRef.current = false;
+    try {
+      pendingJournalSerialized = localStorage.getItem(FAVORITES_PENDING_STORAGE_KEY);
+      pendingJournal = readPendingFavoritesJournal(pendingJournalSerialized);
+    } catch {
+      favoritePendingJournalQuarantinedRef.current = true;
+    }
     if (pendingJournal) {
-      favoriteDirtyIdsRef.current = new Set(pendingJournal.dirtyIds);
-      favoritePendingBaseRef.current = pendingJournal.baseFavorites;
-      favoritePendingBaseKnownIdsRef.current = new Set(pendingJournal.baseKnownIds);
-      favoritePendingRevisionRef.current = pendingJournal.revision;
+      const canReplayExactly = pendingJournal.version === 2 || localPrimaryReadable;
+      favoritePendingJournalQuarantinedRef.current = !canReplayExactly;
+      if (canReplayExactly) {
+        favoriteDirtyIdsRef.current = new Set(pendingJournal.dirtyIds);
+        favoritePendingBaseRef.current = pendingJournal.baseFavorites;
+        favoritePendingBaseKnownIdsRef.current = new Set(pendingJournal.baseKnownIds);
+        favoritePendingRevisionRef.current = pendingJournal.revision;
+        if (pendingJournal.desiredFavorites) {
+          const restored = { ...localFavorites };
+          for (const id of pendingJournal.dirtyIds) {
+            const level = pendingJournal.desiredFavorites[id] ?? 0;
+            if (level > 0) restored[id] = level;
+            else delete restored[id];
+          }
+          localFavorites = restored;
+          favoritesRef.current = restored;
+          setFavorites(restored);
+        }
+      }
+    } else if (pendingJournalSerialized !== null) {
+      // Unknown/future/malformed recovery data is evidence, not garbage. Keep
+      // it byte-for-byte until an explicit favorite mutation creates v2.
+      favoritePendingJournalQuarantinedRef.current = true;
     }
     fetch('/api/favorites')
-      .then((r) => r.json())
+      .then(async (response) => {
+        if (!response.ok) throw new Error(`favorite hydration failed: ${response.status}`);
+        return response.json();
+      })
       .then((data) => {
+        if (data?.malformed) return;
         const serverFavorites = normalizeFavorites(data?.favorites);
-        favoriteServerBaseRef.current = serverFavorites;
-        const dirtyIds = new Set(favoriteDirtyIdsRef.current);
-        for (const id of dirtyIds) {
-          if (favoritePendingBaseKnownIdsRef.current.has(id)) continue;
-          const baseLevel = serverFavorites[id] ?? 0;
-          if (baseLevel > 0) favoritePendingBaseRef.current[id] = baseLevel;
-          favoritePendingBaseKnownIdsRef.current.add(id);
-        }
-        const merged = mergeFavorites(serverFavorites, favoritesRef.current, dirtyIds);
-        favoritesRef.current = merged;
-        persistFavoritesLocal(merged);
-        setFavorites(merged);
+        reconcileFavoritesFromShared(serverFavorites);
       })
       .catch(() => {})
       .finally(() => {
@@ -1142,7 +1273,31 @@ export function ImageProvider({ children }: { children: ReactNode }) {
       })
       .catch(() => {});
     setUiPreferencesHydrated(true);
-  }, [mergeSharedSeen, persistFavoritesLocal, persistPendingFavoritesJournal, scheduleFavoriteFlush, syncSeenToShared]);
+  }, [mergeSharedSeen, persistPendingFavoritesJournal, reconcileFavoritesFromShared, scheduleFavoriteFlush, syncSeenToShared]);
+
+  const refreshFavoritesFromShared = useCallback(async () => {
+    if (!favoritesHydratedRef.current
+      || favoriteWriteInFlightRef.current
+      || favoriteRefreshInFlightRef.current) return;
+
+    favoriteRefreshInFlightRef.current = true;
+    const sharedWriteVersion = favoriteSharedWriteVersionRef.current;
+    try {
+      const response = await fetch('/api/favorites');
+      if (!response.ok) return;
+      const data = await response.json();
+      if (data?.malformed
+        || !providerMountedRef.current
+        || sharedWriteVersion !== favoriteSharedWriteVersionRef.current) return;
+
+      reconcileFavoritesFromShared(normalizeFavorites(data?.favorites));
+    } catch {
+      // Focus recovery is opportunistic. The existing UI and pending journal
+      // remain usable when the local server is temporarily unavailable.
+    } finally {
+      favoriteRefreshInFlightRef.current = false;
+    }
+  }, [reconcileFavoritesFromShared]);
 
   useEffect(() => {
     try {
@@ -1253,18 +1408,22 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     providerMountedRef.current = true;
     const onPageHide = () => flushLifecycleState();
+    const onFocus = () => void refreshFavoritesFromShared();
     const onVisibilityChange = () => {
       if (document.visibilityState === 'hidden') flushLifecycleState();
+      else void refreshFavoritesFromShared();
     };
     window.addEventListener('pagehide', onPageHide);
+    window.addEventListener('focus', onFocus);
     document.addEventListener('visibilitychange', onVisibilityChange);
     return () => {
       window.removeEventListener('pagehide', onPageHide);
+      window.removeEventListener('focus', onFocus);
       document.removeEventListener('visibilitychange', onVisibilityChange);
       providerMountedRef.current = false;
       flushLifecycleState();
     };
-  }, [flushLifecycleState]);
+  }, [flushLifecycleState, refreshFavoritesFromShared]);
 
   // ── Load key bindings from server ──
   useEffect(() => {

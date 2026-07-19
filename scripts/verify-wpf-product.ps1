@@ -13,6 +13,7 @@ $orderedNames = @(
     'verify-wpf-p0.ps1',
     'verify-wpf-p1a.ps1',
     'verify-wpf-p1b.ps1',
+    'verify-wpf-png-metadata.ps1',
     'verify-wpf-formats.ps1',
     'verify-wpf-decode-bounds.ps1',
     'verify-wpf-right-panel.ps1',

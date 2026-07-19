@@ -3,13 +3,12 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 const MAX_FAVORITE_LEVEL = 5;
 
 function favoritesPath() {
-  return process.env.PVU_FAVORITES_PATH
-    ? path.resolve(process.env.PVU_FAVORITES_PATH)
-    : path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'favorites.json');
+  return resolveSharedCachePath('favorites.json', process.env.PVU_FAVORITES_PATH);
 }
 
 function isObjectMap(value: unknown): value is Record<string, unknown> {
@@ -20,17 +19,26 @@ function normalizeStoredFavorites(value: unknown): Record<string, number> | null
   if (!isObjectMap(value)) return null;
   const normalized: Record<string, number> = {};
   for (const [id, levelValue] of Object.entries(value)) {
-    if (!id) return null;
+    if (!id.trim()) return null;
     if (typeof levelValue !== 'number'
       && typeof levelValue !== 'boolean'
       && typeof levelValue !== 'string'
       && levelValue !== null) return null;
     if (typeof levelValue === 'number' && !Number.isFinite(levelValue)) return null;
-    const level = typeof levelValue === 'number'
-      ? Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)))
-      : levelValue
-        ? 1
-        : 0;
+    let level: number;
+    if (typeof levelValue === 'number') {
+      level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, Math.trunc(levelValue)));
+    } else if (typeof levelValue === 'string') {
+      const candidate = levelValue.trim();
+      if (!/^[+-]?\d+$/.test(candidate)) return null;
+      const parsed = Number(candidate);
+      // Match WPF's invariant Int32.TryParse compatibility exactly. Arbitrary
+      // legacy strings must protect the shared file instead of becoming Lv1.
+      if (!Number.isInteger(parsed) || parsed < -2_147_483_648 || parsed > 2_147_483_647) return null;
+      level = Math.max(0, Math.min(MAX_FAVORITE_LEVEL, parsed));
+    } else {
+      level = levelValue === true ? 1 : 0;
+    }
     if (level > 0) normalized[id] = level;
   }
   return normalized;
@@ -45,7 +53,7 @@ function normalizeIncomingFavorites(value: unknown):
 
   const normalized: Record<string, number> = {};
   for (const [id, rawLevel] of Object.entries(value)) {
-    if (!id) return { ok: false, error: 'Favorite paths must not be empty.' };
+    if (!id.trim()) return { ok: false, error: 'Favorite paths must not be empty.' };
     if (typeof rawLevel !== 'number' && typeof rawLevel !== 'boolean') {
       return { ok: false, error: `Favorite level for ${id} must be a number or boolean.` };
     }

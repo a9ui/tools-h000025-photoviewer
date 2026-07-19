@@ -1,15 +1,14 @@
 import crypto from 'crypto';
 import path from 'path';
+import { resolveSharedCachePath } from '../sharedProjectRoot';
 import type { EnhancementPreset, SourceSignature } from './types';
 
-const DEFAULT_ENHANCE_ROOT = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'enhance');
-
-export function getEnhanceRoot(root = DEFAULT_ENHANCE_ROOT) {
-  return root;
+export function getEnhanceRoot(root?: string) {
+  return root ?? resolveSharedCachePath('enhance', process.env.PVU_ENHANCE_ROOT);
 }
 
-export function getJobsFilePath(root = DEFAULT_ENHANCE_ROOT) {
-  return path.join(root, 'jobs.json');
+export function getJobsFilePath(root?: string) {
+  return path.join(getEnhanceRoot(root), 'jobs.json');
 }
 
 export function hashPreset(preset: EnhancementPreset) {
@@ -44,7 +43,7 @@ export function getEnhancementOutputPath(
   signature: SourceSignature,
   preset: EnhancementPreset,
   adapterId: string,
-  root = DEFAULT_ENHANCE_ROOT,
+  root?: string,
   jobId?: string
 ) {
   const presetHash = hashPreset(preset);
@@ -53,5 +52,5 @@ export function getEnhancementOutputPath(
   const safeBase = parsed.name.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) || 'image';
   const safeJobId = jobId ? jobId.replace(/[<>:"/\\|?*\x00-\x1f]/g, '_').slice(0, 80) : '';
   const filename = `${safeJobId ? `${safeJobId}__` : ''}${safeBase}__${preset.id}__${presetHash}.${preset.outputFormat}`;
-  return path.join(root, 'outputs', sourceHash, filename);
+  return path.join(getEnhanceRoot(root), 'outputs', sourceHash, filename);
 }

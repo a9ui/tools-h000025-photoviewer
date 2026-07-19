@@ -53,6 +53,7 @@ describe('favorites route write safety', () => {
     ['invalid JSON', '{'],
     ['missing favorites field', JSON.stringify({})],
     ['array favorites', JSON.stringify({ favorites: [] })],
+    ['whitespace favorite path', JSON.stringify({ favorites: { '   ': 1 } })],
     ['invalid favorite value', JSON.stringify({ favorites: { bad: { level: 5 } } })],
     ['invalid base favorites', JSON.stringify({ favorites: {}, baseFavorites: { bad: [] } })],
   ])('rejects %s without replacing the existing file', async (_name, body) => {
@@ -88,6 +89,38 @@ describe('favorites route write safety', () => {
 
     expect(response.status).toBe(409);
     expect(await fs.readFile(favoritesPath, 'utf8')).toBe(malformed);
+  });
+
+  it('protects arbitrary legacy strings exactly like the WPF reader', async () => {
+    const malformed = '{"keep":3,"invalid":"not-a-level"}\n';
+    await fs.writeFile(favoritesPath, malformed, 'utf8');
+
+    const getResponse = await GET();
+    expect(await getResponse.json()).toMatchObject({ favorites: {}, malformed: true });
+
+    const putResponse = await PUT(putRequest(JSON.stringify({
+      favorites: { replacement: 5 },
+      baseFavorites: {},
+    })));
+    expect(putResponse.status).toBe(409);
+    expect(await fs.readFile(favoritesPath, 'utf8')).toBe(malformed);
+  });
+
+  it('keeps supported integer strings, booleans, and null compatible with WPF', async () => {
+    await fs.writeFile(favoritesPath, JSON.stringify({
+      stringLevel: ' 4 ',
+      highString: '99',
+      negativeString: '-2',
+      legacyTrue: true,
+      legacyFalse: false,
+      legacyNull: null,
+    }), 'utf8');
+
+    const response = await GET();
+    expect(await response.json()).toMatchObject({
+      favorites: { stringLevel: 4, highString: 5, legacyTrue: 1 },
+      malformed: false,
+    });
   });
 
   it('applies only changes from the client base and preserves an external writer', async () => {

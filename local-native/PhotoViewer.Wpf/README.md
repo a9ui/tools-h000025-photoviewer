@@ -29,6 +29,7 @@ implementation. The normative current behavior is documented in
 - refresh active folder
 - open the selected real image with the OS default app
 - versioned, normalized, unknown-field-preserving WPF state written through a bounded process lock and atomic replace
+- editable App Settings key bindings for implemented viewer actions, with context-aware conflict rejection, hot apply, reset, and reload persistence; Settings/Delete retain a fixed Escape rescue key
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
@@ -57,6 +58,7 @@ implementation. The normative current behavior is documented in
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
 - `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
 - `--settings-unseen-dots-smoke <path>` temp-only sidebar/App Settings Unseen dots synchronization, persistence, accessibility, and Seen/cache isolation smoke
+- `--key-bindings-smoke <path> --key-root <temp-path> --key-phase write|reload` temp-only editable-binding conflict/hot-apply and separate-process reload/reset participant
 - `--scan-cancel-smoke <path>` temp-only enumeration/metadata Cancel scan, generation, focus, immediate-rescan, and no-partial-publish smoke
 - `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
 - `--recent-write-ownership-smoke <path>` temp-only explicit folder-set commit ownership, retry, and byte-isolation smoke
@@ -96,6 +98,7 @@ implementation. The normative current behavior is documented in
 - `scripts/verify-wpf-delete-race.ps1` temp-only destructive-workflow race, stale-publish rejection, failed/cancel non-tombstone, and fresh same-name regeneration verifier
 - `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
 - `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
+- `scripts/verify-wpf-key-bindings.ps1` two-process editable key binding, reserved/conflict rejection, wheel/Landing isolation, 100k logical selection, latest-writer unknown merge, hot-apply, reset, Escape rescue, and passive-enhancement verifier
 - `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
 - `scripts/verify-wpf-product.ps1` aggregate every focused WPF verifier (`-SkipStress` for the short loop)
 - `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
@@ -164,7 +167,10 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 
 The perf log separates `MetadataMs`, `MetadataWorkers`, and
 `MetadataCompleted` from UI-thread `MaterializeMs`, so large-folder header
-reads remain measurable without hiding them inside tile creation time.
+reads remain measurable without hiding them inside tile creation time. PNG
+catalog indexing reads IHDR dimensions and the bounded pre-IDAT `parameters`
+chunk from one stream, does not retain redundant full-catalog result maps, and
+waits behind active viewport-thumbnail work so scrolling pixels keep priority.
 
 Preview decode smoke selects one fixture image and immediately selects another,
 then verifies that the deferred decode applies only to the latest selection:
@@ -829,6 +835,26 @@ text-input guard and the outside-input shortcuts together:
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shortcut-typing-smoke $env:TEMP\wpf-shortcut-typing-smoke.json --folder .\local-native\ui-mockup
 ```
+
+## Editable key bindings
+
+App Settings exposes only implemented WPF actions. Each row records a chord,
+shows active-context conflicts inline, resets to compatible defaults, and saves
+through ViewerState v2. A successful save hot-applies in the current process;
+the same bindings reload in a separate process. Settings and Recycle
+confirmation retain a fixed Escape rescue key. All Windows-key chords,
+Tab-based chords, Windows secure/system chords, Ctrl+Escape, and Alt+Escape are
+rejected; reopen uses Ctrl+Shift+T only.
+
+Gallery/Viewer bindings are inactive on Landing and while Settings or Recycle
+confirmation is open. Ctrl/Win-wheel does not resize cards over an input or
+button. In Modal, wheel zoom is limited to the image/image-area; metadata
+sidebar wheel input remains native scrolling. Ctrl+A stores the complete
+filtered selection as canonical paths while projecting selection only to
+realized containers, so a 100,000-item selection does not populate 100,000 WPF
+`SelectedItems`. `scripts/verify-wpf-key-bindings.ps1` proves these boundaries,
+external nested-unknown delete/add merge behavior, source/job isolation, and
+two-process persistence using TEMP-only fixtures.
 
 ## WPF Native Folder Drag-In
 

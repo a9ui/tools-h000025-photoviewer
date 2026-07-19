@@ -47,6 +47,7 @@ public partial class MainWindow : Window
     private const int SearchFilterDebounceMilliseconds = 150;
     private const int SearchStateSaveDebounceMilliseconds = 300;
     private const int MaxVirtualizedContainerSmokeCount = 512;
+    private const int MaxMaterializedSelectionVisualItems = 2_048;
     private const int MaxRecentFolderSets = 12;
     private const int PersistenceLockTimeoutMilliseconds = 2_000;
     private const int PersistenceLockRetryMilliseconds = 25;
@@ -153,6 +154,8 @@ public partial class MainWindow : Window
     private long _selectionVisualSyncGeneration;
     private long _queuedGridSelectionVisualSyncGeneration = -1;
     private long _queuedListSelectionVisualSyncGeneration = -1;
+    private long _queuedSparseGridSelectionVisualSyncGeneration = -1;
+    private long _queuedSparseListSelectionVisualSyncGeneration = -1;
     private bool _syncingFavoriteFilterControls;
     private bool _syncingDateControls;
     private bool _dateFilterMigrationPending;
@@ -276,6 +279,14 @@ public partial class MainWindow : Window
     private double _modalPanY;
     private bool _modalShowingEnhanced;
     private bool _confirmBeforeDelete = true;
+    private Dictionary<ViewerKeyAction, KeyChord> _keyBindings = KeyBindingSettings.CreateDefaults();
+    private Dictionary<ViewerKeyAction, KeyChord> _draftKeyBindings = KeyBindingSettings.CreateDefaults();
+    private Dictionary<string, JsonElement>? _keyBindingUnknownEntries;
+    private readonly Dictionary<ViewerKeyAction, Button> _keyBindingButtons = [];
+    private readonly Dictionary<ViewerKeyAction, TextBlock> _keyBindingConflictTexts = [];
+    private ViewerKeyAction? _recordingKeyAction;
+    private string? _keyBindingCaptureError;
+    private Func<ModifierKeys> _shortcutModifierProvider = static () => Keyboard.Modifiers;
     private bool _shutdownPersistenceFlushed;
     private int _shutdownPersistenceFlushCount;
     private bool _closingDrainInProgress;
@@ -299,6 +310,7 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        InitializeKeyBindingEditor();
         _currentMonitorWorkArea = ResolveCurrentMonitorWorkArea;
         _searchFilterTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
@@ -336,6 +348,8 @@ public partial class MainWindow : Window
         ApplyCardLayoutToAllTiles();
 
         ConfigureGalleryItemsSources();
+        CardsList.ItemContainerGenerator.StatusChanged += SelectionItemContainerGenerator_StatusChanged;
+        RowsList.ItemContainerGenerator.StatusChanged += SelectionItemContainerGenerator_StatusChanged;
         RowsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(RowsList_ScrollChanged));
         ApplyFilters(selectFirst: false);
 
@@ -440,6 +454,21 @@ public partial class MainWindow : Window
             e.LastVisibleIndex,
             e.FirstRealizedIndex,
             e.LastRealizedIndex);
+        QueueSparseSelectionVisualSync(CardsList, grid: true);
+    }
+
+    private void SelectionItemContainerGenerator_StatusChanged(object? sender, EventArgs e)
+    {
+        if (sender is not ItemContainerGenerator generator
+            || generator.Status != GeneratorStatus.ContainersGenerated)
+        {
+            return;
+        }
+
+        if (ReferenceEquals(generator, CardsList.ItemContainerGenerator))
+            QueueSparseSelectionVisualSync(CardsList, grid: true);
+        else if (ReferenceEquals(generator, RowsList.ItemContainerGenerator))
+            QueueSparseSelectionVisualSync(RowsList, grid: false);
     }
 
     private void ScheduleThumbnailViewportRange(
@@ -498,7 +527,10 @@ public partial class MainWindow : Window
     private void RowsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
     {
         if (RowsList.Visibility == Visibility.Visible)
+        {
             ScheduleListThumbnailViewport();
+            QueueSparseSelectionVisualSync(RowsList, grid: false);
+        }
     }
 
     private void ScheduleListThumbnailViewport()
@@ -913,23 +945,13 @@ public partial class MainWindow : Window
 
         if (!IsCurrentLoad(generation, cts))
             return;
-        HashSet<string> existingScannedPaths;
-        try
-        {
-            existingScannedPaths = await Task.Run(
-                () => SnapshotExistingPaths(files.Select(static file => file.FullName), cts.Token),
-                cts.Token);
-        }
-        catch (OperationCanceledException)
-        {
-            return;
-        }
+        // Enumeration already returns paths that existed while their directory
+        // entry was visited. MakeFileTile guards every FileInfo access and the
+        // pre-commit snapshot below removes files that disappear afterwards.
+        // A second full File.Exists pass here only duplicated 100k disk probes
+        // before the first usable catalog could be published.
         if (!IsCurrentLoad(generation, cts))
             return;
-        files = files
-            .Where(file => existingScannedPaths.Contains(file.FullName)
-                && !WasSourceRecycledAfter(file.FullName, sourceRecycleGenerationAtStart))
-            .ToList();
         string? selectedPathAfterConcurrentRecycle = _sourceRecycleGeneration > sourceRecycleGenerationAtStart
             ? SelectedTile()?.Path
             : null;
@@ -1156,6 +1178,13 @@ public partial class MainWindow : Window
             CommitSharedRecentFolderSet(_currentFolderSet);
 
         _loadPhase = "background-metadata";
+        // Do not keep the 100k FileInfo staging catalog alive throughout the
+        // lower-priority metadata pass. The Tile catalog now owns every value
+        // the viewer needs after publication.
+        files = Array.Empty<FileInfo>();
+        preparedTiles.Clear();
+        preparedTiles.TrimExcess();
+
         Task<ImageMetadataLoadMetrics> metadataTask = LoadImageMetadataProgressivelyAsync(
             _allTiles.ToList(),
             generation,
@@ -3855,8 +3884,6 @@ public partial class MainWindow : Window
         await Task.Delay(Math.Max(250, initialDelayMilliseconds), cts.Token);
 
         var watch = Stopwatch.StartNew();
-        var dimensions = new ConcurrentDictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase);
-        var prompts = new ConcurrentDictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var decoded = new ConcurrentQueue<DecodedImageMetadata>();
         int metadataWorkerBudget = tiles.Count >= 10_000 ? 2 : MaxMetadataReadWorkers;
         int workers = Math.Max(1, Math.Min(Math.Min(metadataWorkerBudget, Environment.ProcessorCount), tiles.Count));
@@ -3876,16 +3903,23 @@ public partial class MainWindow : Window
                 async (tile, itemToken) =>
                 {
                     itemToken.ThrowIfCancellationRequested();
-                    bool sizeRead = TryReadBitmapSize(tile.Path, out int width, out int height);
+                    // Bulk prompt/dimension indexing is never allowed to race
+                    // a viewport thumbnail batch for disk access. Continuous
+                    // scrolling can postpone this background work; visible
+                    // pixels are the interactive product priority.
+                    while (!_thumbnailLoadsInFlight.IsEmpty)
+                        await Task.Delay(16, itemToken);
+
+                    bool sizeRead = TryReadCatalogImageMetadata(
+                        tile.Path,
+                        itemToken,
+                        out int width,
+                        out int height,
+                        out PngParametersMetadata? pngMetadata);
                     if (!sizeRead)
                         Interlocked.Increment(ref decodeFailures);
                     var imageDimensions = new ImageDimensions(width, height);
-                    dimensions[tile.Path] = imageDimensions;
-
-                    PngParametersMetadata? pngMetadata = ReadPngParametersMetadata(tile.Path, itemToken);
                     string prompt = pngMetadata?.Prompt ?? "";
-                    if (!string.IsNullOrWhiteSpace(prompt))
-                        prompts[tile.Path] = prompt;
 
                     decoded.Enqueue(new DecodedImageMetadata(tile, imageDimensions, prompt));
                     int done = Interlocked.Increment(ref completed);
@@ -3924,12 +3958,138 @@ public partial class MainWindow : Window
             cts.Token);
 
         return new ImageMetadataLoadMetrics(
-            dimensions,
-            prompts,
+            new Dictionary<string, ImageDimensions>(StringComparer.OrdinalIgnoreCase),
+            new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             workers,
             completed,
             watch.ElapsedMilliseconds,
             decodeFailures);
+    }
+
+    private static bool TryReadCatalogImageMetadata(
+        string path,
+        CancellationToken token,
+        out int width,
+        out int height,
+        out PngParametersMetadata? pngMetadata)
+    {
+        pngMetadata = null;
+        if (string.Equals(Path.GetExtension(path), ".png", StringComparison.OrdinalIgnoreCase)
+            && TryReadPngCatalogHeader(path, token, out width, out height, out pngMetadata))
+        {
+            return width > 0 && height > 0;
+        }
+
+        // Non-PNG files still use WIC for dimensions. A malformed PNG also
+        // gets the old fallback so its recoverable decode-warning semantics do
+        // not change.
+        bool sizeRead = TryReadBitmapSize(path, out width, out height);
+        if (string.Equals(Path.GetExtension(path), ".png", StringComparison.OrdinalIgnoreCase))
+            pngMetadata = ReadPngParametersMetadata(path, token);
+        return sizeRead;
+    }
+
+    private static bool TryReadPngCatalogHeader(
+        string path,
+        CancellationToken token,
+        out int width,
+        out int height,
+        out PngParametersMetadata? metadata)
+    {
+        width = 0;
+        height = 0;
+        metadata = null;
+        bool parametersChunkSeen = false;
+
+        try
+        {
+            using var stream = new FileStream(
+                path,
+                FileMode.Open,
+                FileAccess.Read,
+                FileShare.ReadWrite | FileShare.Delete,
+                4096,
+                FileOptions.SequentialScan);
+            Span<byte> signature = stackalloc byte[8];
+            stream.ReadExactly(signature);
+            if (!signature.SequenceEqual(PngSignature))
+                return false;
+
+            Span<byte> chunkHeader = stackalloc byte[8];
+            Span<byte> imageHeader = stackalloc byte[13];
+            while (stream.Position + 12 <= stream.Length)
+            {
+                token.ThrowIfCancellationRequested();
+                stream.ReadExactly(chunkHeader);
+
+                int length = (chunkHeader[0] << 24) | (chunkHeader[1] << 16) | (chunkHeader[2] << 8) | chunkHeader[3];
+                if (length < 0 || length > MaxPngMetadataChunkBytes || stream.Position + length + 4 > stream.Length)
+                    return false;
+
+                bool isHeader = chunkHeader[4] == (byte)'I'
+                    && chunkHeader[5] == (byte)'H'
+                    && chunkHeader[6] == (byte)'D'
+                    && chunkHeader[7] == (byte)'R';
+                if (isHeader)
+                {
+                    if (length != 13)
+                        return false;
+                    stream.ReadExactly(imageHeader);
+                    if (!TrySkip(stream, 4))
+                        return false;
+                    width = (imageHeader[0] << 24) | (imageHeader[1] << 16) | (imageHeader[2] << 8) | imageHeader[3];
+                    height = (imageHeader[4] << 24) | (imageHeader[5] << 16) | (imageHeader[6] << 8) | imageHeader[7];
+                    continue;
+                }
+
+                // The existing metadata reader intentionally stops before
+                // image payload. Preserve that bound while reusing the same
+                // stream that supplied PNG dimensions.
+                bool isImageData = chunkHeader[4] == (byte)'I'
+                    && chunkHeader[5] == (byte)'D'
+                    && chunkHeader[6] == (byte)'A'
+                    && chunkHeader[7] == (byte)'T';
+                if (isImageData)
+                    return width > 0 && height > 0;
+
+                bool isText = chunkHeader[4] == (byte)'t'
+                    && chunkHeader[5] == (byte)'E'
+                    && chunkHeader[6] == (byte)'X'
+                    && chunkHeader[7] == (byte)'t';
+                if (isText)
+                {
+                    var data = new byte[length];
+                    if (!TryReadExactly(stream, data) || !TrySkip(stream, 4))
+                        return false;
+
+                    int separator = Array.IndexOf(data, (byte)0);
+                    if (separator > 0
+                        && !parametersChunkSeen
+                        && string.Equals(Encoding.Latin1.GetString(data, 0, separator), "parameters", StringComparison.Ordinal))
+                    {
+                        parametersChunkSeen = true;
+                        string raw = Encoding.UTF8.GetString(data, separator + 1, data.Length - separator - 1);
+                        // Match the established metadata reader and product
+                        // contract: the first parameters chunk owns the image.
+                        // Later duplicate chunks must not make catalog search
+                        // disagree with Preview/Modal metadata.
+                        metadata = ParsePngParameters(raw);
+                    }
+                    continue;
+                }
+
+                if (!TrySkip(stream, length + 4))
+                    return false;
+            }
+        }
+        catch (IOException)
+        {
+        }
+        catch (UnauthorizedAccessException)
+        {
+        }
+
+        return width > 0 && height > 0;
     }
 
     private void DrainDecodedImageMetadata(ConcurrentQueue<DecodedImageMetadata> decoded)
@@ -4121,12 +4281,19 @@ public partial class MainWindow : Window
         if (_syncingSelection || sender is not ListBox lb)
             return;
 
+        bool collapseSparseSelection = _selectedPaths.Count > MaxMaterializedSelectionVisualItems
+            && (_shortcutModifierProvider() & (ModifierKeys.Control | ModifierKeys.Shift)) == ModifierKeys.None;
+        if (collapseSparseSelection)
+            _selectedPaths.Clear();
+
         foreach (Tile tile in e.RemovedItems.OfType<Tile>())
             _selectedPaths.Remove(tile.Path);
         foreach (Tile tile in e.AddedItems.OfType<Tile>())
             _selectedPaths.Add(tile.Path);
 
         Tile? primary = lb.SelectedItem as Tile;
+        if (collapseSparseSelection && primary is not null)
+            _selectedPaths.Add(primary.Path);
         if (primary is null || !_selectedPaths.Contains(primary.Path))
             primary = e.AddedItems.OfType<Tile>().LastOrDefault()
                 ?? SelectedTiles().LastOrDefault();
@@ -4143,8 +4310,23 @@ public partial class MainWindow : Window
     private void SetSelection(IEnumerable<Tile> selectedTiles, Tile? primary)
     {
         _selectedPaths.Clear();
-        foreach (Tile tile in selectedTiles.Where(tile => _tiles.Contains(tile)))
-            _selectedPaths.Add(tile.Path);
+        if (selectedTiles is IReadOnlyCollection<Tile> collection
+            && collection.Count > MaxMaterializedSelectionVisualItems)
+        {
+            var availablePaths = new HashSet<string>(
+                _tiles.Select(static tile => tile.Path),
+                StringComparer.OrdinalIgnoreCase);
+            foreach (Tile tile in selectedTiles)
+            {
+                if (availablePaths.Contains(tile.Path))
+                    _selectedPaths.Add(tile.Path);
+            }
+        }
+        else
+        {
+            foreach (Tile tile in selectedTiles.Where(tile => _tiles.Contains(tile)))
+                _selectedPaths.Add(tile.Path);
+        }
 
         Tile? effectivePrimary = primary is not null && _selectedPaths.Contains(primary.Path)
             ? primary
@@ -4164,14 +4346,22 @@ public partial class MainWindow : Window
         try
         {
             _syncingSelection = true;
-            List<Tile> cardSelections = _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
-            List<Tile> rowSelections = _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
+            bool sparseVisuals = _selectedPaths.Count > MaxMaterializedSelectionVisualItems;
+            List<Tile>? materializedSelections = sparseVisuals
+                ? null
+                : _tiles.Where(tile => _selectedPaths.Contains(tile.Path)).ToList();
             var cardsWatch = Stopwatch.StartNew();
-            SynchronizeSelectionControl(CardsList, cardSelections);
+            if (sparseVisuals)
+                SynchronizeRealizedSelectionControl(CardsList);
+            else
+                SynchronizeSelectionControl(CardsList, materializedSelections!);
             cardsWatch.Stop();
             _lastCardsSelectionSyncMs = cardsWatch.ElapsedMilliseconds;
             var rowsWatch = Stopwatch.StartNew();
-            SynchronizeSelectionControl(RowsList, rowSelections);
+            if (sparseVisuals)
+                SynchronizeRealizedSelectionControl(RowsList);
+            else
+                SynchronizeSelectionControl(RowsList, materializedSelections!);
             rowsWatch.Stop();
             _lastRowsSelectionSyncMs = rowsWatch.ElapsedMilliseconds;
         }
@@ -4201,6 +4391,71 @@ public partial class MainWindow : Window
         }
         foreach (Tile tile in selectedTiles)
             listBox.SelectedItems.Add(tile);
+    }
+
+    private void SynchronizeRealizedSelectionControl(ListBox listBox)
+    {
+        if (listBox.Visibility != Visibility.Visible)
+            return;
+
+        // Canonical selection lives in _selectedPaths. WPF SelectedItems is
+        // deliberately only a bounded visual projection for very large sets;
+        // asking it to own 100k entries defeats virtualization and can hang UI.
+        listBox.SelectedItems.Clear();
+        foreach (ListBoxItem container in FindVisualDescendants<ListBoxItem>(listBox))
+        {
+            bool selected = container.DataContext is Tile tile && _selectedPaths.Contains(tile.Path);
+            if (container.IsSelected != selected)
+                container.IsSelected = selected;
+        }
+    }
+
+    private void QueueSparseSelectionVisualSync(ListBox listBox, bool grid)
+    {
+        if (_selectedPaths.Count <= MaxMaterializedSelectionVisualItems
+            || listBox.Visibility != Visibility.Visible)
+        {
+            return;
+        }
+
+        long generation = _selectionVisualSyncGeneration;
+        if (grid)
+        {
+            if (_queuedSparseGridSelectionVisualSyncGeneration == generation)
+                return;
+            _queuedSparseGridSelectionVisualSyncGeneration = generation;
+        }
+        else
+        {
+            if (_queuedSparseListSelectionVisualSyncGeneration == generation)
+                return;
+            _queuedSparseListSelectionVisualSyncGeneration = generation;
+        }
+
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (grid && _queuedSparseGridSelectionVisualSyncGeneration == generation)
+                _queuedSparseGridSelectionVisualSyncGeneration = -1;
+            if (!grid && _queuedSparseListSelectionVisualSyncGeneration == generation)
+                _queuedSparseListSelectionVisualSyncGeneration = -1;
+            if (generation != _selectionVisualSyncGeneration
+                || _selectedPaths.Count <= MaxMaterializedSelectionVisualItems
+                || listBox.Visibility != Visibility.Visible)
+            {
+                return;
+            }
+
+            bool wasSyncingSelection = _syncingSelection;
+            _syncingSelection = true;
+            try
+            {
+                SynchronizeRealizedSelectionControl(listBox);
+            }
+            finally
+            {
+                _syncingSelection = wasSyncingSelection;
+            }
+        }, DispatcherPriority.Render);
     }
 
     private void ApplyPrimarySelection(Tile? primary)
@@ -5403,16 +5658,28 @@ public partial class MainWindow : Window
         if (BulkFavoritePanel is null || SingleSelectionActions is null || BulkSelectionText is null)
             return;
 
-        var selected = SelectedTiles().Where(static tile => tile.IsRealFile).ToList();
-        bool bulk = selected.Count > 1;
+        int selectedCount = 0;
+        int firstLevel = 0;
+        bool mixedLevels = false;
+        foreach (Tile tile in _tiles)
+        {
+            if (!tile.IsRealFile || !_selectedPaths.Contains(tile.Path))
+                continue;
+            if (selectedCount == 0)
+                firstLevel = tile.Fav;
+            else if (tile.Fav != firstLevel)
+                mixedLevels = true;
+            selectedCount++;
+        }
+
+        bool bulk = selectedCount > 1;
         BulkFavoritePanel.Visibility = bulk ? Visibility.Visible : Visibility.Collapsed;
         SingleSelectionActions.Visibility = bulk ? Visibility.Collapsed : Visibility.Visible;
         if (!bulk)
             return;
 
-        int distinctLevels = selected.Select(static tile => tile.Fav).Distinct().Count();
-        string levelSummary = distinctLevels == 1 ? $"Lv {selected[0].Fav}" : "mixed levels";
-        BulkSelectionText.Text = $"{selected.Count:N0} images selected · {levelSummary}";
+        string levelSummary = mixedLevels ? "mixed levels" : $"Lv {firstLevel}";
+        BulkSelectionText.Text = $"{selectedCount:N0} images selected · {levelSummary}";
     }
 
     private bool SetFavoriteLevel(Tile tile, int level)
@@ -5673,6 +5940,22 @@ public partial class MainWindow : Window
         string? requestedActivePath = _previewTabsPersistenceReady
             ? _activePreviewTabPath
             : _restoredActivePreviewTabPath;
+
+        bool hasPinsInCurrentRoots = _pinnedPreviewPaths.Any(path =>
+            _currentFolderSet.Any(root => IsPathWithinRoot(path, root)));
+        if (requestedPaths.Count == 0 && _closedPreviewTabs.Count == 0 && !hasPinsInCurrentRoots)
+        {
+            // The common first-open path has no tab identity to reconcile.
+            // Avoid building a normalized 100k path dictionary just to prove
+            // that three already-empty collections are empty.
+            _previewTabs.Clear();
+            _activePreviewTabPath = null;
+            _restoredPreviewTabPaths.Clear();
+            _restoredActivePreviewTabPath = null;
+            _previewTabsPersistenceReady = true;
+            RefreshPreviewTabs();
+            return null;
+        }
 
         // Preview tabs are a catalog session, not a projection of the current
         // search/filter result. A tab hidden by an exact Favorite or search
@@ -6305,8 +6588,11 @@ public partial class MainWindow : Window
         var previous = SelectedTile();
         List<Tile> filtered = filterResult.Tiles;
 
-        var availablePaths = new HashSet<string>(filtered.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
-        _selectedPaths.IntersectWith(availablePaths);
+        if (_selectedPaths.Count > 0)
+        {
+            var availablePaths = new HashSet<string>(filtered.Select(static tile => tile.Path), StringComparer.OrdinalIgnoreCase);
+            _selectedPaths.IntersectWith(availablePaths);
+        }
 
         bool wasSyncingSelection = _syncingSelection;
         _syncingSelection = true;
@@ -6514,7 +6800,7 @@ public partial class MainWindow : Window
     {
         if (HeaderStats is null) return;
 
-        int selected = SelectedTiles().Count;
+        int selected = _selectedPaths.Count;
         int visible = _tiles.Count;
         int total = _allTiles.Count;
         string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
@@ -7029,24 +7315,8 @@ public partial class MainWindow : Window
         DateFilterSummary.Text = $"Manual: {FormatStateDate(_dateFromLocal) ?? "..."} – {FormatStateDate(_dateToLocal) ?? "..."}";
     }
 
-    private static bool IsZoomModifierActive()
-        => (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0;
-
-    private bool TryHandleZoomKey(KeyEventArgs e)
-    {
-        if (!IsZoomModifierActive())
-            return false;
-
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        if (key is Key.Add or Key.OemPlus)
-            return AdjustCardWidth(1);
-        if (key is Key.Subtract or Key.OemMinus)
-            return AdjustCardWidth(-1);
-        if (key is Key.D0 or Key.NumPad0)
-            return ResetCardWidth();
-
-        return false;
-    }
+    private bool IsZoomModifierActive()
+        => (_shortcutModifierProvider() & (ModifierKeys.Control | ModifierKeys.Windows)) != 0;
 
     // ─────────── Panel toggles ───────────
     private void ToggleSidebar_Click(object sender, RoutedEventArgs e)
@@ -8497,23 +8767,6 @@ public partial class MainWindow : Window
         UpdateModalTransform();
     }
 
-    private bool TryHandleModalTransformKey(KeyEventArgs e)
-    {
-        if (Modal.Visibility != Visibility.Visible)
-            return false;
-
-        var key = e.Key == Key.System ? e.SystemKey : e.Key;
-        return key switch
-        {
-            Key.H => ToggleModalFlip(),
-            Key.E => ToggleModalEnhanced(),
-            Key.Add or Key.OemPlus => AdjustModalZoom(ModalZoomKeyboardStep),
-            Key.Subtract or Key.OemMinus => AdjustModalZoom(1 / ModalZoomKeyboardStep),
-            Key.D0 or Key.NumPad0 => ResetModalTransform(_modalTransformPath, showFeedback: true),
-            _ => false,
-        };
-    }
-
     private void ModalImage_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         CancelPendingModalSingleClick();
@@ -8707,14 +8960,28 @@ public partial class MainWindow : Window
 
     private Tile? SelectedTile()
     {
+        // _selectedPaths is the canonical selection. A hidden Grid/List surface
+        // may deliberately retain a bounded visual SelectedItem until that
+        // surface becomes visible again; never let that stale projection revive
+        // a cleared selection for Favorite or Recycle actions.
+        if (_selectedPaths.Count == 0)
+            return null;
+
         if (!string.IsNullOrWhiteSpace(_primarySelectedPath))
         {
             var primary = _tiles.FirstOrDefault(tile => string.Equals(tile.Path, _primarySelectedPath, StringComparison.OrdinalIgnoreCase));
-            if (primary is not null)
+            if (primary is not null && _selectedPaths.Contains(primary.Path))
                 return primary;
         }
 
-        return CardsList.SelectedItem as Tile ?? RowsList.SelectedItem as Tile;
+        Tile? projected = CardsList.SelectedItem as Tile ?? RowsList.SelectedItem as Tile;
+        if (projected is not null && _selectedPaths.Contains(projected.Path))
+        {
+            return _tiles.FirstOrDefault(tile =>
+                string.Equals(tile.Path, projected.Path, StringComparison.OrdinalIgnoreCase));
+        }
+
+        return _tiles.FirstOrDefault(tile => _selectedPaths.Contains(tile.Path));
     }
 
     private void OpenSelectedExternally_Click(object sender, RoutedEventArgs e)
@@ -8797,9 +9064,243 @@ public partial class MainWindow : Window
 
     private void BulkDeleteSelected_Click(object sender, RoutedEventArgs e) => RequestBulkDeleteSelected();
 
+    private void InitializeKeyBindingEditor()
+    {
+        foreach (KeyBindingDefinition definition in KeyBindingSettings.Definitions)
+        {
+            var row = new StackPanel { Margin = new Thickness(0, 0, 0, 7) };
+            var line = new DockPanel { LastChildFill = true };
+            var capture = new Button
+            {
+                Style = (Style)FindResource("GhostButton"),
+                MinWidth = 132,
+                Height = 28,
+                Padding = new Thickness(8, 0, 8, 0),
+                HorizontalAlignment = HorizontalAlignment.Right,
+                Tag = definition.Action,
+            };
+            DockPanel.SetDock(capture, Dock.Right);
+            capture.Click += KeyBindingCapture_Click;
+            AutomationProperties.SetName(capture, $"{definition.Label} key binding");
+            AutomationProperties.SetHelpText(capture, $"{definition.HelpText} Activate, then press a new key combination.");
+            var label = new TextBlock
+            {
+                Text = definition.Label,
+                Foreground = (Brush)FindResource("TextSecondary"),
+                FontSize = 11.5,
+                TextWrapping = TextWrapping.Wrap,
+                VerticalAlignment = VerticalAlignment.Center,
+                Margin = new Thickness(0, 0, 10, 0),
+            };
+            line.Children.Add(capture);
+            line.Children.Add(label);
+            var conflict = new TextBlock
+            {
+                Foreground = (Brush)FindResource("DangerText"),
+                FontSize = 10.5,
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 3, 0, 0),
+                Visibility = Visibility.Collapsed,
+            };
+            AutomationProperties.SetLiveSetting(conflict, AutomationLiveSetting.Polite);
+            row.Children.Add(line);
+            row.Children.Add(conflict);
+            KeyBindingsPanel.Children.Add(row);
+            _keyBindingButtons[definition.Action] = capture;
+            _keyBindingConflictTexts[definition.Action] = conflict;
+        }
+        RefreshKeyBindingEditor();
+    }
+
+    private void BeginKeyBindingEdit()
+    {
+        _recordingKeyAction = null;
+        _keyBindingCaptureError = null;
+        _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
+        KeyBindingsStatusText.Text = "Choose an action to record a new key combination.";
+        RefreshKeyBindingEditor();
+    }
+
+    private void CancelKeyBindingEdit()
+    {
+        _recordingKeyAction = null;
+        _keyBindingCaptureError = null;
+        _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
+        RefreshKeyBindingEditor();
+    }
+
+    private void KeyBindingCapture_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: ViewerKeyAction action } button)
+            return;
+        _recordingKeyAction = action;
+        _keyBindingCaptureError = null;
+        KeyBindingsStatusText.Text = $"Press the new key combination for {KeyBindingSettings.Definition(action).Label}. Escape cancels recording.";
+        RefreshKeyBindingEditor();
+        button.Focus();
+    }
+
+    private bool CaptureRecordedKey(Key key, ModifierKeys modifiers)
+    {
+        if (_recordingKeyAction is not ViewerKeyAction action)
+            return false;
+        if (key == Key.Escape && modifiers == ModifierKeys.None)
+        {
+            _recordingKeyAction = null;
+            _keyBindingCaptureError = null;
+            KeyBindingsStatusText.Text = "Key recording canceled. Press Escape again to close App Settings.";
+            RefreshKeyBindingEditor();
+            return true;
+        }
+        if (!KeyChord.TryCreate(key, modifiers, out KeyChord chord, out string error))
+        {
+            _keyBindingCaptureError = error;
+            KeyBindingsStatusText.Text = error;
+            RefreshKeyBindingEditor();
+            return true;
+        }
+        if (!KeyBindingSettings.IsAllowedForAction(action, chord, out error))
+        {
+            _keyBindingCaptureError = error;
+            KeyBindingsStatusText.Text = error;
+            RefreshKeyBindingEditor();
+            return true;
+        }
+        _draftKeyBindings[action] = chord;
+        _recordingKeyAction = null;
+        _keyBindingCaptureError = null;
+        KeyBindingsStatusText.Text = $"Draft: {KeyBindingSettings.Definition(action).Label} = {chord.DisplayText}. Save to apply.";
+        RefreshKeyBindingEditor();
+        return true;
+    }
+
+    private void RefreshKeyBindingEditor()
+    {
+        if (KeyBindingsPanel is null)
+            return;
+        IReadOnlyDictionary<ViewerKeyAction, IReadOnlyList<ViewerKeyAction>> conflicts =
+            KeyBindingSettings.FindConflicts(_draftKeyBindings);
+        foreach (KeyBindingDefinition definition in KeyBindingSettings.Definitions)
+        {
+            KeyChord chord = _draftKeyBindings.TryGetValue(definition.Action, out KeyChord draft)
+                ? draft
+                : definition.DefaultChord;
+            if (_keyBindingButtons.TryGetValue(definition.Action, out Button? button))
+            {
+                button.Content = _recordingKeyAction == definition.Action ? "Press key…" : chord.DisplayText;
+                button.ToolTip = definition.HelpText;
+                AutomationProperties.SetHelpText(
+                    button,
+                    $"{definition.HelpText} Current draft is {chord.DisplayText}. Activate, then press a new key combination.");
+            }
+            if (!_keyBindingConflictTexts.TryGetValue(definition.Action, out TextBlock? conflictText))
+                continue;
+            if (_recordingKeyAction == definition.Action && !string.IsNullOrWhiteSpace(_keyBindingCaptureError))
+            {
+                conflictText.Text = _keyBindingCaptureError;
+                conflictText.Visibility = Visibility.Visible;
+                AutomationProperties.SetName(conflictText, $"Invalid key binding for {definition.Label}: {_keyBindingCaptureError}");
+            }
+            else if (conflicts.TryGetValue(definition.Action, out IReadOnlyList<ViewerKeyAction>? others))
+            {
+                string labels = string.Join(", ", others.Select(action => KeyBindingSettings.Definition(action).Label));
+                conflictText.Text = $"Also assigned to {labels} in an overlapping context.";
+                conflictText.Visibility = Visibility.Visible;
+                AutomationProperties.SetName(conflictText, $"Key binding conflict: {definition.Label} is also assigned to {labels}");
+            }
+            else
+            {
+                conflictText.Text = "";
+                conflictText.Visibility = Visibility.Collapsed;
+            }
+        }
+        if (SaveKeyBindingsButton is not null)
+            SaveKeyBindingsButton.IsEnabled = conflicts.Count == 0 && _recordingKeyAction is null;
+    }
+
+    private void ResetKeyBindings_Click(object sender, RoutedEventArgs e)
+    {
+        _recordingKeyAction = null;
+        _keyBindingCaptureError = null;
+        _draftKeyBindings = KeyBindingSettings.CreateDefaults();
+        KeyBindingsStatusText.Text = "Default key bindings are in the draft. Save to apply them.";
+        RefreshKeyBindingEditor();
+    }
+
+    private void SaveKeyBindings_Click(object sender, RoutedEventArgs e)
+    {
+        IReadOnlyDictionary<ViewerKeyAction, IReadOnlyList<ViewerKeyAction>> conflicts =
+            KeyBindingSettings.FindConflicts(_draftKeyBindings);
+        if (conflicts.Count > 0)
+        {
+            KeyBindingsStatusText.Text = "Resolve the highlighted key conflicts before saving.";
+            RefreshKeyBindingEditor();
+            return;
+        }
+
+        var previous = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
+        _keyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_draftKeyBindings);
+        SaveState();
+        bool persisted = TryReadViewerStateFile(ResolvedStatePath, out ViewerState? savedState)
+            && savedState is not null
+            && KeyBindingMapsEqual(
+                _keyBindings,
+                KeyBindingSettings.NormalizePersisted(savedState.KeyBindings, out _));
+        if (!persisted)
+        {
+            _keyBindings = previous;
+            KeyBindingsStatusText.Text = "Key bindings could not be saved. The draft is preserved; fix the local state error and retry.";
+            RefreshKeyBindingEditor();
+            return;
+        }
+
+        _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
+        _keyBindingCaptureError = null;
+        KeyBindingsStatusText.Text = "Key bindings saved and applied.";
+        ApplyKeyBindingTooltips();
+        RefreshKeyBindingEditor();
+    }
+
+    private static bool KeyBindingMapsEqual(
+        IReadOnlyDictionary<ViewerKeyAction, KeyChord> first,
+        IReadOnlyDictionary<ViewerKeyAction, KeyChord> second)
+        => KeyBindingSettings.Definitions.All(definition =>
+            first.TryGetValue(definition.Action, out KeyChord firstChord)
+            && second.TryGetValue(definition.Action, out KeyChord secondChord)
+            && firstChord == secondChord);
+
+    private void ApplyKeyBindingTooltips()
+    {
+        if (ModalCloseBtn is null)
+            return;
+        ModalCloseBtn.ToolTip = $"Close ({BindingText(ViewerKeyAction.CloseModal)})";
+        ModalPreviousButton.ToolTip = $"Previous image ({BindingText(ViewerKeyAction.PreviousImage)})";
+        ModalNextButton.ToolTip = $"Next image ({BindingText(ViewerKeyAction.NextImage)})";
+        ModalFavoriteDecreaseButton.ToolTip = $"Favorite -1 ({BindingText(ViewerKeyAction.FavoriteDecrease)})";
+        ModalFavoriteIncreaseButton.ToolTip = $"Favorite +1 ({BindingText(ViewerKeyAction.FavoriteIncrease)})";
+        FavoriteDecreaseButton.ToolTip = $"Favorite -1 ({BindingText(ViewerKeyAction.FavoriteDecrease)})";
+        FavoriteIncreaseButton.ToolTip = $"Favorite +1 ({BindingText(ViewerKeyAction.FavoriteIncrease)})";
+        BulkFavoriteDecreaseButton.ToolTip = $"Decrease favorite level for selected images ({BindingText(ViewerKeyAction.FavoriteDecrease)})";
+        BulkFavoriteIncreaseButton.ToolTip = $"Increase favorite level for selected images ({BindingText(ViewerKeyAction.FavoriteIncrease)})";
+        ModalDeleteButton.ToolTip = $"Move current source to Recycle Bin ({BindingText(ViewerKeyAction.RecycleCurrentImage)})";
+        RestorePreviewTabButton.ToolTip = $"Reopen last closed ({BindingText(ViewerKeyAction.ReopenLastClosedPreviewTab)})";
+        ModalFlipButton.ToolTip = $"Flip horizontal ({BindingText(ViewerKeyAction.FlipHorizontal)})";
+        ModalEnhancedToggleButton.ToolTip = $"Toggle Original / Enhanced ({BindingText(ViewerKeyAction.ToggleEnhancedPreview)})";
+        ModalZoomOutButton.ToolTip = $"Zoom out ({BindingText(ViewerKeyAction.ModalZoomOut)})";
+        ModalZoomResetButton.ToolTip = $"Reset to fit ({BindingText(ViewerKeyAction.ModalZoomReset)})";
+        ModalZoomInButton.ToolTip = $"Zoom in ({BindingText(ViewerKeyAction.ModalZoomIn)})";
+        ModalShortcutHintText.Text = $"   {BindingText(ViewerKeyAction.PreviousImage)} / {BindingText(ViewerKeyAction.NextImage)} navigate   ·   {BindingText(ViewerKeyAction.CloseModal)} close";
+    }
+
+    private string BindingText(ViewerKeyAction action)
+        => _keyBindings.TryGetValue(action, out KeyChord chord)
+            ? chord.DisplayText
+            : KeyBindingSettings.Definition(action).DefaultChord.DisplayText;
+
     private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
     {
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
+        BeginKeyBindingEdit();
         ConfirmBeforeDeleteCheckBox.IsChecked = _confirmBeforeDelete;
         SetShowUnseenDots(_showUnseenDots, persist: false);
         DiagnosticsText.Text = BuildDiagnosticsText();
@@ -8810,6 +9311,7 @@ public partial class MainWindow : Window
 
     private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
     {
+        CancelKeyBindingEdit();
         AppSettingsDialog.Visibility = Visibility.Collapsed;
         RestoreOverlayFocus(_settingsFocusBeforeDialog);
     }
@@ -9445,10 +9947,16 @@ public partial class MainWindow : Window
         {
             SyncFavoriteFilterControls();
             SyncFoldersSectionControls();
+            _keyBindings = KeyBindingSettings.CreateDefaults();
+            _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
+            ApplyKeyBindingTooltips();
+            RefreshKeyBindingEditor();
             return;
         }
 
         _stateExtensionData = state.ExtensionData is null ? null : new Dictionary<string, JsonElement>(state.ExtensionData);
+        _keyBindings = KeyBindingSettings.NormalizePersisted(state.KeyBindings, out _keyBindingUnknownEntries);
+        _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
 
         if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
             SizeSlider.Value = state.CardWidth;
@@ -9504,6 +10012,8 @@ public partial class MainWindow : Window
             SearchInput.Text = state.SearchQuery;
 
         _restoredSelectedPath = state.SelectedPath;
+        ApplyKeyBindingTooltips();
+        RefreshKeyBindingEditor();
     }
 
     private ViewerState? ReadState()
@@ -9605,6 +10115,7 @@ public partial class MainWindow : Window
                 PreviewTabPaths = previewTabPaths.Count > 0 ? previewTabPaths : null,
                 ActivePreviewTabPath = activePreviewTabPath,
                 SelectedPath = selectedPath,
+                KeyBindings = KeyBindingSettings.ToPersisted(_keyBindings, _keyBindingUnknownEntries),
                 ExtensionData = CloneExtensionData(_stateExtensionData),
             };
             bool malformed = false;
@@ -9616,6 +10127,10 @@ public partial class MainWindow : Window
                     return false;
                 }
                 state.ExtensionData = CloneExtensionData(latest is null ? _stateExtensionData : latest.ExtensionData);
+                _ = KeyBindingSettings.NormalizePersisted(latest?.KeyBindings, out Dictionary<string, JsonElement>? latestUnknownKeyBindings);
+                state.KeyBindings = KeyBindingSettings.ToPersisted(
+                    _keyBindings,
+                    latest is null ? _keyBindingUnknownEntries : latestUnknownKeyBindings);
                 string json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
                 return TryWriteAtomicText(path, json);
             });
@@ -9627,6 +10142,7 @@ public partial class MainWindow : Window
                 return;
             }
             _stateExtensionData = CloneExtensionData(state.ExtensionData);
+            _ = KeyBindingSettings.NormalizePersisted(state.KeyBindings, out _keyBindingUnknownEntries);
         }
         catch
         {
@@ -9884,8 +10400,7 @@ public partial class MainWindow : Window
 
         if (AppSettingsDialog.Visibility == Visibility.Visible)
         {
-            AppSettingsDialog.Visibility = Visibility.Collapsed;
-            RestoreOverlayFocus(_settingsFocusBeforeDialog);
+            CloseAppSettings_Click(this, new RoutedEventArgs());
             return true;
         }
 
@@ -9899,8 +10414,16 @@ public partial class MainWindow : Window
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
+        ModifierKeys modifiers = _shortcutModifierProvider();
         if (DeleteConfirmationDialog.Visibility == Visibility.Visible || AppSettingsDialog.Visibility == Visibility.Visible)
         {
+            if (AppSettingsDialog.Visibility == Visibility.Visible
+                && _recordingKeyAction is not null
+                && CaptureRecordedKey(key, modifiers))
+            {
+                e.Handled = true;
+                return;
+            }
             if (key == Key.Escape)
             {
                 CloseTopmostOverlay();
@@ -9914,9 +10437,30 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (Modal.Visibility == Visibility.Visible && key == Key.Escape)
+        if (!IsViewerShortcutSurfaceActive())
+        {
+            base.OnPreviewKeyDown(e);
+            return;
+        }
+
+        // Modal close remains reachable even when a child Button owns focus.
+        // Settings and Recycle confirmation use the fixed Escape rescue above.
+        if (Modal.Visibility == Visibility.Visible
+            && MatchesBinding(ViewerKeyAction.CloseModal, key, modifiers))
         {
             CloseModal(restoreFocus: true);
+            e.Handled = true;
+            return;
+        }
+
+        // Preview-tab reorder is meaningful only while a tab button owns focus.
+        // Handle just these configured chords before the generic Button guard;
+        // ordinary buttons and editable inputs still suppress viewer shortcuts.
+        if ((MatchesBinding(ViewerKeyAction.MovePreviewTabLeft, key, modifiers)
+                && TryReorderFocusedPreviewTab(-1))
+            || (MatchesBinding(ViewerKeyAction.MovePreviewTabRight, key, modifiers)
+                && TryReorderFocusedPreviewTab(1)))
+        {
             e.Handled = true;
             return;
         }
@@ -9927,86 +10471,204 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (key == Key.T
-            && (Keyboard.Modifiers & ModifierKeys.Shift) != 0
-            && (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Windows)) != 0
-            && RestoreLastClosedPreviewTab())
+        if (TryHandleConfiguredViewerShortcut(key, modifiers))
         {
             e.Handled = true;
             return;
         }
 
-        bool tabReorderChord = (Keyboard.Modifiers & (ModifierKeys.Alt | ModifierKeys.Shift)) == (ModifierKeys.Alt | ModifierKeys.Shift)
-            && (Keyboard.Modifiers & ~(ModifierKeys.Alt | ModifierKeys.Shift)) == ModifierKeys.None;
-        if (tabReorderChord && (key is Key.Left or Key.Right) && TryReorderFocusedPreviewTab(key == Key.Left ? -1 : 1))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        if (TryHandleModalTransformKey(e))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        if (TryHandleZoomKey(e))
-        {
-            e.Handled = true;
-            return;
-        }
-
-        if (Modal.Visibility == Visibility.Visible)
-        {
-            if (e.Key == Key.Left)
-            {
-                NavigateModal(-1);
-                e.Handled = true;
-                return;
-            }
-
-            if (e.Key == Key.Right)
-            {
-                NavigateModal(1);
-                e.Handled = true;
-                return;
-            }
-        }
-
-        if (e.Key == Key.F)
-        {
-            AdjustSelectedFavorite(1);
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.U)
-        {
-            AdjustSelectedFavorite(-1);
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.Delete && RequestDeleteSelected())
-        {
-            e.Handled = true;
-            return;
-        }
-
-        if (e.Key == Key.Escape && CloseTopmostOverlay())
-            e.Handled = true;
         base.OnPreviewKeyDown(e);
     }
 
-    private static bool IsGlobalShortcutInputFocused(IInputElement? focused)
-        => focused is TextBoxBase or ComboBox or DatePicker or ButtonBase;
+    private bool TryHandleConfiguredViewerShortcut(Key key, ModifierKeys modifiers)
+    {
+        if (!IsViewerShortcutSurfaceActive())
+            return false;
+
+        bool modalVisible = Modal.Visibility == Visibility.Visible;
+        if (modalVisible)
+        {
+            if (MatchesBinding(ViewerKeyAction.CloseModal, key, modifiers))
+            {
+                CloseModal(restoreFocus: true);
+                return true;
+            }
+            if (MatchesBinding(ViewerKeyAction.PreviousImage, key, modifiers))
+            {
+                NavigateModal(-1);
+                return true;
+            }
+            if (MatchesBinding(ViewerKeyAction.NextImage, key, modifiers))
+            {
+                NavigateModal(1);
+                return true;
+            }
+            if (MatchesBinding(ViewerKeyAction.FlipHorizontal, key, modifiers))
+                return ToggleModalFlip();
+            if (MatchesBinding(ViewerKeyAction.ToggleEnhancedPreview, key, modifiers))
+                return ToggleModalEnhanced();
+            if (MatchesBinding(ViewerKeyAction.ModalZoomIn, key, modifiers))
+                return AdjustModalZoom(ModalZoomKeyboardStep);
+            if (MatchesBinding(ViewerKeyAction.ModalZoomOut, key, modifiers))
+                return AdjustModalZoom(1 / ModalZoomKeyboardStep);
+            if (MatchesBinding(ViewerKeyAction.ModalZoomReset, key, modifiers))
+                return ResetModalTransform(_modalTransformPath, showFeedback: true);
+        }
+        else
+        {
+            if (MatchesBinding(ViewerKeyAction.SelectAllResults, key, modifiers))
+                return SelectAllCurrentResults();
+            if (MatchesBinding(ViewerKeyAction.ClearSelection, key, modifiers))
+                return ClearCurrentSelection();
+            if (MatchesBinding(ViewerKeyAction.GalleryZoomIn, key, modifiers))
+                return AdjustCardWidth(1);
+            if (MatchesBinding(ViewerKeyAction.GalleryZoomOut, key, modifiers))
+                return AdjustCardWidth(-1);
+            if (MatchesBinding(ViewerKeyAction.GalleryZoomReset, key, modifiers))
+                return ResetCardWidth();
+        }
+
+        if (MatchesBinding(ViewerKeyAction.FavoriteIncrease, key, modifiers))
+            return AdjustSelectedFavorite(1);
+        if (MatchesBinding(ViewerKeyAction.FavoriteDecrease, key, modifiers))
+            return AdjustSelectedFavorite(-1);
+        if (MatchesBinding(ViewerKeyAction.FavoriteLevel1, key, modifiers))
+            return SetFavoriteLevelForSelection(1);
+        if (MatchesBinding(ViewerKeyAction.FavoriteLevel2, key, modifiers))
+            return SetFavoriteLevelForSelection(2);
+        if (MatchesBinding(ViewerKeyAction.FavoriteLevel3, key, modifiers))
+            return SetFavoriteLevelForSelection(3);
+        if (MatchesBinding(ViewerKeyAction.FavoriteLevel4, key, modifiers))
+            return SetFavoriteLevelForSelection(4);
+        if (MatchesBinding(ViewerKeyAction.FavoriteLevel5, key, modifiers))
+            return SetFavoriteLevelForSelection(5);
+        if (MatchesBinding(ViewerKeyAction.RecycleCurrentImage, key, modifiers))
+            return RequestDeleteSelected();
+        if (MatchesBinding(ViewerKeyAction.ReopenLastClosedPreviewTab, key, modifiers))
+            return RestoreLastClosedPreviewTab();
+        if (MatchesBinding(ViewerKeyAction.MovePreviewTabLeft, key, modifiers))
+            return TryReorderFocusedPreviewTab(-1);
+        if (MatchesBinding(ViewerKeyAction.MovePreviewTabRight, key, modifiers))
+            return TryReorderFocusedPreviewTab(1);
+        return false;
+    }
+
+    private bool MatchesBinding(ViewerKeyAction action, Key key, ModifierKeys modifiers)
+        => _keyBindings.TryGetValue(action, out KeyChord chord)
+            && chord.Matches(key, modifiers);
+
+    private bool SelectAllCurrentResults()
+    {
+        Tile? previousPrimary = SelectedTile();
+        Tile? primary = null;
+        int selectableCount = 0;
+        _selectedPaths.Clear();
+        foreach (Tile tile in _tiles)
+        {
+            if (!tile.IsRealFile)
+                continue;
+            selectableCount++;
+            _selectedPaths.Add(tile.Path);
+            primary ??= tile;
+            if (ReferenceEquals(tile, previousPrimary))
+                primary = tile;
+        }
+
+        if (selectableCount == 0 || primary is null)
+            return false;
+
+        _primarySelectedPath = primary.Path;
+        _selectionVisualSyncGeneration++;
+        SynchronizeSelectionControls();
+        ApplyPrimarySelection(primary);
+        SetStatusToast($"Selected all {selectableCount:N0} current results.");
+        return true;
+    }
+
+    private bool ClearCurrentSelection()
+    {
+        if (_selectedPaths.Count == 0)
+            return false;
+        _selectedPaths.Clear();
+        _primarySelectedPath = null;
+        _selectionVisualSyncGeneration++;
+        SynchronizeSelectionControls();
+        ApplyPrimarySelection(null);
+        SetStatusToast("Image selection cleared.");
+        return true;
+    }
+
+    private static bool IsGlobalShortcutInputFocused(object? source)
+    {
+        // Mouse routed events normally report a template child (TextBoxView,
+        // ScrollViewer, Path, TextBlock, etc.) as OriginalSource rather than
+        // the owning input/button. Walk both visual and logical ancestry so a
+        // Ctrl/Win+wheel gesture over any part of those controls keeps its
+        // native behavior instead of leaking into gallery zoom.
+        for (DependencyObject? current = source as DependencyObject;
+             current is not null;
+             current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                 ? VisualTreeHelper.GetParent(current)
+                 : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is TextBoxBase or ComboBox or DatePicker or ButtonBase)
+                return true;
+        }
+
+        return false;
+    }
+
+    private bool IsViewerShortcutSurfaceActive()
+        => Landing.Visibility != Visibility.Visible;
+
+    private bool IsModalImageWheelSource(DependencyObject? source)
+        => source is not null
+            && IsDescendantOrSelf(source, ModalImageArea)
+            && !IsDescendantOrSelf(source, ModalMetadataSidebar)
+            && !IsDescendantOrSelf(source, ModalPreviousButton)
+            && !IsDescendantOrSelf(source, ModalNextButton)
+            && !IsDescendantOrSelf(source, ModalFooter);
+
+    private static bool IsDescendantOrSelf(DependencyObject source, DependencyObject ancestor)
+    {
+        for (DependencyObject? current = source; current is not null; current = current is Visual or System.Windows.Media.Media3D.Visual3D
+            ? VisualTreeHelper.GetParent(current)
+            : LogicalTreeHelper.GetParent(current))
+        {
+            if (ReferenceEquals(current, ancestor))
+                return true;
+        }
+        return false;
+    }
 
     protected override void OnPreviewMouseWheel(MouseWheelEventArgs e)
     {
+        if (DeleteConfirmationDialog.Visibility == Visibility.Visible
+            || AppSettingsDialog.Visibility == Visibility.Visible
+            || !IsViewerShortcutSurfaceActive())
+        {
+            base.OnPreviewMouseWheel(e);
+            return;
+        }
+
         if (Modal.Visibility == Visibility.Visible)
         {
-            AdjustModalZoom(e.Delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
-            e.Handled = true;
+            if (IsModalImageWheelSource(e.OriginalSource as DependencyObject))
+            {
+                AdjustModalZoom(e.Delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
+                e.Handled = true;
+            }
+            else
+            {
+                base.OnPreviewMouseWheel(e);
+            }
+            return;
+        }
+
+        if (IsGlobalShortcutInputFocused(e.OriginalSource)
+            || IsGlobalShortcutInputFocused(Keyboard.FocusedElement))
+        {
+            base.OnPreviewMouseWheel(e);
             return;
         }
 
@@ -10375,10 +11037,78 @@ public partial class MainWindow : Window
         DeleteConfirm_Click(this, new RoutedEventArgs());
     }
     public void OpenAppSettingsForSmoke() => OpenAppSettings_Click(this, new RoutedEventArgs());
+    public bool KeyBindingSurfaceContractForSmoke
+        => KeyBindingsPanel.Children.Count == KeyBindingSettings.Definitions.Count
+            && string.Equals(AutomationProperties.GetName(KeyBindingsPanel), "Editable key bindings", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(ResetKeyBindingsButton), "Reset key bindings to defaults", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(SaveKeyBindingsButton), "Save key bindings", StringComparison.Ordinal)
+            && AutomationProperties.GetLiveSetting(KeyBindingsStatusText) == AutomationLiveSetting.Polite
+            && KeyBindingSettings.Definitions.All(definition =>
+                _keyBindingButtons.TryGetValue(definition.Action, out Button? button)
+                && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(button))
+                && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(button)));
+    public bool KeyBindingSaveEnabledForSmoke => SaveKeyBindingsButton.IsEnabled;
+    public bool KeyBindingHintsMatchForSmoke
+        => ModalCloseBtn.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.CloseModal), StringComparison.Ordinal) == true
+            && ModalPreviousButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.PreviousImage), StringComparison.Ordinal) == true
+            && ModalNextButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.NextImage), StringComparison.Ordinal) == true
+            && FavoriteDecreaseButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.FavoriteDecrease), StringComparison.Ordinal) == true
+            && FavoriteIncreaseButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.FavoriteIncrease), StringComparison.Ordinal) == true
+            && ModalDeleteButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.RecycleCurrentImage), StringComparison.Ordinal) == true
+            && RestorePreviewTabButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.ReopenLastClosedPreviewTab), StringComparison.Ordinal) == true
+            && ModalFlipButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.FlipHorizontal), StringComparison.Ordinal) == true
+            && ModalEnhancedToggleButton.ToolTip?.ToString()?.Contains(BindingText(ViewerKeyAction.ToggleEnhancedPreview), StringComparison.Ordinal) == true
+            && ModalShortcutHintText.Text.Contains(BindingText(ViewerKeyAction.CloseModal), StringComparison.Ordinal);
+    public bool KeyBindingRecordingForSmoke => _recordingKeyAction is not null;
+    public string KeyBindingStatusForSmoke => KeyBindingsStatusText.Text;
+    public int KeyBindingConflictCountForSmoke => KeyBindingSettings.FindConflicts(_draftKeyBindings).Count;
+    public string? KeyBindingTextForSmoke(string storageName, bool draft)
+    {
+        KeyBindingDefinition? definition = KeyBindingSettings.Definitions.FirstOrDefault(candidate =>
+            string.Equals(candidate.StorageName, storageName, StringComparison.OrdinalIgnoreCase));
+        if (definition is null)
+            return null;
+        IReadOnlyDictionary<ViewerKeyAction, KeyChord> source = draft ? _draftKeyBindings : _keyBindings;
+        return source.TryGetValue(definition.Action, out KeyChord chord) ? chord.CanonicalText : null;
+    }
+    public bool SetKeyBindingDraftForSmoke(string storageName, Key key, ModifierKeys modifiers)
+    {
+        KeyBindingDefinition? definition = KeyBindingSettings.Definitions.FirstOrDefault(candidate =>
+            string.Equals(candidate.StorageName, storageName, StringComparison.OrdinalIgnoreCase));
+        if (definition is null
+            || !KeyChord.TryCreate(key, modifiers, out KeyChord chord, out _)
+            || !KeyBindingSettings.IsAllowedForAction(definition.Action, chord, out _))
+            return false;
+        _recordingKeyAction = null;
+        _draftKeyBindings[definition.Action] = chord;
+        RefreshKeyBindingEditor();
+        return true;
+    }
+    public bool BeginKeyBindingCaptureForSmoke(string storageName)
+    {
+        KeyBindingDefinition? definition = KeyBindingSettings.Definitions.FirstOrDefault(candidate =>
+            string.Equals(candidate.StorageName, storageName, StringComparison.OrdinalIgnoreCase));
+        if (definition is null || !_keyBindingButtons.TryGetValue(definition.Action, out Button? button))
+            return false;
+        KeyBindingCapture_Click(button, new RoutedEventArgs());
+        return _recordingKeyAction == definition.Action;
+    }
+    public bool SaveKeyBindingsForSmoke()
+    {
+        SaveKeyBindings_Click(SaveKeyBindingsButton, new RoutedEventArgs());
+        return KeyBindingsStatusText.Text.Contains("saved and applied", StringComparison.OrdinalIgnoreCase);
+    }
+    public void ResetKeyBindingsForSmoke()
+        => ResetKeyBindings_Click(ResetKeyBindingsButton, new RoutedEventArgs());
     public bool ActivateLogoForSmoke()
     {
         LogoHomeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
         return Landing.Visibility == Visibility.Visible;
+    }
+    public bool ActivateViewerForSmoke()
+    {
+        SetPhase(landing: false);
+        return Landing.Visibility != Visibility.Visible;
     }
     public void RetryStatusForSmoke() => RetryDelete_Click(this, new RoutedEventArgs());
     public void ReportScanAccessFailureForSmoke() => ReportScanAccessFailures(1);
@@ -10525,7 +11255,7 @@ public partial class MainWindow : Window
             && ModalArtGlow.Visibility == Visibility.Visible;
     public void CloseModalForSmoke() => CloseModal();
     public int FilteredCountForSmoke => _tiles.Count;
-    public int SelectedCountForSmoke => SelectedTiles().Count;
+    public int SelectedCountForSmoke => _selectedPaths.Count;
     public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
     public FileDragOutSmokeSnapshot BuildFileDropPayloadForSmoke(string originFileName, bool originWasSelected)
     {
@@ -10780,6 +11510,142 @@ public partial class MainWindow : Window
         };
         OnPreviewKeyDown(args);
         return args.Handled;
+    }
+    public bool InvokePreviewKeyForSmoke(Key key, ModifierKeys modifiers)
+    {
+        Func<ModifierKeys> previous = _shortcutModifierProvider;
+        _shortcutModifierProvider = () => modifiers;
+        try
+        {
+            return InvokePreviewKeyForSmoke(key);
+        }
+        finally
+        {
+            _shortcutModifierProvider = previous;
+        }
+    }
+    public bool InvokePreviewMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+        => InvokePreviewMouseWheelForSmoke(delta, modifiers, Keyboard.FocusedElement ?? CardsList);
+
+    private bool InvokePreviewMouseWheelForSmoke(int delta, ModifierKeys modifiers, IInputElement source)
+    {
+        Func<ModifierKeys> previous = _shortcutModifierProvider;
+        _shortcutModifierProvider = () => modifiers;
+        try
+        {
+            var args = new MouseWheelEventArgs(Mouse.PrimaryDevice, Environment.TickCount, delta)
+            {
+                RoutedEvent = Mouse.PreviewMouseWheelEvent,
+                Source = source,
+            };
+            OnPreviewMouseWheel(args);
+            return args.Handled;
+        }
+        finally
+        {
+            _shortcutModifierProvider = previous;
+        }
+    }
+
+    public bool InvokeModalImageMouseWheelForSmoke(int delta)
+        => InvokePreviewMouseWheelForSmoke(delta, ModifierKeys.None, ModalBitmap);
+
+    public bool InvokeModalMetadataMouseWheelForSmoke(int delta)
+        => InvokePreviewMouseWheelForSmoke(delta, ModifierKeys.None, ModalMetadataStatusText);
+
+    public bool SearchInputWheelVisualChildAvailableForSmoke
+    {
+        get
+        {
+            SearchInput.ApplyTemplate();
+            UpdateLayout();
+            return FindVisualDescendant<FrameworkElement>(SearchInput) is not null;
+        }
+    }
+
+    public bool InvokeSearchInputVisualChildMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+    {
+        SearchInput.ApplyTemplate();
+        UpdateLayout();
+        IInputElement source = FindVisualDescendant<FrameworkElement>(SearchInput)
+            ?? throw new InvalidOperationException("Search input visual child was not generated.");
+        return InvokePreviewMouseWheelForSmoke(delta, modifiers, source);
+    }
+
+    public bool ViewerButtonWheelVisualChildAvailableForSmoke
+    {
+        get
+        {
+            ToggleSidebar.ApplyTemplate();
+            UpdateLayout();
+            return FindVisualDescendant<FrameworkElement>(ToggleSidebar) is not null;
+        }
+    }
+
+    public bool InvokeViewerButtonVisualChildMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+    {
+        ToggleSidebar.ApplyTemplate();
+        UpdateLayout();
+        IInputElement source = FindVisualDescendant<FrameworkElement>(ToggleSidebar)
+            ?? throw new InvalidOperationException("Viewer button visual child was not generated.");
+        return InvokePreviewMouseWheelForSmoke(delta, modifiers, source);
+    }
+
+    public int MaterializedSelectionVisualLimitForSmoke => MaxMaterializedSelectionVisualItems;
+    public int SelectionVisualItemCountForSmoke => CardsList.SelectedItems.Count + RowsList.SelectedItems.Count;
+
+    public void SeedLargeSelectionCatalogForSmoke(int count, string primaryPath)
+    {
+        if (count <= 0)
+            throw new ArgumentOutOfRangeException(nameof(count));
+
+        Tile template = _allTiles.FirstOrDefault(tile => string.Equals(tile.Path, primaryPath, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException("The large-selection primary fixture is not in the current catalog.");
+        string root = Path.GetDirectoryName(template.Path) ?? Path.GetTempPath();
+        var tiles = new List<Tile>(count) { template };
+        for (int index = 1; index < count; index++)
+        {
+            tiles.Add(new Tile
+            {
+                Path = Path.Combine(root, $".selection-smoke-{index:D6}.png"),
+                FileName = $"selection-smoke-{index:D6}.png",
+                IsRealFile = true,
+                Group = template.Group,
+                FolderBucketKey = template.FolderBucketKey,
+                FolderBucketLabel = template.FolderBucketLabel,
+                ModifiedUtc = template.ModifiedUtc,
+                CreatedUtc = template.CreatedUtc,
+                ModifiedText = template.ModifiedText,
+                SizeText = template.SizeText,
+                Thumbnail = template.Thumbnail,
+                ArtBase = template.ArtBase,
+                ArtGlow = template.ArtGlow,
+                Fav = 0,
+                Unseen = false,
+            });
+        }
+
+        bool wasSyncingSelection = _syncingSelection;
+        _syncingSelection = true;
+        try
+        {
+            _allTiles.Clear();
+            _allTiles.AddRange(tiles);
+            _tiles.ReplaceAll(tiles);
+            _selectedPaths.Clear();
+            _primarySelectedPath = null;
+        }
+        finally
+        {
+            _syncingSelection = wasSyncingSelection;
+        }
+
+        ApplyCardLayoutToAllTiles();
+        _galleryVirtualizingPanel?.InvalidateItemLayout();
+        _selectionVisualSyncGeneration++;
+        SynchronizeSelectionControls();
+        ApplyPrimarySelection(null);
+        UpdateFolderStats();
     }
     public int GridMaxRealizationCountForSmoke => MaxVirtualizedContainerSmokeCount;
     public double CardWidthForSmoke => SizeSlider.Value;
@@ -11122,7 +11988,15 @@ public partial class MainWindow : Window
     public bool ToggleSelectedFavoriteForSmoke() => ToggleSelectedFavorite();
     public bool AdjustSelectedFavoriteForSmoke(int delta) => AdjustSelectedFavorite(delta);
     public bool AdjustModalFavoriteForSmoke(int delta)
-        => Modal.Visibility == Visibility.Visible && AdjustSelectedFavorite(delta);
+    {
+        if (Modal.Visibility != Visibility.Visible || delta == 0)
+            return false;
+
+        int before = SelectedFavoriteLevelForSmoke;
+        Button button = delta > 0 ? ModalFavoriteIncreaseButton : ModalFavoriteDecreaseButton;
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+        return SelectedFavoriteLevelForSmoke == Math.Clamp(before + Math.Sign(delta), 0, 5);
+    }
     public int ModalFavoriteLevelForSmoke
         => int.TryParse(ModalFavoriteLevelText.Text, out int level) ? level : -1;
     public bool MarkSelectedSeenForSmoke() => SelectedTile() is { IsRealFile: true } tile && MarkTileSeen(tile);
@@ -11257,7 +12131,7 @@ public partial class MainWindow : Window
     }
 
     public bool ModalZoomWheelForSmoke(int delta)
-        => AdjustModalZoom(delta > 0 ? ModalZoomWheelStep : 1 / ModalZoomWheelStep);
+        => InvokeModalImageMouseWheelForSmoke(delta);
 
     public bool ResetModalTransformForSmoke() => ResetModalTransform(_modalTransformPath, showFeedback: true);
 
@@ -11905,6 +12779,7 @@ public sealed class ViewerState
     public List<string>? PinnedPreviewPaths { get; set; }
     public List<string>? PreviewTabPaths { get; set; }
     public string? ActivePreviewTabPath { get; set; }
+    public Dictionary<string, JsonElement>? KeyBindings { get; set; }
     [System.Text.Json.Serialization.JsonExtensionData]
     public Dictionary<string, JsonElement>? ExtensionData { get; set; }
 }
@@ -12339,6 +13214,8 @@ internal sealed class ResettableObservableCollection<T> : ObservableCollection<T
         ArgumentNullException.ThrowIfNull(items);
         CheckReentrancy();
         Items.Clear();
+        if (Items is List<T> list)
+            list.EnsureCapacity(items.Count);
         for (int index = 0; index < items.Count; index++)
             Items.Add(items[index]);
         OnPropertyChanged(new PropertyChangedEventArgs(nameof(Count)));
