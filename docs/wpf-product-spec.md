@@ -2,7 +2,7 @@
 
 文書状態: **Normative for WPF / implementation-ready**
 
-最終監査日: 2026-07-18 JST
+最終監査日: 2026-07-19 JST
 
 正本関係:
 
@@ -55,6 +55,7 @@ NON-GOAL:
 | Favorite | `.cache/favorites.json` | `absolutePath -> 1..5`。0はentryなし |
 | Seen | `.cache/seen.json` | additive `absolutePath -> true` |
 | Recent folders | `.cache/recent-folders.json` | Browser/WPF間のfolder-set履歴 |
+| Search History | `.cache/search-history.json` | version 1、complete queryのMRU最大50件。Browser/WPF read-write、ViewerStateとは別owner |
 | Enhancement jobs | `.cache/enhance/jobs.json` | WPFはread-onlyで成功outputを参照 |
 
 WPF local stateはviewer window、filter、selection、tab等のnative stateを保存する。共有JSONとlocal stateを同じtransactionに混ぜない。
@@ -270,6 +271,15 @@ Foldersは既定展開で、header buttonから折り畳む。collapse中のchil
 - `night cat`は空白込みの1token。
 
 no-resultは正常empty state。permission/decode/query failureはerror state。
+
+### WPF-SRC-002 Shared Search History
+
+- Search inputのfocus/clickでshared fileを毎回background threadから再読し、UI dispatcherでdisk I/Oまたは最大2秒のlock待ちをしない。
+- popupはRecent searches、個別Delete、Clear allを持つ。履歴選択はtag追加ではなくwhole-query replacementで、WPFの通常SearchQuery保存とは分離する。
+- inputのArrowDown/Upで先頭/末尾へ入り、ListBox内Arrowで移動、Enterで適用、Escapeで閉じる。loading、件数、selection、protected/Busy/failureをUI Automation live announcement/statusへ出す。
+- 選択後はpopupを閉じてSearchへfocusを戻すが、そのfocus returnで即再表示しない。
+- documentはversion 1、MRU `entries`最大50、unknown root field保持。queryをcomma trim/rejoinし、NFKC + Browser/.NET共通code-point foldでdedupeする。
+- Browserと同じ`<target>.lock`、lock内latest read、30秒stale recovery、temp + atomic replaceを使う。malformed/futureは既存bytesを保護し、Busy/timeoutはcurrent queryとfileを変えない。
 
 ### WPF-FAV-001 Favorite filter
 
@@ -640,7 +650,7 @@ Accessibility:
 
 変更は最低限、影響workflowの専用verifierと次の共通gateを通す。
 
-通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出するが、`verify-cross-runtime-*.ps1`は含めない。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、`-IncludeReloadSoak`で既定24-cycleの同一process soakをaggregate内へ追加し、cross-runtime 2本を別途実行する。large-catalog変更のcloseoutでは、aggregateとは別に`-Count 100000 -FolderCount 100`を必ず1回通す。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。check件数はscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
+通常のWPF aggregateは`powershell -File scripts/verify-wpf-product.ps1`で一括実行できる。これは`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`を自動検出し、Search Historyのfocused/cross-runtime verifierは順序を固定して明示実行する。日常の短い回帰では`-SkipStress`を使えるが、closeoutでは20,000件stressを省略せず、`-IncludeReloadSoak`で既定24-cycleの同一process soakをaggregate内へ追加し、Favorite/Seen、Recent、Search Historyのcross-runtime gateを通す。large-catalog変更のcloseoutでは、aggregateとは別に`-Count 100000 -FolderCount 100`を必ず1回通す。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。check件数はscript欠落を見つけるsnapshotであり固定合格件数ではないため、追加verifierを削って数を合わせず、live JSONの`checks`と全resultを記録する。
 
 | Area | Command |
 | --- | --- |
@@ -648,6 +658,8 @@ Accessibility:
 | P0 integrated / 5,000 | `powershell -File scripts/verify-wpf-p0.ps1` |
 | Browser/WPF shared Favorite/Seen concurrent stress | `powershell -File scripts/verify-cross-runtime-shared-state.ps1 -Iterations 20` |
 | Browser/WPF/third-writer shared Recent concurrent stress | `powershell -File scripts/verify-cross-runtime-recent.ps1 -Iterations 20` |
+| Shared Search History UI/schema/protection | `powershell -File scripts/verify-wpf-search-history.ps1` |
+| Browser/WPF shared Search History concurrent stress | `powershell -File scripts/verify-cross-runtime-search-history.ps1 -Iterations 20` |
 | Catalog aggregate stress / 20,000 | `powershell -File scripts/verify-wpf-catalog-stress.ps1 -Count 20000` |
 | Exact large catalog / 100,000・100 folders | `powershell -File scripts/verify-wpf-catalog-stress.ps1 -Count 100000 -FolderCount 100 -OverallTimeoutSeconds 180` |
 | P1 search/date/folder | `powershell -File scripts/verify-wpf-p1a.ps1` |
@@ -719,7 +731,9 @@ Reload soakのmemory correctness gateは、warm-up直後と終了時のforced-GC
 
 Browser基準のWPF viewer workflowは実装・専用smoke済み。Bulk Favorite、Bulk Recycle、right panel resize、preview tab reload/hover/reorder/middle-close、modal end wrap/chrome/edge/swipe/feedback、Prompt tag→search、Folder bucket range selection/selected actions/collapse persistence、native Explorer FileDrop drag-outとfolder drag-inまでfocused verifier付きで実装済み。Modalはnamed focusable root、Tab/Control+Tab cycle、focused child上のEscape、close後focus return、metadata/copy/edge-zone Automationを`verify-wpf-p1b.ps1`で実動作固定している。
 
-現行ledgerには、監査した主要journeyの既知P0/P1実装残はない。100,000件/2.9〜3.2 MiBで再現していた同期shared Favorite/Seenのdispatcher停止はgeneration-aware single-writer actorで解消した。2026-07-18の最終aggregateは47 checks / 264,857msで、20,000件stressと24-cycle reload soakを含め全result greenである。shared state/recent cross-runtime各20反復も別途greenで、Favorite/Seen各40 path、unknown field、last-writer policy、lock/tmp cleanupを確認した。
+監査した既存journeyのP0破損は確認していないが、Browser parityと追加製品機能には本書とtruth tableのpendingが残る。100,000件/2.9〜3.2 MiBで再現していた同期shared Favorite/Seenのdispatcher停止はgeneration-aware single-writer actorで解消した。2026-07-18の47 checks / 264,857msは当時のhistorical snapshotであり、現行合格件数ではない。shared state/recent cross-runtime各20反復も別途greenで、Favorite/Seen各40 path、unknown field、last-writer policy、lock/tmp cleanupを確認した。
+
+2026-07-19のModal filmstrip/shared Search History採用時は、Search History focused/cross-runtimeを含む`-SkipStress` aggregate 50/50を再実行して全result greenとした。Search Historyのkeyboard証拠はhandler相当helperとcompiled XAML wiringであり、実OS routed-key eventのmanual testではない。
 
 2026-07-19のpersistent metadata index closeoutではfocused restart/corruption/cancel gateをaggregateへ追加し、現行50 checksを20,000件cold→warm stressと24-cycle reload soak込みで全greenにした。shared Favorite/Seenとshared Recentのcross-runtime各20反復も再実行し、Favorite/Seen各40 path、Recent 3 owner set、valid JSON、lock/tmp residue 0、real port/user cache非使用を再確認した。
 

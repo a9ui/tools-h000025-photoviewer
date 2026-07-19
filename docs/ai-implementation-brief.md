@@ -29,7 +29,7 @@ WPF版:
 
 - .NET 8 Windows WPF。viewer coreはNode、localhost、WebView/WebView2を必要としない。Modalの明示Enhancement bridgeだけはloopback Browser engineへ委譲する。
 - Browserの意味と結果を維持し、native virtualization、Shell Recycle Bin、Explorer/FileDrop、Windows focus/Automationを使う。
-- current WPF実装は現行ledger上のP0〜P2と明示Enhancement create/cancel/retry/output-delete bridgeを実装済み。残るP3はWPF単独Enhancement engine/worker ownership、複数output version selector、cache quota/eviction、高度polish、配布packageであり、viewer coreの未実装と混同しない。別実装は契約ID `WPF-*` とSection 17 gateを満たし、P3を製品判断前に混ぜない。
+- current WPF実装はtruth tableで`implemented`になったviewer workflowと明示Enhancement create/cancel/retry/output-delete bridgeを持つ。Browser parityと追加製品機能には同表の`pending`が残るため、P0〜P2全完了とは読み替えない。別実装は契約ID `WPF-*` とSection 17 gateを満たし、P3を製品判断前に混ぜない。
 
 ## 3. 絶対に変えない意味
 
@@ -104,9 +104,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-product.ps1 -Inclu
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-catalog-stress.ps1 -Count 100000 -FolderCount 100 -OverallTimeoutSeconds 180
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-cross-runtime-shared-state.ps1 -Iterations 20
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-cross-runtime-recent.ps1 -Iterations 20
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-cross-runtime-search-history.ps1 -Iterations 20
 ```
 
-`verify-wpf-product.ps1`は`verify-ui-regression-guard.ps1`と通常の`verify-wpf-*.ps1`、20,000件stressを直列に自動実行し、`-IncludeReloadSoak`で既定24-cycleの同一process reload soakも加える。`verify-cross-runtime-*.ps1`とexact 100,000件/100 folders gateは別実行である。2026-07-18 closeoutのlive inventoryは47 checks / 264,857msで全result green、100,000件gateも100,000/100,000・silent truncate 0・末尾99,999・Grid/List realized 15/9でgreenだった。check数はinventory sanity用のsnapshotであり固定合格件数ではない。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。closeoutは`-SkipStress`を使わず、live JSONの`checks`と各resultを記録する。失敗時だけ個別のfocused verifierで切り分ける。同じWPF projectを複数processから同時buildすると`obj`が競合するため、統合gate自体は直列実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。
+`verify-wpf-product.ps1`は`verify-ui-regression-guard.ps1`、通常の`verify-wpf-*.ps1`、Search History focused/cross-runtime、20,000件stressを直列に実行し、`-IncludeReloadSoak`で既定24-cycleの同一process reload soakも加える。Favorite/Seen、Recentのcross-runtimeとexact 100,000件/100 folders gateは別実行である。2026-07-19の短い採用回帰は`-SkipStress`で50/50 green、過去の20,000 stress/reload soakと100,000/100,000・silent truncate 0・末尾99,999・Grid/List realized 15/9もgreenである。check数はinventory sanity用のsnapshotであり固定合格件数ではない。40-cycle以上は長期memory傾向のextended観測として必要時に別実行する。large-catalog closeoutは`-SkipStress`を使わず、live JSONの`checks`と各resultを記録する。失敗時だけ個別のfocused verifierで切り分ける。同じWPF projectを複数processから同時buildすると`obj`が競合するため、統合gate自体は直列実行する。Delete testは専用temp copyだけ、state/favorite/seen/recent/search-history testはoverride pathだけを使う。real user state/cache/sourceへtest writeしない。
 
 通常WPF起動はproject rootの`.\start_wpf.bat`を使う。repo root、project/target path、git revision、WPF source fingerprint、exe SHA256をatomic provenanceで照合し、全一致する時だけcurrentとして直接起動する。missing/unproven/invalid/別worktree/別revision/source drift/target改変はfail-closed buildへ戻す。app exit 0はconsoleをpauseせず終了し、非0またはproject missingだけ診断を残す。Browser server、port 3000、既存WPF processを所有・停止しない。`scripts/verify-wpf-launcher-freshness.ps1`で分岐を固定する。
 

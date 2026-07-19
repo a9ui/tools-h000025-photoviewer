@@ -592,6 +592,17 @@ Style shortcut:
 - generation IDでstale responseを捨てる。
 - query debounce待ち中にsort/date/hidden folder/folder set/index sessionが変わった場合は旧timerをcancelし、captured済みの旧条件をあとから復活させない。
 
+### BR-SRC-005 Shared Search History
+
+- Search inputのfocus/click時に`/api/search-history`を毎回再読し、履歴があればnamed `Recent searches` regionを開く。typing中は通常suggestionへ切り替える。
+- 履歴rowはcomplete queryのwhole-query replacementであり、現在のchipへ1 tokenを追加する操作ではない。inputのArrowDown/Up、rowのArrowDown/Up、Enter、Escape、mouse/touchを持つ。
+- 確定したquery/tag、履歴選択、入力blurだけをcommitする。debounce途中の各keystrokeと空queryは記録しない。
+- individual DeleteとClear allを持つ。履歴rowはbuttonで、suggestionのcombobox/listbox/option active-descendantとは別surfaceである。
+- shared documentは`.cache/search-history.json` version 1、`entries` MRU最大50、read時optionalの`updatedAtUtc`。正常mutation時はUTC ISO timestampを必ず書く。
+- raw query上限は32,768 UTF-16 code unit。comma tokenをtrimしemptyを除いて`, `で再結合する。identityはNFKC + Browser/WPF共通code-point lowercaseで、U+0130は`i` + combining dotへ展開する。
+- unknown root fieldを保持する。50件超の既存entriesはread時に先頭50へcanonicalizeする。missingはempty。malformed/future/read failureはGET 200 + `ok:false`、mutation protectedは409、invalidは400、lock/I/O failureは503。
+- mutationはcreate-new `<target>.lock`、lock内latest read、2秒timeout、30秒stale recovery、temp + atomic replace。timeout時はcurrent queryと既存bytesを変更しない。
+
 ### BR-FAV-001 Mutation
 
 - `+` / F: 1段階上げ、最大5。
@@ -1005,9 +1016,9 @@ Close時はcurrent画像をgalleryの約35%位置へrevealし、selection/right 
 
 - Modal chrome表示中は、current modal orderを横方向のthumbnail列として画面下部へ表示する。client-filter subsetではそのID順、通常検索ではlogical search orderを使う。
 - current画像はaccent border、`aria-current`、`aria-selected`で明示する。thumbnail clickは同じModalを閉じずに対象画像へ直接移動し、Seen、full-image load、Original/Enhanced判定は通常navigationと同じ経路へ続く。
-- `Toggle modal filmstrip` key bindingは既定`T`。Settingsのkey conflict検査対象に含め、toolbarとfilmstrip内の両方にshow/hide操作、`aria-expanded`、`aria-controls`、`aria-keyshortcuts`を持つ。新field導入前のsettingsで既存actionが`T`を使っている場合はその割当を保持し、filmstripだけを未使用の`B`、`G`、`V`、`Y`の順へfallbackして二重発火を作らない。
+- `Toggle modal filmstrip` key bindingは既定`T`。Settingsのkey conflict検査対象に含め、toolbar toggleは`aria-expanded`/`aria-controls`/`aria-keyshortcuts`、filmstrip内Hideは`aria-controls`/`aria-keyshortcuts`を持つ。新field導入前のsettingsで既存actionが`T`を使っている場合はその割当を保持し、filmstripだけを未使用の`B`、`G`、`V`、`Y`の順へfallbackして二重発火を作らない。
 - show/hideは`pvu_view.modalFilmstripOpen`へdebounce保存し、Modal close/reopenとreload後も保持する。chrome全体をhideした時はfilmstripもpointerを受けず、filmstripの保存値自体は変えない。
-- 大量画像で全thumbnail DOMを生成しない。横scrollのviewportとoverscanだけをrenderし、通常検索の未load範囲はそのwindowだけを`ensureSearchRange`へ要求する。visible filmstrip thumbnail以外をdecodeしない。各virtual optionはlogical全件中の位置を`aria-posinset`/`aria-setsize`で伝える。
+- 大量画像で全thumbnail DOMを生成しない。横scrollのviewportとoverscanだけをrenderし、通常検索の未load範囲はそのwindowと交差するsearch pageだけを`ensureSearchRange`へ要求する。visible filmstrip thumbnail以外をdecodeしない。各virtual optionはlogical全件中の位置を`aria-posinset`/`aria-setsize`で伝える。
 - filmstrip上のpointer/click/wheelはModal edge click、center chrome toggle、swipe、pan、wheel zoomへ伝播させない。縦wheelはfilmstripの横scrollとして扱う。
 
 ## 12. Source Delete
@@ -2122,7 +2133,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Main state/persistence | `src/store/ImageContext.tsx` |
 | Landing/header/bulk/global keys | `src/app/page.tsx` |
 | Sidebar/filter/folders | `src/components/Sidebar.tsx` |
-| Search chips/suggestions | `src/components/SearchBar.tsx` |
+| Search chips/suggestions/history | `src/components/SearchBar.tsx`, `src/lib/searchHistory.ts`, `src/app/api/search-history/route.ts` |
 | Gallery/zoom/virtualization | `src/components/ImageGrid.tsx` |
 | Right preview | `src/components/RightPreviewPanel.tsx` |
 | Bottom tabs | `src/components/BottomPreviewTabs.tsx` |
@@ -2162,6 +2173,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Shared file lock | `src/lib/fileWriteLock.test.ts` |
 | Settings shared write safety | `src/app/api/settings/route.test.ts` |
 | Recent folders shared write safety | `src/app/api/recent-folders/route.test.ts` |
+| Shared Search History schema/UI/concurrency | `src/lib/searchHistory.test.ts`, `src/app/api/search-history/route.test.ts`, `src/components/SearchBar.test.tsx`, `scripts/verify-cross-runtime-search-history.ps1` |
 | Favorite merge/view migration | `src/store/ImageContext.test.tsx` |
 | Preview tab reload | `src/lib/previewTabPersistence.test.ts`, `src/store/ImageContext.test.tsx` |
 | Scan cancellation/conflict/recovery | `src/lib/scanRunCoordinator.test.ts`, `src/app/api/scan/route.test.ts`, `src/store/ImageContext.test.tsx` |
