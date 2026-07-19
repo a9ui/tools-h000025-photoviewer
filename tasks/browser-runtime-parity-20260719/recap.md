@@ -1,12 +1,12 @@
 # Browser runtime parity and WPF launcher adoption recap — 2026-07-19
 
-Status: implementation and isolated verification are green. Normal-root launcher adoption is the remaining closeout step.
+Status: complete locally. Implementation revision `c8dfc3d` was adopted by both normal launchers; this file is the following documentation-only closeout commit and the launchers are revalidated against its branch head.
 
 ## Runtime diagnosis
 
-- Port 3000 was the normal root at `main@3efea54`, but its build predates this recovery.
-- The user-visible WPF process came from `worktrees/wpf-ultimate-0718` and its DLL predates `3efea54`.
-- Local branch count was not runtime composition. The exact checked-out build and launcher provenance are the delivery boundary.
+- Port 3000 was the normal root at `main@3efea54`, but its build predated this recovery.
+- The initially visible WPF process came from `worktrees/wpf-ultimate-0718` and its DLL predated `3efea54`.
+- Local branch count was not runtime composition. The checked-out revision, build, executable path, and launcher provenance are the delivery boundary.
 
 ## Implemented recovery
 
@@ -15,33 +15,32 @@ Status: implementation and isolated verification are green. Normal-root launcher
 - Grid owns Ctrl/Cmd+wheel and `+` / `-` / `0` thumbnail zoom while the Grid viewer is active. Sidebar, header, text, and right-panel scale stay unchanged.
 - The visible last-selected card is the first zoom anchor; pointer/viewport anchoring is the fallback. Browser page zoom is not used for gallery sizing.
 - Visible thumbnail warmup flushes ahead of nearby/background work, retains bounded retry/dedupe state, and gives the newest viewport work priority.
-- Favorite/Unrated/Enhanced sparse paging keeps a bounded match demand through sparse pages and reaches catalog tail instead of silently stopping at a partial page.
+- Favorite/Unrated/Enhanced sparse paging keeps bounded match demand through sparse pages and reaches catalog tail instead of silently stopping at a partial page.
 - Linked worktrees resolve Favorites, Seen, Recent folders, and Enhancement job storage to the normal checkout.
 - Shared cache resolution uses a closed set of literal store paths so production builds do not glob the real thumbnail cache.
 - Browser and WPF share exact Favorite Lv0–5 state. Browser performs a one-time non-destructive local import, refreshes on focus/visibility, and preserves malformed/unknown journal bytes instead of guessing.
-- Seen parsing accepts the WPF legacy-compatible stored forms while new Browser writes stay canonical.
+- Seen parsing accepts WPF-compatible legacy stored forms while new Browser writes stay canonical.
 
 ### WPF
 
 - App Settings contains discoverable key bindings for the implemented gallery, modal, Favorite, recycle, selection, tab, flip, Enhancement, and zoom actions. Bindings validate conflicts/reserved OS chords, hot-apply, persist, reload in a separate process, and preserve unknown state fields.
 - Escape remains a guaranteed rescue from Settings/Delete overlays. Text input, combo/date input, buttons, landing view, and overlays do not leak configured shortcuts or Ctrl/Win+wheel gallery zoom, including WPF template child elements.
-- Ctrl+A and Ctrl+Shift+A use the canonical logical selection set rather than materializing 100,000 visual selections. Hidden List/Grid selection cannot reappear as a stale Favorite/Delete target after clear.
+- Ctrl+A and Ctrl+Shift+A use the canonical logical selection set instead of materializing 100,000 visual selections. Hidden List/Grid selection cannot reappear as a stale Favorite/Delete target after clear.
 - Modal Favorite smoke raises the real `Button.ClickEvent` and verifies UI, disk, and reload.
-- PNG catalog metadata now follows first-`parameters`-chunk semantics, including an explicitly empty first chunk.
+- PNG catalog metadata follows first-`parameters`-chunk semantics, including an explicitly empty first chunk.
 - 100,000-image startup/background work removes duplicate file probes and PNG reads, unused result dictionaries, and empty-state full-catalog maps while yielding background metadata to visible thumbnail I/O.
 
 ## Browser evidence
 
 - Full unit suite: 55 files passed, 2 skipped; 475 tests passed, 2 skipped.
-- TypeScript typecheck: PASS.
-- ESLint: PASS.
-- Next.js optimized production build: PASS.
-- Isolated production Playwright on port 43132: 4/4 PASS.
-- Selected-card zoom drift: at most 1px in Browser e2e; Sidebar geometry/font/viewport scale unchanged.
-- UI retirement/sidebar guard: 18 files PASS.
-- E2E routes isolate Recent/legacy/Favorite/Seen state from the real user stores; normal port 3000 is not used by these tests.
+- TypeScript typecheck, ESLint, UI regression guard, and optimized production build: PASS.
+- Isolated production Playwright on port 43132: 4/4 PASS with `sourceDirty=false`.
+- Normal `start_viewer.bat` rebuilt port 3000 at implementation revision `c8dfc3d`, with no Turbopack warning and loopback-only runtime verification PASS.
+- Normal port 3000 Playwright: 4/4 PASS. Selected-card zoom drift was at most 1px and Sidebar geometry/font/viewport scale stayed unchanged.
+- E2E routes isolate Recent/legacy/Favorite/Seen state. SHA-256, length, and mtime for Favorites, Seen, Recent, Enhancement jobs, and WPF state were identical before/after both final Playwright passes.
+- Runtime `sourceDirty=true` on normal root is explained solely by the pre-existing user-owned `next-env.d.ts`; its hash was preserved through both fast-forwards.
 
-## WPF integrated evidence
+## WPF integrated and launcher evidence
 
 - Product verifier: 49/49 PASS with catalog stress and reload soak included, 274,307 ms total.
 - Release builds in the product verifier: 0 warnings, 0 errors.
@@ -49,6 +48,7 @@ Status: implementation and isolated verification are green. Normal-root launcher
 - Shared-state latency: semantic, actor-adoption, exactness, close/drain, absolute, and strict relative gates PASS. One earlier scheduler outlier was followed by 6/6 focused green runs without weakening the gate.
 - Browser/WPF Favorite + Seen contention: 20 iterations, 40 exact entries each, valid JSON, lock/temp residue 0, PASS.
 - Browser/WPF/third-writer Recent contention: 20 iterations, unknown fields and latest-owner sets preserved, lock/temp residue 0, PASS.
+- Normal `start_wpf.bat` detected the old source revision, rebuilt with 0 warnings/errors, recorded provenance, and launched the normal-root Release executable. The freshness checker returned `current / provenance-match`; the process was responding with a visible `PhotoViewer` window.
 
 ## Final 100k / 100-folder evidence
 
@@ -70,10 +70,10 @@ Earlier same-fixture after-runs were 3,762/4,040 ms catalog-ready and 30,756/29,
 
 ## Version management
 
-- Remote baseline: `origin/main@626b7dd`.
-- Locally adopted baseline: `3efea54`, published without changing remote main as draft PR #319.
-- Recovery tracking: GitHub Issue #320 and SQLite improvement item #42 (`in_progress` until normal launcher adoption).
-- Recovery branch: `codex/browser-runtime-parity-20260719`; stacked draft PR and normal-root fast-forward follow the frozen commit.
+- Remote baseline remains `origin/main@626b7dd`; draft baseline PR #319 points to `3efea54`.
+- Implementation commit: `c8dfc3d` on `codex/browser-runtime-parity-20260719`; this recap is a following docs-only commit.
+- Recovery tracking: GitHub Issue #320 and SQLite improvement item #42.
+- `git push -u origin codex/browser-runtime-parity-20260719` was rejected by the current Codex external-write approval policy before execution. The local branch and normal-root `main` retain the complete commits; GitHub Actions was not used as a gate.
 
 ## Safety boundary retained
 
@@ -81,5 +81,5 @@ Earlier same-fixture after-runs were 3,762/4,040 ms catalog-ready and 30,756/29,
 - No destructive cache/state deletion or migration reset.
 - No change to successful Delete adjacency/navigation semantics or passive Enhancement enqueue behavior.
 - All stress/contention fixtures stayed under TEMP and cleaned up.
-- The final Playwright pass fingerprints real shared stores before/after and rejects test-history leakage.
-- Unrelated normal-root `next-env.d.ts` remains user-owned and untouched.
+- Two exact `photoviewer-grid-zoom-e2e-*` Recent entries created by an earlier pre-isolation pass were detected, removed, and the prior three-folder last set restored. No other Recent entry or shared store was removed.
+- Unrelated normal-root `next-env.d.ts` remains user-owned and hash-identical to its pre-adoption state.
