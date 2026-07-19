@@ -115,7 +115,7 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedFolderBucketKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, ManagedEnhancedOutput> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _restoredPreviewTabPaths = [];
     private readonly SemaphoreSlim _thumbnailDecodeGate = new(MaxThumbnailDecodeWorkers, MaxThumbnailDecodeWorkers);
     private readonly ConcurrentDictionary<string, byte> _thumbnailLoadsInFlight = new(StringComparer.OrdinalIgnoreCase);
@@ -865,11 +865,18 @@ public partial class MainWindow : Window
 
     private sealed record ModalEnhancementJobSnapshot(
         string Id,
+        string SourceId,
         string SourcePath,
         string Status,
         int Progress,
         string? OutputPath,
-        string? ErrorMessage);
+        string? ErrorMessage,
+        long? SourceSize,
+        double? SourceMtimeMs);
+
+    private sealed record ManagedEnhancedOutput(string OutputPath, long SourceSize, double SourceMtimeMs);
+
+    private sealed record DisplayedAssetResolution(string Path, long SizeBytes, bool Enhanced, string? FallbackReason);
 
     private sealed record EnhancementApiResponse(bool Ok, int StatusCode, JsonElement? Payload, string Error);
 
@@ -2343,32 +2350,12 @@ public partial class MainWindow : Window
                 if (!TryGetStringProperty(job, "status", out string? status) ||
                     !string.Equals(status, "succeeded", StringComparison.OrdinalIgnoreCase))
                     continue;
-                if (!TryGetStringProperty(job, "outputPath", out string? outputPath) ||
-                    string.IsNullOrWhiteSpace(outputPath))
-                    continue;
-
-                string resolvedOutput = NormalizeFavoritePath(outputPath);
-                if (!File.Exists(resolvedOutput))
-                    continue;
-
-                bool mapped = false;
-                foreach (string propertyName in new[] { "sourcePath", "sourceId" })
+                if (TryBuildManagedEnhancedOutput(job, out string resolvedSource, out ManagedEnhancedOutput output)
+                    && !_enhancedOutputs.ContainsKey(resolvedSource))
                 {
-                    if (!TryGetStringProperty(job, propertyName, out string? sourcePath) ||
-                        string.IsNullOrWhiteSpace(sourcePath))
-                        continue;
-
-                    string resolvedSource = NormalizeFavoritePath(sourcePath);
-                    if (!File.Exists(resolvedSource))
-                        continue;
-
-                    if (!_enhancedOutputs.ContainsKey(resolvedSource))
-                        _enhancedOutputs[resolvedSource] = resolvedOutput;
-                    mapped = true;
-                }
-
-                if (mapped)
+                    _enhancedOutputs[resolvedSource] = output;
                     _enhancedCandidateCount++;
+                }
             }
         }
         catch (Exception ex)
@@ -2389,9 +2376,75 @@ public partial class MainWindow : Window
         return !string.IsNullOrWhiteSpace(value);
     }
 
+    private static string ResolvedManagedEnhancementOutputsRoot
+        => Path.Combine(Path.GetDirectoryName(ResolvedEnhancementJobsPath)!, "outputs");
+
+    private bool TryBuildManagedEnhancedOutput(
+        JsonElement job,
+        out string resolvedSource,
+        out ManagedEnhancedOutput managedOutput)
+    {
+        resolvedSource = "";
+        managedOutput = null!;
+        if (!TryGetStringProperty(job, "sourcePath", out string? sourcePath)
+            || !TryGetStringProperty(job, "sourceId", out string? sourceId)
+            || !TryGetStringProperty(job, "outputPath", out string? outputPath)
+            || !job.TryGetProperty("sourceSignature", out JsonElement signature)
+            || signature.ValueKind != JsonValueKind.Object
+            || !signature.TryGetProperty("size", out JsonElement sizeElement)
+            || !sizeElement.TryGetInt64(out long sourceSize)
+            || !signature.TryGetProperty("mtimeMs", out JsonElement mtimeElement)
+            || !mtimeElement.TryGetDouble(out double sourceMtimeMs))
+        {
+            return false;
+        }
+
+        try
+        {
+            string resolvedSourcePath = _resolveFinalPath(Path.GetFullPath(sourcePath!));
+            string resolvedSourceId = _resolveFinalPath(Path.GetFullPath(sourceId!));
+            if (!string.Equals(resolvedSourcePath, resolvedSourceId, StringComparison.OrdinalIgnoreCase)
+                || !File.Exists(resolvedSourcePath))
+            {
+                return false;
+            }
+
+            var sourceInfo = new FileInfo(resolvedSourcePath);
+            double currentMtimeMs = new DateTimeOffset(sourceInfo.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+            if (sourceInfo.Length != sourceSize || Math.Abs(currentMtimeMs - sourceMtimeMs) > 1)
+                return false;
+
+            string lexicalOutput = Path.GetFullPath(outputPath!);
+            string canonicalOutput = _resolveFinalPath(lexicalOutput);
+            string lexicalRoot = Path.GetFullPath(ResolvedManagedEnhancementOutputsRoot);
+            string canonicalRoot = _resolveFinalPath(lexicalRoot);
+            if (!IsPathInside(lexicalOutput, lexicalRoot)
+                || !IsPathInside(canonicalOutput, canonicalRoot)
+                || !File.Exists(canonicalOutput)
+                || !SupportedImageExtensions.Contains(Path.GetExtension(canonicalOutput)))
+            {
+                return false;
+            }
+
+            resolvedSource = NormalizeFavoritePath(resolvedSourcePath);
+            managedOutput = new ManagedEnhancedOutput(canonicalOutput, sourceSize, sourceMtimeMs);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
     private bool TryGetEnhancedOutputForPath(string path, out string? outputPath)
     {
-        return _enhancedOutputs.TryGetValue(NormalizeFavoritePath(path), out outputPath);
+        if (_enhancedOutputs.TryGetValue(NormalizeFavoritePath(path), out ManagedEnhancedOutput? output))
+        {
+            outputPath = output.OutputPath;
+            return true;
+        }
+        outputPath = null;
+        return false;
     }
 
     private static bool TryWriteAtomicText(string path, string text)
@@ -8672,11 +8725,20 @@ public partial class MainWindow : Window
         var decodeCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _modalDecodeCompletion = decodeCompletion;
 
-        bool canShowEnhanced = TryGetModalEnhancedOutput(t, out string? enhancedPath);
-        if (!canShowEnhanced)
+        bool requestedEnhanced = _modalShowingEnhanced;
+        bool canShowEnhanced = TryGetModalEnhancedOutput(t, out _);
+        if (!TryResolveDisplayedAsset(t, requestedEnhanced, out DisplayedAssetResolution displayedAsset, out string resolutionFailure))
+        {
             _modalShowingEnhanced = false;
-        string displayPath = _modalShowingEnhanced && enhancedPath is not null ? enhancedPath : t.Path;
+            SetStatusToast($"Preview unavailable: {resolutionFailure}.");
+            displayedAsset = new DisplayedAssetResolution(t.Path, 0, false, null);
+        }
+        _modalShowingEnhanced = displayedAsset.Enhanced;
+        if (requestedEnhanced && displayedAsset.FallbackReason is not null)
+            SetStatusToast(displayedAsset.FallbackReason);
+        string displayPath = displayedAsset.Path;
         _modalDisplayPath = displayPath;
+        ModalFileSizeText.Text = FormatFileSizeMb(displayedAsset.SizeBytes);
         UpdateModalEnhancedControls(canShowEnhanced);
 
         var immediate = _modalShowingEnhanced ? null : PreviewBitmap.Source as BitmapSource ?? t.Thumbnail;
@@ -8718,12 +8780,60 @@ public partial class MainWindow : Window
 
     private bool TryGetModalEnhancedOutput(Tile tile, out string? outputPath)
     {
-        outputPath = tile.EnhancedOutputPath;
-        return tile.IsRealFile
-            && tile.Enhanced
-            && !string.IsNullOrWhiteSpace(outputPath)
-            && File.Exists(outputPath);
+        outputPath = null;
+        if (!tile.IsRealFile
+            || !tile.Enhanced
+            || string.IsNullOrWhiteSpace(tile.EnhancedOutputPath)
+            || !_enhancedOutputs.TryGetValue(NormalizeFavoritePath(tile.Path), out ManagedEnhancedOutput? stored)
+            || !TryCreateManagedEnhancedOutput(tile, stored.OutputPath, stored.SourceSize, stored.SourceMtimeMs, out ManagedEnhancedOutput current)
+            || !string.Equals(current.OutputPath, tile.EnhancedOutputPath, StringComparison.OrdinalIgnoreCase))
+        {
+            return false;
+        }
+
+        outputPath = current.OutputPath;
+        return true;
     }
+
+    private bool TryResolveDisplayedAsset(
+        Tile tile,
+        bool requestEnhanced,
+        out DisplayedAssetResolution resolution,
+        out string failureReason)
+    {
+        resolution = null!;
+        if (!TryValidateFileDropTile(tile, out string canonicalSource, out failureReason))
+            return false;
+
+        var sourceInfo = new FileInfo(canonicalSource);
+        if (requestEnhanced)
+        {
+            if (TryGetModalEnhancedOutput(tile, out string? outputPath) && outputPath is not null)
+            {
+                var outputInfo = new FileInfo(outputPath);
+                resolution = new DisplayedAssetResolution(outputPath, outputInfo.Length, true, null);
+                failureReason = "";
+                return true;
+            }
+
+            resolution = new DisplayedAssetResolution(
+                canonicalSource,
+                sourceInfo.Length,
+                false,
+                "Displayed Enhanced output is unavailable; using Original instead.");
+            failureReason = "";
+            return true;
+        }
+
+        resolution = new DisplayedAssetResolution(canonicalSource, sourceInfo.Length, false, null);
+        failureReason = "";
+        return true;
+    }
+
+    private static string FormatFileSizeMb(long? sizeBytes)
+        => sizeBytes is null or < 0
+            ? "--"
+            : $"{sizeBytes.Value / (1024d * 1024d):0.00}MB";
 
     private void UpdateModalEnhancedControls(bool canShowEnhanced)
     {
@@ -8962,16 +9072,27 @@ public partial class MainWindow : Window
             return null;
         }
 
+        TryGetStringProperty(job, "sourceId", out string? sourceId);
         TryGetStringProperty(job, "sourcePath", out string? sourcePath);
-        if (string.IsNullOrWhiteSpace(sourcePath))
-            TryGetStringProperty(job, "sourceId", out sourcePath);
         TryGetStringProperty(job, "outputPath", out string? outputPath);
         TryGetStringProperty(job, "errorMessage", out string? errorMessage);
         int progress = job.TryGetProperty("progress", out JsonElement progressElement)
             && progressElement.TryGetInt32(out int parsedProgress)
             ? Math.Clamp(parsedProgress, 0, 100)
             : 0;
-        return new ModalEnhancementJobSnapshot(id!, sourcePath ?? "", status!, progress, outputPath, errorMessage);
+        long? sourceSize = null;
+        double? sourceMtimeMs = null;
+        if (job.TryGetProperty("sourceSignature", out JsonElement signature)
+            && signature.ValueKind == JsonValueKind.Object)
+        {
+            if (signature.TryGetProperty("size", out JsonElement sizeElement)
+                && sizeElement.TryGetInt64(out long parsedSize))
+                sourceSize = parsedSize;
+            if (signature.TryGetProperty("mtimeMs", out JsonElement mtimeElement)
+                && mtimeElement.TryGetDouble(out double parsedMtimeMs))
+                sourceMtimeMs = parsedMtimeMs;
+        }
+        return new ModalEnhancementJobSnapshot(id!, sourceId ?? "", sourcePath ?? "", status!, progress, outputPath, errorMessage, sourceSize, sourceMtimeMs);
     }
 
     private static ModalEnhancementJobSnapshot? SelectModalEnhancementJob(JsonElement payload)
@@ -9029,8 +9150,8 @@ public partial class MainWindow : Window
         // but keep the desktop client defensive: never attach another image's
         // job/output to the currently selected tile.
         if (job is not null
-            && !string.IsNullOrWhiteSpace(job.SourcePath)
-            && !string.Equals(job.SourcePath, tile.Path, StringComparison.OrdinalIgnoreCase))
+            && (!string.Equals(NormalizeFavoritePath(job.SourcePath), NormalizeFavoritePath(tile.Path), StringComparison.OrdinalIgnoreCase)
+                || !string.Equals(NormalizeFavoritePath(job.SourceId), NormalizeFavoritePath(tile.Path), StringComparison.OrdinalIgnoreCase)))
         {
             return;
         }
@@ -9040,13 +9161,12 @@ public partial class MainWindow : Window
         _modalEnhancementProgress = job?.Progress ?? 0;
         _modalEnhancementError = job?.ErrorMessage;
 
-        if (job is { Status: "succeeded", OutputPath: not null }
-            && File.Exists(job.OutputPath))
+        if (job is { Status: "succeeded", OutputPath: not null, SourceSize: not null, SourceMtimeMs: not null }
+            && TryCreateManagedEnhancedOutput(tile, job.OutputPath, job.SourceSize.Value, job.SourceMtimeMs.Value, out ManagedEnhancedOutput managedOutput))
         {
-            string outputPath = Path.GetFullPath(job.OutputPath);
             tile.Enhanced = true;
-            tile.EnhancedOutputPath = outputPath;
-            _enhancedOutputs[NormalizeFavoritePath(tile.Path)] = outputPath;
+            tile.EnhancedOutputPath = managedOutput.OutputPath;
+            _enhancedOutputs[NormalizeFavoritePath(tile.Path)] = managedOutput;
             UpdateModalEnhancedControls(canShowEnhanced: true);
         }
 
@@ -9056,6 +9176,43 @@ public partial class MainWindow : Window
         else
             _modalEnhancementPollTimer.Stop();
         UpdateModalEnhancementActionControls();
+    }
+
+    private bool TryCreateManagedEnhancedOutput(
+        Tile tile,
+        string outputPath,
+        long sourceSize,
+        double sourceMtimeMs,
+        out ManagedEnhancedOutput managedOutput)
+    {
+        managedOutput = null!;
+        try
+        {
+            string canonicalSource = _resolveFinalPath(Path.GetFullPath(tile.Path));
+            var sourceInfo = new FileInfo(canonicalSource);
+            double currentMtimeMs = new DateTimeOffset(sourceInfo.LastWriteTimeUtc).ToUnixTimeMilliseconds();
+            if (!sourceInfo.Exists
+                || sourceInfo.Length != sourceSize
+                || Math.Abs(currentMtimeMs - sourceMtimeMs) > 1)
+                return false;
+
+            string lexicalOutput = Path.GetFullPath(outputPath);
+            string canonicalOutput = _resolveFinalPath(lexicalOutput);
+            string lexicalRoot = Path.GetFullPath(ResolvedManagedEnhancementOutputsRoot);
+            string canonicalRoot = _resolveFinalPath(lexicalRoot);
+            if (!IsPathInside(lexicalOutput, lexicalRoot)
+                || !IsPathInside(canonicalOutput, canonicalRoot)
+                || !File.Exists(canonicalOutput)
+                || !SupportedImageExtensions.Contains(Path.GetExtension(canonicalOutput)))
+                return false;
+
+            managedOutput = new ManagedEnhancedOutput(canonicalOutput, sourceSize, sourceMtimeMs);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private void UpdateModalEnhancementActionControls()
@@ -9319,7 +9476,7 @@ public partial class MainWindow : Window
         ModalInteractionFeedback.Visibility = Visibility.Collapsed;
         ResetModalTransform();
         if (wasVisible && restoreFocus)
-            RestoreOverlayFocus(focusTarget);
+            RestoreOverlayFocus(focusTarget, preferPrimaryGallery: true);
     }
 
     private void ToggleModalEnhanced_Click(object sender, RoutedEventArgs e) => ToggleModalEnhanced();
@@ -9832,24 +9989,37 @@ public partial class MainWindow : Window
     private bool TryOpenSelectedExternally()
     {
         Tile? tile = SelectedTile();
-        string canonical = "";
         string reason = "select a source image";
-        if (tile is null || !TryValidateFileDropTile(tile, out canonical, out reason))
+        bool requestEnhanced = tile is not null
+            && Modal.Visibility == Visibility.Visible
+            && _modalShowingEnhanced
+            && string.Equals(_modalSourceTilePath, tile.Path, StringComparison.OrdinalIgnoreCase);
+        if (tile is null || !TryResolveDisplayedAsset(tile, requestEnhanced, out DisplayedAssetResolution displayedAsset, out reason))
         {
             SetStatusToast($"Open externally unavailable: {reason}.");
             return false;
         }
 
+        if (displayedAsset.FallbackReason is not null && Modal.Visibility == Visibility.Visible)
+        {
+            _modalShowingEnhanced = false;
+            OpenModal();
+        }
+
         try
         {
-            var startInfo = new ProcessStartInfo(canonical) { UseShellExecute = true };
+            var startInfo = new ProcessStartInfo(displayedAsset.Path) { UseShellExecute = true };
             if (!_externalFileLauncher(startInfo))
             {
                 ReportExternalOpenFailure();
                 return false;
             }
 
-            SetStatusToast("Opened the selected image externally.");
+            SetStatusToast(displayedAsset.FallbackReason is not null
+                ? $"{displayedAsset.FallbackReason} Opened Original externally."
+                : displayedAsset.Enhanced
+                    ? "Opened the displayed Enhanced image externally."
+                    : "Opened the displayed Original image externally.");
             return true;
         }
         catch (Exception ex) when (ex is Win32Exception
@@ -11138,18 +11308,62 @@ public partial class MainWindow : Window
         RequestDeleteSelected();
     }
 
-    private void RestoreOverlayFocus(IInputElement? target)
+    private void RestoreOverlayFocus(IInputElement? target, bool preferPrimaryGallery = false)
         => Dispatcher.BeginInvoke(() =>
         {
-            if (target is UIElement element && element.IsVisible && element.IsEnabled && element.Focus())
+            if (preferPrimaryGallery && TryFocusPrimaryGalleryItem())
+                return;
+            if (target is UIElement element
+                && (!preferPrimaryGallery || IsCurrentPrimaryGalleryFocusTarget(element))
+                && element.IsVisible
+                && element.IsEnabled
+                && element.Focus())
                 return;
             if (Landing.Visibility == Visibility.Visible && OpenFolderSetButton.IsVisible && OpenFolderSetButton.IsEnabled && OpenFolderSetButton.Focus())
+                return;
+            if (!preferPrimaryGallery && TryFocusPrimaryGalleryItem())
                 return;
             ListBox activeList = RowsList.Visibility == Visibility.Visible ? RowsList : CardsList;
             if (activeList.IsVisible && activeList.IsEnabled && activeList.Focus())
                 return;
             LogoHomeButton.Focus();
         }, DispatcherPriority.Input);
+
+    private bool IsCurrentPrimaryGalleryFocusTarget(DependencyObject target)
+    {
+        Tile? primary = SelectedTile();
+        if (primary is null)
+            return false;
+
+        for (DependencyObject? current = target;
+             current is not null;
+             current = current is Visual or System.Windows.Media.Media3D.Visual3D
+                 ? VisualTreeHelper.GetParent(current)
+                 : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is ListBoxItem { DataContext: Tile tile })
+            {
+                return string.Equals(tile.Path, primary.Path, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+
+        return false;
+    }
+
+    private bool TryFocusPrimaryGalleryItem()
+    {
+        Tile? tile = SelectedTile();
+        ListBox activeList = RowsList.Visibility == Visibility.Visible ? RowsList : CardsList;
+        if (tile is null || !activeList.IsVisible || !activeList.IsEnabled)
+            return false;
+
+        activeList.ScrollIntoView(tile);
+        activeList.UpdateLayout();
+        return activeList.ItemContainerGenerator.ContainerFromItem(tile) is ListBoxItem container
+            && container.IsVisible
+            && container.IsEnabled
+            && container.Focus();
+    }
 
     private static string StatePath => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -11727,6 +11941,21 @@ public partial class MainWindow : Window
             return;
         }
 
+        if (key is Key.Enter or Key.Return && modifiers == ModifierKeys.None)
+        {
+            if (Modal.Visibility == Visibility.Visible)
+            {
+                e.Handled = TryOpenSelectedExternally();
+                return;
+            }
+            if (IsGalleryEnterSurfaceFocused())
+            {
+                OpenModal();
+                e.Handled = Modal.Visibility == Visibility.Visible;
+                return;
+            }
+        }
+
         if (TryHandleConfiguredViewerShortcut(key, modifiers))
         {
             e.Handled = true;
@@ -11910,6 +12139,14 @@ public partial class MainWindow : Window
 
     private bool IsViewerShortcutSurfaceActive()
         => Landing.Visibility != Visibility.Visible;
+
+    private bool IsGalleryEnterSurfaceFocused()
+    {
+        if (Keyboard.FocusedElement is not DependencyObject focused)
+            return false;
+        ListBox activeList = RowsList.Visibility == Visibility.Visible ? RowsList : CardsList;
+        return IsDescendantOrSelf(focused, activeList);
+    }
 
     private bool IsModalImageWheelSource(DependencyObject? source)
         => source is not null
@@ -12223,7 +12460,8 @@ public partial class MainWindow : Window
             bool focused = ModalOpenExternalButton.Focus();
             ModalOpenExternalButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             bool launched = captured is not null
-                && string.Equals(_deleteStatus, "Opened the selected image externally.", StringComparison.Ordinal);
+                && _deleteStatus.Contains("Opened", StringComparison.Ordinal)
+                && _deleteStatus.Contains("externally", StringComparison.Ordinal);
             return new ExternalOpenSmokeSnapshot(
                 launched,
                 captured is not null,
@@ -12852,6 +13090,8 @@ public partial class MainWindow : Window
     public bool DatePickerAutomationNamesForSmoke => string.Equals(AutomationProperties.GetName(DateFromInput), "From date", StringComparison.Ordinal)
         && string.Equals(AutomationProperties.GetName(DateToInput), "To date", StringComparison.Ordinal);
     public bool FocusCardsListForSmoke() => CardsList.Focus();
+    public bool FocusRowsListForSmoke() => RowsList.Focus();
+    public bool FocusSelectedGalleryItemForSmoke() => TryFocusPrimaryGalleryItem();
     public bool FocusDateFromInputForSmoke()
     {
         if (DateFromInput.Focus())
@@ -13628,6 +13868,19 @@ public partial class MainWindow : Window
     public bool ToggleModalFlipForSmoke() => ToggleModalFlip();
 
     public bool ToggleModalEnhancedForSmoke() => ToggleModalEnhanced();
+    public string ModalFileSizeForSmoke => ModalFileSizeText.Text;
+    public static string FormatFileSizeMbForSmoke(long? sizeBytes) => FormatFileSizeMb(sizeBytes);
+    public bool SelectedGalleryItemFocusedForSmoke
+    {
+        get
+        {
+            Tile? tile = SelectedTile();
+            ListBox activeList = RowsList.Visibility == Visibility.Visible ? RowsList : CardsList;
+            return tile is not null
+                && activeList.ItemContainerGenerator.ContainerFromItem(tile) is ListBoxItem container
+                && container.IsKeyboardFocusWithin;
+        }
+    }
 
     public bool ModalZoomShortcutForSmoke(string shortcut)
     {

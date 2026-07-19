@@ -273,6 +273,123 @@ describe('ImageModal sparse navigation lock', () => {
     expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
   });
 
+  it('shows the displayed asset capacity and uses the same Original/Enhanced target for Enter and O', async () => {
+    const openCalls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/enhance/jobs')) {
+        return {
+          ok: true,
+          json: async () => ({
+            jobs: [{
+              id: 'enhanced-1',
+              sourceId: firstImage.id,
+              status: 'succeeded',
+              progress: 100,
+              outputPath: 'C:/enhance/outputs/first.webp',
+            }],
+          }),
+        } as Response;
+      }
+      if (url.includes('/api/open')) {
+        const method = init?.method ?? 'GET';
+        openCalls.push({ url, method });
+        const enhanced = new URL(url, 'http://127.0.0.1').searchParams.get('display') === 'enhanced';
+        return {
+          ok: true,
+          json: async () => ({
+            success: true,
+            opened: enhanced ? 'enhanced' : 'source',
+            sizeBytes: enhanced ? 2_621_440 : 1_048_576,
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+
+    render(<ImageModal />);
+    await waitFor(() => expect(screen.getByLabelText('Displayed file size')).toHaveTextContent('2.50MB'));
+
+    const outputToggle = screen.getByRole('button', { name: 'Toggle original or enhanced image' });
+    expect(outputToggle).toHaveTextContent('UP');
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(openCalls.some((call) => call.method === 'POST' && call.url.includes('display=enhanced'))).toBe(true));
+
+    fireEvent.click(outputToggle);
+    await waitFor(() => expect(screen.getByLabelText('Displayed file size')).toHaveTextContent('1.00MB'));
+    fireEvent.click(screen.getByRole('button', { name: 'Open in external viewer' }));
+    await waitFor(() => expect(openCalls.some((call) => call.method === 'POST' && !call.url.includes('display=enhanced'))).toBe(true));
+
+    const postsBeforeNativeEnter = openCalls.filter((call) => call.method === 'POST').length;
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Enhanced version' }), { key: 'Enter' });
+    expect(openCalls.filter((call) => call.method === 'POST')).toHaveLength(postsBeforeNativeEnter);
+  });
+
+  it('falls back visibly to Original capacity when the Enhanced asset is unavailable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/enhance/jobs')) {
+        return {
+          ok: true,
+          json: async () => ({
+            jobs: [{
+              id: 'enhanced-missing',
+              sourceId: firstImage.id,
+              status: 'succeeded',
+              progress: 100,
+              outputPath: 'C:/enhance/outputs/missing.webp',
+            }],
+          }),
+        } as Response;
+      }
+      const enhanced = new URL(url, 'http://127.0.0.1').searchParams.get('display') === 'enhanced';
+      return {
+        ok: true,
+        json: async () => enhanced
+          ? {
+              success: true,
+              opened: 'source',
+              sizeBytes: 524_288,
+              fallback: {
+                code: 'enhanced-output-missing',
+                message: 'Displayed Enhanced output is unavailable; using Original instead.',
+              },
+            }
+          : { success: true, opened: 'source', sizeBytes: 524_288 },
+      } as Response;
+    }));
+
+    render(<ImageModal />);
+
+    await waitFor(() => expect(screen.getByLabelText('Displayed file size')).toHaveTextContent('0.50MB'));
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('using Original instead'));
+    expect(screen.getByRole('button', { name: 'Toggle original or enhanced image' })).toHaveTextContent('OR');
+  });
+
+  it('reports a recoverable shell failure without leaking the shell detail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/enhance/jobs')) {
+        return { ok: true, json: async () => ({ jobs: [] }) } as Response;
+      }
+      if (init?.method === 'POST') {
+        return {
+          ok: false,
+          json: async () => ({ error: 'Open external application failed' }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, opened: 'source', sizeBytes: 0 }),
+      } as Response;
+    }));
+
+    render(<ImageModal />);
+    await waitFor(() => expect(screen.getByLabelText('Displayed file size')).toHaveTextContent('0.00MB'));
+    fireEvent.keyDown(window, { key: 'Enter' });
+    await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Open external application failed'));
+  });
+
   it('releases navigation after a failed delete so next still works', async () => {
     store.deleteImage.mockResolvedValue(false);
     render(<ImageModal />);

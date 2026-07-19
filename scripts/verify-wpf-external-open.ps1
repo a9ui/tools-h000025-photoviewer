@@ -36,6 +36,10 @@ if ($result.selected -ne $true -or $result.modalOpened -ne $true -or $result.mod
     $failures += 'temp fixture was not selected and decoded in the modal'
 }
 if ($result.successfulLaunch -ne $true) { $failures += 'injected successful ShellExecute launch was not exact' }
+if ($result.enhancedLaunch -ne $true) { $failures += 'displayed Enhanced target or file capacity was not used' }
+if ($result.enhancedFallbacks -ne $true) { $failures += 'missing/stale Enhanced output did not fall back to Original target and capacity' }
+if ($result.formatterBoundaries -ne $true) { $failures += '0.00MB formatter boundary contract failed' }
+if ($result.outsideOwnershipRejected -ne $true) { $failures += 'managed output ownership guard accepted an outside output' }
 if ($result.expectedFailuresHandled -ne $true) { $failures += 'expected ShellExecute, I/O, access, or path failure escaped the event boundary' }
 if ($result.currentSourceRevalidated -ne $true) { $failures += 'current selected catalog source was not revalidated immediately before launch' }
 if ($result.interactionStable -ne $true) { $failures += 'focus, selection, modal, or Automation state changed during external open' }

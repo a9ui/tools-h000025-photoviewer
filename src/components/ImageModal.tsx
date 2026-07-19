@@ -8,6 +8,7 @@ import { useDialogFocus } from '../lib/useDialogFocus';
 import { buildImageIndexById } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
+import { formatFileSizeMb } from '../lib/displayedAsset';
 import CachedImage from './CachedImage';
 import ModalFilmstrip, { type ModalFilmstripItem } from './ModalFilmstrip';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
@@ -50,6 +51,14 @@ type ModalEnhancementJob = {
     colorContrast?: number;
     colorSaturation?: number;
   };
+};
+
+type DisplayedAssetResponse = {
+  success?: boolean;
+  opened?: 'source' | 'enhanced';
+  sizeBytes?: number;
+  fallback?: { code?: string; message?: string };
+  error?: string;
 };
 
 function isActiveEnhancementJob(job: ModalEnhancementJob | null) {
@@ -182,7 +191,6 @@ export default function ImageModal() {
     requestRevealImage,
     keyBindings,
     deleteImage,
-    openExternal,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
     view,
@@ -203,6 +211,8 @@ export default function ImageModal() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [showEnhanced, setShowEnhanced] = useState(false);
+  const [displayedAssetSizeBytes, setDisplayedAssetSizeBytes] = useState<number | null>(null);
+  const [displayedAssetStatus, setDisplayedAssetStatus] = useState('');
   const [enhancementJobs, setEnhancementJobs] = useState<ModalEnhancementJob[]>([]);
   const [enhanceError, setEnhanceError] = useState('');
   const [selectedEnhancedJobId, setSelectedEnhancedJobId] = useState('');
@@ -228,6 +238,7 @@ export default function ImageModal() {
   const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRequestRef = useRef(0);
   const navigationPendingRef = useRef(false);
+  const displayedAssetRequestRef = useRef(0);
 
   useEffect(() => {
     const previousSelectedIndex = previousSelectedIndexRef.current;
@@ -403,6 +414,7 @@ export default function ImageModal() {
   const failedEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'failed' && job.errorMessage) ?? null;
   const visibleEnhanceError = enhanceError || failedEnhancementJob?.errorMessage || '';
   const selectedEnhancedJob = succeededEnhancementJobs.find((job) => job.id === selectedEnhancedJobId) ?? succeededEnhancementJobs[0] ?? null;
+  const displayedEnhancedJobId = selectedEnhancedJob?.id ?? '';
   const enhancedSrc = selectedEnhancedJob
     ? `/api/enhance/output?jobId=${encodeURIComponent(selectedEnhancedJob.id)}`
     : '';
@@ -695,12 +707,74 @@ export default function ImageModal() {
 
   const toggleEnhancedView = useCallback(() => {
     if (!img || !hasEnhancedOutput) return;
+    setDisplayedAssetStatus('');
     setShowEnhanced((current) => {
       const next = !current;
       enhancedDisplayChoiceRef.current[img.id] = next;
       return next;
     });
   }, [hasEnhancedOutput, img]);
+
+  const resolveDisplayedAsset = useCallback(async (launch: boolean) => {
+    if (!img) return;
+    const requestId = ++displayedAssetRequestRef.current;
+    const params = new URLSearchParams({ path: img.id });
+    if (indexToken) params.set('indexToken', indexToken);
+    if (showEnhanced && displayedEnhancedJobId) {
+      params.set('display', 'enhanced');
+      params.set('jobId', displayedEnhancedJobId);
+    }
+
+    try {
+      const response = await fetch(`/api/open?${params.toString()}`, {
+        method: launch ? 'POST' : 'GET',
+        cache: 'no-store',
+      });
+      const data = await response.json() as DisplayedAssetResponse;
+      if (requestId !== displayedAssetRequestRef.current) return;
+      if (!response.ok || !data.success) {
+        setDisplayedAssetStatus(data.error || (launch
+          ? 'Could not open the displayed image. You can retry.'
+          : 'Could not read the displayed file size.'));
+        if (!launch) setDisplayedAssetSizeBytes(null);
+        return;
+      }
+
+      setDisplayedAssetSizeBytes(typeof data.sizeBytes === 'number' ? data.sizeBytes : null);
+      if (data.fallback) {
+        enhancedDisplayChoiceRef.current[img.id] = false;
+        setShowEnhanced(false);
+        setDisplayedAssetStatus(data.fallback.message || 'Enhanced output is unavailable; using Original instead.');
+      } else if (launch) {
+        setDisplayedAssetStatus(data.opened === 'enhanced'
+          ? 'Opened the displayed Enhanced image.'
+          : 'Opened the displayed Original image.');
+      }
+    } catch {
+      if (requestId !== displayedAssetRequestRef.current) return;
+      setDisplayedAssetStatus(launch
+        ? 'Could not open the displayed image. You can retry.'
+        : 'Could not read the displayed file size.');
+      if (!launch) setDisplayedAssetSizeBytes(null);
+    }
+  }, [displayedEnhancedJobId, img, indexToken, showEnhanced]);
+
+  useEffect(() => {
+    setDisplayedAssetStatus('');
+  }, [img?.id]);
+
+  useEffect(() => {
+    if (!img) {
+      displayedAssetRequestRef.current += 1;
+      setDisplayedAssetSizeBytes(null);
+      setDisplayedAssetStatus('');
+      return;
+    }
+    void resolveDisplayedAsset(false);
+    return () => {
+      displayedAssetRequestRef.current += 1;
+    };
+  }, [img, resolveDisplayedAsset]);
 
   const clearChromeIdleTimer = useCallback(() => {
     if (chromeIdleTimer.current === null) return;
@@ -817,8 +891,11 @@ export default function ImageModal() {
       e.preventDefault();
       setSidebarCollapsed((prev) => !prev);
     }
-    else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
+    else if (key === 'Enter' && img) {
+      e.preventDefault();
+      void resolveDisplayedAsset(true);
+    }
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -1063,6 +1140,7 @@ export default function ImageModal() {
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
               <span className="modal-counter">{modalCounter}</span>
+              <span className="modal-file-size" aria-label="Displayed file size">{formatFileSizeMb(displayedAssetSizeBytes)}</span>
             </div>
             <div className="modal-topbar-right">
               <button className={`modal-icon-btn ${isFav ? 'fav-active' : ''}`} onClick={increaseFavorite} title="Favorite +1" aria-label="Increase favorite level">
@@ -1073,7 +1151,7 @@ export default function ImageModal() {
                 <Minus size={16} aria-hidden="true" />
               </button>
               <button className="modal-icon-btn" onClick={() => setFlipped((f) => !f)} title="Flip" aria-label="Flip horizontally">H</button>
-              <button className="modal-icon-btn" onClick={() => openExternal(img.id)} title="Open external" aria-label="Open in external viewer">O</button>
+              <button className="modal-icon-btn" onClick={() => void resolveDisplayedAsset(true)} title="Open external" aria-label="Open in external viewer">O</button>
               <button
                 className="modal-icon-btn"
                 onClick={(event) => {
@@ -1192,6 +1270,9 @@ export default function ImageModal() {
                 <X size={16} aria-hidden="true" />
               </button>
             </div>
+          </div>
+          <div className="modal-displayed-asset-status" role="status" aria-live="polite">
+            {displayedAssetStatus}
           </div>
 
           <div className="modal-main-column" data-testid="modal-main-column">
