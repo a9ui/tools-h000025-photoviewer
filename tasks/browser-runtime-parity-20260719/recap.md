@@ -1,6 +1,55 @@
 # Browser runtime parity and WPF launcher adoption recap — 2026-07-19
 
-Status: complete locally. Implementation revision `c8dfc3d` was adopted by both normal launchers; this file is the following documentation-only closeout commit and the launchers are revalidated against its branch head.
+## 2026-07-19 20:56 JST follow-up adoption
+
+Local `main` was fast-forwarded to `53dc865c08e5009b511e39f0f23405e15730b3db`
+without changing the pre-existing user-owned `next-env.d.ts` SHA-256
+`7B550DDA9686C16F36A17BF9051D5DBF31E98555B30D114AC49FC49A1E712651`.
+This follow-up adds and adopts the following verified recovery:
+
+- Browser thumbnail sizing now spans 20px through an exact one-column endpoint.
+  The visible selected card remains the primary anchor across thumbnail zoom and
+  Sidebar collapse/expand; the fixed Sidebar itself does not scale.
+- An expired in-memory `indexToken` now returns an explicit HTTP 410. Cached
+  images stop retrying the expired session, the modal retains its thumbnail
+  preview, and the current folder set is automatically rescanned once while
+  search/filter/viewer state remains visible.
+- Browser and WPF require an explicit confirmation whenever any Delete target
+  is a Favorite, even when the ordinary confirmation preference is disabled.
+  The destructive execution boundary independently rejects an unconfirmed
+  Favorite target. Source deletion remains Windows Recycle Bin-only.
+- Windows `EBUSY`/`EPERM`/`EACCES` while publishing an Enhancement output now
+  uses bounded rename retries followed by an awaited safe-copy fallback. The
+  job is not marked successful before the final output is durable.
+
+Verification at `53dc865`:
+
+- Browser unit: 59 files passed, 2 skipped; 500 tests passed, 2 skipped.
+- Browser optimized build, TypeScript, full ESLint, and `git diff --check`: PASS.
+- Isolated Browser Playwright zoom/modal contract: 3/3 PASS.
+- WPF aggregate: 48/48 PASS in 268,242ms (`-SkipStress`); exact 100,000 images
+  / 100 folders ran separately and PASSed with catalog/filtered/source all
+  100,000, silent truncate 0, Grid/List realized 15/9, tail index 99,999,
+  warm metadata 213ms, warm full load 3,997ms, zoom drift 0px, and Enhancement
+  reads/candidates 0. TEMP cleanup succeeded.
+- A quiet three-run 100,000-entry shared Favorite/Seen latency gate PASSed:
+  Modal p95 4.382/5.743/6.840ms, Favorite p95 29.744/38.866/25.217ms, and
+  dispatcher max gap 57.049/47.129/48.639ms.
+- Normal `start_viewer.bat` rebuilt and serves revision `53dc865` on loopback
+  `127.0.0.1:3000`; `verify-browser-runtime.ps1` PASSed.
+- Normal `start_wpf.bat` correctly detected the stale Release target. After the
+  existing normal-root WPF window closed through its normal window-close path,
+  it rebuilt with 0 warnings/errors, recorded provenance, completed the real
+  launcher startup smoke in 517ms, and the relaunched normal-root WPF process
+  was responding with a visible `PhotoViewer` window.
+- Revision `53dc865` was pushed to
+  `origin/codex/wpf-thumbnail-performance-20260719`; Draft PR #322 now preserves
+  and exposes the full local-main recovery against the older default
+  `origin/main`. GitHub Actions remains outside the gate.
+
+Status: complete locally at implementation revision `53dc865`. Both normal
+launchers were verified at that implementation revision. Subsequent commits in
+this closeout are documentation-only and do not change the runtime source.
 
 ## Runtime diagnosis
 

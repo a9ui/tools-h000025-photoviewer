@@ -4,8 +4,9 @@
 
 監査基準日: 2026-07-19 JST
 
-基準: このマシンの `refs/heads/main`、commit
-`53dc865c08e5009b511e39f0f23405e15730b3db`。`origin/main` はこの文書の基準ではない。
+実装基準: このマシンの `refs/heads/main` に採用された実装commit
+`53dc865c08e5009b511e39f0f23405e15730b3db`。この文書を追加するdocs-only descendantは
+実装基準を変更しない。`origin/main` はこの文書の実装基準ではない。
 
 現在の実装状況と証拠は [current-implementation-truth.md](./current-implementation-truth.md) を参照する。
 
