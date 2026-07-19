@@ -341,7 +341,8 @@
                   <Grid.ColumnDefinitions><ColumnDefinition Width="46"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                   <TextBlock Grid.Column="0" Text="Size" Foreground="{StaticResource TextTertiary}" FontSize="11.5" VerticalAlignment="Center"/>
                   <Button Grid.Column="1" Style="{StaticResource StepButton}" Content="-" ToolTip="Zoom out" Click="ZoomOut_Click" Margin="0,0,5,0"/>
-                  <Slider Grid.Column="2" x:Name="SizeSlider" Minimum="40" Maximum="600" Value="200" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"/>
+                  <Slider Grid.Column="2" x:Name="SizeSlider" Minimum="20" Maximum="600" Value="200" TickFrequency="20" IsSnapToTickEnabled="True" VerticalAlignment="Center" ValueChanged="SizeSlider_ValueChanged"
+                          AutomationProperties.Name="Gallery image size" AutomationProperties.HelpText="Adjusts Grid image cards from 20 pixels to an exact one-column maximum. List rows are unchanged."/>
                   <Button Grid.Column="3" Style="{StaticResource StepButton}" Content="0" ToolTip="Reset zoom" Click="ZoomReset_Click" Margin="5,0,5,0"/>
                   <Button Grid.Column="4" Style="{StaticResource StepButton}" Content="+" ToolTip="Zoom in" Click="ZoomIn_Click"/>
                 </Grid>
@@ -426,7 +427,8 @@
 
       <GridSplitter Grid.Column="2" x:Name="RightPanelSplitter" Width="6" HorizontalAlignment="Stretch"
                     Background="Transparent" Focusable="True" ResizeDirection="Columns" ResizeBehavior="PreviousAndNext"
-                    KeyboardIncrement="20" ShowsPreview="True" DragCompleted="RightPanelSplitter_DragCompleted"
+                    KeyboardIncrement="20" ShowsPreview="True" PreviewKeyDown="RightPanelSplitter_PreviewKeyDown"
+                    DragStarted="RightPanelSplitter_DragStarted" DragCompleted="RightPanelSplitter_DragCompleted"
                     ToolTip="Resize right preview panel" AutomationProperties.Name="Resize right preview panel"/>
 
       <!-- ─────── Right preview ─────── -->

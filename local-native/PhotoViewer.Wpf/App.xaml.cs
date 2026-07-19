@@ -5122,12 +5122,13 @@ public partial class App : Application
         string? folder = ArgValue(args, "--folder");
         if (string.IsNullOrWhiteSpace(folder))
         {
-            WriteGridZoomSmokeResult(resultPath, new GridZoomSmokeResult(false, "missing required --folder", folder, null, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, false, false));
+            WriteGridZoomSmokeResult(resultPath, new GridZoomSmokeResult { Message = "missing required --folder", Folder = folder });
             Shutdown(1);
             return;
         }
 
         string resultFullPath = Path.GetFullPath(resultPath);
+        int expectedInitialWidth = ArgInt(args, "--expected-initial-width", 20);
         string resultDir = Path.GetDirectoryName(resultFullPath) ?? Path.GetTempPath();
         string statePath = Path.Combine(resultDir, Path.GetFileNameWithoutExtension(resultFullPath) + "-state.json");
         string? previousStatePath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_STATE_PATH");
@@ -5135,6 +5136,21 @@ public partial class App : Application
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
 
         var win = HiddenWindow();
+        double migratedStateCardWidth = double.NaN;
+        bool migrationUnknownStatePreserved = false;
+        try
+        {
+            using JsonDocument migratedState = JsonDocument.Parse(File.ReadAllText(statePath));
+            if (migratedState.RootElement.TryGetProperty("CardWidth", out JsonElement cardWidthElement))
+                migratedStateCardWidth = cardWidthElement.GetDouble();
+            migrationUnknownStatePreserved = migratedState.RootElement.TryGetProperty("LegacyZoomMigrationSentinel", out JsonElement sentinel)
+                && sentinel.ValueKind == JsonValueKind.Object
+                && sentinel.TryGetProperty("keep", out JsonElement keep)
+                && !string.IsNullOrWhiteSpace(keep.GetString());
+        }
+        catch
+        {
+        }
         win.Show();
         win.SuppressStatePersistence();
 
@@ -5160,7 +5176,83 @@ public partial class App : Application
                 bool allWidthsMatch = win.AllCardWidthsMatchForSmoke(afterWheelOut);
                 int filtered = win.FilteredCountForSmoke;
 
+                bool minimumChanged = win.SetGridZoomForSmoke(20);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                double minimumWidth = win.CardWidthForSmoke;
+                bool maximumChanged = win.SetGridZoomForSmoke(600);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                double maximumWidth = win.CardWidthForSmoke;
+                int maximumColumns = win.GridColumnCountForSmoke;
+                bool maximumForcedSingleColumn = win.GridForcesSingleColumnForSmoke;
+                int maximumRealized = win.GridRealizedCountForSmoke;
+                int maximumRealizedBound = win.GridMaxRealizationCountForSmoke;
+
+                _ = win.SetGridZoomForSmoke(200);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool middle = await win.ScrollGridToMiddleForSmokeAsync();
+                string duplicateSiblingPath = Path.GetFullPath(Path.Combine(folder, "duplicate-a", "duplicate.png"));
+                string selectedCandidatePath = Path.GetFullPath(Path.Combine(folder, "duplicate-b", "duplicate.png"));
+                bool duplicateBasenameFixture = win.GridContainsPathForSmoke(duplicateSiblingPath)
+                    && win.GridContainsPathForSmoke(selectedCandidatePath)
+                    && string.Equals(Path.GetFileName(duplicateSiblingPath), Path.GetFileName(selectedCandidatePath), StringComparison.OrdinalIgnoreCase);
+                bool selected = win.SelectPathForSmoke(selectedCandidatePath);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                string? selectedAnchorPath = win.CaptureGridViewportAnchorPathForSmoke();
+                string? selectedAnchor = Path.GetFileName(selectedAnchorPath);
+                bool selectedAnchorUsesSelection = selected
+                    && string.Equals(selectedAnchorPath, selectedCandidatePath, StringComparison.OrdinalIgnoreCase);
+                bool duplicateBasenameCanonicalAnchor = duplicateBasenameFixture
+                    && selectedAnchorUsesSelection
+                    && !string.Equals(selectedAnchorPath, duplicateSiblingPath, StringComparison.OrdinalIgnoreCase);
+
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool sidebarCollapsed = !win.SidebarVisibleForSmoke;
+                bool sidebarCollapseAnchorKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, selectedAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double sidebarCollapseDrift = win.LastGridZoomAnchorDriftForSmoke;
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool sidebarExpanded = win.SidebarVisibleForSmoke;
+                bool sidebarExpandAnchorKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, selectedAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double sidebarExpandDrift = win.LastGridZoomAnchorDriftForSmoke;
+
+                double rightPanelWidth = win.RightPanelWidthForSmoke;
+                win.ResizeRightPanelForSmoke(Math.Clamp(rightPanelWidth + 80, 240, 900));
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool rightPanelResizeAnchorKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, selectedAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double rightPanelResizeDrift = win.LastGridZoomAnchorDriftForSmoke;
+
+                win.ResizeWindowForSmoke(980, 680);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool resizeAnchorKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, selectedAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double resizeDrift = win.LastGridZoomAnchorDriftForSmoke;
+                win.SimulateDpiGeometryChangeForSmoke(1280, 820);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool dpiAnchorKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, selectedAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double dpiDrift = win.LastGridZoomAnchorDriftForSmoke;
+
+                win.ClearSelectionForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                string? noSelectionAnchorPath = win.CaptureGridViewportAnchorPathForSmoke();
+                string? noSelectionAnchor = Path.GetFileName(noSelectionAnchorPath);
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool noSelectionCollapseKept = !string.IsNullOrWhiteSpace(noSelectionAnchor)
+                    && string.Equals(win.LastGridZoomAnchorPathForSmoke, noSelectionAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double noSelectionCollapseDrift = win.LastGridZoomAnchorDriftForSmoke;
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool noSelectionExpandKept = string.Equals(win.LastGridZoomAnchorPathForSmoke, noSelectionAnchorPath, StringComparison.OrdinalIgnoreCase);
+                double noSelectionExpandDrift = win.LastGridZoomAnchorDriftForSmoke;
+
+                double gridWidthBeforeList = win.CardWidthForSmoke;
+                ListVirtualizationProbe listProbe = await win.ProbeListVirtualizationForSmokeAsync();
+                bool listZoomRejected = !win.SetGridZoomForSmoke(600) && Math.Abs(win.CardWidthForSmoke - gridWidthBeforeList) < 0.01;
+                bool gridRestored = win.SetGridModeForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+
                 bool ok = filtered > 0
+                    && Math.Abs(initial - expectedInitialWidth) < 0.01
                     && buttonIn
                     && afterButtonIn > initial
                     && buttonOut
@@ -5173,13 +5265,101 @@ public partial class App : Application
                     && afterWheelIn > afterShortcutReset
                     && wheelOut
                     && Math.Abs(afterWheelOut - afterShortcutReset) < 0.01
-                    && allWidthsMatch;
+                    && allWidthsMatch
+                    && minimumChanged
+                    && Math.Abs(minimumWidth - 20) < 0.01
+                    && maximumChanged
+                    && Math.Abs(maximumWidth - 600) < 0.01
+                    && maximumColumns == 1
+                    && maximumForcedSingleColumn
+                    && maximumRealized is > 0
+                    && maximumRealized <= maximumRealizedBound
+                    && middle
+                    && selectedAnchorUsesSelection
+                    && duplicateBasenameCanonicalAnchor
+                    && sidebarCollapsed
+                    && sidebarExpanded
+                    && sidebarCollapseAnchorKept
+                    && sidebarExpandAnchorKept
+                    && sidebarCollapseDrift <= 8
+                    && sidebarExpandDrift <= 8
+                    && rightPanelResizeAnchorKept
+                    && rightPanelResizeDrift <= 8
+                    && resizeAnchorKept
+                    && resizeDrift <= 8
+                    && dpiAnchorKept
+                    && dpiDrift <= 8
+                    && noSelectionCollapseKept
+                    && noSelectionExpandKept
+                    && noSelectionCollapseDrift <= 8
+                    && noSelectionExpandDrift <= 8
+                    && listProbe.ListMode
+                    && listProbe.Recycling
+                    && listProbe.Bounded
+                    && listZoomRejected
+                    && gridRestored;
 
-                result = new GridZoomSmokeResult(ok, ok ? "grid zoom buttons, shortcut helper, wheel helper, and tile card-width sync passed" : "grid zoom smoke did not match expected size changes", folder, statePath, filtered, initial, afterButtonIn, afterButtonOut, afterShortcutIn, afterShortcutReset, afterWheelIn, buttonIn, buttonOut, shortcutIn, shortcutReset, wheelIn, wheelOut && allWidthsMatch);
+                result = new GridZoomSmokeResult
+                {
+                    Ok = ok,
+                    Message = ok
+                        ? "20px-to-one-column zoom, state clamp, canonical-path selected/unselected geometry anchors, and Grid/List virtualization passed"
+                        : "grid zoom/geometry anchor smoke did not match the Browser-parity contract",
+                    Folder = folder,
+                    StatePath = statePath,
+                    FilteredCount = filtered,
+                    InitialWidth = initial,
+                    MigratedStateCardWidth = migratedStateCardWidth,
+                    MigrationUnknownStatePreserved = migrationUnknownStatePreserved,
+                    AfterButtonIn = afterButtonIn,
+                    AfterButtonOut = afterButtonOut,
+                    AfterShortcutIn = afterShortcutIn,
+                    AfterShortcutReset = afterShortcutReset,
+                    AfterWheelIn = afterWheelIn,
+                    ButtonIn = buttonIn,
+                    ButtonOut = buttonOut,
+                    ShortcutIn = shortcutIn,
+                    ShortcutReset = shortcutReset,
+                    WheelIn = wheelIn,
+                    WheelOutAndTileSync = wheelOut && allWidthsMatch,
+                    MinimumWidth = minimumWidth,
+                    MaximumWidth = maximumWidth,
+                    MaximumColumns = maximumColumns,
+                    MaximumForcedSingleColumn = maximumForcedSingleColumn,
+                    MaximumRealized = maximumRealized,
+                    MaximumRealizedBound = maximumRealizedBound,
+                    SelectedAnchor = selectedAnchor,
+                    SelectedAnchorPath = selectedAnchorPath,
+                    SelectedAnchorUsesSelection = selectedAnchorUsesSelection,
+                    DuplicateBasenameCanonicalAnchor = duplicateBasenameCanonicalAnchor,
+                    SidebarCollapseAnchorKept = sidebarCollapseAnchorKept,
+                    SidebarExpandAnchorKept = sidebarExpandAnchorKept,
+                    SidebarCollapseDrift = sidebarCollapseDrift,
+                    SidebarExpandDrift = sidebarExpandDrift,
+                    RightPanelResizeAnchorKept = rightPanelResizeAnchorKept,
+                    RightPanelResizeDrift = rightPanelResizeDrift,
+                    ResizeAnchorKept = resizeAnchorKept,
+                    ResizeDrift = resizeDrift,
+                    DpiAnchorKept = dpiAnchorKept,
+                    DpiDrift = dpiDrift,
+                    NoSelectionAnchor = noSelectionAnchor,
+                    NoSelectionAnchorPath = noSelectionAnchorPath,
+                    NoSelectionCollapseKept = noSelectionCollapseKept,
+                    NoSelectionExpandKept = noSelectionExpandKept,
+                    NoSelectionCollapseDrift = noSelectionCollapseDrift,
+                    NoSelectionExpandDrift = noSelectionExpandDrift,
+                    ListMode = listProbe.ListMode,
+                    ListUsesRecyclingVirtualization = listProbe.Recycling,
+                    ListBounded = listProbe.Bounded,
+                    ListRealizedFirst = listProbe.FirstRealized,
+                    ListRealizedMiddle = listProbe.MiddleRealized,
+                    ListRealizedLast = listProbe.LastRealized,
+                    ListZoomRejected = listZoomRejected,
+                };
             }
             catch (Exception ex)
             {
-                result = new GridZoomSmokeResult(false, ex.Message, folder, statePath, 0, 0, 0, 0, 0, 0, 0, false, false, false, false, false, false);
+                result = new GridZoomSmokeResult { Message = ex.Message, Folder = folder, StatePath = statePath };
             }
             finally
             {
@@ -6211,6 +6391,56 @@ public partial class App : Application
                     && flatZoomInDrift <= 8
                     && flatZoomOutDrift <= 8;
 
+                heartbeatStage = "flat-endpoints-sidebar-anchor";
+                string? endpointAnchor = win.CaptureGridViewportAnchorForSmoke();
+                var endpointSidebarWatch = Stopwatch.StartNew();
+                bool endpointMinimumChanged = win.SetGridZoomForSmoke(20);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                double endpointMinimumWidth = win.CardWidthForSmoke;
+                bool endpointMinimumAnchorKept = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), endpointAnchor, StringComparison.OrdinalIgnoreCase);
+                double endpointMinimumDrift = win.LastGridZoomAnchorDriftForSmoke;
+                bool endpointMaximumChanged = win.SetGridZoomForSmoke(600);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                double endpointMaximumWidth = win.CardWidthForSmoke;
+                bool endpointMaximumAnchorKept = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), endpointAnchor, StringComparison.OrdinalIgnoreCase);
+                double endpointMaximumDrift = win.LastGridZoomAnchorDriftForSmoke;
+                int endpointMaximumColumns = win.GridColumnCountForSmoke;
+                int endpointMaximumRealized = win.GridRealizedCountForSmoke;
+                bool endpointMaximumForcedSingleColumn = win.GridForcesSingleColumnForSmoke;
+                bool endpointRestored = win.SetGridZoomForSmoke(flatZoomInitialWidth);
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool endpointRestoreAnchorKept = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), endpointAnchor, StringComparison.OrdinalIgnoreCase);
+                double endpointRestoreDrift = win.LastGridZoomAnchorDriftForSmoke;
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool endpointSidebarCollapseAnchorKept = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), endpointAnchor, StringComparison.OrdinalIgnoreCase);
+                double endpointSidebarCollapseDrift = win.LastGridZoomAnchorDriftForSmoke;
+                win.ToggleSidebarForSmoke();
+                await win.WaitForGridZoomAnchorForSmokeAsync();
+                bool endpointSidebarExpandAnchorKept = string.Equals(Path.GetFileName(win.LastGridZoomAnchorPathForSmoke), endpointAnchor, StringComparison.OrdinalIgnoreCase);
+                double endpointSidebarExpandDrift = win.LastGridZoomAnchorDriftForSmoke;
+                endpointSidebarWatch.Stop();
+                bool endpointSidebarRoundTrip = !string.IsNullOrWhiteSpace(endpointAnchor)
+                    && endpointMinimumChanged
+                    && Math.Abs(endpointMinimumWidth - 20) < 0.01
+                    && endpointMinimumAnchorKept
+                    && endpointMinimumDrift <= 8
+                    && endpointMaximumChanged
+                    && Math.Abs(endpointMaximumWidth - 600) < 0.01
+                    && endpointMaximumAnchorKept
+                    && endpointMaximumDrift <= 8
+                    && endpointMaximumColumns == 1
+                    && endpointMaximumForcedSingleColumn
+                    && endpointMaximumRealized is > 0
+                    && endpointMaximumRealized <= gridMaximum
+                    && endpointRestored
+                    && endpointRestoreAnchorKept
+                    && endpointRestoreDrift <= 8
+                    && endpointSidebarCollapseAnchorKept
+                    && endpointSidebarCollapseDrift <= 8
+                    && endpointSidebarExpandAnchorKept
+                    && endpointSidebarExpandDrift <= 8;
+
                 heartbeatStage = "created-group-tail";
                 var createdTailWatch = Stopwatch.StartNew();
                 var createdSortCallWatch = Stopwatch.StartNew();
@@ -6615,6 +6845,24 @@ public partial class App : Application
                     FlatZoomFinalWidth = win.CardWidthForSmoke,
                     FlatZoomInAnchorKept = flatZoomInAnchorKept,
                     FlatZoomOutAnchorKept = flatZoomOutAnchorKept,
+                    EndpointSidebarElapsedMs = endpointSidebarWatch.ElapsedMilliseconds,
+                    EndpointSidebarRoundTrip = endpointSidebarRoundTrip,
+                    EndpointAnchor = endpointAnchor,
+                    EndpointMinimumWidth = endpointMinimumWidth,
+                    EndpointMinimumAnchorKept = endpointMinimumAnchorKept,
+                    EndpointMinimumDrift = endpointMinimumDrift,
+                    EndpointMaximumWidth = endpointMaximumWidth,
+                    EndpointMaximumAnchorKept = endpointMaximumAnchorKept,
+                    EndpointMaximumDrift = endpointMaximumDrift,
+                    EndpointMaximumColumns = endpointMaximumColumns,
+                    EndpointMaximumForcedSingleColumn = endpointMaximumForcedSingleColumn,
+                    EndpointMaximumRealized = endpointMaximumRealized,
+                    EndpointRestoreAnchorKept = endpointRestoreAnchorKept,
+                    EndpointRestoreDrift = endpointRestoreDrift,
+                    EndpointSidebarCollapseAnchorKept = endpointSidebarCollapseAnchorKept,
+                    EndpointSidebarCollapseDrift = endpointSidebarCollapseDrift,
+                    EndpointSidebarExpandAnchorKept = endpointSidebarExpandAnchorKept,
+                    EndpointSidebarExpandDrift = endpointSidebarExpandDrift,
                     CreatedZoomInElapsedMs = createdZoomInWatch.ElapsedMilliseconds,
                     CreatedZoomOutElapsedMs = createdZoomOutWatch.ElapsedMilliseconds,
                     CreatedZoomRoundTrip = createdZoomRoundTrip,
@@ -6672,6 +6920,7 @@ public partial class App : Application
                         && tailGridRoundTripVisual.ContainerSelected
                         && modalTail
                         && flatZoomRoundTrip
+                        && endpointSidebarRoundTrip
                         && changedCreatedSort
                         && createdGroupingActive
                         && createdItemsSourceCount == count
@@ -17601,24 +17850,61 @@ public partial class App : Application
         public bool StateIsolated { get; init; }
     }
 
-    private sealed record GridZoomSmokeResult(
-        bool Ok,
-        string Message,
-        string? Folder,
-        string? StatePath,
-        int FilteredCount,
-        double InitialWidth,
-        double AfterButtonIn,
-        double AfterButtonOut,
-        double AfterShortcutIn,
-        double AfterShortcutReset,
-        double AfterWheelIn,
-        bool ButtonIn,
-        bool ButtonOut,
-        bool ShortcutIn,
-        bool ShortcutReset,
-        bool WheelIn,
-        bool WheelOutAndTileSync);
+    private sealed class GridZoomSmokeResult
+    {
+        public bool Ok { get; init; }
+        public string Message { get; init; } = "grid zoom smoke failed";
+        public string? Folder { get; init; }
+        public string? StatePath { get; init; }
+        public int FilteredCount { get; init; }
+        public double InitialWidth { get; init; }
+        public double MigratedStateCardWidth { get; init; }
+        public bool MigrationUnknownStatePreserved { get; init; }
+        public double AfterButtonIn { get; init; }
+        public double AfterButtonOut { get; init; }
+        public double AfterShortcutIn { get; init; }
+        public double AfterShortcutReset { get; init; }
+        public double AfterWheelIn { get; init; }
+        public bool ButtonIn { get; init; }
+        public bool ButtonOut { get; init; }
+        public bool ShortcutIn { get; init; }
+        public bool ShortcutReset { get; init; }
+        public bool WheelIn { get; init; }
+        public bool WheelOutAndTileSync { get; init; }
+        public double MinimumWidth { get; init; }
+        public double MaximumWidth { get; init; }
+        public int MaximumColumns { get; init; }
+        public bool MaximumForcedSingleColumn { get; init; }
+        public int MaximumRealized { get; init; }
+        public int MaximumRealizedBound { get; init; }
+        public string? SelectedAnchor { get; init; }
+        public string? SelectedAnchorPath { get; init; }
+        public bool SelectedAnchorUsesSelection { get; init; }
+        public bool DuplicateBasenameCanonicalAnchor { get; init; }
+        public bool SidebarCollapseAnchorKept { get; init; }
+        public bool SidebarExpandAnchorKept { get; init; }
+        public double SidebarCollapseDrift { get; init; }
+        public double SidebarExpandDrift { get; init; }
+        public bool RightPanelResizeAnchorKept { get; init; }
+        public double RightPanelResizeDrift { get; init; }
+        public bool ResizeAnchorKept { get; init; }
+        public double ResizeDrift { get; init; }
+        public bool DpiAnchorKept { get; init; }
+        public double DpiDrift { get; init; }
+        public string? NoSelectionAnchor { get; init; }
+        public string? NoSelectionAnchorPath { get; init; }
+        public bool NoSelectionCollapseKept { get; init; }
+        public bool NoSelectionExpandKept { get; init; }
+        public double NoSelectionCollapseDrift { get; init; }
+        public double NoSelectionExpandDrift { get; init; }
+        public bool ListMode { get; init; }
+        public bool ListUsesRecyclingVirtualization { get; init; }
+        public bool ListBounded { get; init; }
+        public int ListRealizedFirst { get; init; }
+        public int ListRealizedMiddle { get; init; }
+        public int ListRealizedLast { get; init; }
+        public bool ListZoomRejected { get; init; }
+    }
 
     private sealed record DisplayStyleSmokeResult(
         bool Ok,
@@ -17960,6 +18246,24 @@ public partial class App : Application
         public double FlatZoomFinalWidth { get; set; }
         public bool FlatZoomInAnchorKept { get; set; }
         public bool FlatZoomOutAnchorKept { get; set; }
+        public long EndpointSidebarElapsedMs { get; set; }
+        public bool EndpointSidebarRoundTrip { get; set; }
+        public string? EndpointAnchor { get; set; }
+        public double EndpointMinimumWidth { get; set; }
+        public bool EndpointMinimumAnchorKept { get; set; }
+        public double EndpointMinimumDrift { get; set; }
+        public double EndpointMaximumWidth { get; set; }
+        public bool EndpointMaximumAnchorKept { get; set; }
+        public double EndpointMaximumDrift { get; set; }
+        public int EndpointMaximumColumns { get; set; }
+        public bool EndpointMaximumForcedSingleColumn { get; set; }
+        public int EndpointMaximumRealized { get; set; }
+        public bool EndpointRestoreAnchorKept { get; set; }
+        public double EndpointRestoreDrift { get; set; }
+        public bool EndpointSidebarCollapseAnchorKept { get; set; }
+        public double EndpointSidebarCollapseDrift { get; set; }
+        public bool EndpointSidebarExpandAnchorKept { get; set; }
+        public double EndpointSidebarExpandDrift { get; set; }
         public long CreatedZoomInElapsedMs { get; set; }
         public long CreatedZoomOutElapsedMs { get; set; }
         public bool CreatedZoomRoundTrip { get; set; }

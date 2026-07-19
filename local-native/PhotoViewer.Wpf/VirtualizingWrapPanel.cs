@@ -58,6 +58,12 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
         typeof(VirtualizingWrapPanel),
         new FrameworkPropertyMetadata(2, FrameworkPropertyMetadataOptions.AffectsMeasure, OnLayoutPropertyChanged));
 
+    public static readonly DependencyProperty ForceSingleColumnProperty = DependencyProperty.Register(
+        nameof(ForceSingleColumn),
+        typeof(bool),
+        typeof(VirtualizingWrapPanel),
+        new FrameworkPropertyMetadata(false, FrameworkPropertyMetadataOptions.AffectsMeasure, OnLayoutPropertyChanged));
+
     public static readonly DependencyProperty ShowGroupHeadersProperty = DependencyProperty.Register(
         nameof(ShowGroupHeaders),
         typeof(bool),
@@ -123,6 +129,12 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
         set => SetValue(OverscanRowsProperty, value);
     }
 
+    public bool ForceSingleColumn
+    {
+        get => (bool)GetValue(ForceSingleColumnProperty);
+        set => SetValue(ForceSingleColumnProperty, value);
+    }
+
     public bool ShowGroupHeaders
     {
         get => (bool)GetValue(ShowGroupHeadersProperty);
@@ -139,6 +151,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     public int LastVisibleIndex => _lastVisibleIndex;
     public int FirstRealizedIndex => _firstRealizedIndex;
     public int LastRealizedIndex => _lastRealizedIndex;
+    public int ColumnCount => _columns;
     public int RealizedItemCount => _firstRealizedIndex < 0 || _lastRealizedIndex < _firstRealizedIndex
         ? 0
         : _lastRealizedIndex - _firstRealizedIndex + 1;
@@ -323,7 +336,9 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
         double spacingX = Math.Max(0, HorizontalSpacing);
         double spacingY = Math.Max(0, VerticalSpacing);
         _cellWidth = Math.Max(1, itemWidthSignature + spacingX);
-        _columns = Math.Max(1, (int)Math.Floor((Math.Max(1, availableWidth) + spacingX) / _cellWidth));
+        _columns = ForceSingleColumn
+            ? 1
+            : Math.Max(1, (int)Math.Floor((Math.Max(1, availableWidth) + spacingX) / _cellWidth));
         double y = 0;
         int groupStart = 0;
         while (groupStart < itemCount)

@@ -53,6 +53,8 @@ public partial class MainWindow : Window
     private const int PersistenceLockRetryMilliseconds = 25;
     private const long AsyncSharedStoreThresholdBytes = 1_048_576;
     private static readonly TimeSpan PersistenceLockStaleAfter = TimeSpan.FromSeconds(30);
+    private const double MinCardWidth = 20;
+    private const double MaxCardWidth = 600;
     private const double DefaultCardWidth = 200;
     private const double CardWidthStep = 20;
     private const double DefaultRightPanelWidth = 340;
@@ -280,8 +282,13 @@ public partial class MainWindow : Window
     private bool _syncingFolderBucketSelection;
     private string? _primarySelectedFolderBucketKey;
     private bool _restoringGridZoomAnchor;
+    private bool _suppressSizeSliderChange;
     private string? _lastGridZoomAnchorPath;
     private double _lastGridZoomAnchorDrift;
+    private GridZoomAnchor? _lastStableGridViewportAnchor;
+    private long _gridAnchorRememberGeneration;
+    private GridZoomAnchor? _rightPanelResizeAnchor;
+    private bool _cardWidthMigrationPending;
     private double _modalZoom = 1;
     private double _modalFitScale = 1;
     private bool _modalFitUpdateQueued;
@@ -363,6 +370,7 @@ public partial class MainWindow : Window
         ConfigureGalleryItemsSources();
         CardsList.ItemContainerGenerator.StatusChanged += SelectionItemContainerGenerator_StatusChanged;
         RowsList.ItemContainerGenerator.StatusChanged += SelectionItemContainerGenerator_StatusChanged;
+        CardsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(CardsList_ScrollChanged));
         RowsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(RowsList_ScrollChanged));
         ApplyFilters(selectFirst: false);
 
@@ -371,6 +379,7 @@ public partial class MainWindow : Window
             AttachGalleryVirtualizationPanel();
             if (CardsList.Items.Count > 0)
                 CardsList.SelectedIndex = 0;
+            ScheduleRememberCurrentGridViewportAnchor();
         };
         Closing += MainWindow_Closing;
         Closed += (_, _) =>
@@ -382,12 +391,12 @@ public partial class MainWindow : Window
         };
         CardsList.MouseDoubleClick += (_, _) => OpenModal();
         RowsList.MouseDoubleClick += (_, _) => OpenModal();
-        SizeChanged += (_, _) => ScheduleModalFitUpdate();
+        SizeChanged += MainWindow_SizeChanged;
         RefreshLandingFolderSetUi();
         RefreshPreviewTabs();
         SetPhase(landing: true);
         _initializing = false;
-        if (_dateFilterMigrationPending)
+        if (_dateFilterMigrationPending || _cardWidthMigrationPending)
             SaveState();
     }
 
@@ -442,7 +451,10 @@ public partial class MainWindow : Window
     {
         VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
         if (ReferenceEquals(panel, _galleryVirtualizingPanel))
+        {
+            SyncGalleryColumnMode();
             return;
+        }
 
         if (_galleryVirtualizingPanel is not null)
             _galleryVirtualizingPanel.RealizedRangeChanged -= GalleryVirtualizingPanel_RealizedRangeChanged;
@@ -450,6 +462,7 @@ public partial class MainWindow : Window
         if (_galleryVirtualizingPanel is null)
             return;
 
+        SyncGalleryColumnMode();
         _galleryVirtualizingPanel.RealizedRangeChanged += GalleryVirtualizingPanel_RealizedRangeChanged;
         ScheduleThumbnailViewportRange(
             _galleryVirtualizingPanel.FirstVisibleIndex,
@@ -468,7 +481,35 @@ public partial class MainWindow : Window
             e.FirstRealizedIndex,
             e.LastRealizedIndex);
         QueueSparseSelectionVisualSync(CardsList, grid: true);
+        ScheduleRememberCurrentGridViewportAnchor();
     }
+
+    private void CardsList_ScrollChanged(object sender, ScrollChangedEventArgs e)
+    {
+        if (CardsList.Visibility == Visibility.Visible
+            && (Math.Abs(e.VerticalChange) > 0.01 || Math.Abs(e.ViewportHeightChange) > 0.01 || Math.Abs(e.ViewportWidthChange) > 0.01))
+        {
+            ScheduleRememberCurrentGridViewportAnchor();
+        }
+    }
+
+    private void MainWindow_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        ScheduleModalFitUpdate();
+        if (!e.WidthChanged && !e.HeightChanged)
+            return;
+        ScheduleGridGeometryAnchorRestore(_lastStableGridViewportAnchor);
+    }
+
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        GridZoomAnchor? anchor = _lastStableGridViewportAnchor ?? CaptureGridZoomAnchor();
+        base.OnDpiChanged(oldDpi, newDpi);
+        PreserveGridAnchorAfterDpiChange(anchor);
+    }
+
+    private void PreserveGridAnchorAfterDpiChange(GridZoomAnchor? anchor)
+        => ScheduleGridGeometryAnchorRestore(anchor);
 
     private void SelectionItemContainerGenerator_StatusChanged(object? sender, EventArgs e)
     {
@@ -7370,18 +7411,19 @@ public partial class MainWindow : Window
     // ─────────── Size slider ───────────
     private void SizeSlider_ValueChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
     {
-        if (_restoringGridZoomAnchor)
+        if (_suppressSizeSliderChange)
             return;
 
         if (RowsList?.Visibility == Visibility.Visible)
         {
-            _restoringGridZoomAnchor = true;
+            _suppressSizeSliderChange = true;
             try { SizeSlider.Value = e.OldValue; }
-            finally { _restoringGridZoomAnchor = false; }
+            finally { _suppressSizeSliderChange = false; }
             return;
         }
 
         GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+        SyncGalleryColumnMode();
         ApplyCardLayoutToAllTiles();
         RestoreGridZoomAnchorAfterLayout(anchor);
         if (!_initializing)
@@ -7410,7 +7452,22 @@ public partial class MainWindow : Window
     {
         if (RowsList?.Visibility == Visibility.Visible)
             return;
-        SizeSlider.Value = Math.Clamp(value, SizeSlider.Minimum, SizeSlider.Maximum);
+        SizeSlider.Value = NormalizeCardWidth(value);
+    }
+
+    private double NormalizeCardWidth(double value)
+        => double.IsFinite(value)
+            ? Math.Clamp(value, Math.Max(MinCardWidth, SizeSlider.Minimum), Math.Min(MaxCardWidth, SizeSlider.Maximum))
+            : DefaultCardWidth;
+
+    private void SyncGalleryColumnMode()
+    {
+        if (CardsList is null || SizeSlider is null)
+            return;
+        VirtualizingWrapPanel? panel = _galleryVirtualizingPanel ?? FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
+        if (panel is null)
+            return;
+        panel.ForceSingleColumn = SizeSlider.Value >= Math.Min(MaxCardWidth, SizeSlider.Maximum) - 0.01;
     }
 
     private GridZoomAnchor? CaptureGridZoomAnchor()
@@ -7421,9 +7478,13 @@ public partial class MainWindow : Window
         if (viewer is null || viewer.ViewportHeight <= 0)
             return null;
 
+        GridZoomAnchor? selected = null;
         GridZoomAnchor? best = null;
         GridZoomAnchor? previous = null;
         double center = viewer.ViewportHeight / 2;
+        string? selectedPath = SelectedTile() is { IsRealFile: true } selectedTile
+            ? selectedTile.Path
+            : _primarySelectedPath;
         foreach (ListBoxItem item in FindVisualDescendants<ListBoxItem>(CardsList))
         {
             if (item.DataContext is not Tile tile || !tile.IsRealFile || item.ActualHeight <= 0)
@@ -7431,18 +7492,47 @@ public partial class MainWindow : Window
             try
             {
                 Point top = item.TransformToAncestor(viewer).Transform(new Point(0, 0));
+                if (top.Y >= viewer.ViewportHeight || top.Y + item.ActualHeight <= 0)
+                    continue;
                 double distance = Math.Abs((top.Y + item.ActualHeight / 2) - center);
+                var candidate = new GridZoomAnchor(tile.Path, top.Y, distance);
+                if (!string.IsNullOrWhiteSpace(selectedPath) && string.Equals(tile.Path, selectedPath, StringComparison.OrdinalIgnoreCase))
+                    selected = candidate;
                 if (best is null || distance < best.Value.CenterDistance)
-                    best = new GridZoomAnchor(tile.Path, top.Y, distance);
+                    best = candidate;
                 if (!string.IsNullOrWhiteSpace(_lastGridZoomAnchorPath) && string.Equals(tile.Path, _lastGridZoomAnchorPath, StringComparison.OrdinalIgnoreCase))
-                    previous = new GridZoomAnchor(tile.Path, top.Y, distance);
+                    previous = candidate;
             }
             catch (InvalidOperationException)
             {
                 // The visual can be recycled while a scroll/layout pass is in flight.
             }
         }
-        return previous ?? best;
+        return selected ?? previous ?? best;
+    }
+
+    private void ScheduleRememberCurrentGridViewportAnchor()
+    {
+        long generation = ++_gridAnchorRememberGeneration;
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (generation != _gridAnchorRememberGeneration || _restoringGridZoomAnchor || CardsList.Visibility != Visibility.Visible)
+                return;
+            GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+            if (anchor is not null)
+                _lastStableGridViewportAnchor = anchor;
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void ScheduleGridGeometryAnchorRestore(GridZoomAnchor? anchor = null)
+    {
+        if (_initializing || CardsList?.Visibility != Visibility.Visible)
+            return;
+        GridZoomAnchor? resolved = anchor ?? _lastStableGridViewportAnchor ?? CaptureGridZoomAnchor();
+        if (resolved is null)
+            return;
+        _gridAnchorRememberGeneration++;
+        RestoreGridZoomAnchorAfterLayout(resolved);
     }
 
     private void RestoreGridZoomAnchorAfterLayout(GridZoomAnchor? anchor)
@@ -7450,6 +7540,8 @@ public partial class MainWindow : Window
         if (anchor is null)
             return;
         _lastGridZoomAnchorPath = anchor.Value.Path;
+        _lastGridZoomAnchorDrift = double.PositiveInfinity;
+        _restoringGridZoomAnchor = true;
         Dispatcher.BeginInvoke(() =>
         {
             VirtualizingWrapPanel? panel = FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
@@ -7462,6 +7554,9 @@ public partial class MainWindow : Window
                     double actual = panel.GetItemViewportTop(anchorIndex);
                     if (double.IsFinite(actual))
                         _lastGridZoomAnchorDrift = Math.Abs(actual - anchor.Value.ViewportY);
+                    _restoringGridZoomAnchor = false;
+                    _lastStableGridViewportAnchor = CaptureGridZoomAnchor() ?? anchor;
+                    ScheduleRememberCurrentGridViewportAnchor();
                 }, DispatcherPriority.Render);
                 return;
             }
@@ -7470,7 +7565,10 @@ public partial class MainWindow : Window
             FrameworkElement? item = FindVisualDescendants<FrameworkElement>(CardsList)
                 .FirstOrDefault(element => element.DataContext is Tile tile && string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
             if (viewer is null || item is null)
+            {
+                _restoringGridZoomAnchor = false;
                 return;
+            }
             try
             {
                 double before = item.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
@@ -7480,13 +7578,21 @@ public partial class MainWindow : Window
                 {
                     FrameworkElement? settled = FindVisualDescendants<FrameworkElement>(CardsList)
                         .FirstOrDefault(element => element.DataContext is Tile tile && string.Equals(tile.Path, anchor.Value.Path, StringComparison.OrdinalIgnoreCase));
-                    if (settled is null) return;
+                    if (settled is null)
+                    {
+                        _restoringGridZoomAnchor = false;
+                        return;
+                    }
                     double actual = settled.TransformToAncestor(viewer).Transform(new Point(0, 0)).Y;
                     _lastGridZoomAnchorDrift = Math.Abs(actual - anchor.Value.ViewportY);
+                    _restoringGridZoomAnchor = false;
+                    _lastStableGridViewportAnchor = CaptureGridZoomAnchor() ?? anchor;
+                    ScheduleRememberCurrentGridViewportAnchor();
                 }, DispatcherPriority.Render);
             }
             catch (InvalidOperationException)
             {
+                _restoringGridZoomAnchor = false;
             }
         }, DispatcherPriority.Render);
     }
@@ -7508,6 +7614,7 @@ public partial class MainWindow : Window
 
     private void ApplyCardLayoutToAllTiles()
     {
+        SyncGalleryColumnMode();
         foreach (var tile in _allTiles)
             ApplyCardLayout(tile);
         _galleryVirtualizingPanel?.InvalidateItemLayout();
@@ -7864,16 +7971,21 @@ public partial class MainWindow : Window
     // ─────────── Panel toggles ───────────
     private void ToggleSidebar_Click(object sender, RoutedEventArgs e)
     {
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
         bool show = Sidebar.Visibility != Visibility.Visible;
         Sidebar.Visibility = show ? Visibility.Visible : Visibility.Collapsed;
         SidebarCol.Width = show ? new GridLength(240) : new GridLength(0);
         ToggleSidebar.Style = (Style)FindResource(show ? "IconButtonActive" : "IconButton");
+        ToggleSidebar.ToolTip = show ? "Hide sidebar" : "Show sidebar";
+        ScheduleGridGeometryAnchorRestore(anchor);
     }
 
     private void ToggleRight_Click(object sender, RoutedEventArgs e)
     {
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
         bool show = RightPanel.Visibility != Visibility.Visible;
         ApplyRightPanelState(show);
+        ScheduleGridGeometryAnchorRestore(anchor);
         SaveState();
     }
 
@@ -7924,7 +8036,28 @@ public partial class MainWindow : Window
             return;
 
         SetRightPanelWidth(RightCol.ActualWidth);
+        ScheduleGridGeometryAnchorRestore(_rightPanelResizeAnchor);
+        _rightPanelResizeAnchor = null;
         SaveState();
+    }
+
+    private void RightPanelSplitter_DragStarted(object sender, DragStartedEventArgs e)
+        => _rightPanelResizeAnchor = CaptureGridZoomAnchor();
+
+    private void RightPanelSplitter_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key is not (Key.Left or Key.Right or Key.Up or Key.Down))
+            return;
+
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (RightPanel.Visibility != Visibility.Visible)
+                return;
+            SetRightPanelWidth(RightCol.ActualWidth);
+            ScheduleGridGeometryAnchorRestore(anchor);
+            SaveState();
+        }, DispatcherPriority.Render);
     }
 
     // ─────────── Display mode (Grid / List) ───────────
@@ -10541,8 +10674,9 @@ public partial class MainWindow : Window
         _keyBindings = KeyBindingSettings.NormalizePersisted(state.KeyBindings, out _keyBindingUnknownEntries);
         _draftKeyBindings = new Dictionary<ViewerKeyAction, KeyChord>(_keyBindings);
 
-        if (state.CardWidth >= SizeSlider.Minimum && state.CardWidth <= SizeSlider.Maximum)
-            SizeSlider.Value = state.CardWidth;
+        double normalizedCardWidth = NormalizeCardWidth(state.CardWidth);
+        _cardWidthMigrationPending = Math.Abs(normalizedCardWidth - state.CardWidth) >= 0.01;
+        SizeSlider.Value = normalizedCardWidth;
 
         _rightPanelWidth = NormalizeRightPanelWidth(state.RightPanelWidth);
         ApplyRightPanelState(state.RightPanelOpen ?? true);
@@ -12516,6 +12650,7 @@ public partial class MainWindow : Window
         return new ListVirtualizationProbe(listMode, ListUsesRecyclingVirtualizationForSmoke, bounded, first, middle, last);
     }
     public double SidebarWidthForSmoke => Sidebar.ActualWidth;
+    public bool SidebarVisibleForSmoke => Sidebar.Visibility == Visibility.Visible;
     public double RightPanelWidthForSmoke => RightPanel.ActualWidth;
     public double RightPanelStoredWidthForSmoke => _rightPanelWidth;
     public bool RightPanelOpenForSmoke => RightPanel.Visibility == Visibility.Visible;
@@ -12530,6 +12665,8 @@ public partial class MainWindow : Window
     public void ToggleRightPanelForSmoke() => ToggleRight_Click(this, new RoutedEventArgs());
     public string? LastGridZoomAnchorPathForSmoke => _lastGridZoomAnchorPath;
     public double LastGridZoomAnchorDriftForSmoke => _lastGridZoomAnchorDrift;
+    public int GridColumnCountForSmoke => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.ColumnCount ?? 0;
+    public bool GridForcesSingleColumnForSmoke => FindVisualDescendant<VirtualizingWrapPanel>(CardsList)?.ForceSingleColumn == true;
     public string? GridViewportAnchorForSmoke
     {
         get
@@ -12542,8 +12679,11 @@ public partial class MainWindow : Window
         }
     }
     public string? CaptureGridViewportAnchorForSmoke() => Path.GetFileName(CaptureGridZoomAnchor()?.Path);
+    public string? CaptureGridViewportAnchorPathForSmoke() => CaptureGridZoomAnchor()?.Path;
     public bool GridContainsFileForSmoke(string? fileName)
         => !string.IsNullOrWhiteSpace(fileName) && _tiles.Any(tile => string.Equals(tile.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+    public bool GridContainsPathForSmoke(string? path)
+        => !string.IsNullOrWhiteSpace(path) && _tiles.Any(tile => string.Equals(tile.Path, path, StringComparison.OrdinalIgnoreCase));
     public async Task<bool> ScrollGridToMiddleForSmokeAsync()
     {
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
@@ -12677,6 +12817,32 @@ public partial class MainWindow : Window
     {
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
         await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.Render);
+        await Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ContextIdle);
+    }
+
+    public void ToggleSidebarForSmoke() => ToggleSidebar_Click(this, new RoutedEventArgs());
+
+    public void ResizeWindowForSmoke(double width, double height)
+    {
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+        Width = Math.Max(MinWidth, width);
+        Height = Math.Max(MinHeight, height);
+        ScheduleGridGeometryAnchorRestore(anchor);
+    }
+
+    public void SimulateDpiGeometryChangeForSmoke(double width, double height)
+    {
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+        Width = Math.Max(MinWidth, width);
+        Height = Math.Max(MinHeight, height);
+        PreserveGridAnchorAfterDpiChange(anchor);
+    }
+
+    public void ResizeRightPanelForSmoke(double width)
+    {
+        GridZoomAnchor? anchor = CaptureGridZoomAnchor();
+        SetRightPanelWidth(width);
+        ScheduleGridGeometryAnchorRestore(anchor);
     }
     public bool ZoomWheelForSmoke(int delta)
     {
@@ -13110,6 +13276,17 @@ public partial class MainWindow : Window
         SaveState();
         return true;
     }
+    public bool SelectPathForSmoke(string path)
+    {
+        var tile = _tiles.FirstOrDefault(candidate => string.Equals(candidate.Path, path, StringComparison.OrdinalIgnoreCase));
+        if (tile is null)
+            return false;
+
+        SelectTile(tile);
+        CardsList.ScrollIntoView(tile);
+        SaveState();
+        return true;
+    }
     public long LastCardsSelectionSyncMsForSmoke => _lastCardsSelectionSyncMs;
     public long LastRowsSelectionSyncMsForSmoke => _lastRowsSelectionSyncMs;
     public long LastEnsureGridSelectionMsForSmoke => _lastEnsureGridSelectionMs;
@@ -13408,7 +13585,7 @@ public sealed class ViewerState
     public List<string>? LastFolderSet { get; set; }
     public string? SearchQuery { get; set; }
     public string? SelectedPath { get; set; }
-    public double CardWidth { get; set; } = 190;
+    public double CardWidth { get; set; } = 200;
     public bool? RightPanelOpen { get; set; }
     public double RightPanelWidth { get; set; } = 340;
     public string? DisplayStyle { get; set; }

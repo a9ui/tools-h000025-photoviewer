@@ -270,6 +270,12 @@ if ($result.createdTailSelected -ne $true -or $result.createdTailCanonicalSelect
 if ($result.createdTailLastVisible -ne ($Count - 1)) { $structuralFailures += "Created tail last visible index was $($result.createdTailLastVisible)" }
 if ($result.modalTail -ne $true -or $result.finalSearchExact -ne $true) { $structuralFailures += 'tail search or modal reachability failed' }
 if ($result.flatZoomRoundTrip -ne $true -or $result.createdZoomRoundTrip -ne $true) { $structuralFailures += '100k Grid zoom anchor/width round trip failed' }
+if ($result.endpointSidebarRoundTrip -ne $true) { $structuralFailures += '20px/one-column/Sidebar anchor round trip failed' }
+if ($result.endpointMinimumWidth -ne 20 -or $result.endpointMaximumWidth -ne 600 -or $result.endpointMaximumColumns -ne 1 -or $result.endpointMaximumForcedSingleColumn -ne $true) { $structuralFailures += "zoom endpoints/columns were $($result.endpointMinimumWidth)/$($result.endpointMaximumWidth)/$($result.endpointMaximumColumns)" }
+if ($result.endpointMaximumRealized -lt 1 -or $result.endpointMaximumRealized -gt $result.gridMaximum) { $structuralFailures += "maximum-zoom Grid realization was not bounded ($($result.endpointMaximumRealized)/$($result.gridMaximum))" }
+foreach ($driftName in @('endpointMinimumDrift','endpointMaximumDrift','endpointRestoreDrift','endpointSidebarCollapseDrift','endpointSidebarExpandDrift')) {
+    if ($null -eq $result.$driftName -or [double]$result.$driftName -gt 8) { $structuralFailures += "$driftName was $($result.$driftName) px" }
+}
 if ($result.staleCancelled -ne $true -or $result.heartbeatCount -lt 4) { $structuralFailures += 'rapid-query cancellation or dispatcher heartbeat failed' }
 if ($result.sourceCountAfter -ne $Count) { $structuralFailures += "source count changed to $($result.sourceCountAfter)" }
 if ($result.enhancementJobsRead -ne 0 -or $result.enhancementCandidates -ne 0) { $structuralFailures += 'enhancement state was touched' }
