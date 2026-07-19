@@ -12139,7 +12139,7 @@ public partial class MainWindow : Window
     public bool SearchWatermarkVisibleForSmoke => SearchWatermark.Visibility == Visibility.Visible;
     public bool SearchAutomationHelpTextForSmoke => string.Equals(
         AutomationProperties.GetHelpText(SearchInput),
-        "Search filenames and prompts. Separate terms with commas.",
+        "Search filenames and prompts. Separate terms with commas. Focus or click to show shared search history.",
         StringComparison.Ordinal);
     public bool DatePickerAutomationNamesForSmoke => string.Equals(AutomationProperties.GetName(DateFromInput), "From date", StringComparison.Ordinal)
         && string.Equals(AutomationProperties.GetName(DateToInput), "To date", StringComparison.Ordinal);
