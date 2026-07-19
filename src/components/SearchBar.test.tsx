@@ -10,6 +10,7 @@ vi.mock('../store/ImageContext', () => ({
 }));
 
 const setSearchQuery = vi.fn();
+let historyState: string[] = [];
 
 function renderSearchBar(searchQuery = '') {
   vi.mocked(useImageStore).mockReturnValue({
@@ -71,18 +72,136 @@ function mockDataTransfer() {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
-    json: () => Promise.resolve({
-      tags: [
-        { tag: 'cat', count: 12 },
-        { tag: 'castle', count: 7 },
-        { tag: 'dog', count: 4 },
-      ],
-    }),
-  })));
+  historyState = ['cat, dog', 'landscape, night'];
+  vi.stubGlobal('fetch', vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    if (url.startsWith('/api/tags')) {
+      return Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({
+          tags: [
+            { tag: 'cat', count: 12 },
+            { tag: 'castle', count: 7 },
+            { tag: 'dog', count: 4 },
+          ],
+        }),
+      } as Response);
+    }
+
+    if (url === '/api/search-history' && init?.method === 'PUT') {
+      const query = String(JSON.parse(String(init.body)).query);
+      historyState = [query, ...historyState.filter((entry) => entry.toLowerCase() !== query.toLowerCase())];
+    } else if (url === '/api/search-history' && init?.method === 'DELETE') {
+      const body = JSON.parse(String(init.body)) as { query?: string; clear?: boolean };
+      historyState = body.clear
+        ? []
+        : historyState.filter((entry) => entry !== body.query);
+    }
+    return Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({ ok: true, entries: [...historyState] }),
+    } as Response);
+  }));
 });
 
 describe('SearchBar accessibility', () => {
+  it('reloads shared history on focus and reopens it on click after Escape', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+
+    await user.click(input);
+    const history = await screen.findByRole('region', { name: 'Search history' });
+    expect(within(history).getByRole('button', { name: 'Use search cat, dog' })).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-expanded', 'false');
+    expect(input).not.toHaveAttribute('aria-activedescendant');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Search history' })).not.toBeInTheDocument();
+    await user.click(input);
+    expect(await screen.findByRole('region', { name: 'Search history' })).toBeInTheDocument();
+
+    const historyReads = vi.mocked(fetch).mock.calls.filter(([url, init]) => (
+      String(url) === '/api/search-history' && !init?.method
+    ));
+    expect(historyReads.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it('replaces the complete chips and draft query when a history row is selected', async () => {
+    const user = userEvent.setup();
+    renderSearchBar('portrait, warm');
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    fireEvent.change(input, { target: { value: 'draft' } });
+    fireEvent.change(input, { target: { value: '' } });
+    await user.click(input);
+
+    const history = await screen.findByRole('region', { name: 'Search history' });
+    const historyAction = within(history).getByRole('button', { name: 'Use search cat, dog' });
+    fireEvent.click(historyAction);
+
+    expect(screen.queryByRole('listitem', { name: /Search tag portrait/i })).not.toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: /Search tag cat, position 1 of 2/i })).toBeInTheDocument();
+    expect(screen.getByRole('listitem', { name: /Search tag dog, position 2 of 2/i })).toBeInTheDocument();
+    expect(input).toHaveValue('');
+    expect(setSearchQuery).toHaveBeenCalledWith('cat, dog');
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
+      String(url) === '/api/search-history'
+      && init?.method === 'PUT'
+      && JSON.parse(String(init.body)).query === 'cat, dog'
+    ))).toBe(true));
+  });
+
+  it('deletes one row and clears all without selecting a history query', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    await user.click(input);
+    await screen.findByRole('region', { name: 'Search history' });
+
+    await user.click(screen.getByRole('button', { name: 'Remove cat, dog from search history' }));
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Use search cat, dog' })).not.toBeInTheDocument());
+    expect(setSearchQuery).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: 'Clear all' }));
+    expect(await screen.findByText('No recent searches')).toBeInTheDocument();
+    expect(screen.queryByRole('option')).not.toBeInTheDocument();
+    expect(setSearchQuery).not.toHaveBeenCalled();
+  });
+
+  it('does not persist draft debounce updates and saves only the effective query on final blur', async () => {
+    renderSearchBar('dog');
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    fireEvent.change(input, { target: { value: '  castle  ' } });
+
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('dog, castle'));
+    expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
+      String(url) === '/api/search-history' && init?.method === 'PUT'
+    ))).toBe(false);
+
+    fireEvent.blur(input, { relatedTarget: null });
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
+      String(url) === '/api/search-history'
+      && init?.method === 'PUT'
+      && JSON.parse(String(init.body)).query === 'dog, castle'
+    ))).toBe(true));
+  });
+
+  it('keeps tag suggestions additive and records the resulting complete query', async () => {
+    renderSearchBar('dog');
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    fireEvent.change(input, { target: { value: 'ca' } });
+    const suggestions = await screen.findByRole('listbox', { name: 'Tag suggestions' });
+    fireEvent.mouseDown(within(suggestions).getByRole('option', { name: /cat/i }));
+
+    expect(setSearchQuery).not.toHaveBeenCalledWith('cat');
+    await waitFor(() => expect(setSearchQuery).toHaveBeenCalledWith('dog, cat'));
+    await waitFor(() => expect(vi.mocked(fetch).mock.calls.some(([url, init]) => (
+      String(url) === '/api/search-history'
+      && init?.method === 'PUT'
+      && JSON.parse(String(init.body)).query === 'dog, cat'
+    ))).toBe(true));
+  });
+
   it('exposes suggestions through a combobox and selects the active option with keyboard', async () => {
     renderSearchBar();
 
