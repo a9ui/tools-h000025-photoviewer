@@ -1,6 +1,6 @@
 # Browser / WPF 全要望 parity ledger
 
-監査日: 2026-07-19 JST
+監査日: 2026-07-20 JST
 
 この表は会話中の追加要望を落とさないための実装台帳である。`implemented`はcurrent local mainのsourceとfocused/aggregate evidenceがある時だけ使う。`in progress`は未commitまたは片surfaceだけ、`pending`はcurrent mainへ製品実装がない状態である。
 
@@ -48,17 +48,18 @@
 | Favorite履歴をBrowser/WPFで共有 | implemented | implemented | shared JSON、cross-runtime lock/atomic/merge、large writer |
 | Seen履歴をBrowser/WPFで共有 | implemented | implemented | shared JSON、Unseen表示toggleとは独立 |
 | Search input focus/clickで検索履歴list | implemented | implemented | whole-query replacement、keyboard/list selection、個別削除/Clear all |
-| Search HistoryをBrowser/WPFで共有 | implemented | implemented | v1/max50/NFKC identity、unknown保持、concurrent lost 0 |
+| Search HistoryをBrowser/WPFで共有 | implemented `0802f95` | implemented | v1/max50/NFKC identity、unknown保持、cross-runtime lost 0。同一Node/targetはprocess-local FIFOでも各turn shared lockを取り、30並列全200/lost 0、full unit 584/584 |
 | key settingsをWPFにも持つ | implemented Browser | implemented WPF | editable bindings、conflict guard、hot apply/reload/reset、input/overlay isolation |
 | settings write失敗を保存済みに見せずRetryできる | implemented | implemented core | malformed/future/lock保持、draft/value rollback、recoverable status |
+| Favorite/Enhanced枠設定の同時保存でlost updateしない | implemented `805d6c9` + `343a364` | implemented `60ed739` | dirty preference単位でlock内latest diskへmerge。空patch拒否、他方の同時更新・unknown field・旧hexを保持し、malformed/future/busyは非破壊 |
 
 ## 5. 一覧status表示
 
 | Requirement | Browser | WPF | Current truth / completion gate |
 | --- | --- | --- | --- |
-| Favorite画像のthumbnailに設定可能な色枠、default黄 | implemented `2863519` | implemented `a091ec7` | independent enabled/color、Favorite 2px inner ring、O(1)、Grid/List、selection/unseen非干渉 |
-| AI高画質化済みthumbnailに設定可能な別色枠、default虹色 | implemented `2863519` | implemented `a091ec7` | Enhanced 3px outer ring。`rainbow` presetまたは単色を選択可能。Favorite黄枠と同時可視、追加image I/O/全走査なし |
-| 2種の枠を独立ON/OFF・表示色保存 | implemented `2863519` | implemented `a091ec7` | shared `.cache/settings.json` nested unknown保持、旧hex値互換、malformed/busy非破壊、同一schema |
+| Favorite画像のthumbnailに設定可能な色枠、default黄 | implemented `2863519` + `805d6c9` | implemented `a091ec7` + `60ed739` | independent enabled/color、Favorite 2px inner ring、O(1)、Grid/List、selection/unseen非干渉、preference単位latest merge |
+| AI高画質化済みthumbnailに設定可能な別色枠、default虹色 | implemented `2863519` + `805d6c9` | implemented `a091ec7` + `60ed739` | Enhanced 3px outer ring。`rainbow` presetまたは単色を選択可能。Favorite黄枠と同時可視、追加image I/O/全走査なし |
+| 2種の枠を独立ON/OFF・表示色保存 | implemented `805d6c9` + `343a364` | implemented `60ed739` | shared `.cache/settings.json` nested unknown保持、旧hex値互換、empty patch拒否、malformed/future/busy非破壊、cross-surface lost update防止 |
 
 ## 6. Modal・Filmstrip・shortcut
 
@@ -72,10 +73,10 @@
 | manual UI hiddenはcursorも隠し、pointer/keyで約900msだけ再表示 | implemented `f6f63d3` | implemented `a091ec7` | transient終了後cursor再非表示、touch/native input隔離 |
 | UI hiddenは画像遷移/Delete/Original-Enhanced切替後も維持 | implemented `f6f63d3` | implemented `a091ec7` | Modal session stateとして保持 |
 | zoom倍率を上端の目立ちにくい位置へ表示 | implemented `f6f63d3` | implemented `a091ec7` | root上端、低contrast、画像/Filmstrip非干渉 |
-| Modalに現在表示中assetのfile容量を`0.00MB`形式で表示 | pending | pending | 小数2桁・スペースなし。Originalはsource bytes、Enhancedはmanaged output bytes。toggleで即時更新し、missing/stale fallback時はsource容量 |
+| Modalに現在表示中assetのfile容量を`0.00MB`形式で表示 | implemented `a1d83c8` | implemented `a1d83c8` | 1024² bytes、小数2桁・spaceなし。Originalはsource、Enhancedはmanaged output。toggle即更新、missing/stale/invalid signature/ownership外はOriginal容量 + recoverable status |
 | manual Filmstripは画像外の専用bottom rowでviewportを縮める | implemented | implemented `a091ec7` + `c3d4ff5` | 画像へ重ねない、T/toolbarで開閉しWPF ViewerState/Browser view stateへ保存 |
 | UI hidden中は下端hoverで前面overlay Filmstrip、離脱で収納 | implemented `f6f63d3` | implemented `a091ec7` | overlay時image geometry不変、current追従、bounded virtualization |
-| top UI button後もArrow/Delete/T/H/F等shortcutが動く | implemented `f6f63d3` | implemented `a091ec7` | Enter/Spaceはbutton native activation、TextBox等は隔離 |
+| top UI button後もArrow/Delete/T/H/F等shortcutが動く | implemented `f6f63d3` | implemented `a091ec7` + `452ac02` | Enter/SpaceはOriginalSource/Keyboard focusの両方でbutton/Prompt chip native activationを1回だけ実行、TextBox等は隔離 |
 | H/D/F等をsimple monochrome icon化、Fはheart、Deleteはtrash | pending | pending | tooltip/aria-label/shortcut hintを残し、色だけに依存しない |
 
 ## 7. Delete・Windows action・clipboard
@@ -84,8 +85,8 @@
 | --- | --- | --- | --- |
 | Deleteは永久削除でなくRecycle Bin | implemented | implemented | source/root/catalog/type/existenceを破壊境界直前に再検証 |
 | Favorite Lv1〜5画像Deleteは通常設定に関係なく確認 | implemented | implemented | mandatory dialog、Do not ask again不可、bulk partial安全 |
-| 一覧Enterで選択画像をModal表示 | implemented Browser | pending WPF | current filtered/sorted order、focus return、input/overlay isolation |
-| Modal Enterで現在表示中のOriginal/Enhancedをexternal open | pending | pending | managed output ownership/existence guard、missing時source fallback |
+| 一覧Enterで選択画像をModal表示 | implemented Browser | implemented `a1d83c8` + `dbad550` + `452ac02` | current filtered/sorted order、navigation後closeもcurrent primary Grid/List itemへfocus。Search/Date/Settings/Delete/Modal input/Landing隔離、button native Enter保持 |
+| Modal Enterで現在表示中のOriginal/Enhancedをexternal open | implemented `a1d83c8` | implemented `a1d83c8` | Browser POSTだけlaunch、GET/HEAD passive、active index/type/existence、lexical+real managed ownership、shell failure。WPF canonical/signature/ownership guard + ShellExecute failure。missing/stale/invalid/ownership外はOriginal fallback |
 | 右click menu: 画像を開く/Explorer/Path copy/Image copy | pending | pending | mouse+keyboard invocation、selection rule、disabled/error/focus/Escape |
 | Ctrl+Cで画像をcopy | pending | pending | text input中はnative copy。bitmap+file-drop contractとclipboard failure |
 
@@ -96,7 +97,7 @@
 | AI高画質化は明示actionだけで開始 | implemented | implemented Browser-API delegation | browse/preview/navigation/Favorite/Deleteでjob/workerを起動しない |
 | WPFの拡大画面/一覧からEnhance actionを使える | implemented Browser | implemented delegation, live UI parity再検証中 | create/history/Original-Enhanced state、button action focused verifier |
 | Windows EBUSYでも完成outputを誤failedにしない | implemented `3654b88` focused | Browser ownerを利用 | rename retry→awaited copy、cleanup-only lock分離。fresh real-GPU rerunは未実施 |
-| Original/Enhanced toggleと現在表示assetを全actionで尊重 | partial | partial | preview表示は実装。Enter/open/context/copyはSection 7 pending |
+| Original/Enhanced toggleと現在表示assetを全actionで尊重 | partial | partial | preview、容量、Enter/openは実装。context menu/Ctrl+C image copyはSection 7 pending |
 
 ## 9. Album / collection
 
