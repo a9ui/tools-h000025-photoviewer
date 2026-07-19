@@ -635,6 +635,56 @@ describe("ImageGrid keyboard primary controls", () => {
     });
   });
 
+  it("keeps the visible selected image anchored when sidebar geometry expands and contracts", async () => {
+    mockClientWidth = 900;
+    const images = Array.from({ length: 80 }, (_, index): ImageFile => ({
+      ...firstImage,
+      id: `C:/images/sidebar-anchor-${index}.png`,
+      filename: `sidebar-anchor-${index}.png`,
+      absolutePath: `C:/images/sidebar-anchor-${index}.png`,
+      fileUrl: `/api/image?sidebar-anchor=${index}`,
+      displayUrl: `/api/image?sidebar-anchor=${index}&display=1`,
+      fullUrl: `/api/image?sidebar-anchor=${index}&full=1`,
+    }));
+    const selectedImage = images[14];
+    const store = {
+      ...createStore("grid", { selectedIds: [selectedImage.id] }),
+      searchResults: images,
+      searchTotal: images.length,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(store);
+
+    renderGrid();
+    const scrollElement = screen.getByTestId("viewer-main");
+    Object.defineProperty(scrollElement, "scrollHeight", {
+      configurable: true,
+      get: () => 20_000,
+    });
+    scrollElement.scrollTop = 600;
+    fireEvent.scroll(scrollElement);
+    await waitFor(() => {
+      expect(store.setSearchScrollPosition).toHaveBeenCalledWith(expect.any(String), 600);
+    });
+
+    const offsetBefore = Number.parseFloat(
+      screen.getByRole("group", { name: `Image ${selectedImage.filename}` }).style.top,
+    ) - scrollElement.scrollTop;
+
+    mockClientWidth = 1140;
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      const selected = screen.getByRole("group", { name: `Image ${selectedImage.filename}` });
+      expect(Number.parseFloat(selected.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
+    });
+
+    mockClientWidth = 900;
+    fireEvent(window, new Event("resize"));
+    await waitFor(() => {
+      const selected = screen.getByRole("group", { name: `Image ${selectedImage.filename}` });
+      expect(Number.parseFloat(selected.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
+    });
+  });
+
   it("captures gallery zoom across the grid viewer so the sidebar does not page-zoom, but leaves list mode native", () => {
     const gridStore = createStore();
     vi.mocked(useImageStore).mockReturnValue(gridStore);

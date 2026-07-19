@@ -174,6 +174,7 @@ export default function ImageModal() {
     setConfirmBeforeDelete,
     view,
     indexToken,
+    reportImageSessionExpired,
   } = useImageStore();
 
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
@@ -363,6 +364,7 @@ export default function ImageModal() {
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
   const favLevel = img ? (favorites[img.id] ?? 0) : 0;
   const isFav = favLevel > 0;
+  const shouldConfirmImageDelete = confirmBeforeDelete || isFav;
   const currentEnhancementJobs = img ? enhancementJobs.filter((job) => job.sourceId === img.id) : [];
   const succeededEnhancementJobs = currentEnhancementJobs.filter((job) => job.status === 'succeeded' && job.outputPath);
   const activeEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'running' || job.status === 'queued') ?? null;
@@ -554,7 +556,7 @@ export default function ImageModal() {
     selectedIndex,
   ]);
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(async (favoriteConfirmed = false) => {
     if (!img || isDeleting) return;
     const deletedIndex = selectedIndex ?? -1;
     navigationRequestRef.current += 1;
@@ -563,7 +565,7 @@ export default function ImageModal() {
     setShowConfirmDelete(false);
     let deletionSucceeded = false;
     try {
-      const ok = await deleteImage(img.id);
+      const ok = await deleteImage(img.id, { favoriteConfirmed });
       if (!ok) return;
       deletionSucceeded = true;
 
@@ -651,7 +653,7 @@ export default function ImageModal() {
     else if (isShortcutKey(key, keyBindings.toggleFavorite) && img) increaseFavorite();
     else if (isShortcutKey(key, keyBindings.decreaseFavorite) && img) decreaseFavorite();
     else if (key === keyBindings.deleteImage) {
-      if (confirmBeforeDelete) setShowConfirmDelete(true);
+      if (shouldConfirmImageDelete) setShowConfirmDelete(true);
       else void handleDelete();
     } else if (isShortcutKey(key, keyBindings.flipHorizontal)) setFlipped((f) => !f);
     else if (key === keyBindings.zoomIn || key === '+') {
@@ -681,7 +683,7 @@ export default function ImageModal() {
       setSidebarCollapsed((prev) => !prev);
     }
     else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, confirmBeforeDelete, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, showConfirmDelete, toggleEnhancedView]);
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -1004,7 +1006,7 @@ export default function ImageModal() {
               <button
                 className="modal-icon-btn"
                 onClick={() => {
-                  if (confirmBeforeDelete) setShowConfirmDelete(true);
+                  if (shouldConfirmImageDelete) setShowConfirmDelete(true);
                   else void handleDelete();
                 }}
                 title="Move to Recycle Bin"
@@ -1055,6 +1057,26 @@ export default function ImageModal() {
             >
               <span>&gt;</span>
             </div>
+            {!fullImageReady && (
+              <CachedImage
+                key={`thumb-preview-${img.id}`}
+                src={img.fileUrl}
+                requestSrc={`${img.fileUrl}${img.fileUrl.includes('?') ? '&' : '?'}priority=visible`}
+                fallbackSrc={img.fullUrl}
+                cacheKind="thumb"
+                alt={img.filename}
+                className={`modal-main-image modal-thumb-preview is-thumb-preview ${swipeOffset !== 0 ? 'dragging' : ''}`}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                onClick={handleImageClick}
+                onDoubleClick={handleImageDoubleClick}
+                style={{
+                  transform: `translate(${pan.x + swipeOffset}px, ${pan.y}px) scale(${zoom}) scaleX(${flipped ? -1 : 1})`,
+                }}
+                draggable={false}
+              />
+            )}
             <CachedImage
               key={fullImageKey}
               src={modalImageSrc}
@@ -1062,7 +1084,7 @@ export default function ImageModal() {
               fallbackSrc={img.fullUrl}
               cacheKind="display"
               alt={img.filename}
-              className={`modal-main-image ${swipeOffset !== 0 ? 'dragging' : ''} ${fullImageReady ? 'is-full-ready' : 'is-full-loading'}`}
+              className={`modal-main-image modal-full-image ${swipeOffset !== 0 ? 'dragging' : ''} ${fullImageReady ? 'is-full-ready' : 'is-full-loading'}`}
               loading="eager"
               decoding="async"
               fetchPriority="high"
@@ -1070,6 +1092,10 @@ export default function ImageModal() {
               onDoubleClick={handleImageDoubleClick}
               onError={(event) => {
                 rememberFullImageFailed(fullImageKey);
+              }}
+              onSessionExpired={() => {
+                rememberFullImageFailed(fullImageKey);
+                reportImageSessionExpired();
               }}
               onLoad={(event) => {
                 const currentSrc = event.currentTarget.currentSrc || event.currentTarget.src;
@@ -1220,17 +1246,21 @@ export default function ImageModal() {
           <div ref={confirmPanelRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title" tabIndex={-1}>
             <h3 id="image-delete-title">Move this image to Recycle Bin?</h3>
             <p>{img.filename}</p>
-            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
-              <input
-                type="checkbox"
-                checked={!confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
-              />
-              <span>Do not ask again</span>
-            </label>
+            {isFav ? (
+              <p role="status">This image is favorite level {favLevel}. Favorite images always require confirmation.</p>
+            ) : (
+              <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+                <input
+                  type="checkbox"
+                  checked={!confirmBeforeDelete}
+                  onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+                />
+                <span>Do not ask again</span>
+              </label>
+            )}
             <div className="confirm-actions">
               <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => setShowConfirmDelete(false)}>Cancel</button>
-              <button className="btn-danger" onClick={() => void handleDelete()} disabled={isDeleting}>
+              <button className="btn-danger" onClick={() => void handleDelete(true)} disabled={isDeleting}>
                 {isDeleting ? 'Moving...' : 'Move to Recycle Bin'}
               </button>
             </div>

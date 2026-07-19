@@ -14,6 +14,13 @@ import {
 } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
+import {
+  DEFAULT_THUMB_SIZE,
+  THUMB_ZOOM_STEP,
+  clampThumbnailSize,
+  getThumbnailGridCellWidth,
+  getThumbnailGridColumns,
+} from '../lib/thumbnailSizing';
 import { Minus } from 'lucide-react';
 import { buildImageIndexById } from '../lib/imageListState';
 import {
@@ -41,10 +48,6 @@ const MODAL_WARMUP_SEARCH_RADIUS = 120;
 const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
 const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
-const MIN_THUMB_SIZE = 40;
-const MAX_THUMB_SIZE = 600;
-const DEFAULT_THUMB_SIZE = 200;
-const THUMB_ZOOM_STEP = 20;
 const VISIBLE_THUMB_RESEND_MS = 900;
 
 function shouldIgnoreGalleryZoomShortcut(target: EventTarget | null): boolean {
@@ -344,7 +347,7 @@ export default function ImageGrid() {
 
   useEffect(() => {
     const commitThumbSize = (next: number) => {
-      const clamped = Math.max(MIN_THUMB_SIZE, Math.min(MAX_THUMB_SIZE, next));
+      const clamped = clampThumbnailSize(next);
       if (clamped === thumbSizeRef.current) return;
       thumbSizeRef.current = clamped;
       setView({ thumbSize: clamped });
@@ -504,15 +507,23 @@ export default function ImageGrid() {
 
   const gridColumns = useMemo(() => {
     if (view.viewMode !== 'grid') return 1;
-    if (view.columns > 0) return view.columns;
     const available = Math.max(1, viewportWidth - horizontalPadding);
-    return Math.max(1, Math.floor((available + GRID_GAP) / (Math.max(40, view.thumbSize) + GRID_GAP)));
+    return getThumbnailGridColumns({
+      availableWidth: available,
+      thumbSize: view.thumbSize,
+      gap: GRID_GAP,
+      explicitColumns: view.columns,
+    });
   }, [horizontalPadding, view.columns, view.thumbSize, view.viewMode, viewportWidth]);
 
   const gridCellWidth = useMemo(() => {
     if (view.viewMode !== 'grid') return 0;
     const available = Math.max(1, viewportWidth - horizontalPadding);
-    return Math.max(40, Math.floor((available - (gridColumns - 1) * GRID_GAP) / gridColumns));
+    return getThumbnailGridCellWidth({
+      availableWidth: available,
+      columns: gridColumns,
+      gap: GRID_GAP,
+    });
   }, [gridColumns, horizontalPadding, view.viewMode, viewportWidth]);
 
   const gridCellHeight = useMemo(() => {
@@ -774,6 +785,12 @@ export default function ImageGrid() {
     const rowHeight = Math.max(1, gridCellHeight + GRID_GAP);
     const previousMetrics = previousGridMetricsRef.current;
     const previousThumbSize = previousThumbSizeRef.current;
+    const thumbSizeChanged = previousThumbSize !== view.thumbSize;
+    const geometryChanged = Boolean(previousMetrics && (
+      previousMetrics.gridColumns !== gridColumns ||
+      previousMetrics.rowHeight !== rowHeight
+    ));
+    const shouldPreservePreviousAnchor = thumbSizeChanged || geometryChanged;
     const container = containerRef.current;
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
     const centeredAnchorIndex = getZoomAnchorIndex({
@@ -788,7 +805,7 @@ export default function ImageGrid() {
       }) ?? undefined;
     const previousAnchorWasVisibleSelection = selectedZoomAnchorIndex !== null &&
       previousMetrics?.anchorIndex === selectedZoomAnchorIndex;
-    const anchorIndex = previousThumbSize !== view.thumbSize
+    const anchorIndex = shouldPreservePreviousAnchor
       ? previousAnchorWasVisibleSelection
         ? selectedZoomAnchorIndex ?? undefined
         : previousMetrics?.anchorIndex ?? visibleSelectedZoomAnchorIndex ?? centeredAnchorIndex
@@ -811,7 +828,7 @@ export default function ImageGrid() {
 
     if (
       previousMetrics &&
-      previousThumbSize !== view.thumbSize &&
+      shouldPreservePreviousAnchor &&
       previousMetrics.fullCount > 0
     ) {
       if (scrollEl) {

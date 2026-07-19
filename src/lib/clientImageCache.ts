@@ -2,6 +2,17 @@
 
 type CacheKind = 'thumb' | 'display';
 
+export class ImageRequestError extends Error {
+  constructor(public readonly status: number) {
+    super(`Image fetch failed: ${status}`);
+    this.name = 'ImageRequestError';
+  }
+}
+
+export function isImageSessionExpiredError(error: unknown): error is ImageRequestError {
+  return error instanceof ImageRequestError && error.status === 410;
+}
+
 interface CacheEntry {
   objectUrl?: string;
   promise?: Promise<string>;
@@ -95,7 +106,7 @@ export function loadCancellableCachedImageUrl(cacheKey: string, requestUrl: stri
 
   entry.promise = fetch(requestUrl, { cache: 'force-cache', signal: abortController.signal })
     .then((response) => {
-      if (!response.ok) throw new Error(`Image fetch failed: ${response.status}`);
+      if (!response.ok) throw new ImageRequestError(response.status);
       return response.blob();
     })
     .then((blob) => {

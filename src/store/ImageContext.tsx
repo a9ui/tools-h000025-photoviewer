@@ -31,6 +31,7 @@ import {
   getSparseModalNavigationRanges,
   type SparseModalNavigationIntent,
 } from '../lib/modalNavigation';
+import { MAX_THUMB_SIZE, MIN_THUMB_SIZE } from '../lib/thumbnailSizing';
 
 // ── View settings ──
 export type ViewMode = 'grid' | 'list';
@@ -39,9 +40,13 @@ export type DisplayStyle = 'standard' | 'compact' | 'poster';
 export type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 export type SearchErrorKind = 'transient' | 'session-expired';
 
+export interface DeleteImageOptions {
+  favoriteConfirmed?: boolean;
+}
+
 export interface ViewSettings {
   viewMode: ViewMode;
-  thumbSize: number;       // px, range 40-600
+  thumbSize: number;       // px, range 20-600; 600 is the one-column endpoint
   aspectMode: AspectMode;
   displayStyle: DisplayStyle;
   columns: number;         // 0 = auto
@@ -92,8 +97,6 @@ const AUTO_THUMB_WARM_DELAY_MS = 4200;
 const AUTO_THUMB_WARM_LIMIT = 1200;
 const MAX_FAVORITE_LEVEL = 5;
 const MAX_CLOSED_PREVIEW_TABS = 30;
-const MIN_THUMB_SIZE = 40;
-const MAX_THUMB_SIZE = 600;
 const MIN_RIGHT_PANEL_WIDTH = 240;
 const MAX_RIGHT_PANEL_WIDTH = 900;
 const MIN_MODAL_EDGE_RATIO = 0.10;
@@ -580,6 +583,7 @@ interface Ctx {
     intent: SparseModalNavigationIntent
   ) => Promise<ModalNavigationResolution>;
   retrySearch: () => void;
+  reportImageSessionExpired: () => void;
   rescanExpiredSearchSession: () => void;
   dismissSearchError: () => void;
 
@@ -656,9 +660,9 @@ interface Ctx {
   perfStats: { searchCount: number; lastSearchMs: number; avgSearchMs: number };
 
   // Actions
-  startScan: (options?: { full?: boolean; dir?: string; onComplete?: (dir: string) => void }) => void;
+  startScan: (options?: { full?: boolean; dir?: string; onComplete?: (dir: string) => void; preserveViewer?: boolean }) => void;
   cancelScan: () => void;
-  deleteImage: (id: string) => Promise<boolean>;
+  deleteImage: (id: string, options?: DeleteImageOptions) => Promise<boolean>;
   openExternal: (id: string) => void;
   totalIndexed: number;
   setTotalIndexed: (n: number) => void;
@@ -681,6 +685,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
   const [isSearching, setIsSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const [searchErrorKind, setSearchErrorKind] = useState<SearchErrorKind | null>(null);
+  const imageSessionExpiredReportedRef = useRef(false);
 
   const [favorites, setFavorites] = useState<Record<string, number>>({});
   const [showFavOnlyState, setShowFavOnlyState] = useState(false);
@@ -2091,6 +2096,10 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     setSearchErrorKind(null);
   }, []);
 
+  useEffect(() => {
+    if (indexToken) imageSessionExpiredReportedRef.current = false;
+  }, [indexToken]);
+
   const setSearchQuery = useCallback((q: string) => {
     setSearchQueryRaw(q);
     searchQueryRef.current = q;
@@ -2282,23 +2291,26 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     cancelActiveScan(false);
   }, [cancelActiveScan]);
 
-  const startScan = useCallback((options: { full?: boolean; dir?: string; onComplete?: (dir: string) => void } = {}) => {
+  const startScan = useCallback((options: { full?: boolean; dir?: string; onComplete?: (dir: string) => void; preserveViewer?: boolean } = {}) => {
     const scanDir = formatDirSet(parseDirSet(options.dir ?? dirPath));
     if (!scanDir || phase === 'scanning' || activeScanRunRef.current) return;
+    const preserveViewer = options.preserveViewer === true && phase === 'viewer';
     const nextCatalogIdentity = catalogIdentity(scanDir);
     const replacesActiveCatalog = Boolean(activeCatalogIdentityRef.current)
       && activeCatalogIdentityRef.current !== nextCatalogIdentity;
     if (scanDir !== dirPath) setDirPath(scanDir);
-    setIndexToken(null);
+    if (!preserveViewer) setIndexToken(null);
     setScanError(null);
     warmedThumbDirRef.current = '';
-    setViewState((prev) => {
-      if (prev.hiddenFolders.length === 0 && !prev.dateFrom && !prev.dateTo) return prev;
-      const next = { ...prev, hiddenFolders: [] as string[], dateFrom: '', dateTo: '' };
-      scheduleViewSettingsPersist(next);
-      return next;
-    });
-    setPhase('scanning');
+    if (!preserveViewer) {
+      setViewState((prev) => {
+        if (prev.hiddenFolders.length === 0 && !prev.dateFrom && !prev.dateTo) return prev;
+        const next = { ...prev, hiddenFolders: [] as string[], dateFrom: '', dateTo: '' };
+        scheduleViewSettingsPersist(next);
+        return next;
+      });
+      setPhase('scanning');
+    }
     setScanProgress({ processed: 0, total: 1, newFiles: 0, stage: 'preparing', message: 'Preparing file list...' });
     const scanRunId = scanRunRef.current + 1;
     scanRunRef.current = scanRunId;
@@ -2326,9 +2338,15 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     const failScan = (message: string) => {
       if (!isCurrentRun() || !settleScanTransport()) return;
       console.error('Scan error', message);
-      setScanError(message);
       setScanProgress(null);
-      setPhase('landing');
+      if (preserveViewer) {
+        setSearchError(`Automatic viewer session refresh failed: ${message}`);
+        setSearchErrorKind('session-expired');
+        setPhase('viewer');
+      } else {
+        setScanError(message);
+        setPhase('landing');
+      }
     };
     es.onmessage = (event) => {
       if (settled || !isCurrentRun()) return;
@@ -2374,6 +2392,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           : null);
         if (replacesActiveCatalog) clearCatalogOwnedUiState();
         activeCatalogIdentityRef.current = nextCatalogIdentity;
+        setSearchError(null);
+        setSearchErrorKind(null);
         options.onComplete?.(scanDir);
         setPhase('viewer');
       } else if (type === 'error') {
@@ -2391,15 +2411,33 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     setScanError(null);
   }, []);
 
+  const reportImageSessionExpired = useCallback(() => {
+    if (imageSessionExpiredReportedRef.current) return;
+    imageSessionExpiredReportedRef.current = true;
+    setSearchError('This viewer session expired. Refreshing the current folder set automatically.');
+    setSearchErrorKind('session-expired');
+    if (dirPath.trim()) startScan({ dir: dirPath, preserveViewer: true });
+  }, [dirPath, startScan]);
+
   const rescanExpiredSearchSession = useCallback(() => {
     if (searchErrorKind !== 'session-expired' || !dirPath.trim()) return;
     setSearchError(null);
     setSearchErrorKind(null);
-    startScan({ dir: dirPath });
+    startScan({ dir: dirPath, preserveViewer: true });
   }, [dirPath, searchErrorKind, startScan]);
 
   // ── Delete ──
-  const deleteImage = useCallback(async (id: string): Promise<boolean> => {
+  const deleteImage = useCallback(async (
+    id: string,
+    options: DeleteImageOptions = {},
+  ): Promise<boolean> => {
+    // UI dialogs are the first safety layer. Keep the same invariant here so a
+    // future caller cannot bypass favorite protection by invoking the action
+    // directly or by racing a favorite change after a bulk snapshot.
+    if ((favoritesRef.current[id] ?? 0) > 0 && options.favoriteConfirmed !== true) {
+      console.warn('Favorite source delete blocked until explicitly confirmed.', id);
+      return false;
+    }
     try {
       const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
       const res = await fetch(`/api/delete?path=${encodeURIComponent(id)}${tokenParam}`, { method: 'DELETE' });
@@ -2751,7 +2789,7 @@ export function ImageProvider({ children }: { children: ReactNode }) {
     <ImageContext.Provider value={{
       phase, setPhase, dirPath, setDirPath, indexToken, scanProgress, scanError, dismissScanError,
       searchQuery, setSearchQuery, searchResults, searchTotal,
-      isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
+      isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, reportImageSessionExpired, rescanExpiredSearchSession, dismissSearchError,
       resolveModalNavigationTarget,
       favorites, toggleFavorite, showFavOnly: showFavOnlyState, setShowFavOnly,
       showUnfavOnly: showUnfavOnlyState, setShowUnfavOnly,

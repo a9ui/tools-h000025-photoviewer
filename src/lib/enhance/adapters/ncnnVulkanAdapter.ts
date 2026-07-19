@@ -3,6 +3,7 @@ import fs from 'fs';
 import path from 'path';
 import sharp from 'sharp';
 import type { EnhancementAdapter } from '../types';
+import { publishEnhancementOutput } from '../outputPublish';
 import {
   registerNcnnVulkanShutdownCleanup,
   terminateNcnnVulkanProcess,
@@ -296,10 +297,16 @@ export const ncnnVulkanAdapter: EnhancementAdapter = {
         targetHeight
       );
       if (await context.isCancelRequested()) throw new Error('Job canceled');
-      await fs.promises.rename(tempFinalOutput, context.outputPath);
+      const publishMethod = await publishEnhancementOutput(tempFinalOutput, context.outputPath);
       await context.updateDiagnostics({
         ...outputDiagnostics,
-        notes: [...notes, ...(outputDiagnostics.notes || [])],
+        notes: [
+          ...notes,
+          ...(outputDiagnostics.notes || []),
+          ...(publishMethod === 'copy'
+            ? ['Windows file lock required safe copy fallback while publishing output']
+            : []),
+        ],
         totalMs: elapsedMs(totalStarted),
       });
       await context.updateProgress(100);

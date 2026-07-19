@@ -302,6 +302,7 @@ public partial class MainWindow : Window
     private int _sharedReloadBarrierDepth;
     private Tile? _pendingDeleteTile;
     private DeleteSnapshot? _pendingBulkDeleteSnapshot;
+    private bool _favoriteDeleteConfirmationRequired;
     private readonly Dictionary<string, long> _sourceRecycleGenerationByPath = new(StringComparer.OrdinalIgnoreCase);
     private long _sourceRecycleGeneration;
     private Func<string, RecycleBinDeleteResult> _recycleBinDelete = SendFileToWindowsRecycleBin;
@@ -9687,15 +9688,23 @@ public partial class MainWindow : Window
             return false;
         }
 
-        if (_confirmBeforeDelete)
+        int favoriteLevel = FavoriteLevelForDelete(tile);
+        bool favoriteProtected = favoriteLevel > 0;
+        if (_confirmBeforeDelete || favoriteProtected)
         {
             _pendingDeleteTile = tile;
             _pendingBulkDeleteSnapshot = null;
-            ShowDeleteConfirmation($"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.", "Move selected image to Recycle Bin");
+            string favoriteWarning = favoriteProtected
+                ? $"\nFavorite level {favoriteLevel}. Favorite images always require confirmation."
+                : "";
+            ShowDeleteConfirmation(
+                $"{tile.FileName}\nThe source will be moved to the Windows Recycle Bin.{favoriteWarning}",
+                "Move selected image to Recycle Bin",
+                favoriteProtected);
             return true;
         }
 
-        return ExecuteDelete(tile);
+        return ExecuteDelete(tile, favoriteConfirmed: false);
     }
 
     private bool RequestBulkDeleteSelected()
@@ -9705,25 +9714,34 @@ public partial class MainWindow : Window
             return RequestDeleteSelected();
 
         var snapshot = new DeleteSnapshot(selected, _tiles.ToList());
-        if (_confirmBeforeDelete)
+        int favoriteCount = selected.Count(tile => FavoriteLevelForDelete(tile) > 0);
+        bool favoriteProtected = favoriteCount > 0;
+        if (_confirmBeforeDelete || favoriteProtected)
         {
             _pendingDeleteTile = null;
             _pendingBulkDeleteSnapshot = snapshot;
+            string favoriteWarning = favoriteProtected
+                ? $"\n{favoriteCount:N0} favorite image(s) are included. Favorite images always require confirmation."
+                : "";
             ShowDeleteConfirmation(
-                $"{selected.Count:N0} selected images\nEach source will be moved independently to the Windows Recycle Bin. Failed images will remain available.",
-                $"Move {selected.Count:N0} selected images to Recycle Bin");
+                $"{selected.Count:N0} selected images\nEach source will be moved independently to the Windows Recycle Bin. Failed images will remain available.{favoriteWarning}",
+                $"Move {selected.Count:N0} selected images to Recycle Bin",
+                favoriteProtected);
             return true;
         }
 
-        return ExecuteBulkDelete(snapshot);
+        return ExecuteBulkDelete(snapshot, favoriteConfirmed: false);
     }
 
-    private void ShowDeleteConfirmation(string message, string confirmAutomationName)
+    private void ShowDeleteConfirmation(string message, string confirmAutomationName, bool favoriteProtected)
     {
         _deleteFocusBeforeDialog = Keyboard.FocusedElement;
+        _favoriteDeleteConfirmationRequired = favoriteProtected;
         DeleteConfirmationText.Text = message;
         System.Windows.Automation.AutomationProperties.SetName(DeleteConfirmButton, confirmAutomationName);
         DoNotAskAgainCheckBox.IsChecked = false;
+        DoNotAskAgainCheckBox.Visibility = favoriteProtected ? Visibility.Collapsed : Visibility.Visible;
+        DoNotAskAgainCheckBox.IsEnabled = !favoriteProtected;
         DeleteConfirmationDialog.Visibility = Visibility.Visible;
         Dispatcher.BeginInvoke(DeleteCancelButton.Focus, DispatcherPriority.Input);
     }
@@ -9732,6 +9750,7 @@ public partial class MainWindow : Window
     {
         _pendingDeleteTile = null;
         _pendingBulkDeleteSnapshot = null;
+        _favoriteDeleteConfirmationRequired = false;
         DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
         SetDeleteStatus("Move to Recycle Bin cancelled.");
         RestoreOverlayFocus(_deleteFocusBeforeDialog);
@@ -9741,23 +9760,35 @@ public partial class MainWindow : Window
     {
         Tile? tile = _pendingDeleteTile;
         DeleteSnapshot? bulkSnapshot = _pendingBulkDeleteSnapshot;
+        bool favoriteProtected = _favoriteDeleteConfirmationRequired;
         _pendingDeleteTile = null;
         _pendingBulkDeleteSnapshot = null;
+        _favoriteDeleteConfirmationRequired = false;
         DeleteConfirmationDialog.Visibility = Visibility.Collapsed;
-        if (DoNotAskAgainCheckBox.IsChecked == true)
+        if (!favoriteProtected && DoNotAskAgainCheckBox.IsChecked == true)
         {
             _confirmBeforeDelete = false;
             SaveState();
         }
         if (bulkSnapshot is not null)
-            ExecuteBulkDelete(bulkSnapshot);
+            ExecuteBulkDelete(bulkSnapshot, favoriteConfirmed: favoriteProtected);
         else if (tile is not null)
-            ExecuteDelete(tile);
+            ExecuteDelete(tile, favoriteConfirmed: favoriteProtected);
         RestoreOverlayFocus(_deleteFocusBeforeDialog);
     }
 
-    private bool ExecuteDelete(Tile tile)
+    private bool ExecuteDelete(Tile tile, bool favoriteConfirmed)
     {
+        // Keep the favorite guard at the destructive boundary as well as in
+        // the request UI. A future caller must not be able to bypass the
+        // mandatory confirmation by invoking execution directly.
+        int favoriteLevel = FavoriteLevelForDelete(tile);
+        if (favoriteLevel > 0 && !favoriteConfirmed)
+        {
+            SetDeleteStatus($"Move to Recycle Bin blocked: {tile.FileName} is Favorite level {favoriteLevel} and requires confirmation.");
+            return false;
+        }
+
         // Revalidate immediately before the only destructive boundary.
         if (!TryValidateDelete(tile, out string reason))
         {
@@ -9801,8 +9832,15 @@ public partial class MainWindow : Window
         return true;
     }
 
-    private bool ExecuteBulkDelete(DeleteSnapshot snapshot)
+    private bool ExecuteBulkDelete(DeleteSnapshot snapshot, bool favoriteConfirmed)
     {
+        int favoriteCount = snapshot.Targets.Count(tile => FavoriteLevelForDelete(tile) > 0);
+        if (favoriteCount > 0 && !favoriteConfirmed)
+        {
+            SetDeleteStatus($"Move to Recycle Bin blocked: {favoriteCount:N0} favorite image(s) require confirmation.");
+            return false;
+        }
+
         var succeeded = new List<Tile>();
         var failed = new List<(Tile Tile, string Reason)>();
         foreach (Tile tile in snapshot.Targets)
@@ -9866,6 +9904,9 @@ public partial class MainWindow : Window
         }
         return true;
     }
+
+    private int FavoriteLevelForDelete(Tile tile)
+        => Math.Max(Math.Clamp(tile.Fav, 0, 5), FavoriteLevelForPath(tile.Path));
 
     /// <summary>
     /// Reconciles WPF-owned UI references after the Recycle Bin backend has
@@ -11147,6 +11188,10 @@ public partial class MainWindow : Window
     public List<string> AllFileNamesForSmoke => _allTiles.Select(static tile => tile.FileName).ToList();
     public string DeleteStatusForSmoke => _deleteStatus;
     public bool DeleteConfirmationVisibleForSmoke => DeleteConfirmationDialog.Visibility == Visibility.Visible;
+    public string DeleteConfirmationTextForSmoke => DeleteConfirmationText.Text;
+    public bool FavoriteDeleteConfirmationRequiredForSmoke => _favoriteDeleteConfirmationRequired;
+    public bool DeleteDoNotAskAgainAvailableForSmoke
+        => DoNotAskAgainCheckBox.Visibility == Visibility.Visible && DoNotAskAgainCheckBox.IsEnabled;
     public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
     public bool DeleteStatusRetryVisibleForSmoke => DeleteStatusRetryButton.Visibility == Visibility.Visible;
     public bool AppSettingsVisibleForSmoke => AppSettingsDialog.Visibility == Visibility.Visible;
@@ -11338,6 +11383,14 @@ public partial class MainWindow : Window
     public int ShutdownPersistenceFlushCountForSmoke => _shutdownPersistenceFlushCount;
     public bool RequestDeleteSelectedForSmoke() => RequestDeleteSelected();
     public bool RequestBulkDeleteSelectedForSmoke() => RequestBulkDeleteSelected();
+    public bool ExecuteSelectedDeleteForSmoke(bool favoriteConfirmed)
+        => SelectedTile() is Tile tile && ExecuteDelete(tile, favoriteConfirmed);
+    public bool ExecuteSelectedBulkDeleteForSmoke(bool favoriteConfirmed)
+    {
+        List<Tile> selected = SelectedTiles().Where(static tile => tile.IsRealFile).ToList();
+        return selected.Count > 0
+            && ExecuteBulkDelete(new DeleteSnapshot(selected, _tiles.ToList()), favoriteConfirmed);
+    }
     public void CancelDeleteForSmoke() => DeleteCancel_Click(this, new RoutedEventArgs());
     public void ConfirmDeleteForSmoke(bool doNotAskAgain)
     {

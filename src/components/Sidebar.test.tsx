@@ -114,12 +114,22 @@ describe('Sidebar favorite level controls', () => {
     render(<Sidebar />);
 
     const slider = screen.getByRole('slider', { name: 'Thumbnail size' });
-    expect(slider).toHaveAttribute('min', '40');
+    expect(slider).toHaveAttribute('min', '20');
     expect(slider).toHaveAttribute('max', '600');
     expect(slider).toHaveAttribute('step', '20');
     fireEvent.change(slider, { target: { value: '260' } });
 
     expect(setView).toHaveBeenCalledWith({ thumbSize: 260 });
+  });
+
+  it('labels the maximum thumbnail endpoint as a one-column layout', () => {
+    const store = createStore();
+    store.view.thumbSize = 600;
+    vi.mocked(useImageStore).mockReturnValue(store);
+
+    render(<Sidebar />);
+
+    expect(screen.getByText('1 column')).toBeInTheDocument();
   });
 
   it('keeps the Size slider shrinkable without creating horizontal sidebar scroll', () => {

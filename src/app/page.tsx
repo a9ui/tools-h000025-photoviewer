@@ -22,6 +22,7 @@ import {
   sharedRecentToLocalMemory,
 } from '../lib/recentFolders';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import { getFavoriteDeleteProtection, shouldConfirmSourceDelete } from '../lib/favoriteDeleteProtection';
 import {
   formatBulkRecycleProgress,
   recycleImagesSequentially,
@@ -47,6 +48,7 @@ function ViewerApp() {
   const bulkDeleteReturnFocusRef = useRef<HTMLButtonElement>(null);
   const bulkDeleteActiveRef = useRef(false);
   const [bulkDeleteTargets, setBulkDeleteTargets] = useState<string[]>([]);
+  const [bulkDeleteFavoriteCount, setBulkDeleteFavoriteCount] = useState(0);
   const [isBulkDeleting, setIsBulkDeleting] = useState(false);
   const [bulkDeleteMessage, setBulkDeleteMessage] = useState('');
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
@@ -61,6 +63,7 @@ function ViewerApp() {
     if (bulkDeleteActiveRef.current) return;
     setShowBulkDeleteConfirm(false);
     setBulkDeleteTargets([]);
+    setBulkDeleteFavoriteCount(0);
   }, []);
   useDialogFocus({
     open: showBulkDeleteConfirm,
@@ -293,7 +296,10 @@ function ViewerApp() {
     }
   }, [decreaseFavoriteLevel, selectedCount, selectedIds]);
 
-  const deleteSelected = useCallback(async (requestedTargets: readonly string[]) => {
+  const deleteSelected = useCallback(async (
+    requestedTargets: readonly string[],
+    favoriteConfirmed = false,
+  ) => {
     if (bulkDeleteActiveRef.current) return;
     const targets = snapshotBulkRecycleTargets(requestedTargets);
     if (targets.length === 0) return;
@@ -303,14 +309,19 @@ function ViewerApp() {
     setShowBulkDeleteConfirm(false);
     setBulkDeleteMessage(`Moving 0/${targets.length} image(s) to Recycle Bin.`);
     try {
-      const result = await recycleImagesSequentially(targets, deleteImage, (progress) => {
+      const result = await recycleImagesSequentially(
+        targets,
+        (id) => deleteImage(id, { favoriteConfirmed }),
+        (progress) => {
         setBulkDeleteMessage(formatBulkRecycleProgress(progress));
-      });
+        },
+      );
       setBulkDeleteMessage(formatBulkRecycleProgress(result));
     } finally {
       bulkDeleteActiveRef.current = false;
       setIsBulkDeleting(false);
       setBulkDeleteTargets([]);
+      setBulkDeleteFavoriteCount(0);
       window.requestAnimationFrame(() => bulkDeleteReturnFocusRef.current?.focus());
     }
   }, [deleteImage]);
@@ -319,10 +330,12 @@ function ViewerApp() {
     if (bulkDeleteActiveRef.current) return;
     const targets = snapshotBulkRecycleTargets(selectedIds);
     if (targets.length === 0) return;
+    const protection = getFavoriteDeleteProtection(targets, favorites);
     setBulkDeleteTargets(targets);
-    if (confirmBeforeDelete) setShowBulkDeleteConfirm(true);
+    setBulkDeleteFavoriteCount(protection.favoriteCount);
+    if (shouldConfirmSourceDelete(confirmBeforeDelete, protection)) setShowBulkDeleteConfirm(true);
     else void deleteSelected(targets);
-  }, [confirmBeforeDelete, deleteSelected, selectedIds]);
+  }, [confirmBeforeDelete, deleteSelected, favorites, selectedIds]);
 
   useEffect(() => {
     if (phase !== 'viewer') return;
@@ -600,19 +613,25 @@ function ViewerApp() {
           <div ref={bulkDeleteConfirmRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title" tabIndex={-1}>
             <h3 id="bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{bulkDeleteTargets.length} image(s) will be moved to Recycle Bin.</p>
-            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
-              <input
-                type="checkbox"
-                checked={!confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
-              />
-              <span>Do not ask again</span>
-            </label>
+            {bulkDeleteFavoriteCount > 0 ? (
+              <p role="status">
+                {bulkDeleteFavoriteCount} favorite image(s) are included. Favorite images always require confirmation.
+              </p>
+            ) : (
+              <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+                <input
+                  type="checkbox"
+                  checked={!confirmBeforeDelete}
+                  onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+                />
+                <span>Do not ask again</span>
+              </label>
+            )}
             <div className="confirm-actions">
               <button ref={bulkDeleteCancelRef} className="btn-cancel" onClick={cancelBulkDelete}>Cancel</button>
               <button
                 className="btn-danger"
-                onClick={() => void deleteSelected(bulkDeleteTargets)}
+                onClick={() => void deleteSelected(bulkDeleteTargets, true)}
                 disabled={isBulkDeleting || bulkDeleteTargets.length === 0}
               >
                 {isBulkDeleting ? 'Moving...' : 'Move to Recycle Bin'}

@@ -2,8 +2,13 @@
 
 /* eslint-disable @next/next/no-img-element -- This component owns cancellable blob/object-URL caching and fallback recovery for local files; next/image cannot preserve that lifecycle. */
 
-import React, { useEffect, useState } from 'react';
-import { evictCachedImageUrl, getCachedImageUrl, loadCancellableCachedImageUrl } from '../lib/clientImageCache';
+import React, { useEffect, useRef, useState } from 'react';
+import {
+  evictCachedImageUrl,
+  getCachedImageUrl,
+  isImageSessionExpiredError,
+  loadCancellableCachedImageUrl,
+} from '../lib/clientImageCache';
 
 type CacheKind = 'thumb' | 'display';
 
@@ -12,7 +17,10 @@ type CachedImageProps = Omit<React.ImgHTMLAttributes<HTMLImageElement>, 'src'> &
   requestSrc?: string;
   fallbackSrc?: string;
   cacheKind: CacheKind;
+  onSessionExpired?: () => void;
 };
+
+const TRANSPARENT_IMAGE_DATA_URL = 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=';
 
 function resolveImageUrl(value: string) {
   try {
@@ -59,6 +67,7 @@ export default function CachedImage({
   cacheKind,
   alt,
   onError,
+  onSessionExpired,
   ...props
 }: CachedImageProps) {
   if (cacheKind === 'thumb') {
@@ -75,6 +84,7 @@ export default function CachedImage({
       cacheKind={cacheKind}
       alt={alt}
       onError={onError}
+      onSessionExpired={onSessionExpired}
     />
   );
 }
@@ -113,13 +123,23 @@ function BlobCachedImage({
   cacheKind,
   alt,
   onError,
+  onSessionExpired,
   ...props
 }: CachedImageProps) {
   const { shouldUseFallback, markFailed } = useResolvedFallbackSrc(src, requestSrc, fallbackSrc);
   const [renderedSrc, setRenderedSrc] = useState<string | null>(() => getCachedImageUrl(src, cacheKind));
+  const [sessionExpired, setSessionExpired] = useState(false);
+  const sessionExpiredNotifiedRef = useRef(false);
+  const onSessionExpiredRef = useRef(onSessionExpired);
+
+  useEffect(() => {
+    onSessionExpiredRef.current = onSessionExpired;
+  }, [onSessionExpired]);
 
   useEffect(() => {
     let cancelled = false;
+    sessionExpiredNotifiedRef.current = false;
+    setSessionExpired(false);
     const cached = getCachedImageUrl(src, cacheKind);
     if (cached) {
       setRenderedSrc(cached);
@@ -134,8 +154,18 @@ function BlobCachedImage({
       .then((objectUrl) => {
         if (!cancelled) setRenderedSrc(objectUrl);
       })
-      .catch(() => {
-        if (!cancelled) setRenderedSrc(fallbackSrc ?? src);
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (isImageSessionExpiredError(error)) {
+          setRenderedSrc(null);
+          setSessionExpired(true);
+          if (!sessionExpiredNotifiedRef.current) {
+            sessionExpiredNotifiedRef.current = true;
+            onSessionExpiredRef.current?.();
+          }
+          return;
+        }
+        setRenderedSrc(fallbackSrc ?? src);
       });
 
     return () => {
@@ -144,16 +174,19 @@ function BlobCachedImage({
     };
   }, [cacheKind, fallbackSrc, requestSrc, src]);
 
-  const immediateSrc = shouldUseFallback ? fallbackSrc ?? src : renderedSrc ?? requestSrc ?? src;
+  const immediateSrc = sessionExpired
+    ? TRANSPARENT_IMAGE_DATA_URL
+    : shouldUseFallback ? fallbackSrc ?? src : renderedSrc ?? requestSrc ?? src;
 
   return (
     <img
       {...props}
       alt={alt ?? ''}
       src={immediateSrc}
+      data-image-session-expired={sessionExpired ? 'true' : undefined}
       onError={(event) => {
         const currentSrc = event.currentTarget.currentSrc || event.currentTarget.src || immediateSrc;
-        if (renderedSrc && resolveImageUrl(currentSrc) === resolveImageUrl(renderedSrc)) {
+        if (renderedSrc?.startsWith('blob:') && resolveImageUrl(currentSrc) === resolveImageUrl(renderedSrc)) {
           evictCachedImageUrl(src, cacheKind);
           setRenderedSrc(null);
         }

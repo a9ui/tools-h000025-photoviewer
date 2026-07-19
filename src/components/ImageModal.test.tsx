@@ -1,5 +1,5 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_KEY_BINDINGS, type ImageFile } from '../lib/types';
 import ImageModal from './ImageModal';
@@ -11,6 +11,8 @@ const store = vi.hoisted(() => ({
   setModalImageIds: vi.fn(),
   searchResults: [] as Array<Record<string, unknown>>,
   selectedIndex: 0 as number | null,
+  favorites: {} as Record<string, number>,
+  reportImageSessionExpired: vi.fn(),
 }));
 
 const fixtures = vi.hoisted(() => {
@@ -62,7 +64,7 @@ vi.mock('../store/ImageContext', () => ({
     resolveModalNavigationTarget: store.resolveModalNavigationTarget,
     cycleFavoriteLevel: vi.fn(),
     decreaseFavoriteLevel: vi.fn(),
-    favorites: {},
+    favorites: store.favorites,
     markImageSeen: vi.fn(),
     requestRevealImage: vi.fn(),
     keyBindings: DEFAULT_KEY_BINDINGS,
@@ -72,6 +74,7 @@ vi.mock('../store/ImageContext', () => ({
     setConfirmBeforeDelete: vi.fn(),
     view: { modalEdgeRatio: 0.28 },
     indexToken: null,
+    reportImageSessionExpired: store.reportImageSessionExpired,
   }),
 }));
 
@@ -89,6 +92,8 @@ describe('ImageModal sparse navigation lock', () => {
     vi.clearAllMocks();
     store.searchResults = [fixtures.first, fixtures.second];
     store.selectedIndex = 0;
+    store.favorites = {};
+    store.reportImageSessionExpired.mockReset();
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({ jobs: [] }),
@@ -106,7 +111,7 @@ describe('ImageModal sparse navigation lock', () => {
     render(<ImageModal />);
 
     fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
-    await waitFor(() => expect(store.deleteImage).toHaveBeenCalledWith(firstImage.id));
+    await waitFor(() => expect(store.deleteImage).toHaveBeenCalledWith(firstImage.id, { favoriteConfirmed: false }));
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Move image to Recycle Bin' })).not.toBeDisabled();
     });
@@ -115,6 +120,52 @@ describe('ImageModal sparse navigation lock', () => {
     await waitFor(() => {
       expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(0, 'next');
       expect(store.setSelectedIndex).toHaveBeenCalledWith(1);
+    });
+  });
+
+  it('keeps the existing thumbnail visible and reports an expired full-image session once', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/enhance/jobs')) {
+        return { ok: true, json: async () => ({ jobs: [] }) } as Response;
+      }
+      return new Response('expired', { status: 410 });
+    }));
+
+    render(<ImageModal />);
+
+    await waitFor(() => expect(store.reportImageSessionExpired).toHaveBeenCalledTimes(1));
+    const images = screen.getAllByRole('img', { name: firstImage.filename });
+    const thumbnail = images.find((image) => image.classList.contains('modal-thumb-preview'));
+    const fullImage = images.find((image) => image.classList.contains('modal-full-image'));
+    expect(thumbnail).toBeDefined();
+    expect(fullImage).toBeDefined();
+    if (!thumbnail || !fullImage) throw new Error('expected thumbnail and full modal images');
+    expect(thumbnail.getAttribute('src')).toContain('/api/image?first');
+    expect(thumbnail).toHaveClass('is-thumb-preview');
+    expect(fullImage).toHaveAttribute('data-image-session-expired', 'true');
+    expect(fullImage).toHaveClass('is-full-loading');
+  });
+
+  it('always confirms a favorite even when ordinary delete confirmation is disabled', async () => {
+    store.favorites = { [firstImage.id]: 4 };
+    store.deleteImage.mockResolvedValue(false);
+    render(<ImageModal />);
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
+
+    const dialog = await screen.findByRole('alertdialog');
+    expect(dialog).toHaveTextContent('favorite level 4');
+    expect(within(dialog).queryByText('Do not ask again')).not.toBeInTheDocument();
+    expect(store.deleteImage).not.toHaveBeenCalled();
+
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    expect(store.deleteImage).not.toHaveBeenCalled();
+
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
+    const confirmedDialog = await screen.findByRole('alertdialog');
+    fireEvent.click(within(confirmedDialog).getByRole('button', { name: 'Move to Recycle Bin' }));
+    await waitFor(() => {
+      expect(store.deleteImage).toHaveBeenCalledWith(firstImage.id, { favoriteConfirmed: true });
     });
   });
 
@@ -157,7 +208,7 @@ describe('ImageModal sparse navigation lock', () => {
     fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.deleteImage });
     await waitFor(() => expect(store.setSelectedIndex).toHaveBeenCalledWith(2));
     expect(store.deleteImage).toHaveBeenCalledTimes(1);
-    expect(store.deleteImage).toHaveBeenCalledWith(secondImage.id);
+    expect(store.deleteImage).toHaveBeenCalledWith(secondImage.id, { favoriteConfirmed: false });
     expect(store.resolveModalNavigationTarget).toHaveBeenCalledTimes(1);
     expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(1, 'delete');
     expect(store.setSelectedIndex).toHaveBeenCalledTimes(1);

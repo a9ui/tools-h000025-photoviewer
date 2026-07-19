@@ -6,6 +6,7 @@ import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type Fol
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import { MAX_THUMB_SIZE, MIN_THUMB_SIZE, THUMB_ZOOM_STEP } from '../lib/thumbnailSizing';
 
 function createRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -606,13 +607,15 @@ export default function Sidebar() {
             type="range"
             className="sidebar-slider"
             aria-label="Thumbnail size"
-            min={40}
-            max={600}
-            step={20}
+            min={MIN_THUMB_SIZE}
+            max={MAX_THUMB_SIZE}
+            step={THUMB_ZOOM_STEP}
             value={view.thumbSize}
             onChange={(e) => setView({ thumbSize: parseInt(e.target.value, 10) })}
           />
-          <span className="sidebar-row-value">{view.thumbSize}px</span>
+          <span className="sidebar-row-value">
+            {view.thumbSize >= MAX_THUMB_SIZE ? '1 column' : `${view.thumbSize}px`}
+          </span>
         </div>
       </div>
 

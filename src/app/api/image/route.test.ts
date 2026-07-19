@@ -2,15 +2,16 @@ import fs from "fs";
 import os from "os";
 import path from "path";
 import { NextRequest } from "next/server";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createImageHandler } from "./route";
 
 const createdPaths: string[] = [];
 
-function imageRequest(filePath: string) {
+function imageRequest(filePath: string, indexToken?: string) {
   const url = new URL("http://127.0.0.1/api/image");
   url.searchParams.set("path", filePath);
+  if (indexToken) url.searchParams.set("indexToken", indexToken);
   return new NextRequest(url);
 }
 
@@ -28,6 +29,7 @@ describe("image route active-index boundary", () => {
     const handler = createImageHandler({
       platform: process.platform,
       getIndexedPaths: () => [path.join(os.tmpdir(), "other.png")],
+      hasIndexSession: () => true,
     });
 
     const response = await handler(imageRequest(requestedPath));
@@ -46,6 +48,7 @@ describe("image route active-index boundary", () => {
     const handler = createImageHandler({
       platform: process.platform,
       getIndexedPaths: () => [indexedPath],
+      hasIndexSession: () => true,
     });
 
     const response = await handler(imageRequest(indexedPath));
@@ -55,5 +58,22 @@ describe("image route active-index boundary", () => {
     expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([
       0x89, 0x50, 0x4e, 0x47,
     ]);
+  });
+
+  it("returns 410 for an explicit viewer session that no longer exists without falling back to the active index", async () => {
+    const requestedPath = path.join(os.tmpdir(), "photoviewer-expired-session.png");
+    const getIndexedPaths = vi.fn(() => [requestedPath]);
+    const handler = createImageHandler({
+      platform: process.platform,
+      getIndexedPaths,
+      hasIndexSession: () => false,
+    });
+
+    const response = await handler(imageRequest(requestedPath, "idx_expired"));
+
+    expect(response.status).toBe(410);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(await response.text()).toContain("viewer session expired");
+    expect(getIndexedPaths).not.toHaveBeenCalled();
   });
 });

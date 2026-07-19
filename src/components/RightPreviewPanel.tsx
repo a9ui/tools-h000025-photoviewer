@@ -5,6 +5,7 @@ import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
 import { useDialogFocus } from '../lib/useDialogFocus';
+import { getFavoriteDeleteProtection, shouldConfirmSourceDelete } from '../lib/favoriteDeleteProtection';
 import { formatBulkRecycleProgress, recycleImagesSequentially } from '../lib/bulkRecycle';
 
 const MIN_PANEL_WIDTH = 240;
@@ -69,6 +70,7 @@ export default function RightPreviewPanel() {
   } = useImageStore();
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
+  const [bulkDeleteFavoriteCount, setBulkDeleteFavoriteCount] = useState(0);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
   const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
   const [bulkMessage, setBulkMessage] = useState('');
@@ -216,19 +218,24 @@ export default function RightPreviewPanel() {
     setEnhanceMessage(`Enhance queued for ${queued} image(s).`);
   };
 
-  const executeBulkDelete = async () => {
+  const executeBulkDelete = async (favoriteConfirmed = false) => {
     if (selectedCount === 0) return;
     const targets = [...selectedIds];
-    const result = await recycleImagesSequentially(targets, deleteImage, (progress) => {
+    const result = await recycleImagesSequentially(targets, (id) => (
+      deleteImage(id, { favoriteConfirmed })
+    ), (progress) => {
       setBulkMessage(formatBulkRecycleProgress(progress));
     });
     setConfirmBulkDelete(false);
+    setBulkDeleteFavoriteCount(0);
     setBulkMessage(formatBulkRecycleProgress(result));
   };
 
   const handleBulkDeleteRequest = () => {
     if (selectedCount === 0) return;
-    if (confirmBeforeDelete) setConfirmBulkDelete(true);
+    const protection = getFavoriteDeleteProtection(selectedIds, favorites);
+    setBulkDeleteFavoriteCount(protection.favoriteCount);
+    if (shouldConfirmSourceDelete(confirmBeforeDelete, protection)) setConfirmBulkDelete(true);
     else void executeBulkDelete();
   };
 
@@ -369,21 +376,33 @@ export default function RightPreviewPanel() {
 
       {confirmBulkDelete && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setConfirmBulkDelete(false)} />
+          <div className="confirm-backdrop" aria-hidden="true" onClick={() => {
+            setConfirmBulkDelete(false);
+            setBulkDeleteFavoriteCount(0);
+          }} />
           <div ref={confirmPanelRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="preview-bulk-delete-title" tabIndex={-1}>
             <h3 id="preview-bulk-delete-title">Move selected images to Recycle Bin?</h3>
             <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
-            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
-              <input
-                type="checkbox"
-                checked={!confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
-              />
-              <span>Do not ask again</span>
-            </label>
+            {bulkDeleteFavoriteCount > 0 ? (
+              <p role="status">
+                {bulkDeleteFavoriteCount} favorite image(s) are included. Favorite images always require confirmation.
+              </p>
+            ) : (
+              <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+                <input
+                  type="checkbox"
+                  checked={!confirmBeforeDelete}
+                  onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+                />
+                <span>Do not ask again</span>
+              </label>
+            )}
             <div className="confirm-actions">
-              <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => setConfirmBulkDelete(false)}>Cancel</button>
-              <button className="btn-danger" onClick={() => void executeBulkDelete()}>Move to Recycle Bin</button>
+              <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => {
+                setConfirmBulkDelete(false);
+                setBulkDeleteFavoriteCount(0);
+              }}>Cancel</button>
+              <button className="btn-danger" onClick={() => void executeBulkDelete(true)}>Move to Recycle Bin</button>
             </div>
           </div>
         </div>

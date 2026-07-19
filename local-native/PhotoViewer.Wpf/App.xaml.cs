@@ -8250,6 +8250,7 @@ public partial class App : Application
                 bool tabCharlie = win.SelectFileNameForSmoke("charlie.png") && win.OpenSelectedPreviewTabForSmoke();
                 win.SetFavoriteOnlyFilterForSmoke(true);
                 bool bulkSelected = win.SelectRangeForSmoke(0, 1);
+                win.SetConfirmBeforeDeleteForSmoke(false);
                 List<string> beforeCancelSelection = win.SelectedFileNamesForSmoke;
                 int backendCalls = 0;
                 bool hardDeleteAttempted = false;
@@ -8264,7 +8265,11 @@ public partial class App : Application
                     return RecycleBinDeleteResult.Success;
                 });
 
-                bool promptedCancel = win.RequestBulkDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
+                bool promptedCancel = win.RequestBulkDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke
+                    && win.DeleteConfirmationTextForSmoke.Contains("2 favorite image", StringComparison.OrdinalIgnoreCase);
                 bool accessibleBulkAction = win.BulkDeleteButtonAccessibleForSmoke && win.DeleteFocusTrapConfiguredForSmoke;
                 win.CancelDeleteForSmoke();
                 bool cancelMutatedNothing = backendCalls == 0
@@ -8272,7 +8277,14 @@ public partial class App : Application
                     && win.CatalogCountForSmoke == 4
                     && beforeCancelSelection.SequenceEqual(win.SelectedFileNamesForSmoke, StringComparer.OrdinalIgnoreCase);
 
-                bool promptedConfirm = win.RequestBulkDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
+                bool executionBoundaryBlocked = !win.ExecuteSelectedBulkDeleteForSmoke(favoriteConfirmed: false)
+                    && backendCalls == 0
+                    && File.Exists(bravoPath) && File.Exists(charliePath)
+                    && beforeCancelSelection.SequenceEqual(win.SelectedFileNamesForSmoke, StringComparer.OrdinalIgnoreCase);
+                bool promptedConfirm = win.RequestBulkDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke;
                 win.ConfirmDeleteForSmoke(doNotAskAgain: true);
                 ViewerState? persistedAfterPartial = ReadPersistedState(statePath);
                 bool partialStateCorrect = !File.Exists(bravoPath) && File.Exists(charliePath)
@@ -8294,8 +8306,12 @@ public partial class App : Application
 
                 bool modalOpened = win.OpenModalForSmoke();
                 failCharlie = false;
-                bool finalExecuted = win.RequestBulkDeleteSelectedForSmoke();
-                bool emptyAfterFinal = finalExecuted
+                bool finalPrompted = win.RequestBulkDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke;
+                win.ConfirmDeleteForSmoke(doNotAskAgain: true);
+                bool emptyAfterFinal = finalPrompted
                     && win.FilteredCountForSmoke == 0
                     && win.SelectedCountForSmoke == 0
                     && !win.ModalVisibleForSmoke
@@ -8308,7 +8324,7 @@ public partial class App : Application
                     && File.Exists(alphaPath) && !File.Exists(bravoPath) && !File.Exists(charliePath) && !File.Exists(deltaPath);
 
                 bool ok = favoriteBravo && favoriteCharlie && favoriteDelta && tabBravo && tabCharlie && bulkSelected
-                    && promptedCancel && accessibleBulkAction && cancelMutatedNothing
+                    && promptedCancel && accessibleBulkAction && cancelMutatedNothing && executionBoundaryBlocked
                     && promptedConfirm && partialStateCorrect && filteredNeighborSelected && partialStatus
                     && modalOpened && emptyAfterFinal && recycleOnly;
                 result = new BulkRecycleSmokeResult
@@ -8318,6 +8334,7 @@ public partial class App : Application
                         ? "bulk Recycle Bin cancel, partial failure, filtered neighbor, persisted state cleanup, and final empty state passed"
                         : "bulk Recycle Bin workflow did not satisfy the guarded selection contract",
                     CancelMutatedNothing = cancelMutatedNothing,
+                    ExecutionBoundaryBlocked = executionBoundaryBlocked,
                     PartialStateCorrect = partialStateCorrect,
                     FilteredNeighborSelected = filteredNeighborSelected,
                     PartialStatus = partialStatus,
@@ -8442,12 +8459,20 @@ public partial class App : Application
                 win.ResetProtectedDeleteRootsForSmoke();
 
                 win.SelectFileNameForSmoke("alpha.png");
-                win.SetConfirmBeforeDeleteForSmoke(true);
-                bool cancelPrompted = win.RequestDeleteSelectedForSmoke() && win.DeleteConfirmationVisibleForSmoke;
+                win.SetConfirmBeforeDeleteForSmoke(false);
+                bool cancelPrompted = win.RequestDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke
+                    && win.DeleteConfirmationTextForSmoke.Contains("Favorite level 1", StringComparison.OrdinalIgnoreCase);
                 win.CancelDeleteForSmoke();
                 bool cancelNonMutation = cancelPrompted && backendCalls == 0 && File.Exists(alphaPath)
                     && win.CatalogCountForSmoke == names.Length && string.Equals(win.SelectedFileNameForSmoke, "alpha.png", StringComparison.OrdinalIgnoreCase);
                 win.SetConfirmBeforeDeleteForSmoke(false);
+                bool singleBoundaryBlocked = !win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: false)
+                    && backendCalls == 0 && File.Exists(alphaPath)
+                    && win.CatalogCountForSmoke == names.Length
+                    && string.Equals(win.SelectedFileNameForSmoke, "alpha.png", StringComparison.OrdinalIgnoreCase);
 
                 string favoritesBefore = FileFingerprint(favoritesPath);
                 string seenBefore = FileFingerprint(seenPath);
@@ -8457,7 +8482,12 @@ public partial class App : Application
                 bool singleTabOpened = win.OpenSelectedPreviewTabForSmoke();
                 bool singlePinned = win.TogglePreviewTabPinForSmoke("alpha.png") && win.IsPreviewTabPinnedForSmoke("alpha.png");
                 bool singleModalOpened = win.OpenModalForSmoke();
-                bool singleDeleted = win.RequestDeleteSelectedForSmoke();
+                bool singlePrompted = win.RequestDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke;
+                win.ConfirmDeleteForSmoke(doNotAskAgain: true);
+                bool singleDeleted = singlePrompted && backendCalls == 1;
                 ViewerState? stateAfterSingle = ReadPersistedState(statePath);
                 bool singleUiReconciled = singleTabOpened && singlePinned && singleModalOpened && singleDeleted
                     && !File.Exists(alphaPath) && File.Exists(Path.Combine(recycle, "alpha.png"))
@@ -8484,7 +8514,13 @@ public partial class App : Application
                 int deltaIndex = bulkOrder.FindIndex(name => string.Equals(name, "delta.png", StringComparison.OrdinalIgnoreCase));
                 bool bulkSelected = charlieIndex >= 0 && deltaIndex == charlieIndex + 1 && win.SelectRangeForSmoke(charlieIndex, deltaIndex);
                 bool bulkModalOpened = win.OpenModalForSmoke();
-                bool bulkExecuted = win.RequestBulkDeleteSelectedForSmoke();
+                bool bulkPrompted = win.RequestBulkDeleteSelectedForSmoke()
+                    && win.DeleteConfirmationVisibleForSmoke
+                    && win.FavoriteDeleteConfirmationRequiredForSmoke
+                    && !win.DeleteDoNotAskAgainAvailableForSmoke
+                    && win.DeleteConfirmationTextForSmoke.Contains("2 favorite image", StringComparison.OrdinalIgnoreCase);
+                win.ConfirmDeleteForSmoke(doNotAskAgain: true);
+                bool bulkExecuted = bulkPrompted && backendCalls == 3;
                 ViewerState? stateAfterBulk = ReadPersistedState(statePath);
                 bool partialFailureCorrect = charliePrepared && deltaTabOpened && bulkSelected && bulkModalOpened && bulkExecuted
                     && !File.Exists(charliePath) && File.Exists(Path.Combine(recycle, "charlie.png"))
@@ -8538,7 +8574,7 @@ public partial class App : Application
                     && File.Exists(bravoPath) && File.Exists(deltaPath) && File.Exists(echoPath) && File.Exists(escapePath)
                     && File.Exists(protectedTarget);
 
-                ok = projectAppRootBlocked && canonicalProtectedEscapeBlocked && cancelNonMutation
+                ok = projectAppRootBlocked && canonicalProtectedEscapeBlocked && cancelNonMutation && singleBoundaryBlocked
                     && singleUiReconciled && partialFailureCorrect && retainedHistory
                     && deadUiAbsentAfterReload && storesStillByteIdentical && recycleOnly;
                 result = new
@@ -8550,6 +8586,7 @@ public partial class App : Application
                     projectAppRootBlocked,
                     canonicalProtectedEscapeBlocked,
                     cancelNonMutation,
+                    singleBoundaryBlocked,
                     singleUiReconciled,
                     partialFailureCorrect,
                     retainedHistory,
@@ -8685,7 +8722,7 @@ public partial class App : Application
                     && win.OpenModalForSmoke();
                 Task<PreviewDecodeSmokeSnapshot> stalePreviewTask = win.WaitForCurrentPreviewDecodeForSmokeAsync("charlie.png");
                 bool modalFocused = win.FocusModalCloseForSmoke();
-                bool charlieDeleted = win.RequestDeleteSelectedForSmoke();
+                bool charlieDeleted = win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: true);
                 PreviewDecodeSmokeSnapshot stalePreview = await stalePreviewTask;
                 await Task.Delay(500);
                 ViewerState? stateAfterAsyncDelete = ReadPersistedState(statePath);
@@ -8722,11 +8759,11 @@ public partial class App : Application
                         throw new InvalidOperationException($"could not prepare sparse delete for {target}");
                 }
                 bool selectedDelta = win.SelectFileNameForSmoke("delta.png");
-                bool deltaToNext = win.RequestDeleteSelectedForSmoke()
+                bool deltaToNext = win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: true)
                     && string.Equals(win.SelectedFileNameForSmoke, "golf.png", StringComparison.OrdinalIgnoreCase);
-                bool golfToPrevious = win.RequestDeleteSelectedForSmoke()
+                bool golfToPrevious = win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: true)
                     && string.Equals(win.SelectedFileNameForSmoke, "bravo.png", StringComparison.OrdinalIgnoreCase);
-                bool bravoToEmpty = win.RequestDeleteSelectedForSmoke()
+                bool bravoToEmpty = win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: true)
                     && win.FilteredCountForSmoke == 0
                     && win.SelectedCountForSmoke == 0
                     && win.RightPreviewEmptyForSmoke
@@ -8763,7 +8800,7 @@ public partial class App : Application
                     && win.ToggleSelectionForSmoke(foxtrotIndex);
                 bool bulkModal = win.OpenModalForSmoke() && win.FocusModalCloseForSmoke();
                 failEcho = true;
-                bool bulkPartialExecuted = win.RequestBulkDeleteSelectedForSmoke();
+                bool bulkPartialExecuted = win.ExecuteSelectedBulkDeleteForSmoke(favoriteConfirmed: true);
                 failEcho = false;
                 ViewerState? stateAfterBulk = ReadPersistedState(statePath);
                 string[] bulkRemoved = [alphaPath, foxtrotPath];
@@ -8820,7 +8857,7 @@ public partial class App : Application
                     win.Dispatcher.BeginInvoke(() =>
                     {
                         refreshDeleteDuringCatalogYield = string.Equals(win.LoadPhaseForSmoke, "publishing", StringComparison.Ordinal)
-                            && win.RequestDeleteSelectedForSmoke();
+                            && win.ExecuteSelectedDeleteForSmoke(favoriteConfirmed: true);
                     }, DispatcherPriority.Input);
                 });
                 Task refreshTask = win.RefreshActiveFolderForSmokeAsync();
@@ -17990,6 +18027,7 @@ public partial class App : Application
         public bool Ok { get; init; }
         public string Message { get; init; } = "";
         public bool CancelMutatedNothing { get; init; }
+        public bool ExecutionBoundaryBlocked { get; init; }
         public bool PartialStateCorrect { get; init; }
         public bool FilteredNeighborSelected { get; init; }
         public bool PartialStatus { get; init; }

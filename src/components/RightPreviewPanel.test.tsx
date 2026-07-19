@@ -155,6 +155,28 @@ describe('RightPreviewPanel bulk favorite levels', () => {
 });
 
 describe('RightPreviewPanel bulk recycle', () => {
+  it('requires confirmation for any favorite even when ordinary confirmation is disabled', () => {
+    const secondId = 'C:/images/second.png';
+    const store = createStore({
+      withPreview: true,
+      selectedIds: [previewImage.id, secondId],
+      searchResults: [previewImage, { ...previewImage, id: secondId }],
+      favorites: { [secondId]: 5 },
+    });
+    store.confirmBeforeDelete = false;
+    vi.mocked(useImageStore).mockReturnValue(store);
+    render(<RightPreviewPanel />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Recycle' }));
+
+    expect(screen.getByRole('alertdialog')).toHaveTextContent('1 favorite image(s) are included');
+    expect(screen.queryByText('Do not ask again')).not.toBeInTheDocument();
+    expect(store.deleteImage).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(store.deleteImage).not.toHaveBeenCalled();
+  });
+
   it('keeps failed image ids selected for retry after a partial recycle', async () => {
     const secondId = 'C:/images/second.png';
     const store = createStore({
@@ -173,8 +195,8 @@ describe('RightPreviewPanel bulk recycle', () => {
 
     expect(await screen.findByText('Moved 1/2 image(s) to Recycle Bin. 1 failed and remain selected for retry.'))
       .toBeInTheDocument();
-    expect(store.deleteImage).toHaveBeenNthCalledWith(1, previewImage.id);
-    expect(store.deleteImage).toHaveBeenNthCalledWith(2, secondId);
+    expect(store.deleteImage).toHaveBeenNthCalledWith(1, previewImage.id, { favoriteConfirmed: true });
+    expect(store.deleteImage).toHaveBeenNthCalledWith(2, secondId, { favoriteConfirmed: true });
     expect(store.clearSelection).not.toHaveBeenCalled();
   });
 });

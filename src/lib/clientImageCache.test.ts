@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   clearClientImageCacheForTests,
   getClientImageCacheStatsForTests,
+  isImageSessionExpiredError,
   loadCachedImageUrl,
   loadCancellableCachedImageUrl,
 } from './clientImageCache';
@@ -110,6 +111,25 @@ describe('client image cache', () => {
 
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(createObjectUrl).toHaveBeenCalledTimes(1);
+  });
+
+  it('preserves a 410 response as a distinguishable expired-session error', async () => {
+    vi.stubGlobal('fetch', vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 410,
+    } as Response)));
+
+    const error = await loadCachedImageUrl('display-expired', '/api/image/expired', 'display')
+      .then(() => null, (reason: unknown) => reason);
+
+    expect(isImageSessionExpiredError(error)).toBe(true);
+    expect(error).toMatchObject({ name: 'ImageRequestError', status: 410 });
+    expect(getClientImageCacheStatsForTests('display')).toEqual({
+      entries: 0,
+      pending: 0,
+      objectUrls: 0,
+      consumers: 0,
+    });
   });
 
   it('keeps only the current display load active in a rapid navigation sequence', async () => {

@@ -280,8 +280,11 @@ function DeleteCleanupProbe() {
         markImageSeen(previewProbeImage.id);
       }}>Prepare deleted references</button>
       <button type="button" onClick={async () => {
-        setDeleteResult(String(await deleteImage(previewProbeImage.id)));
+        setDeleteResult(String(await deleteImage(previewProbeImage.id, { favoriteConfirmed: true })));
       }}>Recycle deleted source</button>
+      <button type="button" onClick={async () => {
+        setDeleteResult(String(await deleteImage(previewProbeImage.id)));
+      }}>Try unconfirmed favorite recycle</button>
       <button type="button" onClick={restoreLastClosedPreview}>Restore last closed preview</button>
       <button type="button" onClick={() => selectImage(
         thirdPreviewProbeImage,
@@ -304,6 +307,7 @@ function SearchProbe() {
     searchError,
     searchErrorKind,
     retrySearch,
+    reportImageSessionExpired,
     rescanExpiredSearchSession,
     view,
     setView,
@@ -332,6 +336,7 @@ function SearchProbe() {
         setView({ sortBy: 'name' });
       }}>Churn query then change sort</button>
       <button type="button" onClick={retrySearch}>Retry current search</button>
+      <button type="button" onClick={reportImageSessionExpired}>Report expired image session</button>
       <button type="button" onClick={rescanExpiredSearchSession}>Rescan expired session</button>
     </div>
   );
@@ -2516,8 +2521,8 @@ describe('ImageProvider catalog switch ownership', () => {
       .toHaveTextContent(thirdPreviewProbeImage.id));
     expect(screen.getByRole('status', { name: 'catalog switch preview tabs' })).toHaveTextContent(previewProbeImage.id);
     expect(screen.getByRole('status', { name: 'catalog switch preview cache' })).toHaveTextContent(previewProbeImage.id);
-    expect(screen.getByRole('status', { name: 'catalog switch preview cache' }))
-      .not.toHaveTextContent(secondPreviewProbeImage.id);
+    await waitFor(() => expect(screen.getByRole('status', { name: 'catalog switch preview cache' }))
+      .not.toHaveTextContent(secondPreviewProbeImage.id));
   });
 
   it('clears all browser-owned volatile references only after a different catalog succeeds', async () => {
@@ -2632,6 +2637,27 @@ describe('ImageProvider source recycle UI ownership', () => {
   beforeEach(() => {
     localStorage.clear();
     vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  });
+
+  it('blocks an unconfirmed favorite at the action boundary without any mutation', async () => {
+    const fetchMock = createSourceRecycleFetch(true);
+    vi.stubGlobal('fetch', fetchMock);
+    render(<ImageProvider><DeleteCleanupProbe /></ImageProvider>);
+    const user = await prepareDeletedReferences();
+
+    fetchMock.mockClear();
+    await user.click(screen.getByRole('button', { name: 'Try unconfirmed favorite recycle' }));
+
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'delete result' })).toHaveTextContent('false');
+    });
+    expect(fetchMock.mock.calls.some(([input]) => String(input).includes('/api/delete'))).toBe(false);
+    expect(screen.getByRole('status', { name: 'delete modal ids' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete selected ids' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete preview tabs' })).toHaveTextContent(previewProbeImage.id);
+    expect(screen.getByRole('status', { name: 'delete favorite history' })).toHaveTextContent('4');
+    expect(screen.getByRole('status', { name: 'delete seen history' })).toHaveTextContent('seen');
   });
 
   it('purges every volatile path reference after recycle while retaining shared history', async () => {
@@ -2873,7 +2899,7 @@ describe('ImageProvider search recovery', () => {
     });
 
     fireEvent.click(screen.getByRole('button', { name: 'Rescan expired session' }));
-    expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('scanning');
+    expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('viewer');
     expect(MockEventSource.instances[0].url).toContain('dir=C%3A%2Fimages');
     act(() => {
       MockEventSource.instances[0].onmessage?.({
@@ -2886,6 +2912,50 @@ describe('ImageProvider search recovery', () => {
       expect(screen.getByRole('status', { name: 'search error state' })).toHaveTextContent('');
       expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(secondPreviewProbeImage.id);
     });
+  });
+
+  it('automatically refreshes an expired image session once and keeps manual retry after failure', async () => {
+    MockEventSource.instances = [];
+    vi.stubGlobal('EventSource', MockEventSource);
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/search')) {
+        return { ok: true, json: async () => ({ results: [previewProbeImage], total: 1, page: 0, totalPages: 1 }) } as Response;
+      }
+      return { ok: true, json: async () => ({ favorites: {}, jobs: [] }) } as Response;
+    }));
+
+    render(
+      <ImageProvider>
+        <SearchProbe />
+      </ImageProvider>
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Load initial search' }));
+    await screen.findByText(previewProbeImage.id);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Report expired image session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Report expired image session' }));
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search error kind' })).toHaveTextContent('session-expired');
+      expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(previewProbeImage.id);
+    });
+    expect(MockEventSource.instances).toHaveLength(1);
+    expect(MockEventSource.instances[0].url).toContain('dir=C%3A%2Fimages');
+    expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('viewer');
+
+    act(() => {
+      MockEventSource.instances[0].onerror?.(new Event('error'));
+    });
+    await waitFor(() => {
+      expect(screen.getByRole('status', { name: 'search error state' }))
+        .toHaveTextContent('Automatic viewer session refresh failed');
+      expect(screen.getByRole('status', { name: 'search result ids' })).toHaveTextContent(previewProbeImage.id);
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rescan expired session' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Rescan expired session' }));
+    expect(MockEventSource.instances).toHaveLength(2);
+    expect(MockEventSource.instances[1].url).toContain('dir=C%3A%2Fimages');
+    expect(screen.getByRole('status', { name: 'search phase' })).toHaveTextContent('viewer');
   });
 
   it('discards a stale 410 when a newer search generation succeeds', async () => {

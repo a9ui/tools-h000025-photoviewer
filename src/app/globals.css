@@ -2184,6 +2184,17 @@ a { color: inherit; text-decoration: none; }
 .modal-image-area img.is-thumb-preview {
   filter: saturate(0.92);
 }
+.modal-image-area img.modal-thumb-preview {
+  position: absolute;
+  z-index: 0;
+}
+.modal-image-area img.modal-full-image {
+  position: relative;
+  z-index: 1;
+}
+.modal-image-area img.modal-full-image.is-full-loading {
+  opacity: 0;
+}
 .modal-image-area img.is-full-ready {
   filter: none;
 }

@@ -4,7 +4,7 @@ import path from "path";
 import { Readable } from "stream";
 import { ensureDisplayImage, ensureThumbnail } from "@/lib/thumbnailCache";
 import { getImageContentType, isSupportedImagePath } from "@/lib/imageFormats";
-import { getIndex } from "@/lib/indexer";
+import { getIndex, hasIndexSession } from "@/lib/indexer";
 import { findActiveIndexedImagePath } from "@/lib/activeImagePath";
 
 export const dynamic = "force-dynamic";
@@ -84,12 +84,14 @@ function getFallbackCacheControl(
 export interface ImageRouteDependencies {
   platform: NodeJS.Platform;
   getIndexedPaths: (indexToken?: string) => string[];
+  hasIndexSession: (indexToken: string) => boolean;
 }
 
 const defaultDependencies: ImageRouteDependencies = {
   platform: process.platform,
   getIndexedPaths: (indexToken) =>
     getIndex(indexToken).map((image) => image.absolutePath),
+  hasIndexSession,
 };
 
 export function createImageHandler(
@@ -109,6 +111,13 @@ export function createImageHandler(
 
     if (!filePath) {
       return new Response("Missing path", { status: 400 });
+    }
+
+    if (indexToken && !dependencies.hasIndexSession(indexToken)) {
+      return new Response("This viewer session expired. Scan the folder set again to refresh it.", {
+        status: 410,
+        headers: { "Cache-Control": "no-store" },
+      });
     }
 
     const indexedPath = findActiveIndexedImagePath(

@@ -13,6 +13,10 @@ type WarmupObservation = {
   seenAt: number;
 };
 
+// Sidebar reflow can land on a fractional CSS pixel at different viewport widths.
+// Two CSS pixels is visually stationary while still catching row/column jumps.
+const MAX_ANCHOR_DRIFT_PX = 2;
+
 async function openFixtureFolder(page: Page, fixtureDir: string) {
   await page.goto('/');
   await page.evaluate(() => {
@@ -201,7 +205,7 @@ test.describe('viewer grid zoom runtime contract', () => {
     await expect.poll(async () => {
       const selectedTop = await stableSelectedCard.evaluate((element) => element.getBoundingClientRect().top);
       return Math.abs(selectedTop - before.selectedTop);
-    }).toBeLessThanOrEqual(1);
+    }).toBeLessThanOrEqual(MAX_ANCHOR_DRIFT_PX);
 
     const after = await page.evaluate(() => {
       const sidebarElement = document.querySelector<HTMLElement>('.sidebar');
@@ -227,5 +231,95 @@ test.describe('viewer grid zoom runtime contract', () => {
       sidebar: before.sidebar,
     });
     await expect(sidebar).toBeVisible();
+  });
+
+  test('keeps the selected card anchored through sidebar collapse and exposes dense-to-one-column endpoints', async ({ page }) => {
+    await page.setViewportSize({ width: 1920, height: 1080 });
+    await openFixtureFolder(page, fixtureDir);
+
+    const viewerMain = page.locator('.viewer-main');
+    await viewerMain.evaluate((element) => {
+      element.scrollTop = 1_800;
+      element.dispatchEvent(new Event('scroll'));
+    });
+    await expect.poll(() => viewerMain.evaluate((element) => element.scrollTop)).toBeGreaterThan(1_500);
+
+    const visibleCards = page.locator('.image-card[role="group"]');
+    await expect.poll(() => visibleCards.count()).toBeGreaterThan(3);
+    const selectedCard = visibleCards.nth(2);
+    const selectedGridIndex = await selectedCard.getAttribute('data-grid-index');
+    expect(selectedGridIndex).not.toBeNull();
+    await selectedCard.locator('[data-image-primary="true"]').click();
+
+    const stableSelectedCard = page.locator(`.image-card[data-grid-index="${selectedGridIndex}"]`);
+    const selectedTop = () => stableSelectedCard.evaluate((element) => element.getBoundingClientRect().top);
+    const beforeCollapseTop = await selectedTop();
+    const sliderBeforeCollapse = page.getByRole('slider', { name: 'Thumbnail size' });
+    const previousThumbSize = Number(await sliderBeforeCollapse.inputValue());
+
+    await page.getByTitle('Hide sidebar').click();
+    await expect(page.locator('.sidebar')).toHaveCount(0);
+    await expect.poll(async () => Math.abs((await selectedTop()) - beforeCollapseTop))
+      .toBeLessThanOrEqual(MAX_ANCHOR_DRIFT_PX);
+
+    const collapsedTop = await selectedTop();
+    await stableSelectedCard.locator('[data-image-primary="true"]').focus();
+    await page.keyboard.press('Control+=');
+    await expect.poll(async () => Math.abs((await selectedTop()) - collapsedTop))
+      .toBeLessThanOrEqual(MAX_ANCHOR_DRIFT_PX);
+
+    const beforeExpandTop = await selectedTop();
+    await page.getByTitle('Show sidebar').click();
+    const slider = page.getByRole('slider', { name: 'Thumbnail size' });
+    await expect(slider).toBeVisible();
+    await expect(slider).toHaveValue(String(Math.min(600, previousThumbSize + 20)));
+    await expect.poll(async () => Math.abs((await selectedTop()) - beforeExpandTop))
+      .toBeLessThanOrEqual(MAX_ANCHOR_DRIFT_PX);
+
+    await slider.fill('40');
+    await expect(slider).toHaveValue('40');
+    await expect.poll(async () => stableSelectedCard.evaluate(() => {
+      const lefts = Array.from(document.querySelectorAll<HTMLElement>('.image-card[role="group"]'))
+        .map((element) => Math.round(element.getBoundingClientRect().left));
+      return new Set(lefts).size;
+    })).toBeGreaterThan(1);
+    const oldMinimumColumns = await stableSelectedCard.evaluate(() => {
+      const lefts = Array.from(document.querySelectorAll<HTMLElement>('.image-card[role="group"]'))
+        .map((element) => Math.round(element.getBoundingClientRect().left));
+      return new Set(lefts).size;
+    });
+
+    await slider.fill('20');
+    await expect(slider).toHaveValue('20');
+    await expect.poll(async () => stableSelectedCard.evaluate((_, previousColumns) => {
+      const lefts = Array.from(document.querySelectorAll<HTMLElement>('.image-card[role="group"]'))
+        .map((element) => Math.round(element.getBoundingClientRect().left));
+      return new Set(lefts).size > Number(previousColumns);
+    }, oldMinimumColumns)).toBe(true);
+
+    await slider.fill('600');
+    await expect(slider).toHaveValue('600');
+    await expect(page.getByText('1 column')).toBeVisible();
+    await expect.poll(async () => page.locator('.image-card[role="group"]').evaluateAll((elements) => (
+      new Set(elements.map((element) => Math.round(element.getBoundingClientRect().left))).size
+    ))).toBe(1);
+  });
+
+  test('renders the selected source image in the full-screen modal', async ({ page }) => {
+    await openFixtureFolder(page, fixtureDir);
+
+    const primaryImages = page.locator('[data-image-primary="true"]');
+    await expect.poll(() => primaryImages.count()).toBeGreaterThan(0);
+    const firstPrimary = primaryImages.first();
+    await firstPrimary.dblclick();
+
+    await expect(page.getByRole('dialog', { name: /Image preview:/ })).toBeVisible();
+    const modalImage = page.locator('.modal-full-image');
+    await expect(modalImage).toBeVisible();
+    await expect.poll(() => modalImage.evaluate((element) => {
+      const image = element as HTMLImageElement;
+      const rect = image.getBoundingClientRect();
+      return image.complete && image.naturalWidth > 0 && rect.width > 0 && rect.height > 0;
+    })).toBe(true);
   });
 });
