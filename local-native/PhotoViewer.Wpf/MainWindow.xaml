@@ -52,17 +52,82 @@
         </StackPanel>
 
         <!-- search -->
-        <Border Grid.Column="1" Height="40" MaxWidth="720" HorizontalAlignment="Stretch" Margin="10,0"
+        <Border x:Name="SearchBoxContainer" Grid.Column="1" Height="40" MaxWidth="720" HorizontalAlignment="Stretch" Margin="10,0"
                 CornerRadius="999" Background="{StaticResource BgSecondary}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1"
                 WindowChrome.IsHitTestVisibleInChrome="True">
           <DockPanel Margin="12,0,10,0" LastChildFill="True">
             <Path DockPanel.Dock="Left" Data="M11,11 m-8,0 a8,8 0 1 0 16,0 a8,8 0 1 0 -16,0 M21,21 l-4.3,-4.3" Stroke="{StaticResource TextTertiary}" StrokeThickness="1.8" Stretch="Uniform" Width="15" Height="15" Margin="0,0,8,0" VerticalAlignment="Center"/>
             <Grid>
-              <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center" TextChanged="SearchInput_TextChanged" AutomationProperties.Name="Search images" AutomationProperties.HelpText="Search filenames and prompts. Separate terms with commas."/>
+              <TextBox Style="{StaticResource SearchBox}" x:Name="SearchInput" FontSize="13" VerticalAlignment="Center"
+                       TextChanged="SearchInput_TextChanged" GotKeyboardFocus="SearchInput_GotKeyboardFocus"
+                       PreviewMouseLeftButtonDown="SearchInput_PreviewMouseLeftButtonDown"
+                       PreviewKeyDown="SearchInput_PreviewKeyDown" LostKeyboardFocus="SearchInput_LostKeyboardFocus"
+                       AutomationProperties.Name="Search images" AutomationProperties.HelpText="Search filenames and prompts. Separate terms with commas. Focus or click to show shared search history."/>
               <TextBlock x:Name="SearchWatermark" Text="Search filenames and prompts. Separate terms with commas." Foreground="{StaticResource TextTertiary}" FontSize="12.5" VerticalAlignment="Center" IsHitTestVisible="False" TextTrimming="CharacterEllipsis"/>
             </Grid>
           </DockPanel>
         </Border>
+
+        <Popup x:Name="SearchHistoryPopup" PlacementTarget="{Binding ElementName=SearchBoxContainer}" Placement="Bottom"
+               AllowsTransparency="True" PopupAnimation="Fade" StaysOpen="False">
+          <Border Width="{Binding PlacementTarget.ActualWidth, ElementName=SearchHistoryPopup}" MaxHeight="320" Margin="0,5,0,0"
+                  Background="{StaticResource BgElevated}" BorderBrush="{StaticResource GlassBorder}" BorderThickness="1"
+                  CornerRadius="10" Padding="0,6,0,6">
+            <DockPanel LastChildFill="True">
+              <Grid DockPanel.Dock="Top" Margin="12,0,6,5">
+                <Grid.ColumnDefinitions>
+                  <ColumnDefinition Width="*"/>
+                  <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock Text="Recent searches" Foreground="{StaticResource TextTertiary}" FontSize="11.5" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                <Button x:Name="ClearSearchHistoryButton" Grid.Column="1" Padding="8,3" Background="Transparent" BorderThickness="0"
+                        Foreground="{StaticResource TextTertiary}" Click="ClearSearchHistory_Click" Content="Clear all" FontSize="11" ToolTip="Clear shared search history"
+                        AutomationProperties.Name="Clear shared search history"/>
+              </Grid>
+              <TextBlock x:Name="SearchHistoryStatusText" DockPanel.Dock="Top" Margin="12,1,12,5"
+                         Foreground="{StaticResource DangerText}" FontSize="11" TextWrapping="Wrap" Visibility="Collapsed"
+                         AutomationProperties.Name="Shared search history status" AutomationProperties.LiveSetting="Assertive"/>
+              <TextBlock x:Name="SearchHistoryAnnouncementText" DockPanel.Dock="Top" Margin="12,1,12,3"
+                         Foreground="{StaticResource TextTertiary}" FontSize="10.5" TextWrapping="Wrap"
+                         AutomationProperties.Name="Shared search history announcement" AutomationProperties.LiveSetting="Polite"/>
+              <TextBlock x:Name="SearchHistoryEmptyText" DockPanel.Dock="Top" Text="No recent searches" Margin="12,8"
+                         Foreground="{StaticResource TextTertiary}" FontSize="12" Visibility="Collapsed"/>
+              <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" MaxHeight="250">
+                <ListBox x:Name="SearchHistoryList" AutomationProperties.Name="Shared search history"
+                         Background="Transparent" BorderThickness="0" Padding="0" SelectionMode="Single"
+                         SelectionChanged="SearchHistoryList_SelectionChanged" PreviewKeyDown="SearchHistoryList_PreviewKeyDown">
+                  <ListBox.ItemContainerStyle>
+                    <Style TargetType="ListBoxItem">
+                      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                      <Setter Property="Padding" Value="0"/>
+                      <Setter Property="Background" Value="Transparent"/>
+                      <Setter Property="BorderThickness" Value="0"/>
+                    </Style>
+                  </ListBox.ItemContainerStyle>
+                  <ListBox.ItemTemplate>
+                    <DataTemplate>
+                      <Grid MinHeight="34">
+                        <Grid.ColumnDefinitions>
+                          <ColumnDefinition Width="*"/>
+                          <ColumnDefinition Width="34"/>
+                        </Grid.ColumnDefinitions>
+                        <Button Grid.Column="0" Tag="{Binding Query}" Click="SearchHistorySelect_Click"
+                                Background="Transparent" BorderThickness="0" Padding="12,6,4,6"
+                                Foreground="{StaticResource TextSecondary}" HorizontalContentAlignment="Left"
+                                ToolTip="{Binding Query}" AutomationProperties.Name="{Binding Query, StringFormat={}Use search {0}}">
+                          <TextBlock Text="{Binding Query}" TextTrimming="CharacterEllipsis" FontSize="12.5"/>
+                        </Button>
+                        <Button Grid.Column="1" Tag="{Binding Query}" Click="SearchHistoryDelete_Click" Style="{StaticResource IconButton}"
+                                Content="×" FontSize="16" Padding="2" ToolTip="Remove from search history"
+                                AutomationProperties.Name="{Binding Query, StringFormat={}Remove search {0}}"/>
+                      </Grid>
+                    </DataTemplate>
+                  </ListBox.ItemTemplate>
+                </ListBox>
+              </ScrollViewer>
+            </DockPanel>
+          </Border>
+        </Popup>
 
         <!-- right cluster -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">

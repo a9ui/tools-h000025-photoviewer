@@ -93,6 +93,10 @@ public partial class MainWindow : Window
     private readonly ObservableCollection<FolderBucketView> _folderBucketViews = new();
     private readonly ObservableCollection<RecentFolderSetView> _recentFolderSetViews = new();
     private readonly ObservableCollection<PreviewTabView> _previewTabs = new();
+    private readonly ObservableCollection<SearchHistoryItemView> _searchHistoryEntries = new();
+    private CancellationTokenSource? _searchHistoryReadCts;
+    private long _searchHistoryUiGeneration;
+    private bool _suppressSearchHistoryFocusOpen;
     private readonly List<Tile> _allTiles = new();
     private readonly List<Tile> _closedPreviewTabs = new();
     private readonly HashSet<string> _pinnedPreviewPaths = new(StringComparer.OrdinalIgnoreCase);
@@ -349,6 +353,7 @@ public partial class MainWindow : Window
         SidebarFolderSetList.ItemsSource = _folderBucketViews;
         RecentFolderSetList.ItemsSource = _recentFolderSetViews;
         PreviewTabList.ItemsSource = _previewTabs;
+        SearchHistoryList.ItemsSource = _searchHistoryEntries;
         RestoreState();
         BuildSampleTiles();
         _allTiles.AddRange(_tiles);
@@ -5473,6 +5478,244 @@ public partial class MainWindow : Window
             return false;
         stream.Seek(count, SeekOrigin.Current);
         return true;
+    }
+
+    private async void SearchInput_GotKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        if (_suppressSearchHistoryFocusOpen)
+            return;
+        await OpenSearchHistoryPopupAsync();
+    }
+
+    private void SearchInput_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        // A focused input does not raise GotKeyboardFocus again. Queue the
+        // reopen after Popup's outside-click processing so click always works
+        // after Escape and every open rereads the shared Browser/WPF file.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_suppressSearchHistoryFocusOpen)
+                _ = OpenSearchHistoryPopupAsync();
+        }, DispatcherPriority.Input);
+    }
+
+    private async void SearchInput_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape && SearchHistoryPopup.IsOpen)
+        {
+            SearchHistoryPopup.IsOpen = false;
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key is Key.Down or Key.Up)
+        {
+            await OpenSearchHistoryPopupAsync();
+            int index = e.Key == Key.Down ? 0 : _searchHistoryEntries.Count - 1;
+            _ = FocusSearchHistoryIndex(index);
+            e.Handled = true;
+            return;
+        }
+
+        if (e.Key == Key.Enter)
+        {
+            if (SearchHistoryPopup.IsOpen && SearchHistoryList.SelectedItem is SearchHistoryItemView selected)
+                await UseSearchHistoryQueryAsync(selected.Query);
+            else
+                await CommitCurrentSearchHistoryAsync();
+            SearchHistoryPopup.IsOpen = false;
+            e.Handled = true;
+        }
+    }
+
+    private void SearchInput_LostKeyboardFocus(object sender, KeyboardFocusChangedEventArgs e)
+    {
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (SearchInput.IsKeyboardFocusWithin)
+                return;
+            if (SearchHistoryPopup.Child is UIElement popupChild && popupChild.IsKeyboardFocusWithin)
+                return;
+            _ = CommitCurrentSearchHistoryAsync();
+        }, DispatcherPriority.Input);
+    }
+
+    private async Task OpenSearchHistoryPopupAsync()
+    {
+        long generation = Interlocked.Increment(ref _searchHistoryUiGeneration);
+        _searchHistoryReadCts?.Cancel();
+        _searchHistoryReadCts?.Dispose();
+        var cts = new CancellationTokenSource();
+        _searchHistoryReadCts = cts;
+        SearchHistoryPopup.IsOpen = true;
+        SearchHistoryAnnouncementText.Text = "Loading recent searches.";
+
+        try
+        {
+            SearchHistoryReadResult result = await Task.Run(
+                () => SearchHistoryStore.Read(SearchHistoryStore.ResolvePath()),
+                cts.Token);
+            if (cts.IsCancellationRequested || generation != Interlocked.Read(ref _searchHistoryUiGeneration))
+                return;
+            ApplySearchHistorySurface(result.Entries, result.Supported, result.Error);
+        }
+        catch (OperationCanceledException)
+        {
+            // A newer open or mutation owns the surface generation.
+        }
+        catch (Exception ex)
+        {
+            if (generation == Interlocked.Read(ref _searchHistoryUiGeneration))
+                ApplySearchHistorySurface([], supported: false, error: ex.Message);
+        }
+    }
+
+    private void ApplySearchHistorySurface(
+        IReadOnlyList<string> entries,
+        bool supported = true,
+        string? error = null)
+    {
+        _searchHistoryEntries.Clear();
+        foreach (string query in entries)
+            _searchHistoryEntries.Add(new SearchHistoryItemView(query));
+
+        SearchHistoryList.SelectedIndex = -1;
+        SearchHistoryEmptyText.Visibility = entries.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        ClearSearchHistoryButton.IsEnabled = supported && entries.Count > 0;
+        SearchHistoryStatusText.Text = supported
+            ? ""
+            : "Search history is protected because its shared file is invalid or newer.";
+        SearchHistoryStatusText.ToolTip = supported ? null : error;
+        SearchHistoryStatusText.Visibility = supported ? Visibility.Collapsed : Visibility.Visible;
+        SearchHistoryAnnouncementText.Text = supported
+            ? $"{entries.Count} recent search{(entries.Count == 1 ? "" : "es")}."
+            : "Shared search history is unavailable.";
+    }
+
+    private async Task<bool> CommitCurrentSearchHistoryAsync()
+    {
+        string query = SearchHistoryStore.NormalizeQuery(SearchInput.Text);
+        if (query.Length == 0)
+            return false;
+        string rawQuery = SearchInput.Text;
+        return await RunSearchHistoryMutationAsync(() => SearchHistoryStore.Commit(
+            SearchHistoryStore.ResolvePath(),
+            rawQuery));
+    }
+
+    private async Task<bool> RunSearchHistoryMutationAsync(Func<SearchHistoryWriteResult> mutation)
+    {
+        long generation = Interlocked.Increment(ref _searchHistoryUiGeneration);
+        _searchHistoryReadCts?.Cancel();
+        SearchHistoryAnnouncementText.Text = "Updating shared search history.";
+        SearchHistoryWriteResult result;
+        try
+        {
+            result = await Task.Run(mutation);
+        }
+        catch (Exception ex)
+        {
+            result = new SearchHistoryWriteResult(SearchHistoryWriteStatus.Failed, [], false, ex.Message);
+        }
+        bool succeeded = result.Status == SearchHistoryWriteStatus.Succeeded;
+        if (generation == Interlocked.Read(ref _searchHistoryUiGeneration))
+            _ = ApplySearchHistoryWrite(result);
+        return succeeded;
+    }
+
+    private bool ApplySearchHistoryWrite(SearchHistoryWriteResult result)
+    {
+        if (result.Status == SearchHistoryWriteStatus.Succeeded)
+        {
+            ApplySearchHistorySurface(result.Entries);
+            return true;
+        }
+
+        string message = result.Status == SearchHistoryWriteStatus.Protected
+            ? "Search history was not changed because its shared file is invalid or newer."
+            : result.Status == SearchHistoryWriteStatus.Busy
+                ? "Search history is busy in another PhotoViewer window."
+                : "Search history could not be saved.";
+        SetStatusToast(message);
+        SearchHistoryStatusText.Text = message;
+        SearchHistoryStatusText.ToolTip = result.Error;
+        SearchHistoryStatusText.Visibility = Visibility.Visible;
+        return false;
+    }
+
+    private async void SearchHistorySelect_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string query })
+            return;
+        await UseSearchHistoryQueryAsync(query);
+        e.Handled = true;
+    }
+
+    private async void SearchHistoryDelete_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not Button { Tag: string query })
+            return;
+        await RunSearchHistoryMutationAsync(() => SearchHistoryStore.Delete(SearchHistoryStore.ResolvePath(), query));
+        e.Handled = true;
+    }
+
+    private async void ClearSearchHistory_Click(object sender, RoutedEventArgs e)
+    {
+        await RunSearchHistoryMutationAsync(() => SearchHistoryStore.Clear(SearchHistoryStore.ResolvePath()));
+        e.Handled = true;
+    }
+
+    private async Task<bool> UseSearchHistoryQueryAsync(string query)
+    {
+        SetSearchQuery(query);
+        bool committed = await CommitCurrentSearchHistoryAsync();
+        CloseSearchHistoryAndFocusInput();
+        return committed;
+    }
+
+    private void CloseSearchHistoryAndFocusInput()
+    {
+        SearchHistoryPopup.IsOpen = false;
+        _suppressSearchHistoryFocusOpen = true;
+        SearchInput.Focus();
+        SearchInput.CaretIndex = SearchInput.Text.Length;
+        Dispatcher.BeginInvoke(
+            () => _suppressSearchHistoryFocusOpen = false,
+            DispatcherPriority.ContextIdle);
+    }
+
+    private bool FocusSearchHistoryIndex(int index)
+    {
+        if (index < 0 || index >= _searchHistoryEntries.Count)
+            return false;
+        SearchHistoryList.SelectedIndex = index;
+        SearchHistoryList.UpdateLayout();
+        bool focused = SearchHistoryList.ItemContainerGenerator.ContainerFromIndex(index) is ListBoxItem item
+            && item.Focus();
+        SearchHistoryAnnouncementText.Text = $"Search history item {index + 1} of {_searchHistoryEntries.Count} selected.";
+        return focused;
+    }
+
+    private async void SearchHistoryList_PreviewKeyDown(object sender, KeyEventArgs e)
+    {
+        if (e.Key == Key.Escape)
+        {
+            CloseSearchHistoryAndFocusInput();
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.Enter && SearchHistoryList.SelectedItem is SearchHistoryItemView selected)
+        {
+            await UseSearchHistoryQueryAsync(selected.Query);
+            e.Handled = true;
+        }
+    }
+
+    private void SearchHistoryList_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    {
+        int index = SearchHistoryList.SelectedIndex;
+        if (index >= 0)
+            SearchHistoryAnnouncementText.Text = $"Search history item {index + 1} of {_searchHistoryEntries.Count} selected.";
     }
 
     private void SearchInput_TextChanged(object sender, TextChangedEventArgs e)
@@ -11169,6 +11412,36 @@ public partial class MainWindow : Window
     public string FavoritesPathForSmoke => ResolvedFavoritesPath;
     public string SeenPathForSmoke => ResolvedSeenPath;
     public string SharedRecentPathForSmoke => ResolvedSharedRecentPath;
+    public string SearchHistoryPathForSmoke => SearchHistoryStore.ResolvePath();
+    public bool SearchHistoryPopupOpenForSmoke => SearchHistoryPopup.IsOpen;
+    public List<string> SearchHistoryEntriesForSmoke => _searchHistoryEntries.Select(static item => item.Query).ToList();
+    public string SearchHistoryStatusForSmoke => SearchHistoryStatusText.Text;
+    public string SearchHistoryAnnouncementForSmoke => SearchHistoryAnnouncementText.Text;
+    public int SearchHistorySelectedIndexForSmoke => SearchHistoryList.SelectedIndex;
+    public Task OpenSearchHistoryForSmokeAsync() => OpenSearchHistoryPopupAsync();
+    public void CloseSearchHistoryForSmoke() => SearchHistoryPopup.IsOpen = false;
+    public async Task<bool> CommitSearchHistoryForSmokeAsync(string query)
+    {
+        SearchInput.Text = query;
+        return await CommitCurrentSearchHistoryAsync();
+    }
+    public async Task<bool> SelectSearchHistoryForSmokeAsync(string query)
+    {
+        return await UseSearchHistoryQueryAsync(query);
+    }
+    public Task<bool> DeleteSearchHistoryForSmokeAsync(string query)
+        => RunSearchHistoryMutationAsync(() => SearchHistoryStore.Delete(SearchHistoryStore.ResolvePath(), query));
+    public Task<bool> ClearSearchHistoryForSmokeAsync()
+        => RunSearchHistoryMutationAsync(() => SearchHistoryStore.Clear(SearchHistoryStore.ResolvePath()));
+    public async Task<bool> NavigateSearchHistoryForSmokeAsync(int direction)
+    {
+        await OpenSearchHistoryPopupAsync();
+        int index = direction >= 0 ? 0 : _searchHistoryEntries.Count - 1;
+        return FocusSearchHistoryIndex(index);
+    }
+    public async Task<bool> ExecuteSelectedSearchHistoryForSmokeAsync()
+        => SearchHistoryList.SelectedItem is SearchHistoryItemView selected
+            && await UseSearchHistoryQueryAsync(selected.Query);
     public string? MetadataIndexPathForSmoke => _metadataIndexPath;
     public string MetadataIndexStatusForSmoke => _metadataIndexStatus;
     public int MetadataIndexProgressForSmoke => _metadataIndexProgress;

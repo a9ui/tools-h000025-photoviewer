@@ -20,6 +20,8 @@ $orderedNames = @(
     'verify-wpf-bulk-favorite.ps1',
     'verify-wpf-bulk-recycle.ps1',
     'verify-wpf-folder-buckets.ps1',
+    'verify-wpf-search-history.ps1',
+    'verify-cross-runtime-search-history.ps1',
     'verify-wpf-search-stall.ps1',
     'verify-wpf-metadata-index.ps1',
     'verify-wpf-preview-tabs.ps1',

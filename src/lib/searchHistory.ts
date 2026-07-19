@@ -53,7 +53,22 @@ export function normalizeSearchHistoryQuery(query: string) {
 }
 
 export function searchHistoryComparisonKey(query: string) {
-  return normalizeSearchHistoryQuery(query).normalize('NFKC').toLocaleLowerCase('en-US');
+  // Keep Browser and .NET identity byte-for-byte deterministic. Runtime Unicode
+  // lowercasing tables do not agree for expansion cases such as U+0130. NFKC
+  // first handles compatibility forms (including fullwidth Latin), then fold
+  // each code point independently (avoiding contextual final-sigma rules)
+  // and spell out the only lowercase expansion, dotted capital I.
+  const normalized = normalizeSearchHistoryQuery(query).normalize('NFKC');
+  let key = '';
+  for (const character of normalized) {
+    const codePoint = character.codePointAt(0)!;
+    if (codePoint === 0x130) {
+      key += 'i\u0307';
+    } else {
+      key += character.toLowerCase();
+    }
+  }
+  return key;
 }
 
 function isObject(value: unknown): value is Record<string, unknown> {
@@ -185,7 +200,16 @@ async function writeSearchHistory(
   await fs.mkdir(directory, { recursive: true });
   try {
     await fs.writeFile(temp, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
-    await fs.rename(temp, target);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await fs.rename(temp, target);
+        break;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException)?.code;
+        if (attempt >= 4 || (code !== 'EBUSY' && code !== 'EPERM' && code !== 'EACCES')) throw error;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+    }
   } finally {
     await fs.unlink(temp).catch(() => {});
   }
@@ -195,6 +219,18 @@ export async function mutateSearchHistory(
   target: string,
   mutation: SearchHistoryMutation,
 ): Promise<SearchHistoryMutationResult> {
+  if (mutation.action !== 'clear'
+    && (mutation.query.length > MAX_SEARCH_HISTORY_QUERY_LENGTH
+      || !normalizeSearchHistoryQuery(mutation.query))) {
+    return {
+      ok: false,
+      entries: [],
+      malformed: false,
+      futureVersion: false,
+      changed: false,
+      error: 'query must be a non-empty bounded string.',
+    };
+  }
   return withFileWriteLock(target, async () => {
     const current = await readSearchHistory(target);
     if (!current.ok) {

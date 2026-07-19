@@ -4,6 +4,8 @@ import path from 'path';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
+import { mutateSearchHistory } from '@/lib/searchHistory';
+
 import { DELETE, GET, PUT } from './route';
 
 let root = '';
@@ -58,6 +60,20 @@ describe('search history shared route', () => {
       version: 1,
       entries: ['cat, dog', 'landscape, night'],
     });
+  });
+
+  it('uses the same deterministic identity for fullwidth Latin and dotted capital I', async () => {
+    expect((await PUT(request('PUT', { query: 'ＣＡＴ, İ' }))).status).toBe(200);
+    expect((await PUT(request('PUT', { query: 'cat, i\u0307' }))).status).toBe(200);
+
+    expect((await storedDocument()).entries).toEqual(['cat, i\u0307']);
+  });
+
+  it('keeps Greek and Cyrillic case-insensitive without contextual sigma drift', async () => {
+    expect((await PUT(request('PUT', { query: 'МОСКВА, ΟΣ' }))).status).toBe(200);
+    expect((await PUT(request('PUT', { query: 'москва, οσ' }))).status).toBe(200);
+
+    expect((await storedDocument()).entries).toEqual(['москва, οσ']);
   });
 
   it('keeps only the newest 50 entries', async () => {
@@ -124,9 +140,30 @@ describe('search history shared route', () => {
     expect((await fs.readdir(root)).sort()).toEqual(['search-history.json']);
   });
 
+  it('returns 503 on a live shared-lock timeout without changing JSON or the lock', async () => {
+    const original = `${JSON.stringify({
+      version: 1,
+      entries: ['preserve me'],
+      updatedAtUtc: '2026-07-19T00:00:00.000Z',
+      ownerMarker: { keep: true },
+    })}\n`;
+    const lockContent = `${JSON.stringify({ pid: process.pid, createdAtUtc: new Date().toISOString() })}\n`;
+    await fs.writeFile(target, original, 'utf8');
+    await fs.writeFile(`${target}.lock`, lockContent, 'utf8');
+
+    const response = await PUT(request('PUT', { query: 'must stay busy' }));
+
+    expect(response.status).toBe(503);
+    expect(await response.json()).toMatchObject({ ok: false, malformed: false, futureVersion: false });
+    expect(await fs.readFile(target, 'utf8')).toBe(original);
+    expect(await fs.readFile(`${target}.lock`, 'utf8')).toBe(lockContent);
+  }, 5_000);
+
   it('rejects empty and oversized incoming queries without creating shared state', async () => {
     expect((await PUT(request('PUT', { query: ' , , ' }))).status).toBe(400);
     expect((await PUT(request('PUT', { query: 'x'.repeat(32_769) }))).status).toBe(400);
+    expect(await mutateSearchHistory(target, { action: 'commit', query: ` ${'x'.repeat(32_768)}` }))
+      .toMatchObject({ ok: false, changed: false, malformed: false, futureVersion: false });
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 });

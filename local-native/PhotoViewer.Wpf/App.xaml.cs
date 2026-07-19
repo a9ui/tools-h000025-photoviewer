@@ -146,6 +146,20 @@ public partial class App : Application
             return;
         }
 
+        int searchHistorySmokeIdx = Array.IndexOf(e.Args, "--search-history-smoke");
+        if (searchHistorySmokeIdx >= 0 && searchHistorySmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureSearchHistorySmoke(e.Args[searchHistorySmokeIdx + 1], e.Args);
+            return;
+        }
+
+        int crossRuntimeSearchHistoryIdx = Array.IndexOf(e.Args, "--cross-runtime-search-history-smoke");
+        if (crossRuntimeSearchHistoryIdx >= 0 && crossRuntimeSearchHistoryIdx + 1 < e.Args.Length)
+        {
+            CaptureCrossRuntimeSearchHistorySmoke(e.Args[crossRuntimeSearchHistoryIdx + 1], e.Args);
+            return;
+        }
+
         int recentWriteOwnershipIdx = Array.IndexOf(e.Args, "--recent-write-ownership-smoke");
         if (recentWriteOwnershipIdx >= 0 && recentWriteOwnershipIdx + 1 < e.Args.Length)
         {
@@ -1173,6 +1187,7 @@ public partial class App : Application
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_FAVORITES_PATH", Path.Combine(root, "favorites.json"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEEN_PATH", Path.Combine(root, "seen.json"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_RECENT_PATH", Path.Combine(root, "recent-folders.json"));
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEARCH_HISTORY_PATH", Path.Combine(root, "search-history.json"));
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ENHANCEMENT_JOBS_PATH", Path.Combine(root, "enhance", "jobs.json"));
     }
 
@@ -1185,6 +1200,7 @@ public partial class App : Application
             "--favorites-path",
             "--seen-path",
             "--recent-path",
+            "--search-history-path",
             "--enhancement-jobs-path",
             "--key-root",
             "--target-path",
@@ -2582,6 +2598,259 @@ public partial class App : Application
                 recentWrites = ok ? iterations : 0,
                 recentPath,
                 keyRoot,
+            });
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureSearchHistorySmoke(string resultPath, string[] args)
+    {
+        string? historyPath = ArgValue(args, "--search-history-path");
+        if (string.IsNullOrWhiteSpace(historyPath))
+        {
+            WriteCrossRuntimeSharedStateResult(resultPath, new { ok = false, message = "missing required --search-history-path" });
+            Shutdown(1);
+            return;
+        }
+
+        historyPath = Path.GetFullPath(historyPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEARCH_HISTORY_PATH", historyPath);
+        Directory.CreateDirectory(Path.GetDirectoryName(historyPath)!);
+        File.WriteAllText(historyPath, JsonSerializer.Serialize(new
+        {
+            version = 1,
+            entries = new[] { "seed, one" },
+            updatedAtUtc = "2026-07-19T00:00:00.000Z",
+            ownerMarker = new { keep = true },
+        }, new JsonSerializerOptions { WriteIndented = true }));
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var win = HiddenWindow();
+        win.Show();
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                bool focused = win.FocusSearchInputForSmoke();
+                await win.OpenSearchHistoryForSmokeAsync();
+                bool focusOpened = focused && win.SearchHistoryPopupOpenForSmoke;
+                bool initialLoaded = win.SearchHistoryEntriesForSmoke.SequenceEqual(["seed, one"]);
+
+                win.CloseSearchHistoryForSmoke();
+                File.WriteAllText(historyPath, JsonSerializer.Serialize(new
+                {
+                    version = 1,
+                    entries = new[] { "external, reload" },
+                    updatedAtUtc = "2026-07-19T00:00:01.000Z",
+                    ownerMarker = new { keep = true },
+                }, new JsonSerializerOptions { WriteIndented = true }));
+                await win.OpenSearchHistoryForSmokeAsync();
+                bool clickReopenedAndReloaded = win.SearchHistoryPopupOpenForSmoke
+                    && win.SearchHistoryEntriesForSmoke.SequenceEqual(["external, reload"]);
+
+                bool committed = await win.CommitSearchHistoryForSmokeAsync("  \uFF23\uFF21\uFF34 ,, \u0130  ");
+                bool keyboardFocused = await win.NavigateSearchHistoryForSmokeAsync(1)
+                    && win.SearchHistorySelectedIndexForSmoke == 0
+                    && string.Equals(
+                        win.SearchHistoryAnnouncementForSmoke,
+                        $"Search history item 1 of {win.SearchHistoryEntriesForSmoke.Count} selected.",
+                        StringComparison.Ordinal);
+                bool keyboardExecuted = await win.ExecuteSelectedSearchHistoryForSmokeAsync();
+                bool selected = await win.SelectSearchHistoryForSmokeAsync("landscape, night");
+                await Dispatcher.Yield(DispatcherPriority.ContextIdle);
+                bool wholeQueryReplaced = string.Equals(win.SearchQueryForSmoke, "landscape, night", StringComparison.Ordinal);
+                bool selectionStayedClosed = !win.SearchHistoryPopupOpenForSmoke;
+                bool deletedByNormalizedIdentity = await win.DeleteSearchHistoryForSmokeAsync("cat, i\u0307")
+                    && !win.SearchHistoryEntriesForSmoke.Any(entry => string.Equals(
+                        SearchHistoryStore.ComparisonKey(entry),
+                        SearchHistoryStore.ComparisonKey("cat, i\u0307"),
+                        StringComparison.Ordinal));
+
+                SearchHistoryWriteResult nonAsciiFirst = await Task.Run(() => SearchHistoryStore.Commit(historyPath, "МОСКВА, Σ"));
+                SearchHistoryWriteResult nonAsciiRepeat = await Task.Run(() => SearchHistoryStore.Commit(historyPath, "москва, σ"));
+                SearchHistoryReadResult nonAsciiRead = await Task.Run(() => SearchHistoryStore.Read(historyPath));
+                bool nonAsciiCaseFold = nonAsciiFirst.Status == SearchHistoryWriteStatus.Succeeded
+                    && nonAsciiRepeat.Status == SearchHistoryWriteStatus.Succeeded
+                    && nonAsciiRead.Entries.Count(entry => string.Equals(
+                        SearchHistoryStore.ComparisonKey(entry),
+                        SearchHistoryStore.ComparisonKey("МОСКВА, Σ"),
+                        StringComparison.Ordinal)) == 1;
+
+                using JsonDocument afterMutation = JsonDocument.Parse(File.ReadAllText(historyPath));
+                bool unknownFieldPreserved = afterMutation.RootElement.TryGetProperty("ownerMarker", out JsonElement marker)
+                    && marker.TryGetProperty("keep", out JsonElement keep)
+                    && keep.ValueKind == JsonValueKind.True;
+                bool versionOne = afterMutation.RootElement.TryGetProperty("version", out JsonElement version)
+                    && version.TryGetInt32(out int value)
+                    && value == 1;
+
+                string lockPath = historyPath + ".lock";
+                string historyBeforeBusy = FileFingerprint(historyPath);
+                File.WriteAllText(lockPath, "{\"pid\":999999,\"createdAtUtc\":\"2026-07-19T00:00:00.000Z\"}");
+                File.SetLastWriteTimeUtc(lockPath, DateTime.UtcNow);
+                string lockBeforeBusy = FileFingerprint(lockPath);
+                var busyWatch = Stopwatch.StartNew();
+                SearchHistoryWriteResult busyWrite = await Task.Run(() => SearchHistoryStore.Commit(
+                    historyPath,
+                    "must remain busy",
+                    timeoutMilliseconds: 0));
+                busyWatch.Stop();
+                bool liveLockBusyProtected = busyWrite.Status == SearchHistoryWriteStatus.Busy
+                    && busyWatch.ElapsedMilliseconds < 250
+                    && string.Equals(historyBeforeBusy, FileFingerprint(historyPath), StringComparison.Ordinal)
+                    && string.Equals(lockBeforeBusy, FileFingerprint(lockPath), StringComparison.Ordinal);
+                File.Delete(lockPath);
+
+                bool cleared = await win.ClearSearchHistoryForSmokeAsync()
+                    && win.SearchHistoryEntriesForSmoke.Count == 0;
+                bool viewerStateSeparated = !File.Exists(win.StatePathForSmoke)
+                    || !File.ReadAllText(win.StatePathForSmoke).Contains("searchHistory", StringComparison.OrdinalIgnoreCase);
+
+                string malformedPath = historyPath + ".malformed";
+                string futurePath = historyPath + ".future";
+                File.WriteAllText(malformedPath, "{ definitely-not-json");
+                File.WriteAllText(futurePath, "{\"version\":2,\"entries\":[\"future\"],\"ownerMarker\":true}");
+                string malformedBefore = FileFingerprint(malformedPath);
+                string futureBefore = FileFingerprint(futurePath);
+                SearchHistoryReadResult malformedRead = SearchHistoryStore.Read(malformedPath);
+                SearchHistoryReadResult futureRead = SearchHistoryStore.Read(futurePath);
+                SearchHistoryWriteResult malformedWrite = SearchHistoryStore.Commit(malformedPath, "must not replace", 0);
+                SearchHistoryWriteResult futureWrite = SearchHistoryStore.Clear(futurePath, 0);
+                bool protectedFilesPreserved = !malformedRead.Supported
+                    && malformedRead.Malformed
+                    && malformedRead.Entries.Count == 0
+                    && !futureRead.Supported
+                    && futureRead.FutureVersion
+                    && futureRead.Entries.Count == 0
+                    && malformedWrite.Status == SearchHistoryWriteStatus.Protected
+                    && futureWrite.Status == SearchHistoryWriteStatus.Protected
+                    && string.Equals(malformedBefore, FileFingerprint(malformedPath), StringComparison.Ordinal)
+                    && string.Equals(futureBefore, FileFingerprint(futurePath), StringComparison.Ordinal);
+
+                string directory = Path.GetDirectoryName(historyPath)!;
+                bool residueFree = !Directory.EnumerateFiles(directory, "*", SearchOption.TopDirectoryOnly)
+                    .Any(path => path.EndsWith(".lock", StringComparison.OrdinalIgnoreCase)
+                        || path.EndsWith(".tmp", StringComparison.OrdinalIgnoreCase));
+
+                ok = focusOpened
+                    && initialLoaded
+                    && clickReopenedAndReloaded
+                    && committed
+                    && keyboardFocused
+                    && keyboardExecuted
+                    && selected
+                    && wholeQueryReplaced
+                    && selectionStayedClosed
+                    && deletedByNormalizedIdentity
+                    && nonAsciiCaseFold
+                    && unknownFieldPreserved
+                    && versionOne
+                    && liveLockBusyProtected
+                    && cleared
+                    && viewerStateSeparated
+                    && protectedFilesPreserved
+                    && residueFree;
+                result = new
+                {
+                    ok,
+                    focusOpened,
+                    initialLoaded,
+                    clickReopenedAndReloaded,
+                    completeEffectiveQueryCommitted = committed,
+                    keyboardArrowAndEnter = keyboardFocused && keyboardExecuted,
+                    accessibleSelectionAnnouncement = keyboardFocused,
+                    historySelectionReplacedWholeQuery = selected && wholeQueryReplaced,
+                    historySelectionStayedClosedAfterRefocus = selectionStayedClosed,
+                    unicodeNfkcDelete = deletedByNormalizedIdentity,
+                    greekAndCyrillicCaseFold = nonAsciiCaseFold,
+                    individualDelete = deletedByNormalizedIdentity,
+                    clearAll = cleared,
+                    unknownFieldPreserved,
+                    versionOne,
+                    liveLockBusyProtected,
+                    busyWrites = liveLockBusyProtected ? 0 : 1,
+                    malformedAndFutureDisplayedEmpty = protectedFilesPreserved,
+                    malformedAndFutureWriteRefused = protectedFilesPreserved,
+                    viewerStateSeparated,
+                    residueFree,
+                    historyPath,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message, historyPath };
+            }
+            finally
+            {
+                try { win.Close(); } catch { }
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, result);
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
+    }
+
+    private void CaptureCrossRuntimeSearchHistorySmoke(string resultPath, string[] args)
+    {
+        string? historyPath = ArgValue(args, "--search-history-path");
+        int iterations = ArgInt(args, "--iterations", 20);
+        if (string.IsNullOrWhiteSpace(historyPath) || iterations < 1)
+        {
+            WriteCrossRuntimeSharedStateResult(resultPath, new
+            {
+                ok = false,
+                message = "missing --search-history-path or valid --iterations",
+                iterations,
+            });
+            Shutdown(1);
+            return;
+        }
+
+        historyPath = Path.GetFullPath(historyPath);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEARCH_HISTORY_PATH", historyPath);
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = true;
+            string? error = null;
+            int writes = 0;
+            try
+            {
+                await Task.Run(() =>
+                {
+                    SearchHistoryWriteResult dottedI = SearchHistoryStore.Commit(historyPath, "ＣＡＴ, İ");
+                    SearchHistoryWriteResult nonAscii = SearchHistoryStore.Commit(historyPath, "МОСКВА, ΟΣ");
+                    if (dottedI.Status != SearchHistoryWriteStatus.Succeeded
+                        || nonAscii.Status != SearchHistoryWriteStatus.Succeeded)
+                    {
+                        throw new InvalidOperationException(
+                            $"WPF Unicode search writes failed: dotted-I={dottedI.Status}, non-ASCII={nonAscii.Status}");
+                    }
+                    for (int index = 0; index < iterations; index++)
+                    {
+                        SearchHistoryWriteResult write = SearchHistoryStore.Commit(historyPath, $"wpf query {index:D2}");
+                        if (write.Status != SearchHistoryWriteStatus.Succeeded)
+                            throw new InvalidOperationException($"WPF search history write failed at iteration {index}: {write.Status}");
+                        writes++;
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                ok = false;
+                error = ex.Message;
+            }
+
+            WriteCrossRuntimeSharedStateResult(resultPath, new
+            {
+                ok,
+                message = ok ? "WPF shared search history writer completed" : error,
+                iterations,
+                writes,
+                unicodeWrites = ok,
+                historyPath,
             });
             Shutdown(ok ? 0 : 1);
         }, DispatcherPriority.ContextIdle);
