@@ -2010,7 +2010,9 @@ Desktopで:
 - Modal Previous/Nextが端でwrap。
 - Closeでcurrent画像をgalleryへreveal。
 - center click chrome、double-click metadata、swipe threshold。
-- filmstripはcurrent optionを1件だけ選択表示し、遠方scrollはviewport windowだけをfetch/renderする。thumbnail clickでその1枚へ移動してedge/center clickへ伝播せず、Delete後は隣接selectedへ一度だけ追従する。show/hide keyとtoolbar操作はclose/reopen/reload後も`pvu_view`から復元し、chrome hidden中はpointerを受けない。
+- filmstripは画像へ重ねず、表示中だけModal main columnの下段を確保して画像viewportを縮める。current optionを1件だけ選択表示し、遠方scrollはviewport windowだけをfetch/renderする。thumbnail clickでその1枚へ移動してedge/center clickへ伝播せず、Delete後は隣接selectedへ一度だけ追従する。show/hide keyとtoolbar操作はclose/reopen/reload後も`pvu_view`から復元し、chrome hidden中は高さ0へ畳んでpointerを受けず画像viewportを全高へ戻す。
+- Modal chromeは操作停止から3秒で自動的に隠れ、Modal内のpointer移動またはkeyboard操作で即時再表示してidle timerを再開する。Delete確認dialog中はchromeを表示したままtimerを停止し、dialog終了後に再開する。center clickによる明示的なhide/showは引き続き有効。
+- zoom倍率indicatorは画像viewportの上側中央へ表示し、上部toolbarと重ならない。Filmstripの開閉で下側へ移動させない。
 
 ### BR-ACC-075 Right preview / tabs
 

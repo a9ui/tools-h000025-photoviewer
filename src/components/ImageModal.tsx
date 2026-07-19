@@ -81,6 +81,7 @@ function formatEnhancementDetails(job: ModalEnhancementJob | null) {
 
 const MAX_READY_FULL_IMAGE_IDS = 120;
 const FULL_IMAGE_KEY_SEPARATOR = '\u0000';
+export const MODAL_CHROME_IDLE_MS = 3000;
 
 function splitPromptTags(prompt: string): string[] {
   const seen = new Set<string>();
@@ -205,6 +206,7 @@ export default function ImageModal() {
   const pendingSingleClick = useRef<number | null>(null);
   const previousSelectedIndexRef = useRef<number | null>(null);
   const favoriteFeedbackTimer = useRef<number | null>(null);
+  const chromeIdleTimer = useRef<number | null>(null);
   const enhancedDisplayChoiceRef = useRef<Record<string, boolean>>({});
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const modalCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -253,6 +255,10 @@ export default function ImageModal() {
     if (favoriteFeedbackTimer.current !== null) {
       window.clearTimeout(favoriteFeedbackTimer.current);
       favoriteFeedbackTimer.current = null;
+    }
+    if (chromeIdleTimer.current !== null) {
+      window.clearTimeout(chromeIdleTimer.current);
+      chromeIdleTimer.current = null;
     }
   }, []);
 
@@ -671,6 +677,45 @@ export default function ImageModal() {
     });
   }, [hasEnhancedOutput, img]);
 
+  const clearChromeIdleTimer = useCallback(() => {
+    if (chromeIdleTimer.current === null) return;
+    window.clearTimeout(chromeIdleTimer.current);
+    chromeIdleTimer.current = null;
+  }, []);
+
+  const scheduleChromeAutoHide = useCallback(() => {
+    clearChromeIdleTimer();
+    if (selectedIndex === null || showConfirmDelete) return;
+    chromeIdleTimer.current = window.setTimeout(() => {
+      chromeIdleTimer.current = null;
+      setChromeHidden(true);
+    }, MODAL_CHROME_IDLE_MS);
+  }, [clearChromeIdleTimer, selectedIndex, showConfirmDelete]);
+
+  const revealChromeForActivity = useCallback(() => {
+    if (selectedIndex === null || showConfirmDelete) return;
+    setChromeHidden(false);
+    scheduleChromeAutoHide();
+  }, [scheduleChromeAutoHide, selectedIndex, showConfirmDelete]);
+
+  useEffect(() => {
+    if (selectedIndex === null) {
+      clearChromeIdleTimer();
+      return;
+    }
+    if (showConfirmDelete) {
+      clearChromeIdleTimer();
+      setChromeHidden(false);
+      return;
+    }
+    if (chromeHidden) {
+      clearChromeIdleTimer();
+      return;
+    }
+    scheduleChromeAutoHide();
+    return clearChromeIdleTimer;
+  }, [chromeHidden, clearChromeIdleTimer, scheduleChromeAutoHide, selectedIndex, showConfirmDelete]);
+
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const key = e.key;
@@ -680,6 +725,7 @@ export default function ImageModal() {
     }
     if (isInteractiveShortcutTarget(e.target)) return;
     if (showConfirmDelete || isDeleting) return;
+    revealChromeForActivity();
 
     if (key === keyBindings.prevImage) goPrev();
     else if (key === keyBindings.nextImage) goNext();
@@ -720,7 +766,7 @@ export default function ImageModal() {
       setSidebarCollapsed((prev) => !prev);
     }
     else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -948,7 +994,7 @@ export default function ImageModal() {
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
 
-        <div ref={modalBodyRef} className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`} tabIndex={-1}>
+        <div ref={modalBodyRef} className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`} tabIndex={-1} onPointerMove={revealChromeForActivity}>
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
@@ -1084,16 +1130,18 @@ export default function ImageModal() {
             </div>
           </div>
 
-          <div
-            className={`modal-image-area ${filmstripOpen ? 'filmstrip-open' : ''}`}
-            onWheel={handleWheel}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishPointerGesture}
-            onPointerCancel={cancelPointerGesture}
-            onClick={handleImageAreaClick}
-            onDoubleClick={handleImageAreaDoubleClick}
-          >
+          <div className="modal-main-column" data-testid="modal-main-column">
+            <div
+              className="modal-image-area"
+              data-testid="modal-image-area"
+              onWheel={handleWheel}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishPointerGesture}
+              onPointerCancel={cancelPointerGesture}
+              onClick={handleImageAreaClick}
+              onDoubleClick={handleImageAreaDoubleClick}
+            >
             <div
               className="modal-edge-zone left"
               style={{ width: modalEdgeZoneWidth }}
@@ -1160,6 +1208,23 @@ export default function ImageModal() {
               draggable={false}
             />
 
+              <div className="zoom-indicator">
+                <span>{Math.round(zoom * 100)}%</span>
+                <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+
+              {favoriteFeedback && (
+                <div className="modal-favorite-feedback" key={favoriteFeedback.token} aria-live="polite">
+                  <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                  <span>{favoriteFeedback.level > 0 ? favoriteFeedback.level : 'OFF'}</span>
+                </div>
+              )}
+            </div>
+
             {filmstripOpen && (
               <ModalFilmstrip
                 total={filmstripTotal}
@@ -1175,22 +1240,6 @@ export default function ImageModal() {
                 onSessionExpired={reportImageSessionExpired}
                 toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
               />
-            )}
-
-            <div className="zoom-indicator">
-              <span>{Math.round(zoom * 100)}%</span>
-              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">
-                <X size={14} aria-hidden="true" />
-              </button>
-            </div>
-
-            {favoriteFeedback && (
-              <div className="modal-favorite-feedback" key={favoriteFeedback.token} aria-live="polite">
-                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-                </svg>
-                <span>{favoriteFeedback.level > 0 ? favoriteFeedback.level : 'OFF'}</span>
-              </div>
             )}
           </div>
 

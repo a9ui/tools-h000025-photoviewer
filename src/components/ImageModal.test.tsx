@@ -1,8 +1,8 @@
 import React from 'react';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_KEY_BINDINGS, type ImageFile } from '../lib/types';
-import ImageModal from './ImageModal';
+import ImageModal, { MODAL_CHROME_IDLE_MS } from './ImageModal';
 
 const store = vi.hoisted(() => ({
   deleteImage: vi.fn(),
@@ -113,6 +113,32 @@ describe('ImageModal sparse navigation lock', () => {
     });
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('auto-hides idle chrome and reveals it again on pointer activity', async () => {
+    vi.useFakeTimers();
+    render(<ImageModal />);
+    const dialog = screen.getByRole('dialog');
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_IDLE_MS);
+    });
+    expect(dialog).toHaveClass('chrome-hidden');
+
+    fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 100 });
+    expect(dialog).not.toHaveClass('chrome-hidden');
+
+    act(() => {
+      vi.advanceTimersByTime(MODAL_CHROME_IDLE_MS);
+    });
+    expect(dialog).toHaveClass('chrome-hidden');
+  });
+
   it('releases navigation after a failed delete so next still works', async () => {
     store.deleteImage.mockResolvedValue(false);
     render(<ImageModal />);
@@ -159,6 +185,8 @@ describe('ImageModal sparse navigation lock', () => {
 
     const strip = screen.getByRole('region', { name: 'Image filmstrip' });
     expect(strip).toBeVisible();
+    expect(within(screen.getByTestId('modal-image-area')).queryByRole('region', { name: 'Image filmstrip' })).toBeNull();
+    expect(within(screen.getByTestId('modal-main-column')).getByRole('region', { name: 'Image filmstrip' })).toBe(strip);
     expect(screen.getByRole('option', { name: 'Open first.png, image 1 of 3' }))
       .toHaveAttribute('aria-current', 'true');
 

@@ -120,6 +120,13 @@ test.describe('modal filmstrip runtime contract', () => {
     const listbox = page.getByRole('listbox', { name: 'Image filmstrip thumbnails' });
     await expect(dialog).toBeVisible();
     await expect(listbox).toBeVisible();
+    const imageAreaBox = await page.locator('.modal-image-area').boundingBox();
+    const filmstripBox = await page.locator('.modal-filmstrip-shell').boundingBox();
+    const zoomIndicatorBox = await page.locator('.zoom-indicator').boundingBox();
+    if (!imageAreaBox || !filmstripBox || !zoomIndicatorBox) throw new Error('Expected modal layout bounds');
+    expect(filmstripBox.y).toBeGreaterThanOrEqual(imageAreaBox.y + imageAreaBox.height);
+    expect(zoomIndicatorBox.y).toBeGreaterThan(imageAreaBox.y);
+    expect(zoomIndicatorBox.y + zoomIndicatorBox.height).toBeLessThan(filmstripBox.y);
 
     const renderedOptions = listbox.getByRole('option');
     await expect.poll(() => renderedOptions.count()).toBeGreaterThan(1);
@@ -213,6 +220,15 @@ test.describe('modal filmstrip runtime contract', () => {
     await expect.poll(() => page.evaluate(() => (
       JSON.parse(localStorage.getItem('pvu_view') || '{}') as { modalFilmstripOpen?: boolean }
     ).modalFilmstripOpen)).toBe(true);
+
+    await page.waitForTimeout(3_200);
+    await expect(page.locator('.modal-body')).toHaveClass(/chrome-hidden/);
+    await expect(page.locator('.modal-filmstrip-shell')).toHaveCSS('pointer-events', 'none');
+    const dialogBox = await dialog.boundingBox();
+    if (!dialogBox) throw new Error('Expected visible modal bounds');
+    await page.mouse.move(dialogBox.x + dialogBox.width / 2, dialogBox.y + dialogBox.height / 2);
+    await expect(page.locator('.modal-body')).not.toHaveClass(/chrome-hidden/);
+    await expect(listbox).toBeVisible();
 
     expect(consoleProblems).toEqual([]);
   });

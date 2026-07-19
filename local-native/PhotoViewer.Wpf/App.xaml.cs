@@ -9332,7 +9332,11 @@ public partial class App : Application
                 File.WriteAllText(deltaPath, "not an image");
 
                 await win.RefreshActiveFolderForSmokeAsync();
-                await Task.Delay(200);
+                // ReconcileOpenSurfacesAfterCatalogReload deliberately restores
+                // focus through DispatcherPriority.Input. Drain the dispatcher
+                // instead of guessing a wall-clock delay so this smoke observes
+                // the completed UI contract on slow and fast machines alike.
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
                 ViewerState? stateAfterRefresh = ReadPersistedState(statePath);
                 bool missingSessionReconciled = !win.AllFileNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
                     && !win.PreviewTabNamesForSmoke.Contains("alpha.png", StringComparer.OrdinalIgnoreCase)
@@ -9383,7 +9387,7 @@ public partial class App : Application
                     File.Delete(source);
                 string sourcesAfterEmptyExternalMutation = FolderFingerprint(folder);
                 await win.RefreshActiveFolderForSmokeAsync();
-                await Task.Delay(150);
+                await win.Dispatcher.InvokeAsync(() => { }, DispatcherPriority.ApplicationIdle);
                 ViewerState? stateAfterEmptyRefresh = ReadPersistedState(statePath);
                 bool noSurvivorReconciled = emptyPrepared
                     && win.CatalogCountForSmoke == 0

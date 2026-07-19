@@ -291,10 +291,12 @@ entryはgalleryのfiltered/sorted full orderをsnapshotする。Left/Right/butto
 表示:
 
 - center image、black backdrop、top toolbar、bottom feedback、left/right edge、metadata sidebar
-- filtered/sorted Modal orderを横に示すvirtualized filmstrip。current imageへ追従し、thumbnail clickで直接移動
+- filtered/sorted Modal orderを横に示すvirtualized filmstrip。画像に重ねず専用下段を確保してviewportを縮め、current imageへ追従し、thumbnail clickで直接移動
 - zoom 0.25〜10、wheel/`+/-/0`、pan、horizontal flip
 - succeeded managed outputがあればEでOriginal/Enhanced切替
 - center image single clickでchrome toggle、double clickでmetadata sidebar、empty backdropでclose
+- chromeは操作停止3秒で自動非表示。Modal内pointer移動またはkeyboard操作で再表示し、Delete確認中は表示を維持する
+- zoom倍率indicatorは画像viewportの上側中央へ表示し、top toolbarと重ねない
 - Prompt/Negative/Settings tabsとtext copy
 - Delete、Open external、explicit Enhance、Cancel/Retry/output delete
 

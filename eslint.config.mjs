@@ -27,7 +27,12 @@ export default defineConfig([
   globalIgnores([
     '.next/**',
     '.cache/**',
+    '.agents/**',
+    '.claude/**',
+    '.codex/**',
+    '.cursor/**',
     '.grok/**',
+    '.playwright-cli/**',
     'coverage/**',
     'node_modules/**',
     'out/**',
