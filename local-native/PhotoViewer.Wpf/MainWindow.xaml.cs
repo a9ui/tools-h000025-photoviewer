@@ -11902,8 +11902,10 @@ public partial class MainWindow : Window
         }
 
         bool modalVisible = Modal.Visibility == Visibility.Visible;
-        bool modalNativeInputFocused = modalVisible && IsModalNativeInputFocused(Keyboard.FocusedElement);
-        bool modalActionButtonFocused = modalVisible && IsModalActionButtonFocused(Keyboard.FocusedElement);
+        bool modalNativeInputFocused = modalVisible
+            && (IsModalNativeInputFocused(e.OriginalSource) || IsModalNativeInputFocused(Keyboard.FocusedElement));
+        bool modalActionButtonFocused = modalVisible
+            && (IsModalActionButtonFocused(e.OriginalSource) || IsModalActionButtonFocused(Keyboard.FocusedElement));
         if (modalVisible && !modalNativeInputFocused)
             RevealModalChromeTransient();
 
@@ -11935,7 +11937,9 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsGlobalShortcutInputFocused(Keyboard.FocusedElement) && !modalActionButtonFocused)
+        if ((IsGlobalShortcutInputFocused(e.OriginalSource)
+                || IsGlobalShortcutInputFocused(Keyboard.FocusedElement))
+            && !modalActionButtonFocused)
         {
             base.OnPreviewKeyDown(e);
             return;
