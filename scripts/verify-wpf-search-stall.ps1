@@ -1,6 +1,6 @@
 param(
     [string]$Configuration = "Release",
-    [string]$OutputPath = (Join-Path $env:TEMP "photoviewer-wpf-search-stall.json")
+    [string]$OutputPath = (Join-Path $env:TEMP ("photoviewer-wpf-search-stall-" + [guid]::NewGuid().ToString("N") + ".json"))
 )
 
 $ErrorActionPreference = "Stop"
