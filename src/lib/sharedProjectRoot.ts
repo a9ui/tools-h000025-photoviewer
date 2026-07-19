@@ -42,7 +42,7 @@ export function resolveSharedProjectRoot(start = process.cwd()) {
   }
 }
 
-export type SharedCacheEntry = 'favorites.json' | 'seen.json' | 'recent-folders.json' | 'enhance';
+export type SharedCacheEntry = 'favorites.json' | 'seen.json' | 'recent-folders.json' | 'search-history.json' | 'enhance';
 
 export function resolveSharedCachePath(fileName: SharedCacheEntry, overridePath?: string, start = process.cwd()) {
   if (overridePath) return path.resolve(overridePath);
@@ -58,6 +58,8 @@ export function resolveSharedCachePath(fileName: SharedCacheEntry, overridePath?
       return path.join(projectRoot, '.cache', 'seen.json');
     case 'recent-folders.json':
       return path.join(projectRoot, '.cache', 'recent-folders.json');
+    case 'search-history.json':
+      return path.join(projectRoot, '.cache', 'search-history.json');
     case 'enhance':
       return path.join(projectRoot, '.cache', 'enhance');
   }
