@@ -5,7 +5,6 @@ import { useImageStore } from '../store/ImageContext';
 import {
   DEFAULT_KEY_BINDINGS,
   DEFAULT_THUMBNAIL_STATUS_BORDERS,
-  THUMBNAIL_STATUS_BORDER_RAINBOW,
   type KeyBindings,
   type ThumbnailStatusBorderSettings,
   type ThumbnailStatusBorderSettingsPatch,
@@ -65,11 +64,6 @@ export default function SettingsModal() {
   const thumbnailBordersSaveAttemptRef = useRef(0);
   const dirtyKeyBindingActionsRef = useRef<Set<keyof KeyBindings>>(new Set());
   const dirtyThumbnailBorderStatusesRef = useRef<Set<keyof ThumbnailStatusBorderSettings>>(new Set());
-  const enhancedSolidColorRef = useRef(
-    thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
-      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
-      : thumbnailStatusBorders.enhanced.color,
-  );
   const close = useCallback(() => {
     keyBindingsSaveAttemptRef.current += 1;
     confirmSaveAttemptRef.current += 1;
@@ -85,9 +79,6 @@ export default function SettingsModal() {
     setThumbnailBordersSaveError('');
     dirtyKeyBindingActionsRef.current.clear();
     dirtyThumbnailBorderStatusesRef.current.clear();
-    enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
-      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
-      : thumbnailStatusBorders.enhanced.color;
   }, [confirmBeforeDelete, keyBindings, setShowSettings, thumbnailStatusBorders]);
 
   useEffect(() => {
@@ -120,10 +111,6 @@ export default function SettingsModal() {
       favorite: dirtyStatuses.has('favorite') ? current.favorite : thumbnailStatusBorders.favorite,
       enhanced: dirtyStatuses.has('enhanced') ? current.enhanced : thumbnailStatusBorders.enhanced,
     }));
-    if (!dirtyStatuses.has('enhanced')
-      && thumbnailStatusBorders.enhanced.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
-      enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color;
-    }
     setThumbnailBordersSaveError('');
   }, [showSettings, thumbnailStatusBorders]);
 
@@ -219,11 +206,6 @@ export default function SettingsModal() {
     patch: Partial<ThumbnailStatusBorderSettings[typeof status]>,
   ) => {
     dirtyThumbnailBorderStatusesRef.current.add(status);
-    if (status === 'enhanced'
-      && typeof patch.color === 'string'
-      && patch.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
-      enhancedSolidColorRef.current = patch.color;
-    }
     setThumbnailBordersSaveError('');
     setThumbnailBordersDraft((current) => ({
       ...current,
@@ -233,7 +215,6 @@ export default function SettingsModal() {
 
   const resetThumbnailBorders = useCallback(() => {
     dirtyThumbnailBorderStatusesRef.current = new Set(['favorite', 'enhanced']);
-    enhancedSolidColorRef.current = DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color;
     setThumbnailBordersSaveError('');
     setThumbnailBordersDraft({
       favorite: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite },
@@ -271,7 +252,7 @@ export default function SettingsModal() {
 
   return (
     <div className="settings-overlay">
-      <div className="settings-backdrop" aria-hidden="true" onClick={close} />
+      <div data-testid="settings-backdrop" className="settings-backdrop" aria-hidden="true" onClick={close} />
       <div ref={panelRef} className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
         <div className="settings-header">
           <h2 id="settings-title">Settings</h2>
@@ -334,8 +315,6 @@ export default function SettingsModal() {
           {(['favorite', 'enhanced'] as const).map((status) => {
             const label = status === 'favorite' ? 'Favorite' : 'AI enhanced';
             const preference = thumbnailBordersDraft[status];
-            const isEnhanced = status === 'enhanced';
-            const isRainbow = isEnhanced && preference.color === THUMBNAIL_STATUS_BORDER_RAINBOW;
             return (
               <div className="setting-row" key={status}>
                 <span className="setting-label">{label} thumbnail border</span>
@@ -350,39 +329,16 @@ export default function SettingsModal() {
                     />
                     <span>{preference.enabled ? 'Enabled' : 'Disabled'}</span>
                   </label>
-                  {isEnhanced && (
-                    <select
-                      className={statusBorderStyles.styleSelect}
-                      aria-label="AI enhanced thumbnail border style"
-                      value={isRainbow ? THUMBNAIL_STATUS_BORDER_RAINBOW : 'solid'}
-                      disabled={!preference.enabled || savingThumbnailBorders}
-                      onChange={(event) => updateThumbnailBorderDraft('enhanced', {
-                        color: event.target.value === THUMBNAIL_STATUS_BORDER_RAINBOW
-                          ? THUMBNAIL_STATUS_BORDER_RAINBOW
-                          : enhancedSolidColorRef.current,
-                      })}
-                    >
-                      <option value={THUMBNAIL_STATUS_BORDER_RAINBOW}>Rainbow</option>
-                      <option value="solid">Single color</option>
-                    </select>
-                  )}
-                  {isRainbow && (
-                    <span
-                      className={statusBorderStyles.rainbowSwatch}
-                      aria-label="Rainbow border preview"
-                      role="img"
-                    />
-                  )}
                   <input
                     className={statusBorderStyles.colorInput}
                     aria-label={`${label} thumbnail border color`}
                     type="color"
-                    value={isRainbow ? '#facc15' : preference.color}
-                    disabled={!preference.enabled || savingThumbnailBorders || isRainbow}
+                    value={preference.color}
+                    disabled={!preference.enabled || savingThumbnailBorders}
                     onChange={(event) => updateThumbnailBorderDraft(status, { color: event.target.value })}
                   />
                   <code className={statusBorderStyles.colorValue}>
-                    {isRainbow ? 'Rainbow' : preference.color}
+                    {preference.color}
                   </code>
                 </div>
               </div>

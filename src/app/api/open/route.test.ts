@@ -3,23 +3,28 @@ import path from "path";
 import { NextRequest } from "next/server";
 import { describe, expect, it, vi } from "vitest";
 
-import { createOpenHandler, type OpenRouteDependencies } from "./route";
+import { buildDefaultApplicationLaunch, createOpenHandler, type OpenRouteDependencies } from "./route";
 
 function openRequest(
   filePath: string,
-  options: { display?: "enhanced"; jobId?: string; method?: string } = {},
+  options: {
+    display?: "enhanced";
+    jobId?: string;
+    method?: string;
+    headers?: Record<string, string>;
+  } = {},
 ) {
   const url = new URL("http://127.0.0.1/api/open");
   url.searchParams.set("path", filePath);
   if (options.display) url.searchParams.set("display", options.display);
   if (options.jobId) url.searchParams.set("jobId", options.jobId);
-  return new NextRequest(url, { method: options.method ?? "POST" });
+  return new NextRequest(url, {
+    method: options.method ?? "POST",
+    headers: options.headers,
+  });
 }
 
-function dependencies(
-  indexedPath: string,
-  managedOutputsRoot = path.join(os.tmpdir(), "enhance", "outputs"),
-): OpenRouteDependencies {
+function dependencies(indexedPath: string, managedOutputsRoot = path.join(os.tmpdir(), "enhance", "outputs")): OpenRouteDependencies {
   return {
     platform: process.platform,
     getIndexedPaths: vi.fn(() => [indexedPath]),
@@ -38,6 +43,57 @@ function dependencies(
 }
 
 describe("open route active-index boundary", () => {
+  it.each([
+    ["foreign Host", { host: "evil.example:3000" }],
+    ["foreign Origin", { host: "127.0.0.1", origin: "https://evil.example" }],
+    ["cross-site Fetch Metadata", { host: "127.0.0.1", "sec-fetch-site": "cross-site" }],
+    [
+      "no-cors Fetch Metadata",
+      {
+        host: "127.0.0.1",
+        "sec-fetch-site": "same-origin",
+        "sec-fetch-mode": "no-cors",
+      },
+    ],
+  ])("rejects %s before resolving or launching a file", async (_name, headers) => {
+    const indexedPath = path.join(os.tmpdir(), "indexed.png");
+    const deps = dependencies(indexedPath);
+
+    const response = await createOpenHandler(deps)(openRequest(indexedPath, { headers }));
+
+    expect(response.status).toBe(403);
+    expect(deps.getIndexedPaths).not.toHaveBeenCalled();
+    expect(deps.openFile).not.toHaveBeenCalled();
+  });
+
+  it.each([String.raw`C:\PVU\x&calc&.jpg`, String.raw`C:\PVU\%COMSPEC%.png`, String.raw`C:\PVU\a^b!.webp`, String.raw`C:\PVU\(draft) 雪 photo.png`])(
+    "passes a Windows filename as one opaque Explorer argument: %s",
+    (filePath) => {
+      const launch = buildDefaultApplicationLaunch(filePath, "win32");
+
+      expect(launch).toEqual({
+        command: "explorer.exe",
+        args: [filePath],
+        options: { windowsHide: true, shell: false },
+      });
+      expect(launch.command.toLowerCase()).not.toBe("cmd.exe");
+      expect(launch.args).not.toContain("/c");
+    },
+  );
+
+  it("uses direct default-application launchers on non-Windows platforms", () => {
+    expect(buildDefaultApplicationLaunch("/tmp/photo.png", "darwin")).toEqual({
+      command: "open",
+      args: ["/tmp/photo.png"],
+      options: { windowsHide: true, shell: false },
+    });
+    expect(buildDefaultApplicationLaunch("/tmp/photo.png", "linux")).toEqual({
+      command: "xdg-open",
+      args: ["/tmp/photo.png"],
+      options: { windowsHide: true, shell: false },
+    });
+  });
+
   it("rejects a path outside the active index without launching an application", async () => {
     const indexedPath = path.join(os.tmpdir(), "indexed.png");
     const requestedPath = path.join(os.tmpdir(), "unindexed.png");
@@ -60,11 +116,13 @@ describe("open route active-index boundary", () => {
     const response = await createOpenHandler(deps)(openRequest(indexedPath));
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true, opened: "source", sizeBytes: 123 });
+    expect(await response.json()).toEqual({
+      success: true,
+      opened: "source",
+      sizeBytes: 123,
+    });
     expect(deps.getFileInfo).toHaveBeenCalledWith(path.resolve(indexedPath));
-    expect(deps.isSupportedImage).toHaveBeenCalledWith(
-      path.resolve(indexedPath),
-    );
+    expect(deps.isSupportedImage).toHaveBeenCalledWith(path.resolve(indexedPath));
     expect(deps.openFile).toHaveBeenCalledWith(path.resolve(indexedPath));
   });
 
@@ -89,13 +147,19 @@ describe("open route active-index boundary", () => {
       updatedAt: "2026-07-20T00:00:00.000Z",
     });
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+      }),
+    );
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ success: true, opened: "enhanced", sizeBytes: 123 });
+    expect(await response.json()).toEqual({
+      success: true,
+      opened: "enhanced",
+      sizeBytes: 123,
+    });
     expect(deps.openFile).toHaveBeenCalledWith(path.resolve(outputPath));
   });
 
@@ -126,11 +190,13 @@ describe("open route active-index boundary", () => {
       updatedAt: "2026-07-20T00:00:00.000Z",
     });
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-      method: "GET",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+        method: "GET",
+      }),
+    );
 
     expect(await response.json()).toEqual({
       success: true,
@@ -140,23 +206,20 @@ describe("open route active-index boundary", () => {
     expect(deps.openFile).not.toHaveBeenCalled();
   });
 
-  it.each(["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"])(
-    "keeps %s requests passive while resolving the displayed file size",
-    async (method) => {
-      const indexedPath = path.join(os.tmpdir(), "indexed.png");
-      const deps = dependencies(indexedPath);
+  it.each(["GET", "HEAD", "PUT", "PATCH", "DELETE", "OPTIONS"])("keeps %s requests passive while resolving the displayed file size", async (method) => {
+    const indexedPath = path.join(os.tmpdir(), "indexed.png");
+    const deps = dependencies(indexedPath);
 
-      const response = await createOpenHandler(deps)(openRequest(indexedPath, { method }));
+    const response = await createOpenHandler(deps)(openRequest(indexedPath, { method }));
 
-      expect(response.status).toBe(200);
-      expect(await response.json()).toEqual({
-        success: true,
-        opened: "source",
-        sizeBytes: 123,
-      });
-      expect(deps.openFile).not.toHaveBeenCalled();
-    },
-  );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      success: true,
+      opened: "source",
+      sizeBytes: 123,
+    });
+    expect(deps.openFile).not.toHaveBeenCalled();
+  });
 
   it.each([
     ["missing", path.join(os.tmpdir(), "enhance", "outputs", "owned", "missing.webp"), { size: 123, mtimeMs: 456 }, "enhanced-output-missing"],
@@ -190,10 +253,12 @@ describe("open route active-index boundary", () => {
       }));
     }
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+      }),
+    );
     const body = await response.json();
 
     expect(response.status).toBe(200);
@@ -211,11 +276,7 @@ describe("open route active-index boundary", () => {
     const outputPath = path.join(outputsRoot, "linked", "enhanced.webp");
     const escapedPath = path.join(os.tmpdir(), "outside", "escaped.webp");
     const deps = dependencies(indexedPath, outputsRoot);
-    vi.mocked(deps.realPath).mockImplementation((candidate) => (
-      path.resolve(candidate) === path.resolve(outputPath)
-        ? path.resolve(escapedPath)
-        : path.resolve(candidate)
-    ));
+    vi.mocked(deps.realPath).mockImplementation((candidate) => (path.resolve(candidate) === path.resolve(outputPath) ? path.resolve(escapedPath) : path.resolve(candidate)));
     vi.mocked(deps.getEnhancementJob).mockResolvedValue({
       id: "job-1",
       sourceId: indexedPath,
@@ -232,10 +293,12 @@ describe("open route active-index boundary", () => {
       updatedAt: "2026-07-20T00:00:00.000Z",
     });
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+      }),
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -272,11 +335,13 @@ describe("open route active-index boundary", () => {
       updatedAt: "2026-07-20T00:00:00.000Z",
     } as never);
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-      method: "GET",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+        method: "GET",
+      }),
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -316,11 +381,13 @@ describe("open route active-index boundary", () => {
       });
     }
 
-    const response = await createOpenHandler(deps)(openRequest(indexedPath, {
-      display: "enhanced",
-      jobId: "job-1",
-      method: "GET",
-    }));
+    const response = await createOpenHandler(deps)(
+      openRequest(indexedPath, {
+        display: "enhanced",
+        jobId: "job-1",
+        method: "GET",
+      }),
+    );
 
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({
@@ -339,6 +406,8 @@ describe("open route active-index boundary", () => {
     const response = await createOpenHandler(deps)(openRequest(indexedPath));
 
     expect(response.status).toBe(500);
-    expect(await response.json()).toEqual({ error: "Open external application failed" });
+    expect(await response.json()).toEqual({
+      error: "Open external application failed",
+    });
   });
 });

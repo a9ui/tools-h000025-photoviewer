@@ -13,7 +13,7 @@ let target = '';
 let previousOverride: string | undefined;
 
 function request(method: 'PUT' | 'DELETE', body: unknown) {
-  return new Request('http://isolated.test/api/search-history', {
+  return new Request('http://127.0.0.1:3001/api/search-history', {
     method,
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body),

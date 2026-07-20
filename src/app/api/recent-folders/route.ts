@@ -3,6 +3,7 @@ import path from 'path';
 import { NextResponse } from 'next/server';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { formatDirSet } from '@/lib/pathSet';
 import { buildSharedRecentFolders, normalizeSharedRecentFolders } from '@/lib/recentFolders';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
@@ -95,6 +96,9 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const forbidden = guardLocalApiRequest(req);
+  if (forbidden) return forbidden;
+
   let body: unknown;
   try {
     body = await req.json();

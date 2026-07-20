@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import path from 'path';
 import { getIndex } from '@/lib/indexer';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { parseDirSet } from '@/lib/pathSet';
 import { enqueueThumbnails, getThumbnailWarmupState, startThumbnailWarmup } from '@/lib/thumbnailCache';
 import { collectLimitedThumbnailWarmupPaths } from '@/lib/thumbnailWarmupPaths';
@@ -37,6 +38,9 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const body = await request.json().catch(() => ({}));
   const indexToken = typeof (body as { indexToken?: unknown }).indexToken === 'string'
     ? (body as { indexToken: string }).indexToken

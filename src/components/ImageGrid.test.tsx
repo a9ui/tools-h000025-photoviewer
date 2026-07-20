@@ -5,11 +5,16 @@ import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { DEFAULT_THUMBNAIL_STATUS_BORDERS, type ImageFile } from "../lib/types";
+import { useOptionalAlbumStore } from "../store/AlbumContext";
 import { useImageStore } from "../store/ImageContext";
 import ImageGrid from "./ImageGrid";
 
 vi.mock("../store/ImageContext", () => ({
   useImageStore: vi.fn(),
+}));
+
+vi.mock("../store/AlbumContext", () => ({
+  useOptionalAlbumStore: vi.fn(),
 }));
 
 vi.mock("./CachedImage", () => ({
@@ -152,6 +157,10 @@ beforeEach(() => {
   mockClientWidth = 960;
   mockClientHeight = 640;
   vi.mocked(useImageStore).mockReturnValue(createStore());
+  vi.mocked(useOptionalAlbumStore).mockReturnValue({
+    activeSource: null,
+    refreshActiveSource: vi.fn(),
+  } as unknown as ReturnType<typeof useOptionalAlbumStore>);
 });
 
 describe("ImageGrid keyboard primary controls", () => {
@@ -277,7 +286,7 @@ describe("ImageGrid keyboard primary controls", () => {
   });
 
   it.each(["grid", "list"] as const)(
-    "renders the default enhanced rainbow outer ring with the favorite yellow inner ring in %s view",
+    "renders the default enhanced cyan outer ring with the favorite yellow inner ring in %s view",
     (viewMode) => {
       vi.mocked(useImageStore).mockReturnValue({
         ...createStore(viewMode),
@@ -289,13 +298,13 @@ describe("ImageGrid keyboard primary controls", () => {
 
       const overlay = screen.getByTestId("thumbnail-status-borders");
       expect(overlay).toHaveAttribute("data-favorite-border", "#facc15");
-      expect(overlay).toHaveAttribute("data-enhanced-border", "rainbow");
-      expect(overlay).toHaveAttribute("data-enhanced-border-mode", "rainbow");
+      expect(overlay).toHaveAttribute("data-enhanced-border", "#38bdf8");
+      expect(overlay).toHaveAttribute("data-enhanced-border-mode", "solid");
       expect(overlay.className).toContain("hasFavorite");
       expect(overlay.className).toContain("hasEnhanced");
-      expect(overlay.className).toContain("enhancedRainbow");
+      expect(overlay.className).not.toContain("enhancedRainbow");
       expect(overlay.style.getPropertyValue("--favorite-thumbnail-border-color")).toBe("#facc15");
-      expect(overlay.style.getPropertyValue("--enhanced-thumbnail-border-color")).toBe("transparent");
+      expect(overlay.style.getPropertyValue("--enhanced-thumbnail-border-color")).toBe("#38bdf8");
     },
   );
 
@@ -661,6 +670,51 @@ describe("ImageGrid keyboard primary controls", () => {
     const targetAfter = screen.getByRole("group", { name: "Image zoom-10.png" });
     expect(targetAfter).toHaveStyle({ top: "1350px" });
     expect(Number.parseFloat(targetAfter.style.top) - scrollElement.scrollTop).toBe(offsetBefore);
+  });
+
+  it("keeps catalog and each Album in separate scroll-memory contexts", async () => {
+    const getSearchScrollPosition = vi.fn(() => null);
+    const store = {
+      ...createStore(),
+      getSearchScrollPosition,
+    } as unknown as ReturnType<typeof useImageStore>;
+    vi.mocked(useImageStore).mockReturnValue(store);
+    const refreshActiveSource = vi.fn();
+    const albumContext = (albumId: string | null) => ({
+      activeSource: albumId
+        ? {
+          album: { id: albumId },
+          images: [firstImage, secondImage],
+          sourceToken: `source-${albumId}`,
+        }
+        : null,
+      refreshActiveSource,
+    } as unknown as ReturnType<typeof useOptionalAlbumStore>);
+
+    vi.mocked(useOptionalAlbumStore).mockReturnValue(albumContext(null));
+    const { rerender } = renderGrid();
+    await waitFor(() => expect(getSearchScrollPosition).toHaveBeenCalledTimes(1));
+    const catalogKey = getSearchScrollPosition.mock.calls[0][0];
+
+    vi.mocked(useOptionalAlbumStore).mockReturnValue(albumContext("album-a"));
+    rerender(<div className="viewer-main" data-testid="viewer-main"><ImageGrid /></div>);
+    await waitFor(() => expect(getSearchScrollPosition).toHaveBeenCalledTimes(2));
+    const albumAKey = getSearchScrollPosition.mock.calls[1][0];
+
+    vi.mocked(useOptionalAlbumStore).mockReturnValue(albumContext("album-b"));
+    rerender(<div className="viewer-main" data-testid="viewer-main"><ImageGrid /></div>);
+    await waitFor(() => expect(getSearchScrollPosition).toHaveBeenCalledTimes(3));
+    const albumBKey = getSearchScrollPosition.mock.calls[2][0];
+
+    vi.mocked(useOptionalAlbumStore).mockReturnValue(albumContext(null));
+    rerender(<div className="viewer-main" data-testid="viewer-main"><ImageGrid /></div>);
+    await waitFor(() => expect(getSearchScrollPosition).toHaveBeenCalledTimes(4));
+
+    expect(JSON.parse(catalogKey)).toMatchObject({ source: { kind: "catalog" } });
+    expect(JSON.parse(albumAKey)).toMatchObject({ source: { kind: "album", id: "album-a" } });
+    expect(JSON.parse(albumBKey)).toMatchObject({ source: { kind: "album", id: "album-b" } });
+    expect(new Set([catalogKey, albumAKey, albumBKey]).size).toBe(3);
+    expect(getSearchScrollPosition.mock.calls[3][0]).toBe(catalogKey);
   });
 
   it("keeps the visible selected image anchored when the sidebar slider changes thumbnail size", async () => {

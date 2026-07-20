@@ -2,6 +2,7 @@ import fs from 'fs';
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { getIndex } from '@/lib/indexer';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { isKnownEnhancementAdapter } from '@/lib/enhance/adapters';
 import { getComfyUiConfigErrorMessage, getComfyUiConfigStatus } from '@/lib/enhance/adapters/comfyUiConfig';
 import { getNcnnVulkanAvailability } from '@/lib/enhance/adapters/ncnnConfig';
@@ -128,6 +129,9 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   let body: {
     sourceId?: string;
     presetId?: string;

@@ -92,6 +92,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     private double _layoutWidth = -1;
     private double _layoutItemWidthSignature = -1;
     private double _layoutItemHeightSignature = -1;
+    private IReadOnlyList<Tile>? _layoutSource;
     private int _firstVisibleIndex = -1;
     private int _lastVisibleIndex = -1;
     private int _firstRealizedIndex = -1;
@@ -155,6 +156,16 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     public int RealizedItemCount => _firstRealizedIndex < 0 || _lastRealizedIndex < _firstRealizedIndex
         ? 0
         : _lastRealizedIndex - _firstRealizedIndex + 1;
+
+    internal void SetLayoutSource(IReadOnlyList<Tile> source)
+    {
+        ArgumentNullException.ThrowIfNull(source);
+        if (ReferenceEquals(_layoutSource, source))
+            return;
+        _layoutSource = source;
+        _layoutDirty = true;
+        InvalidateMeasure();
+    }
 
     public void InvalidateItemLayout()
     {
@@ -384,10 +395,8 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
         _rowHeaders.Add(header);
     }
 
-    private static string ResolveGroup(ItemsControl? owner, int index)
-        => owner is not null && index >= 0 && index < owner.Items.Count && owner.Items[index] is Tile tile
-            ? tile.Group
-            : string.Empty;
+    private string ResolveGroup(ItemsControl? owner, int index)
+        => ResolveTile(owner, index)?.Group ?? string.Empty;
 
     private int FirstItemIndexForRows(int firstRow, int lastRow, int itemCount)
     {
@@ -419,7 +428,7 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     {
         if (double.IsFinite(ItemWidth) && ItemWidth > 0)
             return ItemWidth;
-        if (owner is not null && index >= 0 && index < owner.Items.Count && owner.Items[index] is Tile tile)
+        if (ResolveTile(owner, index) is Tile tile)
             return Math.Max(1, tile.CardWidth + 4);
         return DefaultItemWidth;
     }
@@ -428,9 +437,20 @@ public sealed class VirtualizingWrapPanel : VirtualizingPanel, IScrollInfo
     {
         if (double.IsFinite(ItemHeight) && ItemHeight > 0)
             return ItemHeight;
-        if (owner is not null && index >= 0 && index < owner.Items.Count && owner.Items[index] is Tile tile)
+        if (ResolveTile(owner, index) is Tile tile)
             return Math.Max(1, tile.CardHeight + 4);
         return DefaultItemHeight;
+    }
+
+    private Tile? ResolveTile(ItemsControl? owner, int index)
+    {
+        if (index < 0)
+            return null;
+        if (_layoutSource is not null && index < _layoutSource.Count)
+            return _layoutSource[index];
+        return owner is not null && index < owner.Items.Count
+            ? owner.Items[index] as Tile
+            : null;
     }
 
     private void RealizeItems(int firstIndex, int lastIndex)

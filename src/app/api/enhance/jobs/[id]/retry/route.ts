@@ -2,11 +2,15 @@ import fs from 'fs';
 import { NextResponse } from 'next/server';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
 import { startEnhancementQueue } from '@/lib/enhance/queue';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const { id } = await params;
   const store = getEnhancementJobStore();
   const original = await store.getJob(id);

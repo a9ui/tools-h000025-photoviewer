@@ -28,6 +28,11 @@ type PointerGesture = {
   moved: boolean;
 };
 
+type ModalContextMenuPosition = {
+  x: number;
+  y: number;
+};
+
 type ModalEnhancementJob = {
   id: string;
   sourceId: string;
@@ -255,6 +260,7 @@ export default function ImageModal() {
   const [selectedEnhancedJobId, setSelectedEnhancedJobId] = useState('');
   const [pendingAutoShowJobId, setPendingAutoShowJobId] = useState('');
   const [favoriteFeedback, setFavoriteFeedback] = useState<{ level: number; token: number } | null>(null);
+  const [contextMenu, setContextMenu] = useState<ModalContextMenuPosition | null>(null);
 
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState({ x: 0, y: 0 });
@@ -271,6 +277,7 @@ export default function ImageModal() {
   const modalBodyRef = useRef<HTMLDivElement>(null);
   const modalCloseButtonRef = useRef<HTMLButtonElement>(null);
   const metadataSidebarRef = useRef<HTMLElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const confirmPanelRef = useRef<HTMLDivElement>(null);
   const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
   const navigationRequestRef = useRef(0);
@@ -297,6 +304,7 @@ export default function ImageModal() {
         favoriteFeedbackTimer.current = null;
       }
       setFavoriteFeedback(null);
+      setContextMenu(null);
       previousSelectedIndexRef.current = null;
       return;
     }
@@ -307,6 +315,7 @@ export default function ImageModal() {
     }
     setPan({ x: 0, y: 0 });
     setSwipeOffset(0);
+    setContextMenu(null);
     previousSelectedIndexRef.current = selectedIndex;
   }, [selectedIndex]);
 
@@ -366,6 +375,7 @@ export default function ImageModal() {
   const navigate = useCallback(async (intent: 'prev' | 'next') => {
     if (selectedIndex === null || searchTotal <= 0) return;
     if (navigationPendingRef.current) return;
+    setContextMenu(null);
     setFlipped(false);
     navigationPendingRef.current = true;
     const requestId = ++navigationRequestRef.current;
@@ -401,6 +411,7 @@ export default function ImageModal() {
     setManualChromeVisible(true);
     setTransientChromeVisible(false);
     setFilmstripHoverVisible(false);
+    setContextMenu(null);
   }, [requestRevealImage, searchResults, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   useDialogFocus({
@@ -436,7 +447,7 @@ export default function ImageModal() {
     ? `${modalOrderIndex + 1} / ${modalImageIds.length}`
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
   const filmstripOpen = view.modalFilmstripOpen !== false;
-  const chromeHidden = !manualChromeVisible && !transientChromeVisible && !showConfirmDelete;
+  const chromeHidden = !manualChromeVisible && !transientChromeVisible && !showConfirmDelete && !contextMenu;
   const filmstripInLayout = manualChromeVisible && filmstripOpen;
   const filmstripOverlayVisible = filmstripHoverVisible && !filmstripInLayout;
   const cursorHidden = chromeHidden && !filmstripOverlayVisible;
@@ -490,6 +501,20 @@ export default function ImageModal() {
   const toggleFilmstrip = useCallback(() => {
     setView({ modalFilmstripOpen: !filmstripOpen });
   }, [filmstripOpen, setView]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+    const firstEnabledItem = contextMenuRef.current?.querySelector<HTMLButtonElement>('[role="menuitem"]:not(:disabled)');
+    firstEnabledItem?.focus();
+
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Node && contextMenuRef.current?.contains(target)) return;
+      setContextMenu(null);
+    };
+    document.addEventListener('pointerdown', closeOnOutsidePointer, true);
+    return () => document.removeEventListener('pointerdown', closeOnOutsidePointer, true);
+  }, [contextMenu]);
 
   useEffect(() => {
     if (img) markImageSeen(img.id);
@@ -851,9 +876,9 @@ export default function ImageModal() {
     revealChromeForActivity();
     if (event.pointerType === 'touch') return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const distanceFromBottom = rect.bottom - event.clientY;
-    const isNearBottom = distanceFromBottom >= 0 && distanceFromBottom <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
-    setFilmstripHoverVisible(isNearBottom);
+    const distanceFromLeft = event.clientX - rect.left;
+    const isNearLeft = distanceFromLeft >= 0 && distanceFromLeft <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
+    setFilmstripHoverVisible(isNearLeft);
   }, [revealChromeForActivity, selectedIndex, showConfirmDelete]);
 
   const handleModalPointerLeave = useCallback(() => {
@@ -886,6 +911,12 @@ export default function ImageModal() {
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
     const key = e.key;
+    if (contextMenu && key === keyBindings.closeModal) {
+      e.preventDefault();
+      setContextMenu(null);
+      modalBodyRef.current?.focus();
+      return;
+    }
     if (key === keyBindings.closeModal) {
       close();
       return;
@@ -940,7 +971,7 @@ export default function ImageModal() {
       e.preventDefault();
       void resolveDisplayedAsset(true);
     }
-  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openPicker, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
+  }, [close, contextMenu, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openPicker, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -1123,6 +1154,44 @@ export default function ImageModal() {
     cancelSingleClickAction();
     setSidebarCollapsed((prev) => !prev);
   }, [cancelSingleClickAction]);
+
+  const handleImageAreaContextMenu = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    cancelSingleClickAction();
+    pointerGesture.current = null;
+    setSwipeOffset(0);
+    const menuWidth = 248;
+    const menuHeight = 372;
+    setContextMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    });
+  }, [cancelSingleClickAction]);
+
+  const handleContextMenuKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      setContextMenu(null);
+      modalBodyRef.current?.focus();
+      return;
+    }
+    if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return;
+    const items = Array.from(contextMenuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
+    if (items.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    const nextIndex = event.key === 'Home'
+      ? 0
+      : event.key === 'End'
+        ? items.length - 1
+        : event.key === 'ArrowUp'
+          ? (currentIndex <= 0 ? items.length - 1 : currentIndex - 1)
+          : (currentIndex + 1) % items.length;
+    items[nextIndex]?.focus();
+  }, []);
 
   if (selectedIndex === null) return null;
 
@@ -1331,6 +1400,7 @@ export default function ImageModal() {
               onPointerCancel={cancelPointerGesture}
               onClick={handleImageAreaClick}
               onDoubleClick={handleImageAreaDoubleClick}
+              onContextMenu={handleImageAreaContextMenu}
             >
             <div
               className="modal-edge-zone left"
@@ -1399,7 +1469,7 @@ export default function ImageModal() {
             />
 
               <div className="zoom-indicator">
-                <span>{Math.round(zoom * 100)}%</span>
+                <span aria-label="Zoom level">{Math.round(zoom * 100)}%</span>
                 <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">
                   <X size={14} aria-hidden="true" />
                 </button>
@@ -1411,6 +1481,62 @@ export default function ImageModal() {
                     <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
                   </svg>
                   <span>{favoriteFeedback.level > 0 ? favoriteFeedback.level : 'OFF'}</span>
+                </div>
+              )}
+
+              {contextMenu && (
+                <div
+                  ref={contextMenuRef}
+                  className="modal-context-menu"
+                  role="menu"
+                  aria-label="Image actions"
+                  style={{ left: contextMenu.x, top: contextMenu.y }}
+                  onClick={(event) => event.stopPropagation()}
+                  onContextMenu={(event) => event.preventDefault()}
+                  onKeyDown={handleContextMenuKeyDown}
+                >
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); increaseFavorite(); }}>
+                    Favorite +1
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); decreaseFavorite(); }}>
+                    Favorite -1
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={!hasEnhancedOutput}
+                    onClick={() => { setContextMenu(null); toggleEnhancedView(); }}
+                  >
+                    {showEnhanced ? 'Show Original image' : 'Show Enhanced image'}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); void resolveDisplayedAsset(true); }}>
+                    Open displayed image externally
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); openPicker([img.id]); }}>
+                    Add image to Album
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); toggleFilmstrip(); }}>
+                    {filmstripOpen ? 'Hide Filmstrip' : 'Show Filmstrip'}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); setSidebarCollapsed((prev) => !prev); }}>
+                    {sidebarCollapsed ? 'Show metadata' : 'Hide metadata'}
+                  </button>
+                  <button type="button" role="menuitem" onClick={() => { setContextMenu(null); resetZoom(); }}>
+                    Reset zoom
+                  </button>
+                  <div className="modal-context-menu-separator" role="separator" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    className="danger"
+                    disabled={isDeleting}
+                    onClick={() => {
+                      setContextMenu(null);
+                      setShowConfirmDelete(true);
+                    }}
+                  >
+                    Move image to Recycle Bin…
+                  </button>
                 </div>
               )}
             </div>
@@ -1461,7 +1587,7 @@ export default function ImageModal() {
             className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}
             role={isMobileSheet ? 'dialog' : undefined}
             aria-modal={isMobileSheet || undefined}
-            aria-label={isMobileSheet ? 'Image metadata' : undefined}
+            aria-label="Image metadata"
             tabIndex={isMobileSheet ? -1 : undefined}
           >
             <MetadataTabList

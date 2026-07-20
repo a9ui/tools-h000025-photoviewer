@@ -41,6 +41,23 @@ async function removeStaleLock(lockPath: string, staleMs: number) {
   try {
     const stat = await fs.stat(lockPath);
     if (Date.now() - stat.mtimeMs <= staleMs) return false;
+    try {
+      const owner = JSON.parse(await fs.readFile(lockPath, 'utf8')) as { pid?: unknown };
+      if (typeof owner.pid === 'number' && Number.isSafeInteger(owner.pid) && owner.pid > 0) {
+        try {
+          process.kill(owner.pid, 0);
+          return false;
+        } catch (error) {
+          // EPERM means the process exists but this process may not signal it.
+          // Unknown platform errors are also treated as live: stale recovery
+          // must fail closed instead of creating two concurrent lock owners.
+          const code = (error as NodeJS.ErrnoException)?.code;
+          if (code !== 'ESRCH') return false;
+        }
+      }
+    } catch {
+      // A stale legacy/malformed owner record has no verifiable live owner.
+    }
     await fs.unlink(lockPath);
     return true;
   } catch (error) {
@@ -69,7 +86,8 @@ async function removeOrphanedAtomicTemps(target: string) {
 /**
  * Serializes read/merge/replace operations across Browser and WPF processes.
  * The shared protocol is a create-new `<target>.lock` file. A crashed writer's
- * orphan is recoverable only after the deliberately conservative stale limit.
+ * orphan is recoverable only after the deliberately conservative stale limit
+ * and, for a structured owner record, proof that its process no longer exists.
  */
 export async function withFileWriteLock<T>(
   target: string,

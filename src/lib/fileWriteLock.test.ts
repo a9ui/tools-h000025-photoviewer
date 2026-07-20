@@ -91,6 +91,21 @@ describe('withFileWriteLock', () => {
     expect(await fs.readFile(lockPath, 'utf8')).toBe('active');
   });
 
+  it('never reaps a stale-looking lock while its recorded owner process is still alive', async () => {
+    const lockPath = `${target}.lock`;
+    const owner = JSON.stringify({ pid: process.pid, createdAtUtc: new Date(0).toISOString() });
+    await fs.writeFile(lockPath, owner, 'utf8');
+    const old = new Date(Date.now() - 60_000);
+    await fs.utimes(lockPath, old, old);
+
+    await expect(withFileWriteLock(target, async () => 'never', {
+      retryDelayMs: 1,
+      timeoutMs: 10,
+      staleMs: 1,
+    })).rejects.toThrow(/timed out waiting for shared state lock/i);
+    expect(await fs.readFile(lockPath, 'utf8')).toBe(owner);
+  });
+
   it('cleans only target-specific Browser and WPF atomic temp residue after acquiring the lock', async () => {
     const wpfResidue = path.join(root, '.shared.json.crashed-wpf.tmp');
     const browserResidue = path.join(root, 'shared-crashed-browser.tmp');

@@ -37,3 +37,35 @@ verified loopback-only with every referenced static asset returning 200.
 Step 9's proof shows that #322 is stale: local main is a two-commit implementation
 descendant before this docs-only closeout, while the PR head remains `8914935`.
 The proof is a freeze result, not authorization to push, merge, or close.
+
+## Checkpoint 3 review-hardening status
+
+The earlier closeout remains historical evidence for the committed Album v1
+surface. A new independent-review hardening delta is now integrated in the
+existing local `main` worktree above `f64d98d`; no new branch/worktree was
+created. It hardens legacy Album migration, live-owner lock recovery,
+same-state cleanup retry, unknown key-binding collision migration, and direct
+non-shell external open. It also implements the requested Browser/WPF vertical
+Filmstrip, Modal context actions, Settings/backdrop/hover changes, and the WPF
+full-window Modal, gallery input, direct Favorite, window chrome, tooltip,
+solid-cyan status, and prompt-display corrections.
+
+Browser full unit is green at 69 files / 635 tests and Browser typecheck, lint,
+and production build are green. WPF focused store/UI verifiers and Release build
+are green. The remaining focused and normal-scale full Browser/WPF regressions,
+loopback/Origin-Host guard tests, isolated Browser runtime, normal WPF
+runtime/provenance, final SHA, GitHub, and SQLite reflection are **PENDING FINAL
+GATE**. The user explicitly excluded 20,000/100,000 catalog-scale runs and
+aggregate check-count tracking from this hardening checkpoint; prior green
+records remain historical and require no rerun here. Step 8 is therefore
+reopened only for this hardening delta; it must not be called complete until the
+applicable gates finish. Step 9 remains **MERGE FROZEN** with no push, merge, or
+close.
+
+The attached public-readiness review is also reflected in this checkpoint.
+Direct argument-vector external open is adopted. Explicit loopback binding for
+`dev`/`start` and the mutating local API Origin/Host guard are in the worktree
+with tests pending. Because `LICENSE` is unresolved and a full Codex Security
+scan was not run under this no-external-consultation lane, repository public
+readiness remains **NO-GO** and operation remains private/local with no
+deployment.

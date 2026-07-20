@@ -1,5 +1,6 @@
 import path from "path";
 import { NextRequest, NextResponse } from "next/server";
+import { guardLocalApiRequest } from "@/lib/localApiGuard";
 import {
   canonicalImagePathKey,
   findActiveIndexedImagePath,
@@ -50,6 +51,9 @@ export function isPathInsideDirectory(
 
 export function createDeleteHandler(dependencies: DeleteRouteDependencies) {
   return async function deleteImage(request: NextRequest) {
+    const forbidden = guardLocalApiRequest(request);
+    if (forbidden) return forbidden;
+
     const requestedPath = request.nextUrl.searchParams.get("path");
 
     if (!requestedPath) {

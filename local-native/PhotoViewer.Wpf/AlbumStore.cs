@@ -89,7 +89,8 @@ internal static class AlbumStore
         try
         {
             JsonNode? parsed = JsonNode.Parse(File.ReadAllText(fullPath));
-            ValidationResult validation = Validate(parsed);
+            JsonNode? candidate = NormalizeLegacyEmptyDocument(parsed);
+            ValidationResult validation = Validate(candidate);
             return validation.Supported
                 ? new AlbumReadResult(true, true, false, false, validation.Snapshot, null)
                 : new AlbumReadResult(false, true, !validation.FutureVersion, validation.FutureVersion, null, validation.Error);
@@ -371,10 +372,11 @@ internal static class AlbumStore
             else
             {
                 JsonNode? parsed = JsonNode.Parse(File.ReadAllText(fullPath));
-                ValidationResult validation = Validate(parsed);
+                JsonNode? candidate = NormalizeLegacyEmptyDocument(parsed);
+                ValidationResult validation = Validate(candidate);
                 if (!validation.Supported)
                     return new AlbumMutationResult(AlbumMutationStatus.Protected, false, null, null, validation.Error);
-                root = parsed!.AsObject();
+                root = candidate!.AsObject();
                 snapshot = validation.Snapshot!;
             }
             if (expectedRevision.HasValue && expectedRevision.Value != snapshot.Revision)
@@ -397,7 +399,11 @@ internal static class AlbumStore
             AlbumEntry? album = applied.AlbumId is null ? null : updated.Snapshot!.Albums.FirstOrDefault(candidate => candidate.Id == applied.AlbumId);
             return new AlbumMutationResult(AlbumMutationStatus.Succeeded, true, updated.Snapshot, album);
         }
-        catch (Exception ex) when (ex is JsonException or IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
+        catch (JsonException ex)
+        {
+            return new AlbumMutationResult(AlbumMutationStatus.Protected, false, null, null, ex.Message);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException or NotSupportedException)
         {
             return new AlbumMutationResult(AlbumMutationStatus.Failed, false, null, null, ex.Message);
         }
@@ -467,6 +473,23 @@ internal static class AlbumStore
             recent.Add(recentId);
         }
         return ValidationResult.Valid(new AlbumDocumentSnapshot(Version, revision, updatedAtUtc, albums, recent));
+    }
+
+    private static JsonNode? NormalizeLegacyEmptyDocument(JsonNode? parsed)
+    {
+        if (parsed is not JsonObject root || root.ContainsKey("version"))
+            return parsed;
+        bool hasVersionOneOnlyFields = root.ContainsKey("revision")
+            || root.ContainsKey("updatedAtUtc")
+            || root.ContainsKey("recentAlbumIds");
+        if (hasVersionOneOnlyFields || root["albums"] is not JsonArray albums || albums.Count != 0)
+            return parsed;
+
+        root["version"] = Version;
+        root["revision"] = 0;
+        root["updatedAtUtc"] = DateTimeOffset.UnixEpoch.ToString("O", CultureInfo.InvariantCulture);
+        root["recentAlbumIds"] = new JsonArray();
+        return root;
     }
 
     private static void Publish(string targetPath, JsonObject document)
@@ -547,10 +570,47 @@ internal static class AlbumStore
         {
             if (!File.Exists(lockPath) || DateTime.UtcNow - File.GetLastWriteTimeUtc(lockPath) <= LockStaleAfter)
                 return !File.Exists(lockPath);
+            if (HasLiveLockOwner(lockPath))
+                return false;
             File.Delete(lockPath);
             return !File.Exists(lockPath);
         }
         catch { return false; }
+    }
+
+    private static bool HasLiveLockOwner(string lockPath)
+    {
+        try
+        {
+            using JsonDocument document = JsonDocument.Parse(File.ReadAllText(lockPath));
+            if (!document.RootElement.TryGetProperty("pid", out JsonElement pidElement)
+                || !pidElement.TryGetInt32(out int pid)
+                || pid <= 0)
+            {
+                return false;
+            }
+
+            try
+            {
+                using Process owner = Process.GetProcessById(pid);
+                return !owner.HasExited;
+            }
+            catch (ArgumentException)
+            {
+                return false;
+            }
+            catch
+            {
+                // Access-denied and platform-specific inspection failures must
+                // fail closed; deleting here could create a second lock owner.
+                return true;
+            }
+        }
+        catch
+        {
+            // Legacy/malformed stale locks have no verifiable owner record.
+            return false;
+        }
     }
 
     private static void CleanupAtomicResidue(string targetPath)

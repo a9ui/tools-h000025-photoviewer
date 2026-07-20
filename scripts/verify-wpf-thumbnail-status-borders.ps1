@@ -14,20 +14,24 @@ try {
     $staticContracts = @(
         'FavoriteThumbnailStatusBorderBrush',
         'EnhancedThumbnailStatusBorderBrush',
-        '<LinearGradientBrush x:Key="EnhancedThumbnailStatusBorderBrush"',
-        '<GradientStop Color="#FF1744" Offset="0"/>',
-        '<GradientStop Color="#AA00FF" Offset="0.857143"/>',
-        'EnhancedThumbnailBorderRainbowRadioButton',
-        'Content="Rainbow"',
-        'Content="Single color"',
+        '<SolidColorBrush x:Key="EnhancedThumbnailStatusBorderBrush" Color="#38BDF8"/>',
+        'AutomationProperties.Name="AI-enhanced thumbnail border color"',
         'Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"',
         'Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"',
-        'BorderThickness="3"',
         'BorderThickness="2"'
     )
     $missing = @($staticContracts | Where-Object { $xaml.IndexOf($_, [StringComparison]::Ordinal) -lt 0 })
     if ($missing.Count -gt 0) {
         throw "thumbnail status border XAML contract is incomplete: $($missing -join ', ')"
+    }
+    $removedRainbowUi = @(
+        'EnhancedThumbnailBorderRainbowRadioButton',
+        'Content="Rainbow"',
+        '<LinearGradientBrush x:Key="EnhancedThumbnailStatusBorderBrush"'
+    )
+    $stale = @($removedRainbowUi | Where-Object { $xaml.IndexOf($_, [StringComparison]::Ordinal) -ge 0 })
+    if ($stale.Count -gt 0) {
+        throw "removed rainbow presentation is still present: $($stale -join ', ')"
     }
 
     $process = Start-Process -FilePath $exe `
@@ -45,7 +49,7 @@ try {
         'seededResourcesLoaded',
         'firstSaveSucceeded',
         'normalizedAndApplied',
-        'rainbowBrushContract',
+        'legacyRainbowMigratedToSolidCyan',
         'unknownFieldsPreserved',
         'firstPersisted',
         'crossRuntimePreferenceMerge',
@@ -58,7 +62,7 @@ try {
         'retryReloaded',
         'malformedProtected',
         'invalidSchemaProtected',
-        'rainbowSchemaAccepted',
+        'legacyRainbowSchemaMigrated',
         'missingDefaults',
         'missingDefaultsApplied',
         'existingO1StatusBindings',

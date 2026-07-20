@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 const MAX_FAVORITE_LEVEL = 5;
@@ -135,6 +136,9 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const forbidden = guardLocalApiRequest(req);
+  if (forbidden) return forbidden;
+
   let body: unknown;
   try {
     body = await req.json();

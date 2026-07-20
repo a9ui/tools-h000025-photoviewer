@@ -21,7 +21,7 @@ internal sealed record ThumbnailStatusBorderSettings(
 {
     public const string DefaultFavoriteColor = "#facc15";
     public const string RainbowColor = "rainbow";
-    public const string DefaultEnhancedColor = RainbowColor;
+    public const string DefaultEnhancedColor = "#38bdf8";
 
     public static ThumbnailStatusBorderSettings Default { get; } = new(
         new ThumbnailStatusBorderPreference(true, DefaultFavoriteColor),
@@ -187,7 +187,9 @@ internal static class ThumbnailStatusBorderSettingsStore
         string candidate = value?.Trim() ?? "";
         if (string.Equals(candidate, ThumbnailStatusBorderSettings.RainbowColor, StringComparison.OrdinalIgnoreCase))
         {
-            color = ThumbnailStatusBorderSettings.RainbowColor;
+            // Read old shared files without rejecting them, but never revive
+            // the removed rainbow presentation.
+            color = ThumbnailStatusBorderSettings.DefaultEnhancedColor;
             return true;
         }
         return TryNormalizeColor(candidate, out color);

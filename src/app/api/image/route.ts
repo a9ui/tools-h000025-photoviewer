@@ -1,4 +1,5 @@
 import { NextRequest } from "next/server";
+import { guardLocalApiRequest } from "@/lib/localApiGuard";
 import fs from "fs";
 import path from "path";
 import { Readable } from "stream";
@@ -98,6 +99,9 @@ export function createImageHandler(
   dependencies: ImageRouteDependencies = defaultDependencies,
 ) {
   return async function imageResponse(request: NextRequest) {
+    const forbidden = guardLocalApiRequest(request);
+    if (forbidden) return forbidden;
+
     const filePath = request.nextUrl.searchParams.get("path");
     const thumb = request.nextUrl.searchParams.get("thumb") === "true";
     const display = request.nextUrl.searchParams.get("display") === "true";

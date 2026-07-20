@@ -318,7 +318,7 @@ internal static class KeyBindingSettings
         Def(ViewerKeyAction.ModalZoomIn, "modalZoomIn", "Modal zoom in", "Increase modal image zoom.", ShortcutContext.Modal, Key.OemPlus),
         Def(ViewerKeyAction.ModalZoomOut, "modalZoomOut", "Modal zoom out", "Decrease modal image zoom.", ShortcutContext.Modal, Key.OemMinus),
         Def(ViewerKeyAction.ModalZoomReset, "modalZoomReset", "Reset modal zoom", "Reset modal zoom, pan, and flip state.", ShortcutContext.Modal, Key.D0),
-        Def(ViewerKeyAction.ToggleModalFilmstrip, "toggleModalFilmstrip", "Toggle modal filmstrip", "Pin or unpin the modal thumbnail filmstrip. Bottom-edge hover remains transient.", ShortcutContext.Modal, Key.T),
+        Def(ViewerKeyAction.ToggleModalFilmstrip, "toggleModalFilmstrip", "Toggle modal filmstrip", "Pin or unpin the modal thumbnail filmstrip. Left-edge hover remains transient.", ShortcutContext.Modal, Key.T),
         Def(ViewerKeyAction.AddToAlbum, "addToAlbum", "Add selection to Album", "Open the shared Album picker for the current selection. Existing members remain unchanged.", ShortcutContext.Viewer, Key.B),
     ];
 
@@ -337,6 +337,7 @@ internal static class KeyBindingSettings
         var normalized = CreateDefaults();
         bool addToAlbumPersisted = false;
         Dictionary<string, JsonElement>? unknown = null;
+        var unknownReservedChords = new HashSet<KeyChord>();
         if (persisted is not null)
         {
             foreach ((string name, JsonElement value) in persisted)
@@ -345,6 +346,11 @@ internal static class KeyBindingSettings
                 {
                     unknown ??= new Dictionary<string, JsonElement>(StringComparer.Ordinal);
                     unknown[name] = value.Clone();
+                    if (value.ValueKind == JsonValueKind.String
+                        && KeyChord.TryParse(value.GetString(), out KeyChord unknownChord))
+                    {
+                        unknownReservedChords.Add(unknownChord);
+                    }
                     continue;
                 }
 
@@ -361,9 +367,17 @@ internal static class KeyBindingSettings
 
         if (!addToAlbumPersisted)
         {
-            foreach (Key candidate in new[] { Key.B, Key.G, Key.V, Key.Y })
+            foreach (Key candidate in new[]
             {
-                normalized[ViewerKeyAction.AddToAlbum] = new KeyChord(candidate, ModifierKeys.None);
+                Key.B, Key.G, Key.V, Key.Y, Key.J, Key.K, Key.L, Key.N, Key.M,
+                Key.Q, Key.W, Key.X, Key.C, Key.Z,
+                Key.F6, Key.F7, Key.F8, Key.F9, Key.F10, Key.F11, Key.F12,
+            })
+            {
+                var chord = new KeyChord(candidate, ModifierKeys.None);
+                if (unknownReservedChords.Contains(chord))
+                    continue;
+                normalized[ViewerKeyAction.AddToAlbum] = chord;
                 if (FindConflicts(normalized).Count == 0)
                     break;
             }

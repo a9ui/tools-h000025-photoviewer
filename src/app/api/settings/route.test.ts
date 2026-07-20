@@ -69,7 +69,7 @@ describe('settings route write safety', () => {
       ok: true,
       thumbnailStatusBorders: {
         favorite: { enabled: false, color: '#112233' },
-        enhanced: { enabled: true, color: 'rainbow' },
+        enhanced: { enabled: true, color: '#38bdf8' },
       },
     });
     expect(stored).toMatchObject({
@@ -115,7 +115,7 @@ describe('settings route write safety', () => {
     });
   });
 
-  it('keeps a legacy enhanced hex color solid and defaults only a missing color to rainbow without rewriting', async () => {
+  it('keeps a legacy enhanced hex color solid and defaults only a missing color to cyan without rewriting', async () => {
     const legacy = {
       thumbnailStatusBorders: {
         enhanced: { enabled: true, color: '#AABBCC', futureWidth: 5 },
@@ -142,7 +142,7 @@ describe('settings route write safety', () => {
     const defaultResponse = await GET();
     expect(await defaultResponse.json()).toMatchObject({
       thumbnailStatusBorders: {
-        enhanced: { enabled: false, color: 'rainbow' },
+        enhanced: { enabled: false, color: '#38bdf8' },
       },
       malformed: false,
     });
@@ -218,6 +218,29 @@ describe('settings route write safety', () => {
     });
   });
 
+  it('reserves unknown future string bindings while migrating filmstrip and Add to Album', async () => {
+    const original = JSON.stringify({
+      keyBindings: {
+        futureFilmstripAction: ' T ',
+        futureAlbumAction: 'b',
+        laterAction: 'G',
+      },
+    });
+    await fs.writeFile(target, original, 'utf8');
+
+    const response = await GET();
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      malformed: false,
+      keyBindings: {
+        toggleFilmstrip: 'v',
+        addToAlbum: 'y',
+      },
+    });
+    expect(await fs.readFile(target, 'utf8')).toBe(original);
+  });
+
   it.each([
     ['invalid JSON', '{'],
     ['array body', JSON.stringify([])],
@@ -276,6 +299,25 @@ describe('settings route write safety', () => {
 
     const response = await PUT(putRequest(JSON.stringify({
       keyBindings: { nextImage: 'F' },
+    })));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      ok: false,
+      error: 'Key bindings must not assign the same key to multiple actions.',
+    });
+    expect(await fs.readFile(target, 'utf8')).toBe(original);
+  });
+
+  it('refuses a known binding collision with an unknown future string action', async () => {
+    const original = JSON.stringify({
+      confirmBeforeDelete: true,
+      keyBindings: { futureAction: ' B ' },
+    });
+    await fs.writeFile(target, original, 'utf8');
+
+    const response = await PUT(putRequest(JSON.stringify({
+      keyBindings: { addToAlbum: 'b' },
     })));
 
     expect(response.status).toBe(409);

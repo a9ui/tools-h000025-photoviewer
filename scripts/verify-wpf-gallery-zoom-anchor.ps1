@@ -75,7 +75,7 @@ try {
     if ($result.minimumWidth -ne 20 -or $result.maximumWidth -ne 600) { $failures += "zoom endpoints were $($result.minimumWidth)/$($result.maximumWidth)" }
     if ($result.maximumColumns -ne 1 -or $result.maximumForcedSingleColumn -ne $true) { $failures += 'maximum endpoint was not exactly one column' }
     if ($result.maximumRealized -lt 1 -or $result.maximumRealized -gt $result.maximumRealizedBound) { $failures += 'Grid realization was not bounded at maximum zoom' }
-    foreach ($name in @('selectedAnchorUsesSelection','duplicateBasenameCanonicalAnchor','sidebarCollapseAnchorKept','sidebarExpandAnchorKept','rightPanelResizeAnchorKept','resizeAnchorKept','dpiAnchorKept','noSelectionCollapseKept','noSelectionExpandKept','listUsesRecyclingVirtualization','listBounded','listZoomRejected')) {
+    foreach ($name in @('gallerySurfaceWheelIn','gallerySurfaceWheelOut','galleryScrollbarWheelIn','galleryScrollbarWheelOut','nonGalleryWheelIsolation','middleAutoScroll','selectedAnchorUsesSelection','duplicateBasenameCanonicalAnchor','sidebarCollapseAnchorKept','sidebarExpandAnchorKept','rightPanelResizeAnchorKept','resizeAnchorKept','dpiAnchorKept','noSelectionCollapseKept','noSelectionExpandKept','listUsesRecyclingVirtualization','listBounded','listWheelNative','listZoomRejected')) {
         if ($result.$name -ne $true) { $failures += "$name was false" }
     }
     foreach ($name in @('sidebarCollapseDrift','sidebarExpandDrift','rightPanelResizeDrift','resizeDrift','dpiDrift','noSelectionCollapseDrift','noSelectionExpandDrift')) {

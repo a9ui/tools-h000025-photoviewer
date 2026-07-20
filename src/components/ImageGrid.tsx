@@ -297,6 +297,7 @@ export default function ImageGrid() {
 
   const scrollMemoryKey = useMemo(
     () => JSON.stringify({
+      source: activeSource ? { kind: 'album', id: activeSource.album.id } : { kind: 'catalog' },
       dir: dirPath,
       q: searchQuery,
       sortBy: view.sortBy,
@@ -312,6 +313,7 @@ export default function ImageGrid() {
       hiddenFolders: view.hiddenFolders,
     }),
     [
+      activeSource?.album.id,
       favoriteFilterLevels,
       dirPath,
       searchQuery,

@@ -48,8 +48,10 @@ function ViewerApp() {
     setLibraryOpen,
     openPicker,
     removeMembers,
+    cleanupPaths,
     closeAlbum,
     recycleSource,
+    error: albumError,
   } = useAlbumStore();
 
   const [browseError, setBrowseError] = useState('');
@@ -70,6 +72,18 @@ function ViewerApp() {
   const restoreFocusAfterScanCancelRef = useRef(false);
   const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
   const selectedCount = selectedIds.length;
+  const albumSourceSummary = useMemo(() => {
+    const summary = { current: 0, outside: 0, missing: 0, missingPaths: [] as string[] };
+    for (const member of activeSource?.members ?? []) {
+      if (member.availability === 'current') summary.current += 1;
+      else if (member.availability === 'outside') summary.outside += 1;
+      else {
+        summary.missing += 1;
+        summary.missingPaths.push(member.imagePath);
+      }
+    }
+    return summary;
+  }, [activeSource]);
   const cancelBulkDelete = useCallback(() => {
     if (bulkDeleteActiveRef.current) return;
     setShowBulkDeleteConfirm(false);
@@ -641,12 +655,18 @@ function ViewerApp() {
                 <div>
                   <strong>{activeSource.album.name}</strong>
                   <span>
-                    {activeSource.members.filter((member) => member.availability === 'current').length} current · {' '}
-                    {activeSource.members.filter((member) => member.availability === 'outside').length} outside catalog · {' '}
-                    {activeSource.members.filter((member) => member.availability === 'missing').length} missing
+                    {albumSourceSummary.current} current · {' '}
+                    {albumSourceSummary.outside} outside catalog · {' '}
+                    {albumSourceSummary.missing} missing
                   </span>
+                  {albumError && <p className="album-error" role="alert">{albumError}</p>}
                 </div>
                 <div className="album-source-actions">
+                  {albumSourceSummary.missing > 0 && (
+                    <button className="btn-secondary" onClick={() => void cleanupPaths(albumSourceSummary.missingPaths)}>
+                      Remove missing from Album
+                    </button>
+                  )}
                   <button className="btn-secondary" disabled={selectedCount === 0} onClick={() => void removeMembers(activeSource.album.id, { paths: selectedIds })}>
                     Remove selected from Album
                   </button>

@@ -25,6 +25,47 @@ describe('shared Album store', () => {
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
+  it('reads the known versionless empty document without rewriting it and upgrades on the first real mutation', async () => {
+    const legacy = JSON.stringify({ albums: [], futureRoot: { keep: true } });
+    await fs.writeFile(target, legacy, 'utf8');
+
+    const read = await readAlbums(target);
+    expect(read).toMatchObject({
+      ok: true,
+      exists: true,
+      document: { version: 1, revision: 0, albums: [], recentAlbumIds: [], futureRoot: { keep: true } },
+    });
+    expect(await fs.readFile(target, 'utf8')).toBe(legacy);
+
+    const mutated = await mutateAlbums(target, {
+      action: 'create',
+      name: 'First v1 Album',
+      albumId: 'first-v1',
+      expectedRevision: 0,
+    });
+    expect(mutated).toMatchObject({ ok: true, document: { version: 1, revision: 1 } });
+    const stored = JSON.parse(await fs.readFile(target, 'utf8'));
+    expect(stored).toMatchObject({
+      version: 1,
+      revision: 1,
+      futureRoot: { keep: true },
+      albums: [{ id: 'first-v1' }],
+    });
+  });
+
+  it('protects ambiguous non-empty or partially-versioned legacy documents', async () => {
+    const candidates = [
+      JSON.stringify({ albums: [{ id: 'legacy-with-unknown-shape' }] }),
+      JSON.stringify({ albums: [], revision: 4 }),
+    ];
+    for (const original of candidates) {
+      await fs.writeFile(target, original, 'utf8');
+      expect(await readAlbums(target)).toMatchObject({ ok: false, malformed: true });
+      expect(await mutateAlbums(target, { action: 'create', name: 'Refuse' })).toMatchObject({ ok: false, changed: false });
+      expect(await fs.readFile(target, 'utf8')).toBe(original);
+    }
+  });
+
   it('supports operation mutations with monotonic revisions and idempotent membership', async () => {
     const first = await mutateAlbums(target, { action: 'create', name: '  Trips  ', albumId: 'album-1', expectedRevision: 0 });
     expect(first).toMatchObject({ ok: true, changed: true, document: { revision: 1 }, album: { id: 'album-1', name: 'Trips', revision: 1 } });
@@ -110,6 +151,34 @@ describe('shared Album store', () => {
     expect(await fs.readFile(target, 'utf8')).toBe(before);
   });
 
+  it('lets one same-revision writer win and applies the loser only after an explicit latest-revision retry', async () => {
+    const addedPath = path.join(root, 'retry-added.jpg');
+    await mutateAlbums(target, { action: 'create', name: 'Before', albumId: 'retry-race' });
+    const rename = { action: 'update' as const, albumId: 'retry-race', name: 'After', expectedRevision: 1 };
+    const add = { action: 'add' as const, albumId: 'retry-race', paths: [addedPath], expectedRevision: 1 };
+
+    const results = await Promise.all([
+      mutateAlbums(target, rename),
+      mutateAlbums(target, add),
+    ]);
+    const winnerIndex = results.findIndex((result) => result.ok);
+    const loserIndex = results.findIndex((result) => !result.ok && result.conflict);
+    expect(winnerIndex).toBeGreaterThanOrEqual(0);
+    expect(loserIndex).toBeGreaterThanOrEqual(0);
+    expect(results.filter((result) => result.ok)).toHaveLength(1);
+    expect(results[loserIndex]).toMatchObject({ changed: false, document: { revision: 2 } });
+
+    const loser = loserIndex === 0 ? rename : add;
+    const retry = await mutateAlbums(target, { ...loser, expectedRevision: 2 });
+    expect(retry).toMatchObject({ ok: true, changed: true, document: { revision: 3 } });
+
+    const stored = await readAlbums(target);
+    if (!stored.ok) throw new Error(stored.error);
+    const album = stored.document.albums.find((candidate) => candidate.id === 'retry-race')!;
+    expect(album.name).toBe('After');
+    expect(album.members.map((member) => member.imagePath)).toContain(path.resolve(addedPath));
+  });
+
   it('serializes concurrent latest-on-disk operations without lost updates', async () => {
     const results = await Promise.all(Array.from({ length: 20 }, (_, index) => mutateAlbums(target, {
       action: 'create' as const,
@@ -122,6 +191,57 @@ describe('shared Album store', () => {
     if (!stored.ok) throw new Error(stored.error);
     expect(stored.document.albums.map((album) => album.id).sort()).toEqual(Array.from({ length: 20 }, (_, index) => `album-${index}`).sort());
     await expect(fs.stat(`${target}.lock`)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('serializes conflicting operations on the same Album without field loss or resurrection', async () => {
+    const seedPath = path.join(root, 'seed.jpg');
+    const addedPath = path.join(root, 'added.jpg');
+    const coverPath = path.join(root, 'cover.jpg');
+    await mutateAlbums(target, { action: 'create', name: 'Race', albumId: 'race' });
+    const seeded = await mutateAlbums(target, { action: 'add', albumId: 'race', paths: [seedPath, coverPath] });
+    const coverId = seeded.album!.members.find((member) => member.imagePath === coverPath)!.id;
+    await mutateAlbums(target, { action: 'update', albumId: 'race', coverMemberId: coverId });
+
+    const renameAdd = await Promise.all([
+      mutateAlbums(target, { action: 'update', albumId: 'race', name: 'Renamed' }),
+      mutateAlbums(target, { action: 'add', albumId: 'race', paths: [addedPath] }),
+    ]);
+    expect(renameAdd.every((result) => result.ok)).toBe(true);
+    let current = await readAlbums(target);
+    if (!current.ok) throw new Error(current.error);
+    let album = current.document.albums.find((candidate) => candidate.id === 'race')!;
+    expect(album.name).toBe('Renamed');
+    expect(album.members.map((member) => member.imagePath)).toContain(path.resolve(addedPath));
+
+    const pinRename = await Promise.all([
+      mutateAlbums(target, { action: 'update', albumId: 'race', pinned: true }),
+      mutateAlbums(target, { action: 'update', albumId: 'race', name: 'Pinned and renamed' }),
+    ]);
+    expect(pinRename.every((result) => result.ok)).toBe(true);
+    current = await readAlbums(target);
+    if (!current.ok) throw new Error(current.error);
+    album = current.document.albums.find((candidate) => candidate.id === 'race')!;
+    expect(album).toMatchObject({ name: 'Pinned and renamed', pinned: true });
+
+    const removeCover = await Promise.all([
+      mutateAlbums(target, { action: 'remove', albumId: 'race', memberIds: [coverId] }),
+      mutateAlbums(target, { action: 'update', albumId: 'race', coverMemberId: coverId }),
+    ]);
+    expect(removeCover.some((result) => result.ok)).toBe(true);
+    current = await readAlbums(target);
+    if (!current.ok) throw new Error(current.error);
+    album = current.document.albums.find((candidate) => candidate.id === 'race')!;
+    expect(album.members.some((member) => member.id === coverId)).toBe(false);
+    expect(album.coverMemberId).toBeNull();
+
+    const deleteAdd = await Promise.all([
+      mutateAlbums(target, { action: 'delete', albumId: 'race' }),
+      mutateAlbums(target, { action: 'add', albumId: 'race', paths: [path.join(root, 'late.jpg')] }),
+    ]);
+    expect(deleteAdd.some((result) => result.ok)).toBe(true);
+    current = await readAlbums(target);
+    if (!current.ok) throw new Error(current.error);
+    expect(current.document.albums.some((candidate) => candidate.id === 'race')).toBe(false);
   });
 
   it('cleans a recycled source identity from every Album in one document revision', async () => {

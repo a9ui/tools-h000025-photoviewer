@@ -48,6 +48,8 @@ describe('shared project root resolution', () => {
       .toBe(path.join(main, '.cache', 'seen.json'));
     expect(resolveSharedCachePath('recent-folders.json', undefined, worktree))
       .toBe(path.join(main, '.cache', 'recent-folders.json'));
+    expect(resolveSharedCachePath('settings.json', undefined, worktree))
+      .toBe(path.join(main, '.cache', 'settings.json'));
     expect(resolveSharedCachePath('enhance', undefined, worktree))
       .toBe(path.join(main, '.cache', 'enhance'));
   });

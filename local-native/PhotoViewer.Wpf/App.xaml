@@ -26,16 +26,7 @@
     <SolidColorBrush x:Key="Favorite" Color="#F43F5E"/>
     <SolidColorBrush x:Key="FavoriteText" Color="#FECDD3"/>
     <SolidColorBrush x:Key="FavoriteThumbnailStatusBorderBrush" Color="#FACC15"/>
-    <LinearGradientBrush x:Key="EnhancedThumbnailStatusBorderBrush" StartPoint="0,0" EndPoint="1,1">
-      <GradientStop Color="#FF1744" Offset="0"/>
-      <GradientStop Color="#FF9100" Offset="0.142857"/>
-      <GradientStop Color="#FFEA00" Offset="0.285714"/>
-      <GradientStop Color="#00E676" Offset="0.428571"/>
-      <GradientStop Color="#00B8D4" Offset="0.571429"/>
-      <GradientStop Color="#2979FF" Offset="0.714286"/>
-      <GradientStop Color="#AA00FF" Offset="0.857143"/>
-      <GradientStop Color="#FF1744" Offset="1"/>
-    </LinearGradientBrush>
+    <SolidColorBrush x:Key="EnhancedThumbnailStatusBorderBrush" Color="#38BDF8"/>
     <SolidColorBrush x:Key="Success" Color="#10B981"/>
     <SolidColorBrush x:Key="Danger" Color="#EF4444"/>
     <SolidColorBrush x:Key="DangerText" Color="#FECACA"/>
@@ -73,6 +64,30 @@
       <Setter Property="TextOptions.TextRenderingMode" Value="ClearType"/>
     </Style>
 
+    <Style TargetType="ToolTip">
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+      <Setter Property="Background" Value="{StaticResource BgElevated}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Padding" Value="9,6"/>
+      <Setter Property="FontSize" Value="11.5"/>
+      <Setter Property="HasDropShadow" Value="True"/>
+      <Setter Property="MaxWidth" Value="420"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="ToolTip">
+            <Border CornerRadius="7" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" Padding="{TemplateBinding Padding}">
+              <ContentPresenter TextElement.Foreground="{TemplateBinding Foreground}" TextElement.FontSize="{TemplateBinding FontSize}"/>
+            </Border>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Triggers>
+        <Trigger Property="Content" Value="{x:Null}"><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+        <Trigger Property="Content" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger>
+      </Style.Triggers>
+    </Style>
+
     <Style x:Key="SectionHeader" TargetType="TextBlock">
       <Setter Property="Foreground" Value="{StaticResource TextTertiary}"/>
       <Setter Property="FontSize" Value="10.5"/>
@@ -93,10 +108,11 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.4"/>
               </Trigger>
@@ -115,9 +131,11 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="#356366F1"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -129,6 +147,7 @@
       <Setter Property="Width" Value="44"/>
       <Setter Property="Height" Value="34"/>
       <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+      <Setter Property="Cursor" Value="Hand"/>
       <Setter Property="Template">
         <Setter.Value>
           <ControlTemplate TargetType="Button">
@@ -136,10 +155,12 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -154,10 +175,12 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="#E5EF4444"/>
                 <Setter Property="Foreground" Value="White"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -178,16 +201,18 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource BgElevated}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentSoft}"/>
                 <Setter TargetName="bd" Property="BorderBrush" Value="#806366F1"/>
                 <Setter Property="Foreground" Value="{StaticResource AccentLight}"/>
               </Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -205,9 +230,40 @@
           <ControlTemplate TargetType="Button">
             <ContentPresenter/>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <!-- Transparent text actions still expose a clear pointer-hover and keyboard-focus state. -->
+    <Style x:Key="TransparentButton" TargetType="Button">
+      <Setter Property="Foreground" Value="{StaticResource TextSecondary}"/>
+      <Setter Property="Background" Value="Transparent"/>
+      <Setter Property="BorderBrush" Value="Transparent"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="bd" CornerRadius="6" Padding="{TemplateBinding Padding}"
+                    Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+              <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
+                <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
+                <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
+                <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+              </MultiTrigger>
+              <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource AccentLight}"/></Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/><Setter Property="Cursor" Value="Arrow"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -226,14 +282,16 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
               <Trigger Property="IsChecked" Value="True">
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource Accent}"/>
                 <Setter Property="Foreground" Value="White"/>
                 <Setter Property="FontWeight" Value="SemiBold"/>
               </Trigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -255,11 +313,13 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource HoverFill}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -276,11 +336,13 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="BorderBrush" Value="#99EF4444"/>
                 <Setter TargetName="bd" Property="Background" Value="#24EF4444"/>
                 <Setter Property="Foreground" Value="{StaticResource DangerText}"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -321,7 +383,7 @@
                     <ColumnDefinition Width="28"/>
                   </Grid.ColumnDefinitions>
                   <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0" Padding="7,0,3,0" Background="Transparent" BorderThickness="0" Foreground="{TemplateBinding Foreground}" CaretBrush="{StaticResource AccentLight}" VerticalContentAlignment="Center"/>
-                  <Button x:Name="PART_Button" Grid.Column="1" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextSecondary}" Focusable="False" ToolTip="Open calendar">
+                  <Button x:Name="PART_Button" Grid.Column="1" Style="{StaticResource TransparentButton}" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextSecondary}" Focusable="False" ToolTip="Open calendar">
                     <Path Data="M4,6 h16 v14 h-16 z M4,10 h16 M8,3 v6 M16,3 v6" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.35" Stretch="Uniform" Width="14" Height="14"/>
                   </Button>
                 </Grid>
@@ -333,10 +395,11 @@
               </Popup>
             </Grid>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="InputBorder" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
                 <Setter TargetName="InputBorder" Property="Background" Value="{StaticResource BgElevated}"/>
-              </Trigger>
+              </MultiTrigger>
               <Trigger Property="IsKeyboardFocusWithin" Value="True">
                 <Setter TargetName="InputBorder" Property="BorderBrush" Value="{StaticResource AccentLight}"/>
               </Trigger>
@@ -374,7 +437,7 @@
                   <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Day" Property="Background" Value="{StaticResource HoverFill}"/></Trigger>
+                  <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions><Setter TargetName="Day" Property="Background" Value="{StaticResource HoverFill}"/></MultiTrigger>
                   <Trigger Property="IsSelected" Value="True"><Setter TargetName="Day" Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></Trigger>
                   <Trigger Property="IsToday" Value="True"><Setter TargetName="Day" Property="BorderBrush" Value="{StaticResource AccentLight}"/></Trigger>
                   <Trigger Property="IsInactive" Value="True"><Setter Property="Foreground" Value="{StaticResource TextTertiary}"/></Trigger>
@@ -395,7 +458,7 @@
                   <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                 </Border>
                 <ControlTemplate.Triggers>
-                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CalendarButtonBorder" Property="Background" Value="{StaticResource HoverFill}"/></Trigger>
+                  <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions><Setter TargetName="CalendarButtonBorder" Property="Background" Value="{StaticResource HoverFill}"/></MultiTrigger>
                   <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.38"/></Trigger>
                 </ControlTemplate.Triggers>
               </ControlTemplate>
@@ -419,9 +482,11 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="#38F43F5E"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -429,6 +494,69 @@
     </Style>
 
     <!-- ═══════════ Image card (ListBoxItem) ═══════════ -->
+    <Style x:Key="CompactCardFavoriteButton" TargetType="Button">
+      <Setter Property="Foreground" Value="White"/>
+      <Setter Property="Background" Value="#B8000000"/>
+      <Setter Property="BorderThickness" Value="0"/>
+      <Setter Property="Padding" Value="0"/>
+      <Setter Property="FontSize" Value="9"/>
+      <Setter Property="FontWeight" Value="Bold"/>
+      <Setter Property="Cursor" Value="Hand"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="Button">
+            <Border x:Name="compactFavoriteButtonBackground" Background="{TemplateBinding Background}">
+              <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+              <MultiTrigger>
+                <MultiTrigger.Conditions>
+                  <Condition Property="IsMouseOver" Value="True"/>
+                  <Condition Property="IsEnabled" Value="True"/>
+                </MultiTrigger.Conditions>
+                <Setter TargetName="compactFavoriteButtonBackground" Property="Background" Value="#E0F43F5E"/>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+    </Style>
+
+    <ControlTemplate x:Key="CompactCardItemTemplate" TargetType="ListBoxItem">
+      <Border x:Name="compactRing" Width="{Binding CardWidth}" Height="{Binding CardHeight}"
+              Background="{StaticResource BgTertiary}" BorderBrush="Transparent" BorderThickness="0"
+              CornerRadius="3" ClipToBounds="True">
+        <Grid>
+          <Image Source="{Binding Thumbnail}" Stretch="{Binding CardThumbnailStretch}" RenderOptions.BitmapScalingMode="LowQuality"/>
+          <Border CornerRadius="3" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="2"
+                  IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
+          <Border CornerRadius="2" Margin="2" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
+                  IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
+          <Grid x:Name="compactFavoriteControls" VerticalAlignment="Bottom"
+                Height="{Binding CompactFavoriteControlHeight}" Opacity="0" IsHitTestVisible="False">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Button Grid.Column="0" Style="{StaticResource CompactCardFavoriteButton}" Content="-"
+                    CommandParameter="decrease" Tag="{Binding}" ToolTip="Decrease favorite level"
+                    AutomationProperties.Name="{Binding FileName, StringFormat={}Decrease favorite level for {0}}"/>
+            <Button Grid.Column="1" Style="{StaticResource CompactCardFavoriteButton}" Content="+"
+                    CommandParameter="increase" Tag="{Binding}" ToolTip="Increase favorite level"
+                    AutomationProperties.Name="{Binding FileName, StringFormat={}Increase favorite level for {0}}"/>
+          </Grid>
+        </Grid>
+      </Border>
+      <ControlTemplate.Triggers>
+        <Trigger Property="IsMouseOver" Value="True">
+          <Setter TargetName="compactFavoriteControls" Property="Opacity" Value="1"/>
+          <Setter TargetName="compactFavoriteControls" Property="IsHitTestVisible" Value="True"/>
+        </Trigger>
+        <Trigger Property="IsSelected" Value="True">
+          <Setter TargetName="compactRing" Property="BorderBrush" Value="{StaticResource AccentLight}"/>
+          <Setter TargetName="compactRing" Property="BorderThickness" Value="2"/>
+        </Trigger>
+      </ControlTemplate.Triggers>
+    </ControlTemplate>
+
     <Style x:Key="CardItem" TargetType="ListBoxItem">
       <Setter Property="Margin" Value="0,0,14,14"/>
       <Setter Property="Cursor" Value="Hand"/>
@@ -441,28 +569,30 @@
                 <Border CornerRadius="12" ClipToBounds="True" Background="{StaticResource BgSecondary}"
                         Width="{Binding CardWidth}" Height="{Binding CardHeight}">
                   <Grid>
-                    <Rectangle Fill="{Binding ArtBase}"/>
-                    <Rectangle Fill="{Binding ArtGlow}"/>
+                    <Rectangle Fill="{StaticResource BgTertiary}"/>
                     <Image Source="{Binding Thumbnail}" Stretch="{Binding CardThumbnailStretch}" RenderOptions.BitmapScalingMode="HighQuality"/>
 
                     <!-- unseen dot -->
                     <Ellipse Width="8" Height="8" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
                              Fill="{StaticResource AccentLight}"
-                             Visibility="{Binding ShowUnseenDot, Converter={StaticResource BoolToVis}}"/>
+                             Visibility="{Binding ShowUnseenDotOnCard, Converter={StaticResource BoolToVis}}"/>
 
-                    <!-- favorite count pill -->
-                    <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="7"
-                            CornerRadius="999" Background="#9E000000" BorderBrush="#73F43F5E" BorderThickness="1"
-                            Padding="6,2" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}">
-                      <StackPanel Orientation="Horizontal">
-                        <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}"
-                              Stretch="Uniform" Width="10" Height="10" Margin="0,0,3,0"/>
-                        <TextBlock Text="{Binding Fav}" Foreground="{StaticResource FavoriteText}" FontSize="10.5" FontWeight="Bold"/>
-                      </StackPanel>
-                    </Border>
+                    <!-- Browser-parity direct Favorite controls. Routed Click is handled by the owning gallery. -->
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="2">
+                      <Button Style="{StaticResource IconButton}" Width="{Binding CardFavoriteButtonSize}" Height="{Binding CardFavoriteButtonSize}"
+                              CommandParameter="decrease" Tag="{Binding}" Margin="0,0,2,0" Visibility="{Binding ShowFavoriteBadge, Converter={StaticResource BoolToVis}}"
+                              ToolTip="Decrease favorite level" AutomationProperties.Name="{Binding FileName, StringFormat={}Decrease favorite level for {0}}">
+                        <TextBlock Text="−" Foreground="{StaticResource FavoriteText}" FontWeight="Bold"/>
+                      </Button>
+                      <Button Style="{StaticResource IconButton}" Width="{Binding CardFavoriteButtonSize}" Height="{Binding CardFavoriteButtonSize}"
+                              CommandParameter="increase" Tag="{Binding}" ToolTip="Increase favorite level"
+                              AutomationProperties.Name="{Binding FileName, StringFormat={}Increase favorite level for {0}}">
+                        <StackPanel Orientation="Horizontal"><TextBlock Text="♥" Foreground="{StaticResource Favorite}" FontSize="10"/><TextBlock Text="{Binding Fav}" Foreground="{StaticResource FavoriteText}" FontSize="9" Margin="2,0,0,0" Visibility="{Binding ShowFavoriteBadge, Converter={StaticResource BoolToVis}}"/></StackPanel>
+                      </Button>
+                    </StackPanel>
 
                     <!-- hover overlay + filename -->
-                    <Border x:Name="overlay" VerticalAlignment="Bottom" Height="90" Opacity="0" Padding="10,0,10,10">
+                    <Border x:Name="overlay" VerticalAlignment="Bottom" Height="90" Opacity="0" Padding="10,0,10,10" Visibility="{Binding ShowCardDetails, Converter={StaticResource BoolToVis}}">
                       <Border.Background>
                         <LinearGradientBrush StartPoint="0,1" EndPoint="0,0">
                           <GradientStop Color="#B8000000" Offset="0"/>
@@ -474,10 +604,15 @@
                     </Border>
 
                     <!-- Status borders stay above hover chrome and bind to the tile's existing O(1) state. -->
-                    <Border CornerRadius="11" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                    <Border CornerRadius="11" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="2"
                             IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
                     <Border CornerRadius="8" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
                             IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
+                    <Border HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="5" Padding="4,1" CornerRadius="4"
+                            Background="#D9142630" BorderBrush="#FF38BDF8" BorderThickness="1"
+                            IsHitTestVisible="False" Visibility="{Binding ShowEnhancedBadge, Converter={StaticResource BoolToVis}}">
+                      <TextBlock Text="AI" Foreground="#FFBAE6FD" FontSize="9" FontWeight="SemiBold"/>
+                    </Border>
                   </Grid>
                 </Border>
               </Grid>
@@ -499,6 +634,11 @@
           </ControlTemplate>
         </Setter.Value>
       </Setter>
+      <Style.Triggers>
+        <DataTrigger Binding="{Binding UseCompactCardTemplate}" Value="True">
+          <Setter Property="Template" Value="{StaticResource CompactCardItemTemplate}"/>
+        </DataTrigger>
+      </Style.Triggers>
     </Style>
 
     <!-- ═══════════ List-view row ═══════════ -->
@@ -517,10 +657,9 @@
                 </Grid.ColumnDefinitions>
                 <Border Grid.Column="0" Width="{Binding ListThumbnailWidth}" Height="{Binding ListThumbnailHeight}" CornerRadius="7" ClipToBounds="True" Margin="0,0,12,0">
                   <Grid>
-                    <Rectangle Fill="{Binding ArtBase}"/>
-                    <Rectangle Fill="{Binding ArtGlow}"/>
+                    <Rectangle Fill="{StaticResource BgTertiary}"/>
                     <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
-                    <Border CornerRadius="6" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                    <Border CornerRadius="6" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="2"
                             IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
                     <Border CornerRadius="4" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
                             IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
@@ -532,13 +671,16 @@
                   <TextBlock Text="{Binding Path}" Foreground="{StaticResource TextTertiary}" FontSize="10.5" FontFamily="{StaticResource MonoFont}" TextTrimming="CharacterEllipsis" Margin="0,1,0,0"/>
                   <TextBlock Text="{Binding Prompt}" Foreground="{StaticResource TextSecondary}" FontSize="11.5" TextTrimming="CharacterEllipsis" Margin="0,2,0,0"/>
                 </StackPanel>
-                <Border Grid.Column="2" VerticalAlignment="Center" CornerRadius="999" Background="#9E000000" BorderBrush="#73F43F5E" BorderThickness="1"
-                        Padding="7,2" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}">
-                  <StackPanel Orientation="Horizontal">
-                    <Path Data="M12,21 C-4,10 3,-2 12,5 C21,-2 28,10 12,21 z" Fill="{StaticResource Favorite}" Stretch="Uniform" Width="10" Height="10" Margin="0,0,3,0"/>
-                    <TextBlock Text="{Binding Fav}" Foreground="{StaticResource FavoriteText}" FontSize="10.5" FontWeight="Bold"/>
-                  </StackPanel>
-                </Border>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center" Margin="8,0,0,0">
+                  <Button Style="{StaticResource IconButton}" Width="28" Height="28" CommandParameter="decrease" Tag="{Binding}"
+                          ToolTip="Decrease favorite level" AutomationProperties.Name="{Binding FileName, StringFormat={}Decrease favorite level for {0}}">
+                    <TextBlock Text="−" Foreground="{StaticResource FavoriteText}" FontWeight="Bold"/>
+                  </Button>
+                  <Button Style="{StaticResource IconButton}" MinWidth="34" Width="Auto" Height="28" Padding="5,0" CommandParameter="increase" Tag="{Binding}"
+                          ToolTip="Increase favorite level" AutomationProperties.Name="{Binding FileName, StringFormat={}Increase favorite level for {0}}">
+                    <StackPanel Orientation="Horizontal"><TextBlock Text="♥" Foreground="{StaticResource Favorite}"/><TextBlock Text="{Binding Fav}" Foreground="{StaticResource FavoriteText}" FontSize="10" Margin="3,0,0,0"/></StackPanel>
+                  </Button>
+                </StackPanel>
               </Grid>
             </Border>
             <ControlTemplate.Triggers>
@@ -569,9 +711,10 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource AccentLight}"/>
-              </Trigger>
+              </MultiTrigger>
               <Trigger Property="IsEnabled" Value="False">
                 <Setter Property="Opacity" Value="0.5"/>
               </Trigger>
@@ -593,11 +736,13 @@
               </StackPanel>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="{StaticResource BgElevated}"/>
                 <Setter TargetName="bd" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
                 <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.5"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>
@@ -617,9 +762,11 @@
               <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
             </Border>
             <ControlTemplate.Triggers>
-              <Trigger Property="IsMouseOver" Value="True">
+              <MultiTrigger>
+                <MultiTrigger.Conditions><Condition Property="IsMouseOver" Value="True"/><Condition Property="IsEnabled" Value="True"/></MultiTrigger.Conditions>
                 <Setter TargetName="bd" Property="Background" Value="#F87171"/>
-              </Trigger>
+              </MultiTrigger>
+              <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.4"/></Trigger>
             </ControlTemplate.Triggers>
           </ControlTemplate>
         </Setter.Value>

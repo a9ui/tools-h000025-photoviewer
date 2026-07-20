@@ -20,6 +20,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using System.Windows.Shell;
 using System.Windows.Threading;
 
 namespace PhotoViewer.Wpf;
@@ -64,6 +65,7 @@ public partial class MainWindow : Window
     private const double MaxRightPanelWidth = 900;
     private const double ModalZoomMin = 0.25;
     private const double ModalZoomMax = 10;
+    private const string EnhancedStatusBorderDefaultColor = "#38BDF8";
     private const double ModalZoomKeyboardStep = 1.15;
     private const double ModalZoomWheelStep = 1.1;
     private const int ModalChromeTransientMilliseconds = 900;
@@ -178,6 +180,12 @@ public partial class MainWindow : Window
     private bool _dateFilterMigrationPending;
     private FileDragSession? _fileDragSession;
     private bool _suppressPreviewClickAfterFileDrag;
+    private Button? _pendingCardFavoriteButton;
+    private readonly DispatcherTimer _galleryAutoScrollTimer;
+    private ListBox? _galleryAutoScrollSurface;
+    private ScrollViewer? _galleryAutoScrollViewer;
+    private Point _galleryAutoScrollAnchor;
+    private Point _galleryAutoScrollPointer;
     private bool _settingSearchQuery;
     private string? _currentFolder;
     private List<string> _currentFolderSet = [];
@@ -344,6 +352,7 @@ public partial class MainWindow : Window
     private Func<IReadOnlyList<string>> _protectedDeleteRoots = ResolveProtectedDeleteRoots;
     private string _deleteStatus = "";
     private Action? _statusRetryAction;
+    private string[] _pendingAlbumCleanupPaths = [];
     private IInputElement? _deleteFocusBeforeDialog;
     private IInputElement? _settingsFocusBeforeDialog;
     private IInputElement? _modalFocusBeforeOverlay;
@@ -364,6 +373,11 @@ public partial class MainWindow : Window
             Interval = TimeSpan.FromMilliseconds(SearchStateSaveDebounceMilliseconds),
         };
         _searchStateSaveTimer.Tick += SearchStateSaveTimer_Tick;
+        _galleryAutoScrollTimer = new DispatcherTimer(DispatcherPriority.Input)
+        {
+            Interval = TimeSpan.FromMilliseconds(16),
+        };
+        _galleryAutoScrollTimer.Tick += (_, _) => ApplyGalleryAutoScrollTick();
         _modalFeedbackTimer = new DispatcherTimer(DispatcherPriority.Background)
         {
             Interval = TimeSpan.FromMilliseconds(650),
@@ -403,6 +417,8 @@ public partial class MainWindow : Window
         RowsList.ItemContainerGenerator.StatusChanged += SelectionItemContainerGenerator_StatusChanged;
         CardsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(CardsList_ScrollChanged));
         RowsList.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(RowsList_ScrollChanged));
+        CardsList.AddHandler(Button.ClickEvent, new RoutedEventHandler(CardFavoriteButton_Click));
+        RowsList.AddHandler(Button.ClickEvent, new RoutedEventHandler(CardFavoriteButton_Click));
         ApplyFilters(selectFirst: false);
 
         Loaded += (_, _) =>
@@ -893,6 +909,8 @@ public partial class MainWindow : Window
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
 
     private void OpenAlbums_Click(object sender, RoutedEventArgs e) => ShowAlbumLibrary();
+
+    private void AddCurrentToAlbum_Click(object sender, RoutedEventArgs e) => ShowAlbumLibrary();
 
     private bool ShowAlbumLibrary()
     {
@@ -5151,7 +5169,11 @@ public partial class MainWindow : Window
         if (hasRealFile)
             PreviewNegativeText.Text = "";
         PreviewDateText.Text = t.ModifiedText;
-        PreviewPromptText.Text = hasRealFile ? t.Path : (string.IsNullOrWhiteSpace(t.Prompt) ? t.Path : t.Prompt);
+        PreviewPromptText.Text = hasRealFile
+            ? t.Path
+            : string.IsNullOrWhiteSpace(t.Prompt)
+                ? t.Path
+                : FormatPromptTagsForDisplay(t.Prompt);
         FavoriteLevelText.Text = t.Fav.ToString();
         ModalFavoriteLevelText.Text = t.Fav.ToString();
         SyncSelectionActionSurface();
@@ -5333,7 +5355,9 @@ public partial class MainWindow : Window
         CopyPreviewNegativeButton.IsEnabled = !string.IsNullOrWhiteSpace(metadata.NegativePrompt);
         CopyPreviewNegativeButton.ToolTip = CopyPreviewNegativeButton.IsEnabled ? "Copy negative prompt" : "No negative prompt metadata loaded";
         PreviewPromptLabel.Text = "PROMPT";
-        PreviewPromptText.Text = string.IsNullOrWhiteSpace(metadata.Prompt) ? PreviewPromptText.Text : metadata.Prompt;
+        PreviewPromptText.Text = string.IsNullOrWhiteSpace(metadata.Prompt)
+            ? PreviewPromptText.Text
+            : FormatPromptTagsForDisplay(metadata.Prompt);
         SetPreviewMetadataRow(PreviewSamplerLabel, PreviewSamplerText, "SAMPLER", metadata.Setting("Sampler"));
         SetPreviewMetadataRow(PreviewStepsLabel, PreviewStepsText, "STEPS", metadata.Setting("Steps"));
         SetPreviewMetadataRow(PreviewCfgLabel, PreviewCfgText, "CFG", metadata.Setting("CFG scale"));
@@ -5365,7 +5389,7 @@ public partial class MainWindow : Window
             : metadata.Settings.Count > 0
                 ? settingsText
                 : "PNG parameters loaded";
-        ModalPromptText.Text = hasPrompt ? metadata!.Prompt : "-";
+        ModalPromptText.Text = hasPrompt ? FormatPromptTagsForDisplay(metadata!.Prompt) : "-";
         SyncModalPromptChips(hasPrompt ? metadata!.Prompt : "");
         ModalNegativeText.Text = hasNegative ? metadata!.NegativePrompt : "-";
         CopyModalMetadataButton.IsEnabled = metadata is not null;
@@ -5380,13 +5404,39 @@ public partial class MainWindow : Window
     {
         var tags = new List<string>();
         var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (string tag in (prompt ?? "").Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+        foreach (string rawTag in (prompt ?? "").Split(','))
         {
+            string tag = NormalizePromptTagForDisplay(rawTag);
+            if (tag.Length < 2 || tag.Contains('\n') || tag.Contains('\r'))
+                continue;
             if (seen.Add(tag))
                 tags.Add(tag);
+            if (tags.Count >= 160)
+                break;
         }
         return tags;
     }
+
+    private static string NormalizePromptTagForDisplay(string rawTag)
+    {
+        int start = 0;
+        while (start < rawTag.Length
+            && (char.IsWhiteSpace(rawTag[start]) || rawTag[start] is '(' or '[' or '{'))
+        {
+            start++;
+        }
+
+        int end = rawTag.Length - 1;
+        while (end >= start
+            && (char.IsWhiteSpace(rawTag[end]) || rawTag[end] is ')' or ']' or '}'))
+        {
+            end--;
+        }
+        return end < start ? "" : rawTag[start..(end + 1)].Trim();
+    }
+
+    private static string FormatPromptTagsForDisplay(string? prompt)
+        => string.Join(", ", ParsePromptTags(prompt));
 
     private void SyncModalPromptChips(string prompt)
     {
@@ -5479,7 +5529,9 @@ public partial class MainWindow : Window
         if (selected is null || _currentPreviewMetadata is null
             || !string.Equals(selected.Path, _currentPreviewMetadataPath, StringComparison.OrdinalIgnoreCase))
             return false;
-        string text = (negative ? _currentPreviewMetadata.NegativePrompt : _currentPreviewMetadata.Prompt).Trim();
+        string text = negative
+            ? _currentPreviewMetadata.NegativePrompt.Trim()
+            : FormatPromptTagsForDisplay(_currentPreviewMetadata.Prompt);
         if (text.Length == 0)
             return false;
         _lastMetadataCopyText = text;
@@ -7643,7 +7695,46 @@ public partial class MainWindow : Window
         VirtualizingWrapPanel? panel = _galleryVirtualizingPanel ?? FindVisualDescendant<VirtualizingWrapPanel>(CardsList);
         if (panel is null)
             return;
+        // CardsList always publishes this exact filtered collection. Let the
+        // panel read variable heights/groups directly instead of paying the
+        // WPF ItemCollection indexer cost once per item on every extent rebuild.
+        panel.SetLayoutSource(_tiles);
+        (double uniformWidth, double uniformHeight) = ResolveUniformCardLayout();
+        // The panel otherwise asks ItemCollection for every tile while rebuilding
+        // its 20k/100k extent. Width is always uniform, and non-original aspect
+        // modes also have a uniform height, so publish those shared metrics once.
+        panel.ItemWidth = uniformWidth + 4;
+        panel.ItemHeight = double.IsFinite(uniformHeight) ? uniformHeight + 4 : double.NaN;
         panel.ForceSingleColumn = SizeSlider.Value >= Math.Min(MaxCardWidth, SizeSlider.Maximum) - 0.01;
+    }
+
+    private (double Width, double Height) ResolveUniformCardLayout()
+    {
+        double baseWidth = SizeSlider?.Value ?? DefaultCardWidth;
+        double minWidth = SizeSlider?.Minimum ?? 130;
+        double maxWidth = SizeSlider?.Maximum ?? 280;
+        double widthFactor = _displayStyle switch
+        {
+            DisplayStyleCompact => 0.82,
+            DisplayStylePoster => 1.12,
+            _ => 1.0,
+        };
+        double width = Math.Clamp(baseWidth * widthFactor, minWidth, maxWidth);
+        // Icon-size cards are square for every aspect mode. Publishing that
+        // uniform height keeps the virtualizing panel from walking the full
+        // ItemCollection merely to rediscover the same value at minimum zoom.
+        double aspectHeightFactor = _aspectMode switch
+        {
+            AspectSquareValue => 1.0,
+            AspectOriginalValue => double.NaN,
+            _ => 1.5,
+        };
+        double height = width < 80
+            ? width
+            : double.IsFinite(aspectHeightFactor)
+                ? Math.Max(40, width * aspectHeightFactor)
+                : double.NaN;
+        return (width, height);
     }
 
     private GridZoomAnchor? CaptureGridZoomAnchor()
@@ -7810,12 +7901,20 @@ public partial class MainWindow : Window
 
         double width = Math.Clamp(baseWidth * widthFactor, minWidth, maxWidth);
         double aspectHeightFactor = AspectHeightFactor(tile);
-        tile.CardWidth = width;
-        tile.CardHeight = Math.Max(64, width * aspectHeightFactor);
-        tile.CardThumbnailStretch = _aspectMode == AspectOriginalValue ? Stretch.Uniform : Stretch.UniformToFill;
-        tile.ListThumbnailWidth = listThumbnailBase;
-        tile.ListThumbnailHeight = Math.Clamp(listThumbnailBase * aspectHeightFactor, 32, 120);
-        tile.ListThumbnailSize = Math.Max(tile.ListThumbnailWidth, tile.ListThumbnailHeight);
+        // At icon-size zoom levels, extreme source ratios make cards look like
+        // vertical slivers. Keep the media cell square while preserving the
+        // complete source inside it through Stretch.Uniform.
+        double height = width < 80 ? width : Math.Max(40, width * aspectHeightFactor);
+        double listThumbnailHeight = Math.Clamp(listThumbnailBase * aspectHeightFactor, 32, 120);
+        tile.ApplyCardLayout(
+            width,
+            height,
+            _aspectMode == AspectOriginalValue ? Stretch.Uniform : Stretch.UniformToFill,
+            showDetails: width >= 96,
+            showStatusBadge: width >= 72,
+            listThumbnailBase,
+            listThumbnailHeight,
+            Math.Max(listThumbnailBase, listThumbnailHeight));
     }
 
     private double AspectHeightFactor(Tile tile)
@@ -7823,6 +7922,8 @@ public partial class MainWindow : Window
         return _aspectMode switch
         {
             AspectSquareValue => 1.0,
+            AspectOriginalValue when tile.ImagePixelWidth > 0 && tile.ImagePixelHeight > 0
+                => Math.Clamp(tile.ImagePixelHeight / (double)tile.ImagePixelWidth, 0.35, 3.0),
             _ => 1.5,
         };
     }
@@ -8617,6 +8718,142 @@ public partial class MainWindow : Window
         OpenModal();
     }
 
+    private void GalleryAutoScroll_PreviewMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not ListBox surface)
+            return;
+
+        if (e.ChangedButton == MouseButton.Left && FindCardFavoriteButton(e.OriginalSource) is Button favoriteButton)
+        {
+            _pendingCardFavoriteButton = favoriteButton;
+            _fileDragSession = null;
+            e.Handled = true;
+            return;
+        }
+
+        if (_galleryAutoScrollSurface is not null)
+        {
+            StopGalleryAutoScroll();
+            e.Handled = true;
+            return;
+        }
+
+        if (e.ChangedButton != MouseButton.Middle || !CanStartGalleryAutoScroll(surface))
+            return;
+
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(surface);
+        if (viewer is null)
+            return;
+
+        _fileDragSession = null;
+        _galleryAutoScrollSurface = surface;
+        _galleryAutoScrollViewer = viewer;
+        _galleryAutoScrollAnchor = e.GetPosition(surface);
+        _galleryAutoScrollPointer = _galleryAutoScrollAnchor;
+        Mouse.Capture(surface, CaptureMode.SubTree);
+        _galleryAutoScrollTimer.Start();
+        surface.Cursor = Cursors.ScrollNS;
+        e.Handled = true;
+    }
+
+    private bool CanStartGalleryAutoScroll(ListBox surface)
+        => Modal.Visibility != Visibility.Visible
+            && AppSettingsDialog.Visibility != Visibility.Visible
+            && DeleteConfirmationDialog.Visibility != Visibility.Visible
+            && Landing.Visibility != Visibility.Visible
+            && (ReferenceEquals(surface, CardsList) || ReferenceEquals(surface, RowsList));
+
+    private void GalleryAutoScroll_PreviewMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.Left && _pendingCardFavoriteButton is Button pending)
+        {
+            Button? released = FindCardFavoriteButton(e.OriginalSource);
+            _pendingCardFavoriteButton = null;
+            if (ReferenceEquals(released, pending))
+                ActivateCardFavoriteButton(pending);
+            e.Handled = true;
+            return;
+        }
+        // Browser-style auto-scroll remains active after the initiating middle
+        // click; a subsequent click or Escape cancels it.
+        if (_galleryAutoScrollSurface is not null && e.ChangedButton == MouseButton.Middle)
+            e.Handled = true;
+    }
+
+    private void GalleryAutoScroll_LostMouseCapture(object sender, MouseEventArgs e)
+    {
+        if (_galleryAutoScrollSurface is not null && !ReferenceEquals(Mouse.Captured, _galleryAutoScrollSurface))
+            StopGalleryAutoScroll(releaseCapture: false);
+    }
+
+    private bool UpdateGalleryAutoScrollPointer(FrameworkElement surface, MouseEventArgs e)
+    {
+        if (!ReferenceEquals(surface, _galleryAutoScrollSurface))
+            return false;
+        _galleryAutoScrollPointer = e.GetPosition(surface);
+        e.Handled = true;
+        return true;
+    }
+
+    private bool ApplyGalleryAutoScrollTick()
+    {
+        if (_galleryAutoScrollViewer is not ScrollViewer viewer || _galleryAutoScrollSurface is null)
+            return false;
+
+        double displacement = _galleryAutoScrollPointer.Y - _galleryAutoScrollAnchor.Y;
+        const double deadZone = 12;
+        if (Math.Abs(displacement) <= deadZone)
+            return false;
+        double speed = Math.Sign(displacement) * Math.Min(48, (Math.Abs(displacement) - deadZone) * 0.12);
+        double before = viewer.VerticalOffset;
+        double target = Math.Clamp(before + speed, 0, Math.Max(0, viewer.ExtentHeight - viewer.ViewportHeight));
+        if (Math.Abs(target - before) <= 0.01)
+            return false;
+        viewer.ScrollToVerticalOffset(target);
+        return true;
+    }
+
+    private void StopGalleryAutoScroll(bool releaseCapture = true)
+    {
+        ListBox? surface = _galleryAutoScrollSurface;
+        _galleryAutoScrollTimer.Stop();
+        _galleryAutoScrollSurface = null;
+        _galleryAutoScrollViewer = null;
+        if (surface is not null)
+            surface.ClearValue(CursorProperty);
+        if (releaseCapture && surface is not null && ReferenceEquals(Mouse.Captured, surface))
+            Mouse.Capture(null);
+    }
+
+    private static Button? FindCardFavoriteButton(object? source)
+    {
+        for (DependencyObject? current = source as DependencyObject; current is not null; current = current is Visual or System.Windows.Media.Media3D.Visual3D
+            ? VisualTreeHelper.GetParent(current)
+            : LogicalTreeHelper.GetParent(current))
+        {
+            if (current is Button { CommandParameter: string action, Tag: Tile }
+                && action is "increase" or "decrease")
+                return (Button)current;
+        }
+        return null;
+    }
+
+    private void CardFavoriteButton_Click(object sender, RoutedEventArgs e)
+    {
+        if (FindCardFavoriteButton(e.OriginalSource) is not Button button)
+            return;
+        ActivateCardFavoriteButton(button);
+        e.Handled = true;
+    }
+
+    private bool ActivateCardFavoriteButton(Button button)
+    {
+        if (button.Tag is not Tile { IsRealFile: true } tile || button.CommandParameter is not string action)
+            return false;
+        int delta = action == "decrease" ? -1 : 1;
+        return SetFavoriteLevel(tile, Math.Clamp(tile.Fav + delta, 0, 5));
+    }
+
     private void FileDragSurface_PreviewMouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
         if (sender is not FrameworkElement surface || e.ChangedButton != MouseButton.Left)
@@ -8634,6 +8871,8 @@ public partial class MainWindow : Window
 
     private void FileDragSurface_PreviewMouseMove(object sender, MouseEventArgs e)
     {
+        if (sender is FrameworkElement autoScrollSurface && UpdateGalleryAutoScrollPointer(autoScrollSurface, e))
+            return;
         if (sender is not FrameworkElement surface
             || _fileDragSession is not FileDragSession session
             || !ReferenceEquals(session.Surface, surface)
@@ -8794,6 +9033,7 @@ public partial class MainWindow : Window
     private void OpenModal()
     {
         if (SelectedTile() is not Tile t) return;
+        StopGalleryAutoScroll();
         bool opening = Modal.Visibility != Visibility.Visible;
         bool sourceChanged = !string.Equals(_modalSourceTilePath, t.Path, StringComparison.OrdinalIgnoreCase);
         if (opening)
@@ -8803,7 +9043,9 @@ public partial class MainWindow : Window
         if (sourceChanged)
         {
             _modalSourceTilePath = t.Path;
-            _modalShowingEnhanced = false;
+            // Each navigation target is resolved independently. A currently valid,
+            // owned succeeded output is the preferred asset for a newly selected image.
+            _modalShowingEnhanced = TryGetModalEnhancedOutput(t, out _);
         }
         var watch = Stopwatch.StartNew();
         _modalCts?.Cancel();
@@ -8813,7 +9055,7 @@ public partial class MainWindow : Window
         var decodeCompletion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         _modalDecodeCompletion = decodeCompletion;
 
-        bool requestedEnhanced = _modalShowingEnhanced;
+        bool requestedEnhanced = _modalShowingEnhanced || (sourceChanged && t.Enhanced);
         bool canShowEnhanced = TryGetModalEnhancedOutput(t, out _);
         if (!TryResolveDisplayedAsset(t, requestedEnhanced, out DisplayedAssetResolution displayedAsset, out string resolutionFailure))
         {
@@ -9021,15 +9263,35 @@ public partial class MainWindow : Window
 
     private void CloseModal_Click(object sender, RoutedEventArgs e) => CloseModal(restoreFocus: true);
 
+    private void Modal_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        bool enhancedAvailable = SelectedTile() is Tile tile && TryGetModalEnhancedOutput(tile, out _);
+        ModalContextEnhancedToggle.IsEnabled = enhancedAvailable;
+        ModalContextEnhancedToggle.Header = _modalShowingEnhanced ? "Show Original" : "Show Enhanced";
+    }
+
     private void ModalBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {
-        // Only a click whose hit target is the empty black surface closes the
-        // preview. Image clicks, edge zones, metadata, and toolbar controls
-        // retain their own interactions.
-        if (TryCloseModalFromBackdrop(e.OriginalSource))
+        // Empty preview space toggles chrome just like a click on the fitted
+        // image. Edge navigation, pan, metadata, filmstrip, and toolbar
+        // controls retain their own routed interactions.
+        if (TryToggleModalChromeFromSurface(e.OriginalSource))
         {
             e.Handled = true;
         }
+    }
+
+    private bool TryToggleModalChromeFromSurface(object? hitTarget)
+    {
+        if (Modal.Visibility != Visibility.Visible
+            || (!ReferenceEquals(hitTarget, Modal) && !ReferenceEquals(hitTarget, ModalImageArea))
+            || _modalZoom > 1)
+        {
+            return false;
+        }
+
+        ScheduleModalChromeToggle();
+        return true;
     }
 
     private bool TryCloseModalFromBackdrop(object? hitTarget)
@@ -9252,10 +9514,25 @@ public partial class MainWindow : Window
         if (job is { Status: "succeeded", OutputPath: not null, SourceSize: not null, SourceMtimeMs: not null }
             && TryCreateManagedEnhancedOutput(tile, job.OutputPath, job.SourceSize.Value, job.SourceMtimeMs.Value, out ManagedEnhancedOutput managedOutput))
         {
+            bool newlyAvailable = !TryGetModalEnhancedOutput(tile, out _);
             tile.Enhanced = true;
             tile.EnhancedOutputPath = managedOutput.OutputPath;
             _enhancedOutputs[NormalizeFavoritePath(tile.Path)] = managedOutput;
             UpdateModalEnhancedControls(canShowEnhanced: true);
+            if (newlyAvailable
+                && Modal.Visibility == Visibility.Visible
+                && string.Equals(_modalSourceTilePath, tile.Path, StringComparison.OrdinalIgnoreCase)
+                && !_modalShowingEnhanced)
+            {
+                _modalShowingEnhanced = true;
+                OpenModal();
+            }
+        }
+        else if (job is { Status: "succeeded", OutputPath: not null })
+        {
+            _modalEnhancementError = "Enhanced output is missing, stale, or outside managed storage; Original remains active.";
+            _modalShowingEnhanced = false;
+            UpdateModalEnhancedControls(canShowEnhanced: false);
         }
 
         bool active = job?.Status is "queued" or "running";
@@ -9615,7 +9892,6 @@ public partial class MainWindow : Window
         ClampModalPan();
         UpdateModalTransform();
         RevealModalChromeTransient();
-        ShowModalInteractionFeedback($"Zoom {Math.Round(_modalZoom * 100):0}%");
         return true;
     }
 
@@ -9632,8 +9908,6 @@ public partial class MainWindow : Window
         _modalTransformPath = path;
         UpdateModalTransform();
         ScheduleModalFitUpdate();
-        if (showFeedback && changed)
-            ShowModalInteractionFeedback("Zoom reset");
         return changed;
     }
 
@@ -9713,10 +9987,14 @@ public partial class MainWindow : Window
         double sourceHeight = tile.ImagePixelHeight > 0 ? tile.ImagePixelHeight : ModalBitmap.Source?.Height ?? 640;
         double oldEffectiveScale = _modalFitScale * _modalZoom;
         bool preserveUserZoom = Math.Abs(_modalZoom - 1) > 0.0001;
-        double metadataWidth = ModalMetadataSidebar.Visibility == Visibility.Visible ? ModalMetadataSidebar.Width + ModalMetadataSidebar.Margin.Right + 84 : 0;
-        double availableWidth = Math.Max(240, Modal.ActualWidth - 144 - metadataWidth - 32);
-        double availableHeight = Math.Max(240, (ModalImageArea.ActualHeight > 0 ? ModalImageArea.ActualHeight : Modal.ActualHeight - ModalTopBar.ActualHeight) - 32);
-        _modalFitScale = Math.Min(1, Math.Min(availableWidth / sourceWidth, availableHeight / sourceHeight));
+        double metadataWidth = ModalMetadataSidebar.Visibility == Visibility.Visible
+            ? ModalMetadataSidebar.Width + ModalMetadataSidebar.Margin.Right + 12
+            : 0;
+        double areaWidth = ModalImageArea.ActualWidth > 0 ? ModalImageArea.ActualWidth : Modal.ActualWidth;
+        double areaHeight = ModalImageArea.ActualHeight > 0 ? ModalImageArea.ActualHeight : Modal.ActualHeight;
+        double availableWidth = Math.Max(1, areaWidth - metadataWidth - 24);
+        double availableHeight = Math.Max(1, areaHeight - 24);
+        _modalFitScale = Math.Min(availableWidth / sourceWidth, availableHeight / sourceHeight);
         ModalImage.Width = Math.Max(1, sourceWidth * _modalFitScale);
         ModalImage.Height = Math.Max(1, sourceHeight * _modalFitScale);
         ModalMetadataSidebar.MaxHeight = availableHeight;
@@ -9888,8 +10166,7 @@ public partial class MainWindow : Window
 
         RevealModalChromeTransient();
         Point position = e.GetPosition(Modal);
-        double distanceFromBottom = Modal.ActualHeight - position.Y;
-        SetModalFilmstripHoverVisible(distanceFromBottom >= 0 && distanceFromBottom <= ModalFilmstripHoverZone);
+        SetModalFilmstripHoverVisible(position.X >= 0 && position.X <= ModalFilmstripHoverZone);
     }
 
     private void Modal_MouseLeave(object sender, MouseEventArgs e) => SetModalFilmstripHoverVisible(false);
@@ -10436,44 +10713,25 @@ public partial class MainWindow : Window
         if (Application.Current is null)
             return;
         Application.Current.Resources["FavoriteThumbnailStatusBorderBrush"] = CreateThumbnailStatusBorderBrush(
-            settings.Favorite,
-            allowRainbow: false);
+            settings.Favorite);
         Application.Current.Resources["EnhancedThumbnailStatusBorderBrush"] = CreateThumbnailStatusBorderBrush(
-            settings.Enhanced,
-            allowRainbow: true);
+            settings.Enhanced);
     }
 
-    private static Brush CreateThumbnailStatusBorderBrush(
-        ThumbnailStatusBorderPreference preference,
-        bool allowRainbow)
+    private static Brush CreateThumbnailStatusBorderBrush(ThumbnailStatusBorderPreference preference)
     {
         if (!preference.Enabled)
             return Brushes.Transparent;
 
-        if (allowRainbow
-            && string.Equals(
-                preference.Color,
-                ThumbnailStatusBorderSettings.RainbowColor,
-                StringComparison.OrdinalIgnoreCase))
-        {
-            var rainbow = new LinearGradientBrush
-            {
-                StartPoint = new Point(0, 0),
-                EndPoint = new Point(1, 1),
-            };
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x17, 0x44), 0));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x91, 0x00), 0.142857));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0xea, 0x00), 0.285714));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x00, 0xe6, 0x76), 0.428571));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x00, 0xb8, 0xd4), 0.571429));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0x29, 0x79, 0xff), 0.714286));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xaa, 0x00, 0xff), 0.857143));
-            rainbow.GradientStops.Add(new GradientStop(Color.FromRgb(0xff, 0x17, 0x44), 1));
-            rainbow.Freeze();
-            return rainbow;
-        }
-
-        if (!ThumbnailStatusBorderSettingsStore.TryNormalizeColor(preference.Color, out string color))
+        // Legacy "rainbow" remains readable, but the WPF/browser parity
+        // presentation is now the same quiet solid cyan.
+        string requestedColor = string.Equals(
+            preference.Color,
+            ThumbnailStatusBorderSettings.RainbowColor,
+            StringComparison.OrdinalIgnoreCase)
+                ? EnhancedStatusBorderDefaultColor
+                : preference.Color;
+        if (!ThumbnailStatusBorderSettingsStore.TryNormalizeColor(requestedColor, out string color))
             return Brushes.Transparent;
 
         byte red = byte.Parse(color.AsSpan(1, 2), NumberStyles.HexNumber, CultureInfo.InvariantCulture);
@@ -10503,15 +10761,13 @@ public partial class MainWindow : Window
             FavoriteThumbnailBorderCheckBox.IsChecked = settings.Favorite.Enabled;
             FavoriteThumbnailBorderColorTextBox.Text = settings.Favorite.Color;
             EnhancedThumbnailBorderCheckBox.IsChecked = settings.Enhanced.Enabled;
-            bool useRainbow = string.Equals(
+            bool legacyRainbow = string.Equals(
                 settings.Enhanced.Color,
                 ThumbnailStatusBorderSettings.RainbowColor,
                 StringComparison.OrdinalIgnoreCase);
-            EnhancedThumbnailBorderColorTextBox.Text = useRainbow
-                ? ThumbnailStatusBorderSettings.DefaultFavoriteColor
+            EnhancedThumbnailBorderColorTextBox.Text = legacyRainbow
+                ? EnhancedStatusBorderDefaultColor
                 : settings.Enhanced.Color;
-            EnhancedThumbnailBorderRainbowRadioButton.IsChecked = useRainbow;
-            EnhancedThumbnailBorderSolidRadioButton.IsChecked = !useRainbow;
         }
         finally
         {
@@ -10527,22 +10783,17 @@ public partial class MainWindow : Window
         bool favoriteValid = ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
             FavoriteThumbnailBorderColorTextBox?.Text,
             out string favoriteColor);
-        bool useRainbow = EnhancedThumbnailBorderRainbowRadioButton?.IsChecked == true;
-        bool enhancedValid = useRainbow || ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+        bool enhancedValid = ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
             EnhancedThumbnailBorderColorTextBox?.Text,
             out _);
-        string enhancedColor = useRainbow
-            ? ThumbnailStatusBorderSettings.RainbowColor
-            : EnhancedThumbnailBorderColorTextBox?.Text ?? "";
+        string enhancedColor = EnhancedThumbnailBorderColorTextBox?.Text ?? "";
         FavoriteThumbnailBorderColorPreview.Background = favoriteValid
             ? CreateThumbnailStatusBorderBrush(
-                new ThumbnailStatusBorderPreference(true, favoriteColor),
-                allowRainbow: false)
+                new ThumbnailStatusBorderPreference(true, favoriteColor))
             : Brushes.Transparent;
         EnhancedThumbnailBorderColorPreview.Background = enhancedValid
             ? CreateThumbnailStatusBorderBrush(
-                new ThumbnailStatusBorderPreference(true, enhancedColor),
-                allowRainbow: true)
+                new ThumbnailStatusBorderPreference(true, enhancedColor))
             : Brushes.Transparent;
         return favoriteValid && enhancedValid;
     }
@@ -10557,24 +10808,7 @@ public partial class MainWindow : Window
         bool valid = RefreshThumbnailStatusBorderColorPreviews();
         ThumbnailBordersStatusText.Text = valid
             ? "Ready to save."
-            : "Use a six-digit hex color such as #facc15 for each Single color field.";
-    }
-
-    private void EnhancedThumbnailBorderMode_Changed(object sender, RoutedEventArgs e)
-    {
-        if (_initializing || _syncingThumbnailStatusBorderControls
-            || EnhancedThumbnailBorderColorTextBox is null
-            || ThumbnailBordersStatusText is null)
-        {
-            return;
-        }
-        _dirtyThumbnailStatusBorderPreferences |= ThumbnailStatusBorderDirtyPreferences.Enhanced;
-        bool valid = RefreshThumbnailStatusBorderColorPreviews();
-        ThumbnailBordersStatusText.Text = valid
-            ? EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true
-                ? "Rainbow AI-enhanced border is ready to save."
-                : "Single-color AI-enhanced border is ready to save."
-            : "Use a six-digit hex color such as #facc15 for Single color mode.";
+            : "Use a six-digit hex color such as #38bdf8 for each border color.";
     }
 
     private void ThumbnailBorderEnabled_Changed(object sender, RoutedEventArgs e)
@@ -10593,7 +10827,8 @@ public partial class MainWindow : Window
         _dirtyThumbnailStatusBorderPreferences = ThumbnailStatusBorderDirtyPreferences.All;
         PopulateThumbnailStatusBorderControls(_draftThumbnailStatusBorderSettings);
         SaveThumbnailBordersButton.Content = "Save borders";
-        ThumbnailBordersStatusText.Text = "Default yellow Favorite and rainbow AI-enhanced borders are ready. Save to apply them.";
+        EnhancedThumbnailBorderColorTextBox.Text = EnhancedStatusBorderDefaultColor;
+        ThumbnailBordersStatusText.Text = "Default yellow Favorite and cyan AI-enhanced borders are ready. Save to apply them.";
     }
 
     private void SaveThumbnailBorders_Click(object sender, RoutedEventArgs e)
@@ -10616,7 +10851,7 @@ public partial class MainWindow : Window
         if (!TryReadThumbnailStatusBorderDraft(out ThumbnailStatusBorderSettings draft))
         {
             SaveThumbnailBordersButton.Content = "Retry save";
-            ThumbnailBordersStatusText.Text = "Favorite needs a six-digit hex color. AI-enhanced needs Rainbow or a six-digit hex color. Nothing was changed.";
+            ThumbnailBordersStatusText.Text = "Favorite and AI-enhanced borders each need a six-digit hex color. Nothing was changed.";
             return;
         }
 
@@ -10655,15 +10890,9 @@ public partial class MainWindow : Window
         {
             return false;
         }
-        string enhancedColor;
-        if (EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true)
-        {
-            enhancedColor = ThumbnailStatusBorderSettings.RainbowColor;
-        }
-        else if (EnhancedThumbnailBorderSolidRadioButton.IsChecked != true
-            || !ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
+        if (!ThumbnailStatusBorderSettingsStore.TryNormalizeColor(
                 EnhancedThumbnailBorderColorTextBox.Text,
-                out enhancedColor))
+                out string enhancedColor))
         {
             return false;
         }
@@ -10743,7 +10972,14 @@ public partial class MainWindow : Window
     }
 
     private void OpenAppSettings_Click(object sender, RoutedEventArgs e)
+        => OpenAppSettings(focusShortcuts: false);
+
+    private void OpenShortcuts_Click(object sender, RoutedEventArgs e)
+        => OpenAppSettings(focusShortcuts: true);
+
+    private void OpenAppSettings(bool focusShortcuts)
     {
+        StopGalleryAutoScroll();
         _settingsFocusBeforeDialog = Keyboard.FocusedElement;
         BeginKeyBindingEdit();
         BeginThumbnailStatusBorderEdit();
@@ -10752,7 +10988,42 @@ public partial class MainWindow : Window
         DiagnosticsText.Text = BuildDiagnosticsText();
         DiagnosticsStatusText.Text = "Read-only diagnostics. Copy excludes paths, image metadata, prompts, and personal state.";
         AppSettingsDialog.Visibility = Visibility.Visible;
-        Dispatcher.BeginInvoke(ConfirmBeforeDeleteCheckBox.Focus, DispatcherPriority.Input);
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (focusShortcuts)
+            {
+                KeyBindingsHeading.BringIntoView();
+                Button? firstBinding = KeyBindingSettings.Definitions
+                    .Select(definition => _keyBindingButtons.TryGetValue(definition.Action, out Button? button) ? button : null)
+                    .FirstOrDefault(static button => button is not null);
+                if (firstBinding?.Focus() != true)
+                    KeyBindingsPanel.Focus();
+                return;
+            }
+            ConfirmBeforeDeleteCheckBox.Focus();
+        }, DispatcherPriority.Input);
+    }
+
+    private void AppSettingsBackdrop_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
+    {
+        if (TryCloseAppSettingsFromBackdrop(e.OriginalSource))
+        {
+            e.Handled = true;
+        }
+    }
+
+    private bool TryCloseAppSettingsFromBackdrop(object? hitTarget)
+    {
+        if (AppSettingsDialog.Visibility != Visibility.Visible || !ReferenceEquals(hitTarget, AppSettingsDialog))
+            return false;
+        CloseAppSettings_Click(AppSettingsDialog, new RoutedEventArgs());
+        return true;
+    }
+
+    private void AppSettingsDialog_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (e.OriginalSource is not DependencyObject source || !IsDescendantOrSelf(source, AppSettingsScrollViewer))
+            e.Handled = true;
     }
 
     private void CloseAppSettings_Click(object sender, RoutedEventArgs e)
@@ -10980,10 +11251,16 @@ public partial class MainWindow : Window
             CloseModal();
         }
 
-        SetDeleteStatus(albumCleanupSucceeded
-            ? $"Moved {tile.FileName} to Recycle Bin. Album membership was reconciled."
-            : $"Moved {tile.FileName} to Recycle Bin, but Album cleanup failed. Missing membership was preserved for recovery.",
-            isFailure: !albumCleanupSucceeded);
+        if (albumCleanupSucceeded)
+        {
+            SetDeleteStatus($"Moved {tile.FileName} to Recycle Bin. Album membership was reconciled.");
+        }
+        else
+        {
+            SetStatusToast(
+                $"Moved {tile.FileName} to Recycle Bin, but Album cleanup is pending. The missing membership was preserved; Retry only removes that membership and never recycles the source again.",
+                RetryPendingAlbumMembershipCleanup);
+        }
         SaveState();
         return true;
     }
@@ -11065,7 +11342,9 @@ public partial class MainWindow : Window
         {
             string firstReason = failed.Count > 0 ? $" {failed[0].Reason}" : "";
             string cleanupReason = albumCleanupSucceeded ? "" : " Album cleanup failed; missing membership was preserved for recovery.";
-            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}{cleanupReason}");
+            SetStatusToast(
+                $"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}{cleanupReason}",
+                albumCleanupSucceeded ? null : RetryPendingAlbumMembershipCleanup);
         }
         return true;
     }
@@ -11073,7 +11352,9 @@ public partial class MainWindow : Window
     private int FavoriteLevelForDelete(Tile tile)
         => Math.Max(Math.Clamp(tile.Fav, 0, 5), FavoriteLevelForPath(tile.Path));
 
-    private bool CleanupAlbumMembershipAfterRecycle(IReadOnlyList<string> recycledPaths)
+    private bool CleanupAlbumMembershipAfterRecycle(
+        IReadOnlyList<string> recycledPaths,
+        int timeoutMilliseconds = 2_000)
     {
         string[] sharedPaths = recycledPaths
             .Where(path => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".avif" or ".gif")
@@ -11083,16 +11364,53 @@ public partial class MainWindow : Window
             return true;
         try
         {
-            AlbumMutationResult result = AlbumStore.CleanupPaths(AlbumStore.ResolvePath(), sharedPaths);
+            AlbumMutationResult result = AlbumStore.CleanupPaths(
+                AlbumStore.ResolvePath(),
+                sharedPaths,
+                expectedRevision: null,
+                timeoutMilliseconds: timeoutMilliseconds);
             if (!result.Ok)
+            {
+                _pendingAlbumCleanupPaths = _pendingAlbumCleanupPaths
+                    .Concat(sharedPaths)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToArray();
                 return false;
+            }
+            _pendingAlbumCleanupPaths = _pendingAlbumCleanupPaths
+                .Except(sharedPaths, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             RefreshActiveAlbumSource();
             return true;
         }
         catch
         {
+            _pendingAlbumCleanupPaths = _pendingAlbumCleanupPaths
+                .Concat(sharedPaths)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
             return false;
         }
+    }
+
+    private void RetryPendingAlbumMembershipCleanup()
+    {
+        string[] pending = _pendingAlbumCleanupPaths.ToArray();
+        if (pending.Length == 0)
+        {
+            SetStatusToast("Album cleanup retry is no longer needed.");
+            return;
+        }
+
+        if (CleanupAlbumMembershipAfterRecycle(pending))
+        {
+            SetStatusToast($"Removed {pending.Length:N0} missing source membership(s) from Album. No source Recycle action was repeated.");
+            return;
+        }
+
+        SetStatusToast(
+            "Album cleanup is still pending. The source is already in Recycle Bin; Retry only attempts the idempotent membership cleanup.",
+            RetryPendingAlbumMembershipCleanup);
     }
 
     /// <summary>
@@ -11989,6 +12307,12 @@ public partial class MainWindow : Window
     {
         var key = e.Key == Key.System ? e.SystemKey : e.Key;
         ModifierKeys modifiers = _shortcutModifierProvider();
+        if (_galleryAutoScrollSurface is not null && key == Key.Escape)
+        {
+            StopGalleryAutoScroll();
+            e.Handled = true;
+            return;
+        }
         if (DeleteConfirmationDialog.Visibility == Visibility.Visible || AppSettingsDialog.Visibility == Visibility.Visible)
         {
             if (AppSettingsDialog.Visibility == Visibility.Visible
@@ -12259,6 +12583,10 @@ public partial class MainWindow : Window
         return false;
     }
 
+    private bool IsGalleryWheelSource(object? source)
+        => source is DependencyObject dependency
+            && (IsDescendantOrSelf(dependency, CardsList) || IsDescendantOrSelf(dependency, RowsList));
+
     private bool IsViewerShortcutSurfaceActive()
         => Landing.Visibility != Visibility.Visible;
 
@@ -12322,11 +12650,16 @@ public partial class MainWindow : Window
             return;
         }
 
-        if (IsZoomModifierActive())
+        if (IsZoomModifierActive() && IsGalleryWheelSource(e.OriginalSource))
         {
-            AdjustCardWidth(e.Delta > 0 ? 1 : -1);
-            e.Handled = true;
-            return;
+            // Browser parity keeps List rows at a fixed size. Only consume the
+            // wheel when Grid zoom actually changes; otherwise native List
+            // scrolling must keep working instead of silently swallowing input.
+            if (AdjustCardWidth(e.Delta > 0 ? 1 : -1))
+            {
+                e.Handled = true;
+                return;
+            }
         }
 
         base.OnPreviewMouseWheel(e);
@@ -12534,12 +12867,95 @@ public partial class MainWindow : Window
         => DoNotAskAgainCheckBox.Visibility == Visibility.Visible && DoNotAskAgainCheckBox.IsEnabled;
     public bool DeleteStatusVisibleForSmoke => DeleteStatusToast.Visibility == Visibility.Visible;
     public bool DeleteStatusRetryVisibleForSmoke => DeleteStatusRetryButton.Visibility == Visibility.Visible;
+    public int PendingAlbumCleanupCountForSmoke => _pendingAlbumCleanupPaths.Length;
+    public bool QueueAlbumMembershipCleanupForSmoke(params string[] paths)
+    {
+        bool cleaned = CleanupAlbumMembershipAfterRecycle(paths, timeoutMilliseconds: 75);
+        if (!cleaned)
+        {
+            SetStatusToast(
+                "Album cleanup is pending. Retry only removes membership and never runs source Recycle.",
+                RetryPendingAlbumMembershipCleanup);
+        }
+        return cleaned;
+    }
     public bool AppSettingsVisibleForSmoke => AppSettingsDialog.Visibility == Visibility.Visible;
+    public bool LandingCaptionControlsContractForSmoke
+        => new[] { LandingMinimizeButton, LandingMaximizeButton, LandingCloseButton }.All(button =>
+            button.Style is not null
+            && WindowChrome.GetIsHitTestVisibleInChrome(button)
+            && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(button))
+            && !string.IsNullOrWhiteSpace(button.ToolTip?.ToString()));
+    public bool ActivateLandingMinimizeForSmoke()
+    {
+        WindowState previous = WindowState;
+        LandingMinimizeButton.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, LandingMinimizeButton));
+        bool minimized = WindowState == WindowState.Minimized;
+        WindowState = previous == WindowState.Minimized ? WindowState.Normal : previous;
+        return minimized;
+    }
+    public bool ShortcutDiscoverabilityContractForSmoke
+        => new[] { LandingShortcutsButton, ViewerShortcutsButton, ModalShortcutsButton }.All(button =>
+            string.Equals(AutomationProperties.GetName(button), "Open keyboard shortcuts", StringComparison.Ordinal)
+            && !string.IsNullOrWhiteSpace(button.ToolTip?.ToString()));
+    public bool SidebarSettingsPinnedForSmoke
+        => Grid.GetRow(VisualTreeHelper.GetParent(SidebarAppSettingsButton) as UIElement ?? SidebarAppSettingsButton) == 1
+            && SidebarAppSettingsButton.Visibility == Visibility.Visible
+            && string.Equals(AutomationProperties.GetName(SidebarAppSettingsButton), "Open app settings from sidebar", StringComparison.Ordinal);
+    public bool ActivateShortcutEntryForSmoke(string surface)
+    {
+        Button button = surface.Trim().ToLowerInvariant() switch
+        {
+            "landing" => LandingShortcutsButton,
+            "modal" => ModalShortcutsButton,
+            _ => ViewerShortcutsButton,
+        };
+        button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent, button));
+        return AppSettingsDialog.Visibility == Visibility.Visible;
+    }
+    public bool AppSettingsScrollContractForSmoke
+        => ScrollViewer.GetVerticalScrollBarVisibility(AppSettingsScrollViewer) == ScrollBarVisibility.Auto
+            && ScrollViewer.GetHorizontalScrollBarVisibility(AppSettingsScrollViewer) == ScrollBarVisibility.Disabled
+            && !AppSettingsScrollViewer.CanContentScroll
+            && Grid.GetRow(AppSettingsScrollViewer) == 1
+            && Grid.GetRow(AppSettingsDoneButton) == 2
+            && AppSettingsDialogSurface.MaxHeight > 0;
+    public bool AppSettingsInsideClickStaysOpenForSmoke()
+        => AppSettingsDialog.Visibility == Visibility.Visible
+            && !TryCloseAppSettingsFromBackdrop(AppSettingsDialogSurface)
+            && AppSettingsDialog.Visibility == Visibility.Visible;
+    public bool AppSettingsBackdropClosesForSmoke()
+        => TryCloseAppSettingsFromBackdrop(AppSettingsDialog)
+            && AppSettingsDialog.Visibility != Visibility.Visible;
     public bool DiagnosticsSurfaceContractForSmoke
         => !string.IsNullOrWhiteSpace(AutomationProperties.GetName(DiagnosticsText))
             && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(CopyDiagnosticsButton))
             && AutomationProperties.GetLiveSetting(DiagnosticsStatusText) == AutomationLiveSetting.Polite
             && AppSettingsDialogSurface.MaxHeight > 0;
+    public bool HoverAndTooltipContractForSmoke
+        => new[]
+            {
+                "IconButton", "IconButtonActive", "CaptionButton", "CloseButton", "SidebarLink", "TransparentButton",
+                "GhostButton", "DangerButton", "StepButton", "PrimaryButton", "BrowseButton", "DangerFilled",
+            }
+            .All(StyleHasEnabledHoverForSmoke)
+            && Application.Current?.TryFindResource(typeof(ToolTip)) is Style tooltipStyle
+            && tooltipStyle.Setters.OfType<Setter>().Any(setter => setter.Property == Control.BackgroundProperty && setter.Value is Brush)
+            && tooltipStyle.Setters.OfType<Setter>().Any(setter => setter.Property == Control.ForegroundProperty && setter.Value is Brush)
+            && tooltipStyle.Setters.OfType<Setter>().Any(setter => setter.Property == Control.TemplateProperty && setter.Value is ControlTemplate);
+    private static bool StyleHasEnabledHoverForSmoke(string resourceKey)
+    {
+        if (Application.Current?.TryFindResource(resourceKey) is not Style style)
+            return false;
+
+        ControlTemplate? template = style.Setters
+            .OfType<Setter>()
+            .FirstOrDefault(setter => setter.Property == Control.TemplateProperty)
+            ?.Value as ControlTemplate;
+        return template?.Triggers.OfType<MultiTrigger>().Any(trigger =>
+            trigger.Conditions.Any(condition => condition.Property == UIElement.IsMouseOverProperty && Equals(condition.Value, true))
+            && trigger.Conditions.Any(condition => condition.Property == UIElement.IsEnabledProperty && Equals(condition.Value, true))) == true;
+    }
     public DiagnosticsSmokeSnapshot CopyDiagnosticsForSmoke(bool injectClipboardFailure)
     {
         Action<string> previous = _diagnosticsClipboardWriter;
@@ -13123,6 +13539,19 @@ public partial class MainWindow : Window
             container?.IsSelected == true);
     }
     public int SelectedFavoriteLevelForSmoke => SelectedTile()?.Fav ?? 0;
+    public bool AdjustGalleryFavoriteForSmoke(string fileName, int delta)
+    {
+        Tile? tile = _allTiles.FirstOrDefault(candidate => string.Equals(candidate.FileName, fileName, StringComparison.OrdinalIgnoreCase));
+        if (tile is null || delta is not (-1 or 1))
+            return false;
+
+        var button = new Button
+        {
+            Tag = tile,
+            CommandParameter = delta < 0 ? "decrease" : "increase",
+        };
+        return ActivateCardFavoriteButton(button);
+    }
     public bool SelectedUnseenForSmoke => SelectedTile()?.Unseen == true;
     public int FavoriteStoreCountForSmoke => _favorites.Count(static item => item.Value > 0);
     public int SeenStoreCountForSmoke => _seenPaths.Count;
@@ -13333,6 +13762,52 @@ public partial class MainWindow : Window
             ?? throw new InvalidOperationException("Viewer button visual child was not generated.");
         return InvokePreviewMouseWheelForSmoke(delta, modifiers, source);
     }
+
+    public bool InvokeGallerySurfaceMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+        => InvokePreviewMouseWheelForSmoke(delta, modifiers, CardsList);
+
+    public bool InvokeListSurfaceMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+        => InvokePreviewMouseWheelForSmoke(delta, modifiers, RowsList);
+
+    public bool InvokeGalleryScrollbarMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+    {
+        CardsList.ApplyTemplate();
+        UpdateLayout();
+        IInputElement source = (IInputElement?)FindVisualDescendant<ScrollBar>(CardsList) ?? CardsList;
+        return InvokePreviewMouseWheelForSmoke(delta, modifiers, source);
+    }
+
+    public bool InvokeRightPanelMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+        => InvokePreviewMouseWheelForSmoke(delta, modifiers, RightPreviewContent);
+
+    public bool InvokeLandingMouseWheelForSmoke(int delta, ModifierKeys modifiers)
+        => InvokePreviewMouseWheelForSmoke(delta, modifiers, Landing);
+
+    public bool BeginGalleryAutoScrollForSmoke(double anchorY, double pointerY)
+    {
+        StopGalleryAutoScroll();
+        CardsList.ApplyTemplate();
+        UpdateLayout();
+        ScrollViewer? viewer = FindVisualDescendant<ScrollViewer>(CardsList);
+        if (viewer is null || !CanStartGalleryAutoScroll(CardsList))
+            return false;
+        _galleryAutoScrollSurface = CardsList;
+        _galleryAutoScrollViewer = viewer;
+        _galleryAutoScrollAnchor = new Point(0, anchorY);
+        _galleryAutoScrollPointer = new Point(0, pointerY);
+        return true;
+    }
+
+    public bool TickGalleryAutoScrollForSmoke()
+    {
+        bool requested = ApplyGalleryAutoScrollTick();
+        _galleryAutoScrollViewer?.UpdateLayout();
+        return requested;
+    }
+    public bool GalleryAutoScrollActiveForSmoke => _galleryAutoScrollSurface is not null;
+    public void StopGalleryAutoScrollForSmoke() => StopGalleryAutoScroll();
+    public double GalleryVerticalOffsetForSmoke
+        => FindVisualDescendant<ScrollViewer>(CardsList)?.VerticalOffset ?? 0;
 
     public int MaterializedSelectionVisualLimitForSmoke => MaxMaterializedSelectionVisualItems;
     public int SelectionVisualItemCountForSmoke => CardsList.SelectedItems.Count + RowsList.SelectedItems.Count;
@@ -13674,9 +14149,7 @@ public partial class MainWindow : Window
         => string.Equals(AutomationProperties.GetName(FavoriteThumbnailBorderCheckBox), "Show favorite thumbnail border", StringComparison.Ordinal)
             && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderCheckBox), "Show AI-enhanced thumbnail border", StringComparison.Ordinal)
             && string.Equals(AutomationProperties.GetName(FavoriteThumbnailBorderColorTextBox), "Favorite thumbnail border color", StringComparison.Ordinal)
-            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderRainbowRadioButton), "Use rainbow AI-enhanced thumbnail border", StringComparison.Ordinal)
-            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderSolidRadioButton), "Use single-color AI-enhanced thumbnail border", StringComparison.Ordinal)
-            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderColorTextBox), "AI-enhanced thumbnail border single color", StringComparison.Ordinal)
+            && string.Equals(AutomationProperties.GetName(EnhancedThumbnailBorderColorTextBox), "AI-enhanced thumbnail border color", StringComparison.Ordinal)
             && FavoriteThumbnailBorderColorTextBox.MaxLength == 7
             && EnhancedThumbnailBorderColorTextBox.MaxLength == 7
             && !string.IsNullOrWhiteSpace(AutomationProperties.GetHelpText(FavoriteThumbnailBorderColorTextBox))
@@ -13688,14 +14161,9 @@ public partial class MainWindow : Window
     public bool FavoriteThumbnailStatusBorderCheckedForSmoke => FavoriteThumbnailBorderCheckBox.IsChecked == true;
     public string FavoriteThumbnailStatusBorderDraftColorForSmoke => FavoriteThumbnailBorderColorTextBox.Text;
     public bool EnhancedThumbnailStatusBorderCheckedForSmoke => EnhancedThumbnailBorderCheckBox.IsChecked == true;
-    public string EnhancedThumbnailStatusBorderDraftColorForSmoke
-        => EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true
-            ? ThumbnailStatusBorderSettings.RainbowColor
-            : EnhancedThumbnailBorderColorTextBox.Text;
-    public bool EnhancedThumbnailStatusBorderRainbowModeForSmoke
-        => EnhancedThumbnailBorderRainbowRadioButton.IsChecked == true;
-    public bool EnhancedThumbnailStatusBorderSolidModeForSmoke
-        => EnhancedThumbnailBorderSolidRadioButton.IsChecked == true;
+    public string EnhancedThumbnailStatusBorderDraftColorForSmoke => EnhancedThumbnailBorderColorTextBox.Text;
+    public bool EnhancedThumbnailStatusBorderRainbowModeForSmoke => false;
+    public bool EnhancedThumbnailStatusBorderSolidModeForSmoke => true;
     public bool EnhancedThumbnailStatusBorderSolidColorEnabledForSmoke
         => EnhancedThumbnailBorderColorTextBox.IsEnabled;
     public bool ThumbnailStatusBorderSettingsProtectedForSmoke => _thumbnailStatusBorderSettingsProtected;
@@ -13713,10 +14181,16 @@ public partial class MainWindow : Window
         => ThumbnailStatusBorderResourceColorForSmoke("EnhancedThumbnailStatusBorderBrush");
     public bool EnhancedThumbnailStatusBorderResourceIsRainbowForSmoke
         => Application.Current?.Resources["EnhancedThumbnailStatusBorderBrush"] is LinearGradientBrush;
+    public bool EnhancedThumbnailStatusBorderResourceIsSolidForSmoke
+        => Application.Current?.Resources["EnhancedThumbnailStatusBorderBrush"] is SolidColorBrush;
+    public bool EnhancedThumbnailStatusBorderResourceUsesDefaultCyanForSmoke
+        => string.Equals(
+            ThumbnailStatusBorderResourceColorForSmoke("EnhancedThumbnailStatusBorderBrush"),
+            EnhancedStatusBorderDefaultColor,
+            StringComparison.OrdinalIgnoreCase);
     public bool EnhancedThumbnailStatusBorderResourceIsFrozenForSmoke
         => Application.Current?.Resources["EnhancedThumbnailStatusBorderBrush"] is Brush brush && brush.IsFrozen;
-    public bool EnhancedThumbnailStatusBorderRainbowStopsForSmoke
-        => ThumbnailStatusBorderRainbowStopsForSmoke("EnhancedThumbnailStatusBorderBrush");
+    public bool EnhancedThumbnailStatusBorderRainbowStopsForSmoke => false;
     private static byte ThumbnailStatusBorderResourceAlphaForSmoke(string key)
         => Application.Current?.Resources[key] switch
         {
@@ -13732,36 +14206,6 @@ public partial class MainWindow : Window
             LinearGradientBrush => ThumbnailStatusBorderSettings.RainbowColor,
             _ => "",
         };
-    private static bool ThumbnailStatusBorderRainbowStopsForSmoke(string key)
-    {
-        if (Application.Current?.Resources[key] is not LinearGradientBrush gradient
-            || gradient.GradientStops.Count != 8)
-        {
-            return false;
-        }
-        Color[] expectedColors =
-        [
-            Color.FromRgb(0xff, 0x17, 0x44),
-            Color.FromRgb(0xff, 0x91, 0x00),
-            Color.FromRgb(0xff, 0xea, 0x00),
-            Color.FromRgb(0x00, 0xe6, 0x76),
-            Color.FromRgb(0x00, 0xb8, 0xd4),
-            Color.FromRgb(0x29, 0x79, 0xff),
-            Color.FromRgb(0xaa, 0x00, 0xff),
-            Color.FromRgb(0xff, 0x17, 0x44),
-        ];
-        double[] expectedOffsets = [0, 0.142857, 0.285714, 0.428571, 0.571429, 0.714286, 0.857143, 1];
-        for (int index = 0; index < expectedColors.Length; index++)
-        {
-            GradientStop stop = gradient.GradientStops[index];
-            if (stop.Color != expectedColors[index]
-                || Math.Abs(stop.Offset - expectedOffsets[index]) > 0.0000001)
-            {
-                return false;
-            }
-        }
-        return true;
-    }
     public bool FocusSidebarUnseenDotsForSmoke() => ShowUnseenDots.Focus();
     public bool FocusAppSettingsUnseenDotsForSmoke() => AppSettingsUnseenDotsCheckBox.Focus();
     public bool IsSidebarUnseenDotsFocusedForSmoke => ShowUnseenDots.IsKeyboardFocused;
@@ -14059,12 +14503,63 @@ public partial class MainWindow : Window
         => ModalFilmstripOverlay.Visibility == Visibility.Visible;
     public bool ModalFilmstripPinnedForSmoke => _modalFilmstripOpen;
     public double ModalImageAreaHeightForSmoke => ModalImageArea.ActualHeight;
+    public bool ModalFullWindowFitContractForSmoke
+        => Modal.Visibility == Visibility.Visible
+            && ModalBitmap.Stretch == Stretch.Uniform
+            && ModalImageArea.ActualHeight >= Math.Max(1, Modal.ActualHeight - 2)
+            && ModalImageArea.ActualWidth >= Math.Max(1, Modal.ActualWidth - ModalFilmstripLayout.ActualWidth - 40)
+            && ModalImage.ActualWidth <= ModalImageArea.ActualWidth + 0.5
+            && ModalImage.ActualHeight <= ModalImageArea.ActualHeight + 0.5;
+    public bool ModalTopBarPointerHitTestContractForSmoke
+        => WindowChrome.GetIsHitTestVisibleInChrome(ModalTopBar)
+            && new[] { ModalCloseBtn, ModalShortcutsButton, ModalDeleteButton, ModalMetadataSidebarToggleButton,
+                ModalFilmstripToggleButton, ModalOpenExternalButton, ModalRevealButton, ModalEnhanceButton,
+                ModalEnhancedToggleButton, ModalFlipButton, ModalFavoriteDecreaseButton, ModalFavoriteIncreaseButton }
+                .All(button => IsDescendantOrSelf(button, ModalTopBar));
+    public bool ModalContextMenuContractForSmoke
+        => Modal.ContextMenu is null
+            && ReferenceEquals(ModalImageArea.ContextMenu, ModalContextMenu)
+            && string.Equals(AutomationProperties.GetName(ModalContextMenu), "Image actions", StringComparison.Ordinal)
+            && ModalContextMenu.Items.OfType<MenuItem>().Count() >= 8
+            && ModalContextMenu.Items.OfType<MenuItem>().All(item =>
+                !string.IsNullOrWhiteSpace(item.Header?.ToString())
+                && !string.IsNullOrWhiteSpace(AutomationProperties.GetName(item)));
+    public bool ActivateModalContextFavoriteForSmoke(int delta)
+    {
+        string prefix = delta switch
+        {
+            1 => "Favorite +1",
+            -1 => "Favorite -1",
+            _ => "",
+        };
+        MenuItem? item = ModalContextMenu.Items.OfType<MenuItem>()
+            .FirstOrDefault(candidate => candidate.Header?.ToString()?.StartsWith(prefix, StringComparison.Ordinal) == true);
+        if (item is null)
+            return false;
+        int before = SelectedFavoriteLevelForSmoke;
+        item.RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent, item));
+        return SelectedFavoriteLevelForSmoke == Math.Clamp(before + delta, 0, 5);
+    }
+    public bool ModalVerticalFilmstripContractForSmoke
+        => ScrollViewer.GetVerticalScrollBarVisibility(ModalFilmstripLayoutList) == ScrollBarVisibility.Auto
+            && ScrollViewer.GetHorizontalScrollBarVisibility(ModalFilmstripLayoutList) == ScrollBarVisibility.Disabled
+            && ScrollViewer.GetVerticalScrollBarVisibility(ModalFilmstripOverlayList) == ScrollBarVisibility.Auto
+            && ScrollViewer.GetHorizontalScrollBarVisibility(ModalFilmstripOverlayList) == ScrollBarVisibility.Disabled
+            && ModalFilmstripLayoutList.ItemsPanel.LoadContent() is VirtualizingStackPanel layoutPanel
+            && layoutPanel.Orientation == Orientation.Vertical
+            && ModalFilmstripOverlayList.ItemsPanel.LoadContent() is VirtualizingStackPanel overlayPanel
+            && overlayPanel.Orientation == Orientation.Vertical;
+    public bool ToggleModalChromeFromEmptySurfaceForSmoke()
+        => TryToggleModalChromeFromSurface(ModalImageArea);
     public bool ModalZoomIndicatorContractForSmoke
         => ModalZoomIndicator.VerticalAlignment == VerticalAlignment.Top
             && Grid.GetRowSpan(ModalZoomIndicator) == 3
             && ModalZoomIndicator.Margin.Top <= 2
             && ModalZoomIndicator.Opacity <= 0.65
             && ModalZoomLabel.FontSize <= 10;
+    public bool ModalSingleZoomReadoutForSmoke
+        => ModalZoomIndicator.Visibility == (ModalChromeEffectivelyVisible ? Visibility.Visible : Visibility.Collapsed)
+            && !ModalInteractionFeedbackText.Text.StartsWith("Zoom", StringComparison.OrdinalIgnoreCase);
     public void RevealModalChromeTransientForSmoke() => RevealModalChromeTransient();
     public void ExpireModalChromeTransientForSmoke() => ExpireModalChromeTransient();
     public void SetModalChromeVisibleForSmoke(bool visible) => SetModalChromeVisible(visible, showFeedback: false);
@@ -14500,7 +14995,7 @@ public partial class MainWindow : Window
         bool applied = metadata is not null
             && current
             && string.Equals(PreviewPromptLabel.Text, "PROMPT", StringComparison.Ordinal)
-            && string.Equals(PreviewPromptText.Text, metadata.Prompt, StringComparison.Ordinal);
+            && string.Equals(PreviewPromptText.Text, FormatPromptTagsForDisplay(metadata.Prompt), StringComparison.Ordinal);
         return new PngMetadataSmokeSnapshot(
             current,
             selected?.Path,
@@ -14537,6 +15032,9 @@ public partial class MainWindow : Window
 
     public static bool HasPngParametersForSmoke(string path)
         => ReadPngParametersMetadata(path, CancellationToken.None) is not null;
+
+    public static string NormalizePromptDisplayForSmoke(string? prompt)
+        => FormatPromptTagsForDisplay(prompt);
 
     public MetadataCopySmokeSnapshot CopyCurrentPreviewMetadataForSmoke()
     {
@@ -15188,6 +15686,8 @@ internal sealed class ResettableObservableCollection<T> : ObservableCollection<T
 // ─────────── Tile view model ───────────
 public sealed class Tile : INotifyPropertyChanged
 {
+    private static readonly PropertyChangedEventArgs AllLayoutPropertiesChanged = new(string.Empty);
+
     public Brush? ArtBase { get; set; }
     public Brush? ArtGlow { get; set; }
     public string FileName { get; set; } = "";
@@ -15209,6 +15709,8 @@ public sealed class Tile : INotifyPropertyChanged
     private int _imagePixelWidth;
     private int _imagePixelHeight;
     private bool _enhanced;
+    private bool _showCardDetails = true;
+    private bool _showCardStatusBadge = true;
 
     public bool Enhanced
     {
@@ -15218,8 +15720,41 @@ public sealed class Tile : INotifyPropertyChanged
             if (_enhanced == value) return;
             _enhanced = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Enhanced)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowEnhancedBadge)));
         }
     }
+
+    public bool ShowCardDetails
+    {
+        get => _showCardDetails;
+        set
+        {
+            if (_showCardDetails == value) return;
+            _showCardDetails = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowCardDetails)));
+        }
+    }
+
+    public bool ShowCardStatusBadge
+    {
+        get => _showCardStatusBadge;
+        set
+        {
+            if (_showCardStatusBadge == value) return;
+            _showCardStatusBadge = value;
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowCardStatusBadge)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowFavoriteBadge)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowEnhancedBadge)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUnseenDotOnCard)));
+        }
+    }
+
+    public bool ShowFavoriteBadge => _showCardStatusBadge && _fav > 0;
+    public bool ShowEnhancedBadge => _showCardStatusBadge && _enhanced;
+    public bool ShowUnseenDotOnCard => _showCardStatusBadge && _showUnseenDot;
+    public double CardFavoriteButtonSize => Math.Clamp(_cardWidth - 4, 18, 30);
+    public bool UseCompactCardTemplate => _cardWidth < 80;
+    public double CompactFavoriteControlHeight => Math.Clamp(_cardHeight * 0.45, 10, 18);
 
     public string Prompt
     {
@@ -15290,6 +15825,7 @@ public sealed class Tile : INotifyPropertyChanged
             if (_showUnseenDot == value) return;
             _showUnseenDot = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUnseenDot)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowUnseenDotOnCard)));
         }
     }
 
@@ -15302,6 +15838,7 @@ public sealed class Tile : INotifyPropertyChanged
             if (_fav == clamped) return;
             _fav = clamped;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(Fav)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ShowFavoriteBadge)));
         }
     }
 
@@ -15326,6 +15863,8 @@ public sealed class Tile : INotifyPropertyChanged
             if (Math.Abs(_cardWidth - value) < 0.01) return;
             _cardWidth = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardWidth)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardFavoriteButtonSize)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(UseCompactCardTemplate)));
         }
     }
 
@@ -15338,6 +15877,7 @@ public sealed class Tile : INotifyPropertyChanged
             if (Math.Abs(_cardHeight - value) < 0.01) return;
             _cardHeight = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CardHeight)));
+            PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(CompactFavoriteControlHeight)));
         }
     }
 
@@ -15375,6 +15915,43 @@ public sealed class Tile : INotifyPropertyChanged
             _listThumbnailHeight = value;
             PropertyChanged?.Invoke(this, new PropertyChangedEventArgs(nameof(ListThumbnailHeight)));
         }
+    }
+
+    internal void ApplyCardLayout(
+        double cardWidth,
+        double cardHeight,
+        Stretch cardThumbnailStretch,
+        bool showDetails,
+        bool showStatusBadge,
+        double listThumbnailWidth,
+        double listThumbnailHeight,
+        double listThumbnailSize)
+    {
+        bool changed = Math.Abs(_cardWidth - cardWidth) >= 0.01
+            || Math.Abs(_cardHeight - cardHeight) >= 0.01
+            || _cardThumbnailStretch != cardThumbnailStretch
+            || _showCardDetails != showDetails
+            || _showCardStatusBadge != showStatusBadge
+            || Math.Abs(_listThumbnailWidth - listThumbnailWidth) >= 0.01
+            || Math.Abs(_listThumbnailHeight - listThumbnailHeight) >= 0.01
+            || Math.Abs(_listThumbnailSize - listThumbnailSize) >= 0.01;
+        if (!changed)
+            return;
+
+        _cardWidth = cardWidth;
+        _cardHeight = cardHeight;
+        _cardThumbnailStretch = cardThumbnailStretch;
+        _showCardDetails = showDetails;
+        _showCardStatusBadge = showStatusBadge;
+        _listThumbnailWidth = listThumbnailWidth;
+        _listThumbnailHeight = listThumbnailHeight;
+        _listThumbnailSize = listThumbnailSize;
+
+        // Only realized cards have WPF binding subscribers. Non-realized
+        // catalog entries therefore update without allocating event args, and
+        // realized cards refresh all layout bindings with one notification.
+        PropertyChangedEventHandler? handler = PropertyChanged;
+        handler?.Invoke(this, AllLayoutPropertiesChanged);
     }
 
     public event PropertyChangedEventHandler? PropertyChanged;

@@ -24,6 +24,10 @@ const store = vi.hoisted(() => ({
   reportImageSessionExpired: vi.fn(),
 }));
 
+const albumStore = vi.hoisted(() => ({
+  openPicker: vi.fn(),
+}));
+
 const fixtures = vi.hoisted(() => {
   const first = {
     id: 'C:/images/first.png',
@@ -88,6 +92,15 @@ vi.mock('../store/ImageContext', () => ({
   }),
 }));
 
+vi.mock('../store/AlbumContext', () => ({
+  useOptionalAlbumStore: () => ({
+    activeSource: null,
+    recycleSource: vi.fn(async () => false),
+    refreshActiveSource: vi.fn(async () => null),
+    openPicker: albumStore.openPicker,
+  }),
+}));
+
 vi.mock('../lib/clientImageCache', async (importOriginal) => ({
   ...await importOriginal<typeof import('../lib/clientImageCache')>(),
   loadCachedImageUrl: vi.fn(async () => '/cached-image'),
@@ -124,6 +137,12 @@ function toggleManualChromeFromImage(filename = firstImage.filename) {
   });
 }
 
+function openImageActions() {
+  const area = screen.getByTestId('modal-image-area');
+  fireEvent.contextMenu(area, { clientX: 420, clientY: 260 });
+  return screen.getByRole('menu', { name: 'Image actions' });
+}
+
 describe('ImageModal sparse navigation lock', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -133,6 +152,7 @@ describe('ImageModal sparse navigation lock', () => {
     store.modalImageIds = [];
     store.view = { modalEdgeRatio: 0.28, modalFilmstripOpen: true };
     store.reportImageSessionExpired.mockReset();
+    albumStore.openPicker.mockReset();
     vi.stubGlobal('fetch', vi.fn(async () => ({
       ok: true,
       json: async () => ({ jobs: [] }),
@@ -168,7 +188,7 @@ describe('ImageModal sparse navigation lock', () => {
     expect(dialog).toHaveClass('chrome-hidden', 'cursor-hidden');
     expect(dialog).toHaveAttribute('data-manual-chrome', 'hidden');
 
-    fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 100, clientY: 500 });
+    fireEvent.pointerMove(dialog, { pointerId: 1, pointerType: 'mouse', clientX: 500, clientY: 500 });
     expect(dialog).not.toHaveClass('chrome-hidden');
     expect(dialog).not.toHaveClass('cursor-hidden');
 
@@ -390,6 +410,147 @@ describe('ImageModal sparse navigation lock', () => {
     await waitFor(() => expect(screen.getByRole('status')).toHaveTextContent('Open external application failed'));
   });
 
+  it('routes safe image actions from the context menu and confirms before Recycle', async () => {
+    const openCalls: Array<{ url: string; method: string }> = [];
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.includes('/api/enhance/jobs')) {
+        return { ok: true, json: async () => ({ jobs: [] }) } as Response;
+      }
+      if (url.includes('/api/open')) {
+        const method = init?.method ?? 'GET';
+        openCalls.push({ url, method });
+        return {
+          ok: true,
+          json: async () => ({ success: true, opened: 'source', sizeBytes: 1024 }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    }));
+
+    render(<ImageModal />);
+
+    let menu = openImageActions();
+    expect(screen.getByRole('dialog')).toHaveAttribute('data-manual-chrome', 'visible');
+    expect(within(menu).getByRole('menuitem', { name: 'Show Enhanced image' })).toBeDisabled();
+    expect(store.resolveModalNavigationTarget).not.toHaveBeenCalled();
+    expect(store.setSelectedIndex).not.toHaveBeenCalled();
+
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Favorite +1' }));
+    expect(store.cycleFavoriteLevel).toHaveBeenCalledTimes(1);
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Favorite -1' }));
+    expect(store.decreaseFavoriteLevel).toHaveBeenCalledTimes(1);
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Open displayed image externally' }));
+    await waitFor(() => expect(openCalls.some((call) => call.method === 'POST')).toBe(true));
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Add image to Album' }));
+    expect(albumStore.openPicker).toHaveBeenCalledWith([firstImage.id]);
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Hide Filmstrip' }));
+    expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
+
+    expect(screen.getByRole('complementary', { name: 'Image metadata' })).toHaveClass('hidden');
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Show metadata' }));
+    expect(screen.getByRole('complementary', { name: 'Image metadata' })).not.toHaveClass('hidden');
+
+    const area = screen.getByTestId('modal-image-area');
+    fireEvent.wheel(area, { deltaY: -120 });
+    expect(screen.getByLabelText('Zoom level')).toHaveTextContent('110%');
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Reset zoom' }));
+    expect(screen.getByLabelText('Zoom level')).toHaveTextContent('100%');
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Move image to Recycle Bin…' }));
+    expect(await screen.findByRole('alertdialog')).toHaveTextContent('Move this image to Recycle Bin?');
+    expect(store.deleteImage).not.toHaveBeenCalled();
+  });
+
+  it('toggles a valid Enhanced output from the context menu', async () => {
+    vi.stubGlobal('fetch', vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/api/enhance/jobs')) {
+        return {
+          ok: true,
+          json: async () => ({
+            jobs: [{
+              id: 'enhanced-context',
+              sourceId: firstImage.id,
+              status: 'succeeded',
+              progress: 100,
+              outputPath: 'C:/enhance/outputs/context.webp',
+            }],
+          }),
+        } as Response;
+      }
+      return {
+        ok: true,
+        json: async () => ({ success: true, opened: 'enhanced', sizeBytes: 2048 }),
+      } as Response;
+    }));
+
+    render(<ImageModal />);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Toggle original or enhanced image' })).toHaveTextContent('UP'));
+
+    let menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Show Original image' }));
+    expect(screen.getByRole('button', { name: 'Toggle original or enhanced image' })).toHaveTextContent('OR');
+
+    menu = openImageActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Show Enhanced image' }));
+    expect(screen.getByRole('button', { name: 'Toggle original or enhanced image' })).toHaveTextContent('UP');
+  });
+
+  it('closes the context menu on Escape, outside pointer, and image navigation', async () => {
+    render(<ImageModal />);
+
+    openImageActions();
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.closeModal });
+    expect(screen.queryByRole('menu', { name: 'Image actions' })).not.toBeInTheDocument();
+    expect(store.setSelectedIndex).not.toHaveBeenCalled();
+
+    openImageActions();
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole('menu', { name: 'Image actions' })).not.toBeInTheDocument();
+
+    openImageActions();
+    fireEvent.keyDown(window, { key: DEFAULT_KEY_BINDINGS.nextImage });
+    expect(screen.queryByRole('menu', { name: 'Image actions' })).not.toBeInTheDocument();
+    await waitFor(() => expect(store.resolveModalNavigationTarget).toHaveBeenCalledWith(0, 'next'));
+  });
+
+  it('keeps one zoom readout and wires the visible flip, metadata, reset, and close buttons', () => {
+    render(<ImageModal />);
+
+    const fullImage = screen.getAllByRole('img', { name: firstImage.filename })
+      .find((candidate) => candidate.classList.contains('modal-full-image'));
+    expect(fullImage).toBeDefined();
+    if (!fullImage) throw new Error('expected the full modal image');
+
+    expect(screen.getAllByLabelText('Zoom level')).toHaveLength(1);
+    expect(screen.getByLabelText('Zoom level')).toHaveTextContent('100%');
+    fireEvent.click(screen.getByRole('button', { name: 'Flip horizontally' }));
+    expect(fullImage.style.transform).toContain('scaleX(-1)');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show metadata sidebar' }));
+    expect(screen.getByRole('complementary', { name: 'Image metadata' })).not.toHaveClass('hidden');
+
+    fireEvent.wheel(screen.getByTestId('modal-image-area'), { deltaY: -120 });
+    expect(screen.getByLabelText('Zoom level')).toHaveTextContent('110%');
+    fireEvent.click(screen.getByRole('button', { name: 'Reset zoom' }));
+    expect(screen.getByLabelText('Zoom level')).toHaveTextContent('100%');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close image preview' }));
+    expect(store.setSelectedIndex).toHaveBeenCalledWith(null);
+  });
+
   it('releases navigation after a failed delete so next still works', async () => {
     store.deleteImage.mockResolvedValue(false);
     render(<ImageModal />);
@@ -464,7 +625,7 @@ describe('ImageModal sparse navigation lock', () => {
     expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
   });
 
-  it('reveals the filmstrip as a front overlay only inside the bottom hover zone', async () => {
+  it('reveals the vertical filmstrip as a front overlay only inside the left hover zone', async () => {
     vi.useFakeTimers();
     render(<ImageModal />);
     const dialog = screen.getByRole('dialog');
@@ -475,8 +636,8 @@ describe('ImageModal sparse navigation lock', () => {
     fireEvent.pointerMove(dialog, {
       pointerId: 2,
       pointerType: 'mouse',
-      clientX: 500,
-      clientY: 1000 - MODAL_FILMSTRIP_HOVER_ZONE_PX + 1,
+      clientX: MODAL_FILMSTRIP_HOVER_ZONE_PX - 1,
+      clientY: 500,
     });
     const overlayStrip = screen.getByRole('region', { name: 'Image filmstrip' });
     expect(overlayStrip).toHaveClass('is-overlay');

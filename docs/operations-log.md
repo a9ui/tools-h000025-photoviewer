@@ -172,3 +172,42 @@ Skill candidate:
 - Future production-build verification must either stop the normal server first,
   use a truly isolated output directory, or include a planned standard-launcher
   restart. Never overwrite the shared `.next` behind a live production server.
+
+## 2026-07-20 Album v1 Independent-Review Hardening (working checkpoint)
+
+- The hardening delta is being integrated directly in the existing local
+  `main` worktree above `f64d98d`; no branch/worktree, cherry-pick, push, merge,
+  close, deployment, WinForms work, or user-state/cache deletion is part of the
+  operation. PR #322 remains **MERGE FROZEN**.
+- Browser external-open launch now passes a validated executable and argument
+  vector directly. Do not restore `cmd.exe`, shell interpolation, or a composed
+  command string for Explorer/open actions.
+- A stale shared lock is not recoverable by age alone when its structured PID
+  still identifies a live process. Album cleanup after successful Recycle is a
+  separate latest-state reconciliation with a visible retry path; do not roll
+  back the source Recycle or discard the missing member on cleanup failure.
+- Browser and WPF now treat the old rainbow Enhanced-border preference as a
+  legacy input normalized to solid cyan. Keep Favorite yellow and Enhanced cyan
+  independently configurable and merged by dirty preference into the shared
+  settings document.
+- Current confirmed gates are Browser unit 69 files / 635 tests, Browser
+  typecheck/lint/build, WPF Release build, and focused WPF store/UI verifiers.
+  Final focused and normal-scale full Browser/WPF regressions, isolated Browser
+  runtime, normal WPF runtime/provenance, final SHA, and GitHub/SQLite reflection
+  remain **PENDING FINAL GATE** and must not be inferred from the prior closeout.
+- The user explicitly removed 20,000/100,000 catalog-scale reruns and aggregate
+  check-count tracking from this hardening checkpoint. Prior green evidence is
+  retained as history, is not evidence for the current delta, and is not a
+  required rerun here.
+- Public-readiness review follow-up is active but not green. Direct non-shell
+  open is adopted. `package.json` explicitly binds `dev` and `start` to
+  `127.0.0.1`, and mutating local API routes use the shared Origin/Host guard;
+  focused/full tests for those worktree changes remain pending. `LICENSE` is
+  unresolved, so public repository/distribution readiness is **NO-GO** and the
+  product remains private/local with deployment prohibited.
+- A full Codex Security scan was not run because external consultation is
+  forbidden in this lane and the scan requires a separate authorized setup. Do
+  not treat the current focused checks as a public security clearance.
+- `next-env.d.ts` is an unrelated generated tracked change in the primary
+  worktree. Claude's untracked `local-native/` evidence and the separate
+  untracked screenshot worktree artifact were not changed or cleaned.

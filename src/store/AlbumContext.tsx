@@ -45,6 +45,7 @@ interface AlbumContextValue {
   deleteAlbum: (albumId: string) => Promise<boolean>;
   addMembers: (albumId: string, paths: readonly string[]) => Promise<boolean>;
   removeMembers: (albumId: string, options: { memberIds?: readonly string[]; paths?: readonly string[] }) => Promise<boolean>;
+  cleanupPaths: (paths: readonly string[]) => Promise<boolean>;
   recycleSource: (imagePath: string, options?: DeleteImageOptions) => Promise<boolean>;
 }
 
@@ -117,13 +118,18 @@ export function AlbumProvider({ children }: { children: ReactNode }) {
     url: string,
     method: 'POST' | 'PATCH' | 'DELETE',
     body: Record<string, unknown>,
+    options: { includeExpectedRevision?: boolean } = {},
   ): Promise<MutationResponse | null> => {
     const expectedRevision = documentRef.current?.revision;
+    const includeExpectedRevision = options.includeExpectedRevision !== false;
     try {
       const response = await fetch(url, {
         method,
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ ...body, ...(expectedRevision === undefined ? {} : { expectedRevision }) }),
+        body: JSON.stringify({
+          ...body,
+          ...(!includeExpectedRevision || expectedRevision === undefined ? {} : { expectedRevision }),
+        }),
       });
       const payload = await response.json() as MutationResponse;
       if (!response.ok || !payload.ok || !payload.document) {
@@ -234,6 +240,26 @@ export function AlbumProvider({ children }: { children: ReactNode }) {
     return Boolean(result);
   }, [mutate, refreshSourceById]);
 
+  const cleanupPaths = useCallback(async (paths: readonly string[]) => {
+    const uniquePaths = [...new Set(paths.filter(Boolean))];
+    if (uniquePaths.length === 0) return false;
+    // Cleanup is a commutative, path-scoped reconciliation operation. Omitting
+    // expectedRevision lets the locked store apply it to the latest document
+    // instead of turning an unrelated Browser/WPF edit into a false conflict.
+    const result = await mutate(
+      '/api/albums/members/cleanup',
+      'POST',
+      { paths: uniquePaths },
+      { includeExpectedRevision: false },
+    );
+    const albumId = activeSourceRef.current?.album.id;
+    if (albumId) await refreshSourceById(albumId);
+    if (!result) {
+      setError('Album cleanup is still pending. Missing membership was preserved; retry Remove missing from Album.');
+    }
+    return Boolean(result);
+  }, [mutate, refreshSourceById]);
+
   const recycleSource = useCallback(async (imagePath: string, options: DeleteImageOptions = {}) => {
     const source = activeSourceRef.current;
     const member = source?.members.find((candidate) => candidate.imagePath === imagePath);
@@ -268,11 +294,15 @@ export function AlbumProvider({ children }: { children: ReactNode }) {
     }
 
     clearSelection();
-    const cleanup = await mutate('/api/albums/members/cleanup', 'POST', { paths: [imagePath] });
-    if (!cleanup) {
-      setError('The image was recycled, but Album membership cleanup failed. The missing member was preserved for recovery.');
+    const cleanupSucceeded = await cleanupPaths([imagePath]);
+    const refreshed = activeSourceRef.current?.album.id === source.album.id
+      ? activeSourceRef.current
+      : await refreshSourceById(source.album.id);
+    if (!cleanupSucceeded) {
+      // refreshSourceById clears an earlier error on success, so publish the
+      // recoverable partial-success state only after the source is refreshed.
+      setError('The image was recycled, but Album cleanup is pending. The missing member was preserved; use Remove missing from Album to retry.');
     }
-    const refreshed = await refreshSourceById(source.album.id);
     if (modalWasOpen) {
       const nextIndex = nextImagePath && refreshed
         ? refreshed.images.findIndex((image) => image.id === nextImagePath)
@@ -281,7 +311,7 @@ export function AlbumProvider({ children }: { children: ReactNode }) {
       setModalImageIds(nextIndex >= 0 && refreshed ? refreshed.images.map((image) => image.id) : []);
     }
     return true;
-  }, [clearSelection, deleteImage, favorites, mutate, refreshSourceById, selectedIndex, setModalImageIds, setSelectedIndex]);
+  }, [cleanupPaths, clearSelection, deleteImage, favorites, refreshSourceById, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   const openPicker = useCallback((paths?: readonly string[]) => {
     const targets = [...new Set((paths ?? selectedIds).filter(Boolean))];
@@ -313,11 +343,12 @@ export function AlbumProvider({ children }: { children: ReactNode }) {
     deleteAlbum,
     addMembers,
     removeMembers,
+    cleanupPaths,
     recycleSource,
   }), [
     activeSource, addMembers, changeLibraryOpen, closeAlbum, createAlbum, deleteAlbum, document, error, libraryOpen,
     loading, openAlbum, openPicker, pickerOpen, pickerTargetPaths, recycleSource, refreshActiveSource,
-    refreshAlbums, removeMembers, updateAlbum,
+    cleanupPaths, refreshAlbums, removeMembers, updateAlbum,
   ]);
 
   return <AlbumContext.Provider value={value}>{children}</AlbumContext.Provider>;

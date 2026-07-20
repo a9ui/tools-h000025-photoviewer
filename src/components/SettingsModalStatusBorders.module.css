@@ -21,39 +21,6 @@
   opacity: 0.42;
 }
 
-.styleSelect {
-  min-width: 112px;
-  height: 28px;
-  padding: 0 0.45rem;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  color: var(--text-secondary);
-  background: var(--bg-secondary);
-}
-
-.styleSelect:disabled {
-  opacity: 0.42;
-}
-
-.rainbowSwatch {
-  width: 32px;
-  height: 22px;
-  flex: 0 0 auto;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: linear-gradient(
-    90deg,
-    #ff1744 0%,
-    #ff9100 14.2%,
-    #ffea00 28.6%,
-    #00e676 42.8%,
-    #00b8d4 57.2%,
-    #2979ff 71.4%,
-    #aa00ff 85.8%,
-    #ff1744 100%
-  );
-}
-
 .colorValue {
   min-width: 64px;
   color: var(--text-tertiary);

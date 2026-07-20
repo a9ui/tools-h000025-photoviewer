@@ -50,3 +50,31 @@ This local milestone is complete without publishing it. PR #322 is not a merge
 candidate: its head is older than local main and its tree omits Album v1. Any
 future push/head update/merge/close remains a separate explicit user decision and
 must rerun the required PR/local/origin/merge-candidate tree proofs at that time.
+
+## Post-closeout review-hardening addendum
+
+This closeout describes the earlier committed Album v1 checkpoint. It does not
+declare the subsequent review-hardening worktree complete. The current delta is
+documented in
+[`checkpoint-3-review-hardening.md`](./checkpoint-3-review-hardening.md) and is
+based on local `main` HEAD `f64d98d81e016e43177b1e39738f759742d1215b`.
+
+At this addendum, Browser unit 69 files / 635 tests, typecheck, lint, production
+build, WPF Release build, and focused WPF store/UI verifiers are green. Final
+focused and normal-scale full Browser/WPF regressions, loopback/Origin-Host
+guard tests, Browser isolated runtime, WPF normal runtime/provenance, final
+commit SHA, GitHub, and SQLite reflection are **PENDING FINAL GATE**. The user
+explicitly excluded 20,000/100,000 catalog-scale runs and aggregate check-count
+tracking from this hardening checkpoint. Earlier green scale/aggregate records
+remain unchanged historical evidence and do not require a rerun here.
+
+The public-readiness review does not change this into a publication closeout.
+Direct argument-vector external open is adopted; explicit loopback `dev`/`start`
+binding and the mutating local API Origin/Host guard are present with tests
+pending. `LICENSE` remains unresolved and a full Codex Security scan was not run
+under the no-external-consultation boundary, so public readiness is **NO-GO** and
+the product remains private/local with deployment prohibited. No new
+branch/worktree, push, merge, close, deployment, WinForms change, Claude
+worktree cleanup, or user cache/state deletion is authorized. PR #322 remains
+**MERGE FROZEN**. The unrelated tracked `next-env.d.ts` worktree change is
+excluded from this checkpoint.

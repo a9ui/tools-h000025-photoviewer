@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { execFile } from 'child_process';
 import path from 'path';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { formatDirSet, parseDirSet } from '@/lib/pathSet';
 
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,9 @@ export const dynamic = 'force-dynamic';
  * folder paths. The fallback VBScript picker remains single-folder only.
  */
 export async function POST(request: NextRequest) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const multi = request.nextUrl.searchParams.get('multi') === '1';
   const psScript = `
 Add-Type -TypeDefinition @"

@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { mutateAlbums, type AlbumMutation, type AlbumMutationResult } from '@/lib/albums';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 export function albumsPath() {
@@ -8,6 +9,9 @@ export function albumsPath() {
 }
 
 export async function readObjectBody(request: Request) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return { ok: false as const, response: forbidden };
+
   let body: unknown;
   try {
     body = await request.json();

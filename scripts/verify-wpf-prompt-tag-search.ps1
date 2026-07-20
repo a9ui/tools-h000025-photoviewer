@@ -32,6 +32,7 @@ if ($result.appended.modalVisible -ne $false -or $result.appended.searchFocused 
 if ($result.initialAccessibilityReady -ne $true) { $failures += 'prompt chip accessibility metadata is missing' }
 if ($result.searchPersisted -ne $true) { $failures += 'search query did not persist and reload' }
 if ($result.promptFallbackVisible -ne $true) { $failures += 'prompt chip fallback is not visible when metadata has no prompt' }
+if ($result.promptEmphasisNormalized -ne $true) { $failures += 'prompt display retained emphasis wrapper parentheses or brackets' }
 if ($result.sourceUntouched -ne $true) { $failures += 'source image changed' }
 if ($result.enhancementJobsBefore -ne $result.enhancementJobsAfter -or $result.enhancementCandidatesBefore -ne $result.enhancementCandidatesAfter) { $failures += 'enhancement state changed' }
 

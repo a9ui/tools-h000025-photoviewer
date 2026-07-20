@@ -40,9 +40,12 @@ function normalizePreference(
   { allowRainbow }: { allowRainbow: boolean },
 ): ThumbnailStatusBorderPreference {
   if (!isValidPreference(value, { allowRainbow })) return { ...fallback };
+  const storedColor = typeof value.color === 'string' ? value.color.toLowerCase() : fallback.color;
   return {
     enabled: typeof value.enabled === 'boolean' ? value.enabled : fallback.enabled,
-    color: typeof value.color === 'string' ? value.color.toLowerCase() : fallback.color,
+    // `rainbow` remains accepted so an older shared settings file is never
+    // rejected, but v1 now presents every thumbnail with a stable solid ring.
+    color: storedColor === THUMBNAIL_STATUS_BORDER_RAINBOW ? fallback.color : storedColor,
   };
 }
 
@@ -78,11 +81,9 @@ export function getThumbnailStatusBorderPresentation({
   settings: ThumbnailStatusBorderSettings;
 }): ThumbnailStatusBorderPresentation {
   const showEnhanced = enhanced && settings.enhanced.enabled;
-  const enhancedRainbow = showEnhanced
-    && settings.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW;
   return {
     favoriteColor: favorite && settings.favorite.enabled ? settings.favorite.color : null,
-    enhancedColor: showEnhanced && !enhancedRainbow ? settings.enhanced.color : null,
-    enhancedRainbow,
+    enhancedColor: showEnhanced ? settings.enhanced.color : null,
+    enhancedRainbow: false,
   };
 }

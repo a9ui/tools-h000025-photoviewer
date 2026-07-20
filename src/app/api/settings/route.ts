@@ -3,27 +3,26 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from '@/lib/fileWriteLock';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { hasKeyBindingConflicts, normalizeKeyBinding } from '@/lib/keyBindings';
+import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
-import {
-  isValidThumbnailStatusBordersDocument,
-  normalizeThumbnailStatusBorders,
-} from '@/lib/thumbnailStatusBorders';
+import { isValidThumbnailStatusBordersDocument, normalizeThumbnailStatusBorders } from '@/lib/thumbnailStatusBorders';
 
 export const dynamic = 'force-dynamic';
 
 type SettingsDocument = Record<string, unknown>;
 
 const KEY_BINDING_NAMES = Object.keys(DEFAULT_KEY_BINDINGS) as Array<keyof KeyBindings>;
+const KEY_BINDING_NAME_SET = new Set<string>(KEY_BINDING_NAMES);
 const MAX_KEY_BINDING_LENGTH = 64;
-const FILMSTRIP_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.toggleFilmstrip, 'b', 'g', 'v', 'y'] as const;
-const ADD_TO_ALBUM_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.addToAlbum, 'g', 'v', 'y'] as const;
+const SAFE_MIGRATION_KEYS = ['b', 'g', 'v', 'y', 'j', 'k', 'l', 'n', 'm', 'q', 'w', 'x', 'c', 'z', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'] as const;
+const FILMSTRIP_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.toggleFilmstrip, ...SAFE_MIGRATION_KEYS] as const;
+const ADD_TO_ALBUM_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.addToAlbum, ...SAFE_MIGRATION_KEYS.filter((key) => key !== DEFAULT_KEY_BINDINGS.addToAlbum)] as const;
 
 function settingsPath() {
-  return process.env.PVU_SETTINGS_PATH
-    ? path.resolve(process.env.PVU_SETTINGS_PATH)
-    : path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'settings.json');
+  return resolveSharedCachePath('settings.json', process.env.PVU_SETTINGS_PATH);
 }
 
 function isObject(value: unknown): value is SettingsDocument {
@@ -50,23 +49,40 @@ function validateStoredDocument(value: unknown): value is SettingsDocument {
   if (Object.hasOwn(value, 'keyBindings') && !validateKeyBindings(value.keyBindings)) {
     return false;
   }
-  if (Object.hasOwn(value, 'thumbnailStatusBorders')
-    && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
+  if (Object.hasOwn(value, 'thumbnailStatusBorders') && !isValidThumbnailStatusBordersDocument(value.thumbnailStatusBorders)) {
     return false;
   }
   return true;
 }
 
+function addUnknownStringBindingKeys(usedKeys: Set<string>, storedBindings: SettingsDocument): void {
+  for (const [name, value] of Object.entries(storedBindings)) {
+    if (KEY_BINDING_NAME_SET.has(name) || typeof value !== 'string') continue;
+    const normalized = normalizeKeyBinding(value);
+    if (normalized) usedKeys.add(normalized);
+  }
+}
+
+function hasEffectiveKeyBindingConflicts(document: SettingsDocument): boolean {
+  const effectiveBindings = publicSettings(document).keyBindings;
+  if (hasKeyBindingConflicts(effectiveBindings)) return true;
+
+  const knownKeys = new Set(Object.values(effectiveBindings).map(normalizeKeyBinding));
+  const storedBindings = isObject(document.keyBindings) ? document.keyBindings : {};
+  for (const [name, value] of Object.entries(storedBindings)) {
+    if (!KEY_BINDING_NAME_SET.has(name) && typeof value === 'string') {
+      const normalized = normalizeKeyBinding(value);
+      if (normalized && knownKeys.has(normalized)) return true;
+    }
+  }
+  return false;
+}
+
 function publicSettings(document: SettingsDocument): AppSettings {
-  const storedBindings = validateKeyBindings(document.keyBindings)
-    ? document.keyBindings
-    : {};
-  const keyBindings = Object.fromEntries(KEY_BINDING_NAMES.map((name) => [
-    name,
-    typeof storedBindings[name] === 'string'
-      ? storedBindings[name]
-      : DEFAULT_KEY_BINDINGS[name],
-  ])) as unknown as KeyBindings;
+  const storedBindings = validateKeyBindings(document.keyBindings) ? document.keyBindings : {};
+  const keyBindings = Object.fromEntries(
+    KEY_BINDING_NAMES.map((name) => [name, typeof storedBindings[name] === 'string' ? storedBindings[name] : DEFAULT_KEY_BINDINGS[name]]),
+  ) as unknown as KeyBindings;
 
   // `toggleFilmstrip` was added after the original settings schema. Preserve a
   // user's existing T assignment instead of silently making two modal actions
@@ -74,38 +90,43 @@ function publicSettings(document: SettingsDocument): AppSettings {
   // no explicit filmstrip binding; an explicitly saved collision remains
   // visible to the normal Settings conflict repair flow.
   if (typeof storedBindings.toggleFilmstrip !== 'string') {
-    const usedKeys = new Set(KEY_BINDING_NAMES
-      .filter((name) => name !== 'toggleFilmstrip' && (name !== 'addToAlbum' || typeof storedBindings.addToAlbum === 'string'))
-      .map((name) => normalizeKeyBinding(keyBindings[name])));
-    keyBindings.toggleFilmstrip = FILMSTRIP_MIGRATION_KEYS.find(
-      (candidate) => !usedKeys.has(normalizeKeyBinding(candidate)),
-    ) ?? DEFAULT_KEY_BINDINGS.toggleFilmstrip;
+    const usedKeys = new Set(
+      KEY_BINDING_NAMES.filter((name) => name !== 'toggleFilmstrip' && (name !== 'addToAlbum' || typeof storedBindings.addToAlbum === 'string')).map((name) => normalizeKeyBinding(keyBindings[name])),
+    );
+    addUnknownStringBindingKeys(usedKeys, storedBindings);
+    keyBindings.toggleFilmstrip = FILMSTRIP_MIGRATION_KEYS.find((candidate) => !usedKeys.has(normalizeKeyBinding(candidate))) ?? DEFAULT_KEY_BINDINGS.toggleFilmstrip;
   }
 
   // Album v1 historically suggested B, but a migrated filmstrip may already
   // own it. Allocate the first free candidate without rewriting an explicit
   // user binding or introducing a silent collision.
   if (typeof storedBindings.addToAlbum !== 'string') {
-    const usedKeys = new Set(KEY_BINDING_NAMES
-      .filter((name) => name !== 'addToAlbum')
-      .map((name) => normalizeKeyBinding(keyBindings[name])));
-    keyBindings.addToAlbum = ADD_TO_ALBUM_MIGRATION_KEYS.find(
-      (candidate) => !usedKeys.has(normalizeKeyBinding(candidate)),
-    ) ?? DEFAULT_KEY_BINDINGS.addToAlbum;
+    const usedKeys = new Set(KEY_BINDING_NAMES.filter((name) => name !== 'addToAlbum').map((name) => normalizeKeyBinding(keyBindings[name])));
+    addUnknownStringBindingKeys(usedKeys, storedBindings);
+    keyBindings.addToAlbum = ADD_TO_ALBUM_MIGRATION_KEYS.find((candidate) => !usedKeys.has(normalizeKeyBinding(candidate))) ?? DEFAULT_KEY_BINDINGS.addToAlbum;
   }
 
   return {
     keyBindings,
-    confirmBeforeDelete: typeof document.confirmBeforeDelete === 'boolean'
-      ? document.confirmBeforeDelete
-      : true,
+    confirmBeforeDelete: typeof document.confirmBeforeDelete === 'boolean' ? document.confirmBeforeDelete : true,
     thumbnailStatusBorders: normalizeThumbnailStatusBorders(document.thumbnailStatusBorders),
   };
 }
 
 async function readSettings(): Promise<
-  { ok: true; document: SettingsDocument; settings: AppSettings; malformed: false } |
-  { ok: false; document: SettingsDocument; settings: AppSettings; malformed: true; error: string }
+  | {
+      ok: true;
+      document: SettingsDocument;
+      settings: AppSettings;
+      malformed: false;
+    }
+  | {
+      ok: false;
+      document: SettingsDocument;
+      settings: AppSettings;
+      malformed: true;
+      error: string;
+    }
 > {
   const target = settingsPath();
   try {
@@ -145,9 +166,7 @@ async function readSettings(): Promise<
   }
 }
 
-function validateIncomingDocument(value: unknown):
-  { ok: true; update: SettingsDocument } |
-  { ok: false; error: string } {
+function validateIncomingDocument(value: unknown): { ok: true; update: SettingsDocument } | { ok: false; error: string } {
   if (!isObject(value)) {
     return { ok: false, error: 'Request body must be an object.' };
   }
@@ -155,15 +174,18 @@ function validateIncomingDocument(value: unknown):
     return { ok: false, error: 'confirmBeforeDelete must be a boolean.' };
   }
   if (Object.hasOwn(value, 'keyBindings') && !validateKeyBindings(value.keyBindings)) {
-    return { ok: false, error: 'keyBindings must contain only bounded string bindings.' };
+    return {
+      ok: false,
+      error: 'keyBindings must contain only bounded string bindings.',
+    };
   }
   if (Object.hasOwn(value, 'thumbnailStatusBorders')) {
     const borders = value.thumbnailStatusBorders;
-    const hasPreferenceUpdate = isObject(borders)
-      && (['favorite', 'enhanced'] as const).some((status) => {
+    const hasPreferenceUpdate =
+      isObject(borders) &&
+      (['favorite', 'enhanced'] as const).some((status) => {
         const preference = borders[status];
-        return isObject(preference)
-          && (Object.hasOwn(preference, 'enabled') || Object.hasOwn(preference, 'color'));
+        return isObject(preference) && (Object.hasOwn(preference, 'enabled') || Object.hasOwn(preference, 'color'));
       });
     if (!isValidThumbnailStatusBordersDocument(borders) || !hasPreferenceUpdate) {
       return {
@@ -172,18 +194,16 @@ function validateIncomingDocument(value: unknown):
       };
     }
   }
-  if (!Object.hasOwn(value, 'confirmBeforeDelete')
-    && !Object.hasOwn(value, 'keyBindings')
-    && !Object.hasOwn(value, 'thumbnailStatusBorders')) {
-    return { ok: false, error: 'Request body must include a supported setting.' };
+  if (!Object.hasOwn(value, 'confirmBeforeDelete') && !Object.hasOwn(value, 'keyBindings') && !Object.hasOwn(value, 'thumbnailStatusBorders')) {
+    return {
+      ok: false,
+      error: 'Request body must include a supported setting.',
+    };
   }
   return { ok: true, update: value };
 }
 
-function mergeThumbnailStatusBorders(
-  currentValue: unknown,
-  incomingValue: unknown,
-): SettingsDocument {
+function mergeThumbnailStatusBorders(currentValue: unknown, incomingValue: unknown): SettingsDocument {
   const current = isObject(currentValue) ? currentValue : {};
   const incoming = isObject(incomingValue) ? incomingValue : {};
   const merged: SettingsDocument = { ...current, ...incoming };
@@ -221,6 +241,9 @@ export async function GET() {
 }
 
 export async function PUT(request: Request) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   let body: unknown;
   try {
     body = await request.json();
@@ -236,20 +259,19 @@ export async function PUT(request: Request) {
     return await withFileWriteLock(settingsPath(), async () => {
       const current = await readSettings();
       if (!current.ok) {
-        return NextResponse.json({
-          ok: false,
-          error: 'Shared settings JSON is malformed; refusing to overwrite it.',
-          ...current.settings,
-          malformed: true,
-        }, { status: 409 });
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'Shared settings JSON is malformed; refusing to overwrite it.',
+            ...current.settings,
+            malformed: true,
+          },
+          { status: 409 },
+        );
       }
 
-      const incomingBindings = isObject(incoming.update.keyBindings)
-        ? incoming.update.keyBindings
-        : {};
-      const currentBindings = isObject(current.document.keyBindings)
-        ? current.document.keyBindings
-        : {};
+      const incomingBindings = isObject(incoming.update.keyBindings) ? incoming.update.keyBindings : {};
+      const currentBindings = isObject(current.document.keyBindings) ? current.document.keyBindings : {};
       const hasIncomingStatusBorders = Object.hasOwn(incoming.update, 'thumbnailStatusBorders');
       const updated: SettingsDocument = {
         ...current.document,
@@ -258,21 +280,22 @@ export async function PUT(request: Request) {
           ...currentBindings,
           ...incomingBindings,
         },
-        ...(hasIncomingStatusBorders ? {
-          thumbnailStatusBorders: mergeThumbnailStatusBorders(
-            current.document.thumbnailStatusBorders,
-            incoming.update.thumbnailStatusBorders,
-          ),
-        } : {}),
+        ...(hasIncomingStatusBorders
+          ? {
+              thumbnailStatusBorders: mergeThumbnailStatusBorders(current.document.thumbnailStatusBorders, incoming.update.thumbnailStatusBorders),
+            }
+          : {}),
       };
-      if (Object.hasOwn(incoming.update, 'keyBindings')
-        && hasKeyBindingConflicts(publicSettings(updated).keyBindings)) {
-        return NextResponse.json({
-          ok: false,
-          error: 'Key bindings must not assign the same key to multiple actions.',
-          ...current.settings,
-          malformed: false,
-        }, { status: 409 });
+      if (Object.hasOwn(incoming.update, 'keyBindings') && hasEffectiveKeyBindingConflicts(updated)) {
+        return NextResponse.json(
+          {
+            ok: false,
+            error: 'Key bindings must not assign the same key to multiple actions.',
+            ...current.settings,
+            malformed: false,
+          },
+          { status: 409 },
+        );
       }
       await writeSettings(updated);
       return NextResponse.json({
@@ -282,10 +305,13 @@ export async function PUT(request: Request) {
       });
     });
   } catch (error) {
-    return NextResponse.json({
-      ok: false,
-      error: error instanceof Error ? error.message : String(error),
-      malformed: false,
-    }, { status: 503 });
+    return NextResponse.json(
+      {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        malformed: false,
+      },
+      { status: 503 },
+    );
   }
 }

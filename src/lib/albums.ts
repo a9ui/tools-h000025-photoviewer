@@ -105,24 +105,43 @@ function emptyDocument(): AlbumsDocument {
   };
 }
 
+function normalizeLegacyEmptyDocument(parsed: Record<string, unknown>) {
+  if (Object.hasOwn(parsed, 'version')) return parsed;
+  const hasVersionOneOnlyFields = Object.hasOwn(parsed, 'revision')
+    || Object.hasOwn(parsed, 'updatedAtUtc')
+    || Object.hasOwn(parsed, 'recentAlbumIds');
+  if (hasVersionOneOnlyFields || !Array.isArray(parsed.albums) || parsed.albums.length !== 0) return null;
+  return {
+    ...parsed,
+    version: ALBUMS_VERSION,
+    revision: 0,
+    updatedAtUtc: new Date(0).toISOString(),
+    recentAlbumIds: [],
+  };
+}
+
 function validateDocument(parsed: unknown): { ok: true; document: AlbumsDocument } | { ok: false; futureVersion: boolean; error: string } {
   if (!isObject(parsed)) return { ok: false, futureVersion: false, error: 'albums.json root must be an object.' };
-  if (typeof parsed.version === 'number' && Number.isInteger(parsed.version) && parsed.version > ALBUMS_VERSION) {
-    return { ok: false, futureVersion: true, error: `albums.json version ${parsed.version} is newer than supported version ${ALBUMS_VERSION}.` };
+  const candidate = normalizeLegacyEmptyDocument(parsed);
+  if (!candidate) {
+    return { ok: false, futureVersion: false, error: 'albums.json legacy state is not an unambiguous empty document.' };
   }
-  if (parsed.version !== ALBUMS_VERSION
-    || !isRevision(parsed.revision)
-    || !isUtcStamp(parsed.updatedAtUtc)
-    || !Array.isArray(parsed.albums)
-    || !Array.isArray(parsed.recentAlbumIds)
-    || !parsed.recentAlbumIds.every(isBoundedToken)) {
+  if (typeof candidate.version === 'number' && Number.isInteger(candidate.version) && candidate.version > ALBUMS_VERSION) {
+    return { ok: false, futureVersion: true, error: `albums.json version ${candidate.version} is newer than supported version ${ALBUMS_VERSION}.` };
+  }
+  if (candidate.version !== ALBUMS_VERSION
+    || !isRevision(candidate.revision)
+    || !isUtcStamp(candidate.updatedAtUtc)
+    || !Array.isArray(candidate.albums)
+    || !Array.isArray(candidate.recentAlbumIds)
+    || !candidate.recentAlbumIds.every(isBoundedToken)) {
     return { ok: false, futureVersion: false, error: 'albums.json does not match the supported version 1 root schema.' };
   }
 
   const albumIds = new Set<string>();
   const memberIds = new Set<string>();
   const albums: AlbumRecord[] = [];
-  for (const value of parsed.albums) {
+  for (const value of candidate.albums) {
     if (!isObject(value)
       || !isBoundedToken(value.id)
       || typeof value.name !== 'string'
@@ -175,19 +194,19 @@ function validateDocument(parsed: unknown): { ok: true; document: AlbumsDocument
       members,
     });
   }
-  if (new Set(parsed.recentAlbumIds).size !== parsed.recentAlbumIds.length
-    || parsed.recentAlbumIds.some((id) => !albumIds.has(id))) {
+  if (new Set(candidate.recentAlbumIds).size !== candidate.recentAlbumIds.length
+    || candidate.recentAlbumIds.some((id) => !albumIds.has(id))) {
     return { ok: false, futureVersion: false, error: 'albums.json contains invalid recent Album ids.' };
   }
   return {
     ok: true,
     document: {
-      ...parsed,
+      ...candidate,
       version: ALBUMS_VERSION,
-      revision: parsed.revision,
-      updatedAtUtc: parsed.updatedAtUtc,
+      revision: candidate.revision,
+      updatedAtUtc: candidate.updatedAtUtc,
       albums,
-      recentAlbumIds: [...parsed.recentAlbumIds],
+      recentAlbumIds: [...candidate.recentAlbumIds],
     },
   };
 }

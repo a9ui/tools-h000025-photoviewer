@@ -1,4 +1,5 @@
 import { NextRequest } from 'next/server';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { isScanAbortedError, ScanAbortedError, scanDirectory, setIndex } from '@/lib/indexer';
 import { cancelThumbnailWarmup } from '@/lib/thumbnailCache';
 import { basenameFromPath, parseDirSet } from '@/lib/pathSet';
@@ -14,6 +15,9 @@ export const dynamic = 'force-dynamic';
  * Stable Diffusion PNG metadata when available, and streams progress via SSE.
  */
 export async function GET(request: NextRequest) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const dir = request.nextUrl.searchParams.get('dir');
   const forceFull = request.nextUrl.searchParams.get('full') === '1';
 

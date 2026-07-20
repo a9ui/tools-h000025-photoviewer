@@ -5,6 +5,7 @@ import {
   mutateSearchHistory,
   readSearchHistory,
 } from '@/lib/searchHistory';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 
 function searchHistoryPath() {
@@ -44,6 +45,9 @@ export async function GET() {
 }
 
 export async function PUT(req: Request) {
+  const forbidden = guardLocalApiRequest(req);
+  if (forbidden) return forbidden;
+
   const parsed = await requestBody(req);
   if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
   if (!isObject(parsed.body) || !validQuery(parsed.body.query)) {
@@ -66,6 +70,9 @@ export async function PUT(req: Request) {
 }
 
 export async function DELETE(req: Request) {
+  const forbidden = guardLocalApiRequest(req);
+  if (forbidden) return forbidden;
+
   const parsed = await requestBody(req);
   if (!parsed.ok) return NextResponse.json({ ok: false, error: parsed.error }, { status: 400 });
   if (!isObject(parsed.body)) {

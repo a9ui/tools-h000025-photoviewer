@@ -46,6 +46,7 @@ try {
         'accessibility',
         'zoomIndicator',
         'filmstripLayout',
+        'contextMenuAction',
         'manualVisiblePersistent',
         'chromeHidden',
         'transientReveal',

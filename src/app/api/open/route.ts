@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { guardLocalApiRequest } from "@/lib/localApiGuard";
 import { execFile } from "child_process";
 import path from "path";
 import fs from "fs";
@@ -15,7 +16,8 @@ export const dynamic = "force-dynamic";
  * POST /api/open?path=ABSOLUTE_PATH
  *
  * Opens a file in the OS default application (e.g. Windows Photo Viewer).
- * Uses `start ""` on Windows.
+ * Windows deliberately invokes Explorer directly instead of routing a user
+ * controlled filename through cmd.exe's command language.
  */
 export interface OpenRouteDependencies {
   platform: NodeJS.Platform;
@@ -49,18 +51,38 @@ function getFileInfo(filePath: string): OpenFileInfo {
   }
 }
 
+export interface DefaultApplicationLaunch {
+  command: string;
+  args: string[];
+  options: { windowsHide: true; shell: false };
+}
+
+export function buildDefaultApplicationLaunch(filePath: string, platform: NodeJS.Platform = process.platform): DefaultApplicationLaunch {
+  if (platform === "win32") {
+    return {
+      command: "explorer.exe",
+      args: [filePath],
+      options: { windowsHide: true, shell: false },
+    };
+  }
+  return platform === "darwin"
+    ? {
+        command: "open",
+        args: [filePath],
+        options: { windowsHide: true, shell: false },
+      }
+    : {
+        command: "xdg-open",
+        args: [filePath],
+        options: { windowsHide: true, shell: false },
+      };
+}
+
 function openWithDefaultApplication(filePath: string): Promise<void> {
   return new Promise<void>((resolve, reject) => {
-    const command =
-      process.platform === "win32"
-        ? "cmd.exe"
-        : process.platform === "darwin"
-          ? "open"
-          : "xdg-open";
-    const args =
-      process.platform === "win32" ? ["/c", "start", "", filePath] : [filePath];
+    const launch = buildDefaultApplicationLaunch(filePath);
 
-    execFile(command, args, { windowsHide: true }, (error) => {
+    execFile(launch.command, launch.args, launch.options, (error) => {
       if (error) reject(error);
       else resolve();
     });
@@ -69,8 +91,7 @@ function openWithDefaultApplication(filePath: string): Promise<void> {
 
 const defaultDependencies: OpenRouteDependencies = {
   platform: process.platform,
-  getIndexedPaths: (indexToken) =>
-    getIndex(indexToken).map((image) => image.absolutePath),
+  getIndexedPaths: (indexToken) => getIndex(indexToken).map((image) => image.absolutePath),
   getFileInfo,
   realPath: (filePath) => fs.realpathSync.native(filePath),
   isSupportedImage: isSupportedImagePath,
@@ -86,30 +107,20 @@ function managedOutputFallback(code: string) {
   };
 }
 
-function isPathInsideDirectory(
-  rootPath: string,
-  candidatePath: string,
-  platform: NodeJS.Platform,
-) {
+function isPathInsideDirectory(rootPath: string, candidatePath: string, platform: NodeJS.Platform) {
   const pathApi = platform === "win32" ? path.win32 : path.posix;
-  const relative = pathApi.relative(
-    pathApi.resolve(rootPath),
-    pathApi.resolve(candidatePath),
-  );
-  return Boolean(relative)
-    && relative !== ".."
-    && !relative.startsWith(`..${pathApi.sep}`)
-    && !pathApi.isAbsolute(relative);
+  const relative = pathApi.relative(pathApi.resolve(rootPath), pathApi.resolve(candidatePath));
+  return Boolean(relative) && relative !== ".." && !relative.startsWith(`..${pathApi.sep}`) && !pathApi.isAbsolute(relative);
 }
 
-async function resolveDisplayedOpenTarget(
-  request: NextRequest,
-  sourcePath: string,
-  sourceInfo: OpenFileInfo,
-  dependencies: OpenRouteDependencies,
-) {
+async function resolveDisplayedOpenTarget(request: NextRequest, sourcePath: string, sourceInfo: OpenFileInfo, dependencies: OpenRouteDependencies) {
   if (request.nextUrl.searchParams.get("display") !== "enhanced") {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: null };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: null,
+    };
   }
 
   const jobId = request.nextUrl.searchParams.get("jobId");
@@ -117,49 +128,84 @@ async function resolveDisplayedOpenTarget(
   try {
     job = jobId ? await dependencies.getEnhancementJob(jobId) : null;
   } catch {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-job-store-unavailable") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-job-store-unavailable"),
+    };
   }
-  if (!job
-    || job.status !== "succeeded"
-    || typeof job.outputPath !== "string"
-    || !job.outputPath.trim()) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-job-unavailable") };
+  if (!job || job.status !== "succeeded" || typeof job.outputPath !== "string" || !job.outputPath.trim()) {
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-job-unavailable"),
+    };
   }
 
-  if (typeof job.sourcePath !== "string"
-    || typeof job.sourceId !== "string"
-    || !job.sourcePath.trim()
-    || !job.sourceId.trim()
-    || !findActiveIndexedImagePath(job.sourcePath, [sourcePath], dependencies.platform)
-    || !findActiveIndexedImagePath(job.sourceId, [sourcePath], dependencies.platform)) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-source-mismatch") };
+  if (
+    typeof job.sourcePath !== "string" ||
+    typeof job.sourceId !== "string" ||
+    !job.sourcePath.trim() ||
+    !job.sourceId.trim() ||
+    !findActiveIndexedImagePath(job.sourcePath, [sourcePath], dependencies.platform) ||
+    !findActiveIndexedImagePath(job.sourceId, [sourcePath], dependencies.platform)
+  ) {
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-source-mismatch"),
+    };
   }
 
   const sourceSignature = job.sourceSignature;
-  if (!sourceSignature
-    || !Number.isFinite(sourceSignature.size)
-    || sourceSignature.size < 0
-    || !Number.isFinite(sourceSignature.mtimeMs)) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-source-signature-invalid") };
+  if (!sourceSignature || !Number.isFinite(sourceSignature.size) || sourceSignature.size < 0 || !Number.isFinite(sourceSignature.mtimeMs)) {
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-source-signature-invalid"),
+    };
   }
 
-  if (sourceSignature.size !== sourceInfo.size
-    || Math.abs(sourceSignature.mtimeMs - sourceInfo.mtimeMs) > 1) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-source-stale") };
+  if (sourceSignature.size !== sourceInfo.size || Math.abs(sourceSignature.mtimeMs - sourceInfo.mtimeMs) > 1) {
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-source-stale"),
+    };
   }
 
   const outputPath = path.resolve(job.outputPath);
   const outputsRoot = path.resolve(dependencies.getManagedOutputsRoot());
   if (!isPathInsideDirectory(outputsRoot, outputPath, dependencies.platform)) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-output-outside-ownership") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-output-outside-ownership"),
+    };
   }
 
   const outputInfo = dependencies.getFileInfo(outputPath);
   if (!outputInfo.exists || !outputInfo.isFile) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-output-missing") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-output-missing"),
+    };
   }
   if (!dependencies.isSupportedImage(outputPath)) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-output-unsupported") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-output-unsupported"),
+    };
   }
 
   let canonicalOutput: string;
@@ -168,43 +214,48 @@ async function resolveDisplayedOpenTarget(
     canonicalOutput = dependencies.realPath(outputPath);
     canonicalRoot = dependencies.realPath(outputsRoot);
   } catch {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-output-canonicalization-failed") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-output-canonicalization-failed"),
+    };
   }
   if (!isPathInsideDirectory(canonicalRoot, canonicalOutput, dependencies.platform)) {
-    return { targetPath: sourcePath, opened: "source" as const, fileInfo: sourceInfo, fallback: managedOutputFallback("enhanced-output-outside-ownership") };
+    return {
+      targetPath: sourcePath,
+      opened: "source" as const,
+      fileInfo: sourceInfo,
+      fallback: managedOutputFallback("enhanced-output-outside-ownership"),
+    };
   }
 
-  return { targetPath: canonicalOutput, opened: "enhanced" as const, fileInfo: outputInfo, fallback: null };
+  return {
+    targetPath: canonicalOutput,
+    opened: "enhanced" as const,
+    fileInfo: outputInfo,
+    fallback: null,
+  };
 }
 
-export function createOpenHandler(
-  dependencies: OpenRouteDependencies = defaultDependencies,
-) {
+export function createOpenHandler(dependencies: OpenRouteDependencies = defaultDependencies) {
   return async function openImage(request: NextRequest) {
+    const forbidden = guardLocalApiRequest(request);
+    if (forbidden) return forbidden;
+
     const filePath = request.nextUrl.searchParams.get("path");
-    const indexToken =
-      request.nextUrl.searchParams.get("indexToken") || undefined;
+    const indexToken = request.nextUrl.searchParams.get("indexToken") || undefined;
 
     if (!filePath) {
       return NextResponse.json({ error: "Missing path" }, { status: 400 });
     }
 
-    const indexedPath = findActiveIndexedImagePath(
-      filePath,
-      dependencies.getIndexedPaths(indexToken),
-      dependencies.platform,
-    );
+    const indexedPath = findActiveIndexedImagePath(filePath, dependencies.getIndexedPaths(indexToken), dependencies.platform);
     if (!indexedPath) {
       if (indexToken) {
-        return NextResponse.json(
-          { error: "Image is not in this viewer session" },
-          { status: 404 },
-        );
+        return NextResponse.json({ error: "Image is not in this viewer session" }, { status: 404 });
       }
-      return NextResponse.json(
-        { error: "Image is not in the active index" },
-        { status: 403 },
-      );
+      return NextResponse.json({ error: "Image is not in the active index" }, { status: 403 });
     }
 
     const resolved = path.resolve(indexedPath);
@@ -215,10 +266,7 @@ export function createOpenHandler(
     }
 
     if (!dependencies.isSupportedImage(resolved)) {
-      return NextResponse.json(
-        { error: "Unsupported image type" },
-        { status: 415 },
-      );
+      return NextResponse.json({ error: "Unsupported image type" }, { status: 415 });
     }
 
     try {
@@ -235,10 +283,7 @@ export function createOpenHandler(
       response.headers.set("Cache-Control", "no-store");
       return response;
     } catch {
-      return NextResponse.json(
-        { error: "Open external application failed" },
-        { status: 500 },
-      );
+      return NextResponse.json({ error: "Open external application failed" }, { status: 500 });
     }
   };
 }

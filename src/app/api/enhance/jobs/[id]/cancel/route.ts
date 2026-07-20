@@ -2,11 +2,15 @@ import { NextResponse } from 'next/server';
 import { requestComfyUiInterrupt } from '@/lib/enhance/adapters/comfyUiClient';
 import { requestNcnnVulkanCancel } from '@/lib/enhance/adapters/ncnnProcessRegistry';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
+import { guardLocalApiRequest } from '@/lib/localApiGuard';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 
-export async function POST(_request: Request, { params }: { params: Promise<{ id: string }> }) {
+export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const { id } = await params;
   const job = await getEnhancementJobStore().requestCancel(id);
   if (!job) {

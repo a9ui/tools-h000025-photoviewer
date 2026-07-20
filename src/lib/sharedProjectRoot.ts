@@ -42,7 +42,7 @@ export function resolveSharedProjectRoot(start = process.cwd()) {
   }
 }
 
-export type SharedCacheEntry = 'favorites.json' | 'seen.json' | 'recent-folders.json' | 'search-history.json' | 'albums.json' | 'enhance';
+export type SharedCacheEntry = 'favorites.json' | 'seen.json' | 'recent-folders.json' | 'search-history.json' | 'albums.json' | 'settings.json' | 'enhance';
 
 export function resolveSharedCachePath(fileName: SharedCacheEntry, overridePath?: string, start = process.cwd()) {
   if (overridePath) return path.resolve(overridePath);
@@ -62,6 +62,8 @@ export function resolveSharedCachePath(fileName: SharedCacheEntry, overridePath?
       return path.join(projectRoot, '.cache', 'search-history.json');
     case 'albums.json':
       return path.join(projectRoot, '.cache', 'albums.json');
+    case 'settings.json':
+      return path.join(projectRoot, '.cache', 'settings.json');
     case 'enhance':
       return path.join(projectRoot, '.cache', 'enhance');
   }
