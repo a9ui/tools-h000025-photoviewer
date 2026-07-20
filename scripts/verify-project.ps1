@@ -55,6 +55,21 @@ try {
     }
   }
 
+  function Test-PowerShellSyntax {
+    param([string]$RelativePath)
+    $tokens = $null
+    $errors = $null
+    [System.Management.Automation.Language.Parser]::ParseFile(
+      (Join-Path $Root $RelativePath),
+      [ref]$tokens,
+      [ref]$errors
+    ) | Out-Null
+    if ($errors.Count -gt 0) {
+      $messages = @($errors | ForEach-Object { $_.Message })
+      throw "$RelativePath has PowerShell syntax errors: $($messages -join '; ')"
+    }
+  }
+
   $required = @(
     "README.md",
     "SECURITY.md",
@@ -74,7 +89,13 @@ try {
     "docs\license-decision.md",
     "scripts\verify-public-surface.ps1",
     "scripts\harden-github-repository.ps1",
-    ".github\workflows\verify.yml"
+    ".github\workflows\verify.yml",
+    ".github\workflows\security-audit.yml",
+    ".github\ISSUE_TEMPLATE\config.yml",
+    ".github\ISSUE_TEMPLATE\bug_report.yml",
+    ".github\ISSUE_TEMPLATE\feature_request.yml",
+    ".github\ISSUE_TEMPLATE\performance_report.yml",
+    ".github\pull_request_template.md"
   )
 
   $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Root $_) -PathType Leaf) })
@@ -82,6 +103,9 @@ try {
     [pscustomobject]@{ ok = $false; missing = $missing } | ConvertTo-Json -Depth 5
     exit 1
   }
+
+  Test-PowerShellSyntax "scripts\verify-public-surface.ps1"
+  Test-PowerShellSyntax "scripts\harden-github-repository.ps1"
 
   $readme = Read-ProjectFile "README.md"
   Test-TextContains "README.md" $readme @(
@@ -148,9 +172,6 @@ try {
   }
 
   & (Join-Path $Root "scripts\verify-public-surface.ps1")
-  if ($LASTEXITCODE -ne 0) {
-    throw "scripts/verify-public-surface.ps1 failed with exit code $LASTEXITCODE"
-  }
 
   Invoke-Pnpm test:unit
   if (-not $SkipLint) {
@@ -171,6 +192,7 @@ try {
     ok = $true
     checks = @(
       "required-public-files",
+      "PowerShell syntax",
       "public-surface-policy",
       "pnpm test:unit",
       $(if ($SkipLint) { "lint skipped" } else { "pnpm lint" }),
