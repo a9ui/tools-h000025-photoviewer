@@ -148,3 +148,27 @@ Skill candidate:
   HTTP 200 at restoration time). Do not use that launcher `status` form as a
   probe for a user-owned port; WPF verification after the incident used TEMP
   processes only and did not touch port 3000 again.
+
+## 2026-07-20 Album v1 Normal-Launcher Closeout
+
+- Album v1 implementation checkpoint `5f24725d7f5842db2dc1e2a3dc773edc4ad451f4`
+  passed the normal production launcher on explicit loopback port 3132 with
+  `sourceDirty=false`, exact source revision, and the Album Playwright scenario
+  1/1. Port 3000 was not used for that E2E.
+- The first normal-launcher attempt correctly rejected clean provenance because
+  Next production build rewrote tracked `next-env.d.ts`. Restoring the tracked
+  development reference made the same completed build clean; do not treat a
+  post-build dirty flag as green.
+- Operational incident: building the shared `.next` while the old user-owned
+  port 3000 process was alive left its in-memory old manifest pointing at two
+  replaced static assets, which returned HTTP 500. Root HTML still returned 200,
+  so root-only health checks would have missed the breakage.
+- The exact standard `start_viewer.bat -> prod_launcher.js ->
+  serve_with_parent_watch.js -> next start` ownership chain was confirmed. The
+  standard launcher replaced only that stale managed process tree with the clean
+  final build. Follow-up verification required exact source revision,
+  `sourceDirty=false`, loopback-only binding, root 200, and all 9 referenced
+  static assets 200. No user state/cache or unrelated process was removed.
+- Future production-build verification must either stop the normal server first,
+  use a truly isolated output directory, or include a planned standard-launcher
+  restart. Never overwrite the shared `.next` behind a live production server.

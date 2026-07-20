@@ -27,3 +27,13 @@ typecheck, lint, build and isolated Album Playwright passed. WPF focused Album,
 56-check aggregate with reload soak, and exact 100,000 catalog passed. Step 8
 is the active durable-doc/GitHub/SQLite checkpoint; step 9 remains intentionally
 frozen because local main is now ahead of PR #322 head.
+
+## Closeout status
+
+Steps 1-8 are complete. The normal Browser launcher was also exercised on an
+isolated explicit port with the clean implementation SHA and Album Playwright,
+then the user-facing port 3000 was restored through the standard launcher and
+verified loopback-only with every referenced static asset returning 200.
+Step 9's proof shows that #322 is stale: local main is a two-commit implementation
+descendant before this docs-only closeout, while the PR head remains `8914935`.
+The proof is a freeze result, not authorization to push, merge, or close.

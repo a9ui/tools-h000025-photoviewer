@@ -98,7 +98,7 @@ NON-GOAL:
 - diagnostic、screenshot、reportへsecret、cookie、`.env`、raw state/cache、private image pathを載せない。
 - runtime diagnostic UIは必要最小限のversion/build/runtime/count/safety情報だけを表示する。
 - verifierはTEMP fixtureとoverride pathを使い、ユーザーFavorite/Seen/Recent/state/cache/sourceを変更しない。
-- ユーザー所有のport/processを検証のために再起動しない。Browserは `scripts/verify-browser-runtime.ps1`、WPFは `scripts/check-wpf-launch-target.ps1 -Json` のread-only経路を使う。
+- ユーザー所有のport/processを通常の検証都合で再起動しない。Browserは `scripts/verify-browser-runtime.ps1`、WPFは `scripts/check-wpf-launch-target.ps1 -Json` のread-only経路を使う。検証操作自身が共有buildを壊した場合だけ、exact ownership chainを確認してstandard launcherで直ちに復旧し、rootだけでなく参照static assetを全probeしてincidentをoperations logへ残す。
 
 ### 2.4 WinFormsのFROZEN境界
 
