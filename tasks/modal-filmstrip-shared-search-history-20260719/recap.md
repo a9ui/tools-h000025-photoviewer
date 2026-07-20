@@ -232,3 +232,29 @@ Current WPF evidence is `verify-wpf-product.ps1 -IncludeReloadSoak` 55/55 in
 strengthened Search History gate included. No source image, user shared state,
 normal port-3000 runtime, WinForms code, deployment, or GitHub Actions gate was
 used.
+
+## Local checkpoint, cleanup, and remaining adoption boundary
+
+The completed implementation and audit were committed directly to local
+`main` as `e6cf850ca17945ac13216ad4dd485a472b35ce8c`. The normal WPF Release
+target was rebuilt and recorded at that revision; the freshness checker reports
+`current / provenance-match` with 0 build warnings and 0 errors.
+
+The user-owned Browser launcher remains live on loopback port 3000 at revision
+`dbad550`. It was inspected but not stopped and its active `.next` tree was not
+rebuilt in place. Therefore the Browser normal-launcher adoption remains a
+real pending runtime step, not a claimed green result.
+
+Branch/worktree triage used PR disposition, patch equivalence, semantic
+adoption commits, clean status, and ancestor checks. Local branches went from
+91 to 5 and registered worktrees from 56 to 4. The retained branches are
+`main`, Draft PR #322, a unique unadopted Album MVP, and dirty-protected
+WinForms/Claude work. No unique or dirty branch was deleted.
+
+GitHub still has only `main` and the Draft PR #322 head branch. The remote PR
+head remains `14ebe6a` because Codex local execution policy rejected the
+canonical push before process creation. PR comment `5018114574` records the
+local SHA, all gates, cleanup counts, exact manual push command, and the rule
+not to merge until the remote head reaches `e6cf850` or a verified descendant.
+SQLite improvement item #48 is `in_progress` for the same two remaining facts:
+manual PR-head publication and the user-timed port-3000 restart.
