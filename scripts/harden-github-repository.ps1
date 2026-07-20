@@ -2,6 +2,10 @@
 param(
     [string]$Repository = 'a9ui/H000025-PhotoViewer',
     [string[]]$RequiredCheck = @('Browser verification', 'WPF Release build'),
+    [ValidateSet('first_time_contributors_new_to_github', 'first_time_contributors', 'all_external_contributors')]
+    [string]$ForkApprovalPolicy = 'first_time_contributors',
+    [ValidateRange(1, 400)]
+    [int]$ArtifactRetentionDays = 30,
     [switch]$Apply
 )
 
@@ -9,7 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
 if ($Repository -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
-    throw "Repository must use owner/name form."
+    throw 'Repository must use owner/name form.'
 }
 if ($RequiredCheck.Count -eq 0 -or @($RequiredCheck | Where-Object { [string]::IsNullOrWhiteSpace($_) }).Count -gt 0) {
     throw 'At least one non-empty required status check is required.'
@@ -38,6 +42,8 @@ $plannedChanges = @(
     "Protect main and require checks: $($RequiredCheck -join ', ')",
     'Include administrators, require pull requests and conversation resolution, and block force-push/deletion',
     'Set the default GITHUB_TOKEN permission to read and disallow Actions approval of pull requests',
+    "Require maintainer approval for fork workflows according to '$ForkApprovalPolicy'",
+    "Retain Actions artifacts and logs for $ArtifactRetentionDays days",
     'Delete merged branches automatically and require full commit SHA references for Actions'
 )
 
@@ -118,6 +124,14 @@ Invoke-GhJson -Method PUT -Endpoint "repos/$Repository/actions/permissions/workf
     can_approve_pull_request_reviews = $false
 }
 
+Invoke-GhJson -Method PUT -Endpoint "repos/$Repository/actions/permissions/fork-pr-contributor-approval" -Body @{
+    approval_policy = $ForkApprovalPolicy
+}
+
+Invoke-GhJson -Method PUT -Endpoint "repos/$Repository/actions/permissions/artifact-and-log-retention" -Body @{
+    days = $ArtifactRetentionDays
+}
+
 Invoke-GhJson -Method PATCH -Endpoint "repos/$Repository/code-scanning/default-setup" -Body @{
     state = 'configured'
     query_suite = 'default'
@@ -137,6 +151,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Actions policy verification failed.' }
 
 gh api "repos/$Repository/actions/permissions/workflow"
 if ($LASTEXITCODE -ne 0) { throw 'Workflow token policy verification failed.' }
+
+gh api "repos/$Repository/actions/permissions/fork-pr-contributor-approval"
+if ($LASTEXITCODE -ne 0) { throw 'Fork workflow approval verification failed.' }
+
+gh api "repos/$Repository/actions/permissions/artifact-and-log-retention"
+if ($LASTEXITCODE -ne 0) { throw 'Actions retention verification failed.' }
 
 gh api "repos/$Repository/private-vulnerability-reporting"
 if ($LASTEXITCODE -ne 0) { throw 'Private vulnerability reporting verification failed.' }
