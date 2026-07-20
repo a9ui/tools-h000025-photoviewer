@@ -210,11 +210,15 @@ try {
     if ($OutputPath) {
         $resolvedOutput = [IO.Path]::GetFullPath($OutputPath)
         $outputDirectory = Split-Path -Parent $resolvedOutput
-        New-Item -ItemType Directory -Force $outputDirectory | Out-Null
+        if ($outputDirectory) {
+            New-Item -ItemType Directory -Force $outputDirectory | Out-Null
+        }
         Set-Content -LiteralPath $resolvedOutput -Value $json -Encoding UTF8
     }
     Write-Output $json
-    if (-not $result.ok) { exit 1 }
+    if (-not $result.ok) {
+        throw 'Public surface verification failed. See the JSON findings above.'
+    }
 }
 finally {
     Pop-Location
