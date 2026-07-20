@@ -63,6 +63,7 @@ export interface KeyBindings {
   closeModal: string;
   flipHorizontal: string;
   enhanceImage: string;
+  toggleFilmstrip: string;
   zoomIn: string;
   zoomOut: string;
   zoomReset: string;
@@ -77,13 +78,34 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   closeModal: 'Escape',
   flipHorizontal: 'h',
   enhanceImage: 'a',
+  toggleFilmstrip: 't',
   zoomIn: '=',
   zoomOut: '-',
   zoomReset: '0',
+};
+
+export interface ThumbnailStatusBorderPreference {
+  enabled: boolean;
+  color: string;
+}
+
+export const THUMBNAIL_STATUS_BORDER_RAINBOW = 'rainbow' as const;
+
+export interface ThumbnailStatusBorderSettings {
+  favorite: ThumbnailStatusBorderPreference;
+  enhanced: ThumbnailStatusBorderPreference;
+}
+
+export type ThumbnailStatusBorderSettingsPatch = Partial<ThumbnailStatusBorderSettings>;
+
+export const DEFAULT_THUMBNAIL_STATUS_BORDERS: ThumbnailStatusBorderSettings = {
+  favorite: { enabled: true, color: '#facc15' },
+  enhanced: { enabled: true, color: THUMBNAIL_STATUS_BORDER_RAINBOW },
 };
 
 // App settings.
 export interface AppSettings {
   keyBindings: KeyBindings;
   confirmBeforeDelete?: boolean;
+  thumbnailStatusBorders?: ThumbnailStatusBorderSettings;
 }

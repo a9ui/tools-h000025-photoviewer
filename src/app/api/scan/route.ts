@@ -1,7 +1,8 @@
 import { NextRequest } from 'next/server';
-import { scanDirectory, setIndex } from '@/lib/indexer';
+import { isScanAbortedError, ScanAbortedError, scanDirectory, setIndex } from '@/lib/indexer';
 import { cancelThumbnailWarmup } from '@/lib/thumbnailCache';
 import { basenameFromPath, parseDirSet } from '@/lib/pathSet';
+import { canonicalScanFolderSet, reserveScanRun } from '@/lib/scanRunCoordinator';
 import type { ImageFile } from '@/lib/types';
 
 export const dynamic = 'force-dynamic';
@@ -25,19 +26,68 @@ export async function GET(request: NextRequest) {
     });
   }
 
+  const releaseScanRun = reserveScanRun(dirs);
+  if (!releaseScanRun) {
+    const message = 'A scan for this folder set is already running. Please retry when it completes.';
+    if (request.headers.get('accept')?.includes('text/event-stream')) {
+      const event = JSON.stringify({
+        type: 'error',
+        processed: 0,
+        total: 0,
+        newFiles: 0,
+        message,
+      });
+      return new Response(`data: ${event}\n\n`, {
+        headers: {
+          'Content-Type': 'text/event-stream',
+          'Cache-Control': 'no-cache',
+          Connection: 'keep-alive',
+        },
+      });
+    }
+    return new Response(JSON.stringify({
+      error: message,
+      retryable: true,
+    }), {
+      status: 409,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
   const encoder = new TextEncoder();
+  const abortController = new AbortController();
+  const abort = () => abortController.abort();
+  if (request.signal.aborted) abort();
+  else request.signal.addEventListener('abort', abort, { once: true });
   cancelThumbnailWarmup();
 
   const stream = new ReadableStream({
     async start(controller) {
+      const close = () => {
+        try {
+          controller.close();
+        } catch {
+          // The browser may have already closed the SSE stream.
+        }
+      };
+      const enqueue = (event: string) => {
+        if (abortController.signal.aborted) throw new ScanAbortedError();
+        try {
+          controller.enqueue(encoder.encode(event));
+        } catch {
+          abort();
+          throw new ScanAbortedError();
+        }
+      };
       const keepAlive = setInterval(() => {
         try {
-          controller.enqueue(encoder.encode(': keepalive\n\n'));
+          enqueue(': keepalive\n\n');
         } catch {
           clearInterval(keepAlive);
         }
       }, 10000);
       try {
+        if (abortController.signal.aborted) throw new ScanAbortedError();
         const seen = new Set<string>();
         const allImages: ImageFile[] = [];
         const failedRoots: string[] = [];
@@ -51,6 +101,7 @@ export async function GET(request: NextRequest) {
           let rootLatestNewFiles = 0;
           let images: ImageFile[] = [];
           try {
+            if (abortController.signal.aborted) throw new ScanAbortedError();
             images = await scanDirectory(root, (processed, total, newFiles, status) => {
               rootLatestNewFiles = newFiles;
               const currentTotal = Math.max(1, total);
@@ -71,9 +122,10 @@ export async function GET(request: NextRequest) {
                   ? `[${rootIndex}/${dirs.length}] ${rootLabel}: ${status?.message ?? 'Scanning...'}`
                   : status?.message,
               });
-              controller.enqueue(encoder.encode(`data: ${event}\n\n`));
-            }, { forceFull });
+              enqueue(`data: ${event}\n\n`);
+            }, { forceFull, signal: abortController.signal });
           } catch (err) {
+            if (isScanAbortedError(err)) throw err;
             failedRoots.push(`${rootLabel}: ${err instanceof Error ? err.message : String(err)}`);
             const event = JSON.stringify({
               type: 'progress',
@@ -83,7 +135,7 @@ export async function GET(request: NextRequest) {
               stage: 'scanning',
               message: `Skipped ${rootLabel}: ${err instanceof Error ? err.message : String(err)}`,
             });
-            controller.enqueue(encoder.encode(`data: ${event}\n\n`));
+            enqueue(`data: ${event}\n\n`);
           }
 
           for (const image of images) {
@@ -100,8 +152,9 @@ export async function GET(request: NextRequest) {
           throw new Error(`Scan failed: ${failedRoots.join('; ')}`);
         }
 
+        if (abortController.signal.aborted) throw new ScanAbortedError();
         // Store in memory for search
-        setIndex(allImages);
+        const indexToken = setIndex(allImages, canonicalScanFolderSet(dirs));
 
         const completeEvent = JSON.stringify({
           type: 'complete',
@@ -109,13 +162,18 @@ export async function GET(request: NextRequest) {
           total: allImages.length,
           newFiles: 0,
           stage: 'complete',
+          indexToken,
           message: failedRoots.length > 0
             ? `Scan complete with ${failedRoots.length} skipped folder(s). ${allImages.length} images indexed.`
             : `Scan complete. ${allImages.length} images indexed.`,
         });
-        controller.enqueue(encoder.encode(`data: ${completeEvent}\n\n`));
-        controller.close();
+        enqueue(`data: ${completeEvent}\n\n`);
+        close();
       } catch (err) {
+        if (isScanAbortedError(err) || abortController.signal.aborted) {
+          close();
+          return;
+        }
         const errorEvent = JSON.stringify({
           type: 'error',
           processed: 0,
@@ -123,11 +181,20 @@ export async function GET(request: NextRequest) {
           newFiles: 0,
           message: String(err),
         });
-        controller.enqueue(encoder.encode(`data: ${errorEvent}\n\n`));
-        controller.close();
+        try {
+          enqueue(`data: ${errorEvent}\n\n`);
+        } catch {
+          // A disconnected client cannot receive a terminal error event.
+        }
+        close();
       } finally {
         clearInterval(keepAlive);
+        request.signal.removeEventListener('abort', abort);
+        releaseScanRun();
       }
+    },
+    cancel() {
+      abort();
     },
   });
 

@@ -1,5 +1,24 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  await page.route('**/api/recent-folders', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        ok: true,
+        malformed: false,
+        recent: { version: 1, lastFolderSet: [], recentFolderSets: [], updatedAtUtc: '' },
+      }),
+    });
+  });
+  await page.route('**/api/legacy-state', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({ recentDirs: [], lastDirSet: '' }),
+    });
+  });
+});
+
 test('landing page exposes the PhotoViewer folder workflow', async ({ page }) => {
   await page.goto('/');
 
@@ -24,4 +43,59 @@ test('landing page restores the last folder set from local storage', async ({ pa
   await expect(lastFolderButton).toBeVisible();
   await expect(lastFolderButton).toContainText('Pictures');
   await expect(page.getByText('Recent folder sets')).toBeVisible();
+});
+
+test('landing Settings exposes safe runtime identity without mobile overflow', async ({ page }) => {
+  const fullRevision = '1234567890abcdef1234567890abcdef12345678';
+  let runtimeRequests = 0;
+  await page.route('**/api/runtime', async (route) => {
+    runtimeRequests += 1;
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        product: 'PhotoViewer',
+        sourceRevision: fullRevision,
+        sourceDirty: true,
+        buildId: 'build_2026-07-18_mobile-overflow-proof',
+        buildCompletedAtUtc: '2026-07-18T01:02:03.000Z',
+        serverHost: '127.0.0.1',
+        serverPort: 3125,
+        serverStartedAtUtc: '2026-07-18T01:03:00.000Z',
+        processId: 4321,
+        projectRoot: 'C:/Users/private/project',
+      }),
+    });
+  });
+
+  await page.goto('/');
+  expect(runtimeRequests).toBe(0);
+  const opener = page.getByRole('button', { name: 'Open settings and runtime version' });
+  await opener.click();
+
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeVisible();
+  await expect(page.getByText('1234567890')).toHaveAttribute('title', fullRevision);
+  await expect(page.getByText('Dirty')).toBeVisible();
+  await expect(page.getByText('127.0.0.1:3125')).toBeVisible();
+  expect(runtimeRequests).toBeGreaterThanOrEqual(1);
+  const requestsAfterReady = runtimeRequests;
+  await page.waitForTimeout(100);
+  expect(runtimeRequests).toBe(requestsAfterReady);
+
+  await expect(page.getByRole('button', { name: 'Close settings' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Reload' })).toBeFocused();
+  await page.keyboard.press('Tab');
+  await expect(page.getByRole('button', { name: 'Copy diagnostics' })).toBeFocused();
+
+  await page.setViewportSize({ width: 320, height: 720 });
+  const hasHorizontalOverflow = await page.locator('.settings-panel').evaluate((panel) => (
+    panel.scrollWidth > panel.clientWidth
+    || Array.from(panel.querySelectorAll<HTMLElement>('.settings-runtime, .settings-runtime-row, .settings-runtime-row dd'))
+      .some((element) => element.scrollWidth > element.clientWidth)
+  ));
+  expect(hasHorizontalOverflow).toBe(false);
+
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('dialog', { name: 'Settings' })).toBeHidden();
+  await expect(opener).toBeFocused();
 });

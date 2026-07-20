@@ -3,7 +3,54 @@ import os from 'os';
 import path from 'path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
-import { ensureDisplayImage, ensureThumbnail, getDisplayPath, getThumbnailPath } from './thumbnailCache';
+import {
+  MAX_PENDING_WARM_THUMB_TASKS,
+  compareThumbnailQueueEntries,
+  ensureDisplayImage,
+  ensureThumbnail,
+  getDisplayPath,
+  getThumbnailPath,
+  selectSupersededWarmupQueueEntries,
+} from './thumbnailCache';
+
+describe('thumbnail queue policy', () => {
+  it('serves direct image responses before speculative work at the same priority', () => {
+    const direct = { priority: 0, sequence: 1, warmup: false };
+    const warmup = { priority: 0, sequence: 2, warmup: true };
+
+    expect(compareThumbnailQueueEntries(direct, warmup)).toBeLessThan(0);
+    expect(compareThumbnailQueueEntries(warmup, direct)).toBeGreaterThan(0);
+  });
+
+  it('prefers the newest moving-viewport warmup but keeps background warmup FIFO', () => {
+    const oldVisible = { priority: 1, sequence: 10, warmup: true };
+    const newVisible = { priority: 1, sequence: 20, warmup: true };
+    const oldBackground = { priority: 3, sequence: 10, warmup: true };
+    const newBackground = { priority: 3, sequence: 20, warmup: true };
+
+    expect(compareThumbnailQueueEntries(newVisible, oldVisible)).toBeLessThan(0);
+    expect(compareThumbnailQueueEntries(oldVisible, newVisible)).toBeGreaterThan(0);
+    expect(compareThumbnailQueueEntries(oldBackground, newBackground)).toBeLessThan(0);
+    expect(compareThumbnailQueueEntries(newBackground, oldBackground)).toBeGreaterThan(0);
+  });
+
+  it('keeps speculative pending work under an explicit finite ceiling', () => {
+    expect(MAX_PENDING_WARM_THUMB_TASKS).toBe(1200);
+
+    const oldVisible = { priority: 1, sequence: 10, warmup: true };
+    const newVisible = { priority: 1, sequence: 20, warmup: true };
+    const oldBackground = { priority: 3, sequence: 1, warmup: true };
+    const newBackground = { priority: 3, sequence: 2, warmup: true };
+    const direct = { priority: 3, sequence: 0, warmup: false };
+    expect(selectSupersededWarmupQueueEntries([
+      newVisible,
+      direct,
+      newBackground,
+      oldVisible,
+      oldBackground,
+    ], 2)).toEqual([oldBackground, newBackground]);
+  });
+});
 
 describe('thumbnail cache', () => {
   it('computes versioned cache paths without reading the source file', async () => {

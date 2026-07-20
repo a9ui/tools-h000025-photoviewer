@@ -2,6 +2,7 @@
 
 import React, { useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
+import type { ThumbnailStatusBorderSettings } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
 import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
 import {
@@ -9,11 +10,21 @@ import {
   getEmptyResultMessage,
   getZoomCenteredScrollTop,
   shouldIgnoreViewerShortcut,
+  withGridPointerAnchor,
   type GridMetricsSnapshot,
 } from '../lib/viewerUi';
 import { reconcileModalOrderAfterFilterChange } from '../lib/modalNavigation';
 import { createThumbnailWarmupBatcher, type ThumbnailWarmupPriority } from '../lib/thumbnailWarmupBatcher';
+import {
+  DEFAULT_THUMB_SIZE,
+  THUMB_ZOOM_STEP,
+  clampThumbnailSize,
+  getThumbnailGridCellWidth,
+  getThumbnailGridColumns,
+} from '../lib/thumbnailSizing';
+import { Minus } from 'lucide-react';
 import { buildImageIndexById } from '../lib/imageListState';
+import { getThumbnailStatusBorderPresentation } from '../lib/thumbnailStatusBorders';
 import {
   buildDateSectionLayout,
   findDateSectionAnchorIndex,
@@ -27,6 +38,8 @@ import {
   type DateSectionLayoutEntry,
 } from '../lib/dateSectionLayout';
 import CachedImage from './CachedImage';
+import { ScanErrorNotice } from './ScanErrorNotice';
+import statusBorderStyles from './ImageGridStatusBorders.module.css';
 
 const OVERSCAN_ROWS = 4;
 const SEARCH_PAGE_SIZE = 100;
@@ -38,18 +51,75 @@ const MODAL_WARMUP_SEARCH_RADIUS = 120;
 const BACKGROUND_SEARCH_PAGE_DELAY_MS = 180;
 const BACKGROUND_SEARCH_PAGES = 1;
 const SCROLL_MEMORY_WRITE_DELAY_MS = 180;
+const VISIBLE_THUMB_RESEND_MS = 900;
+
+const ThumbnailStatusBorderOverlay = React.memo(function ThumbnailStatusBorderOverlay({
+  favorite,
+  enhanced,
+  settings,
+  placement,
+}: {
+  favorite: boolean;
+  enhanced: boolean;
+  settings: ThumbnailStatusBorderSettings;
+  placement: 'grid' | 'list';
+}) {
+  const presentation = getThumbnailStatusBorderPresentation({ favorite, enhanced, settings });
+  if (!presentation.favoriteColor && !presentation.enhancedColor && !presentation.enhancedRainbow) return null;
+
+  const className = [
+    statusBorderStyles.overlay,
+    statusBorderStyles[placement],
+    presentation.favoriteColor ? statusBorderStyles.hasFavorite : '',
+    presentation.enhancedColor || presentation.enhancedRainbow ? statusBorderStyles.hasEnhanced : '',
+    presentation.enhancedRainbow ? statusBorderStyles.enhancedRainbow : '',
+  ].filter(Boolean).join(' ');
+  const style = {
+    '--favorite-thumbnail-border-color': presentation.favoriteColor ?? 'transparent',
+    '--enhanced-thumbnail-border-color': presentation.enhancedColor ?? 'transparent',
+  } as React.CSSProperties;
+
+  return (
+    <span
+      className={className}
+      style={style}
+      data-testid="thumbnail-status-borders"
+      data-favorite-border={presentation.favoriteColor ?? undefined}
+      data-enhanced-border={presentation.enhancedRainbow ? 'rainbow' : presentation.enhancedColor ?? undefined}
+      data-enhanced-border-mode={presentation.enhancedRainbow ? 'rainbow' : presentation.enhancedColor ? 'solid' : undefined}
+      aria-hidden="true"
+    />
+  );
+});
+
+function shouldIgnoreGalleryZoomShortcut(target: EventTarget | null): boolean {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+  return Boolean(element?.closest([
+    'input:not([type="range"])',
+    'textarea',
+    'select',
+    '[contenteditable]:not([contenteditable="false"])',
+  ].join(', ')));
+}
 
 function withThumbPriorityParams(fileUrl: string, priority: ThumbnailWarmupPriority = 'visible') {
   const separator = fileUrl.includes('?') ? '&' : '?';
   return `${fileUrl}${separator}priority=${priority}`;
 }
 
-function dispatchThumbnailWarmup(paths: string[], dirPath: string, priority: ThumbnailWarmupPriority = 'nearby') {
+function dispatchThumbnailWarmup(
+  paths: string[],
+  dirPath: string,
+  priority: ThumbnailWarmupPriority = 'nearby',
+  indexToken?: string | null
+) {
   if (paths.length === 0) return;
   void fetch('/api/thumbs/warm', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ paths, dir: dirPath, priority }),
+    body: JSON.stringify({ paths, dir: dirPath, priority, ...(indexToken ? { indexToken } : {}) }),
   }).catch(() => {
     // Best-effort only; rendered image requests can still generate thumbs.
   });
@@ -143,14 +213,15 @@ function getZoomAnchorIndex({
 
 export default function ImageGrid() {
   const {
-    searchQuery, searchResults, searchTotal, isSearching, ensureSearchRange,
+    searchQuery, searchResults, searchTotal, isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
     selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
-    closeAllPreviews, setSearchScrollPosition, getSearchScrollPosition,
+    closeAllPreviews, clearSelection, setSearchScrollPosition, getSearchScrollPosition,
     seenImageIds, markImageSeen, revealImageId, consumeRevealImage, openModalAtImage,
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     requestRevealImage, showSettings,
-    dirPath,
+    thumbnailStatusBorders,
+    dirPath, indexToken,
   } = useImageStore();
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -161,23 +232,34 @@ export default function ImageGrid() {
   const [horizontalPadding, setHorizontalPadding] = useState(0);
   const [verticalPaddingTop, setVerticalPaddingTop] = useState(0);
   const preloadRef = useRef<Set<string>>(new Set());
-  const visibleWarmRef = useRef<Set<string>>(new Set());
+  const visibleWarmRef = useRef<Map<string, number>>(new Map());
   const modalWarmCursorRef = useRef(0);
   const restoredScrollKeyRef = useRef<string | null>(null);
   const previousThumbSizeRef = useRef(view.thumbSize);
   const previousGridMetricsRef = useRef<GridMetricsSnapshot | null>(null);
   const warmupBatcherRef = useRef<ReturnType<typeof createThumbnailWarmupBatcher> | null>(null);
-
-  if (warmupBatcherRef.current === null) {
-    warmupBatcherRef.current = createThumbnailWarmupBatcher({
-      dispatch: dispatchThumbnailWarmup,
-    });
-  }
+  const [rovingImageId, setRovingImageId] = useState<string | null>(null);
+  const pendingPrimaryFocusIdRef = useRef<string | null>(null);
+  const clientFilterPagingDemandRef = useRef<{
+    contextKey: string;
+    targetMatchCount: number;
+  } | null>(null);
 
   useEffect(() => {
-    const batcher = warmupBatcherRef.current;
-    return () => batcher?.clear();
-  }, []);
+    const batcher = createThumbnailWarmupBatcher({
+      dispatch: (paths, currentDirPath, priority) => dispatchThumbnailWarmup(
+        paths,
+        currentDirPath,
+        priority,
+        indexToken
+      ),
+    });
+    warmupBatcherRef.current = batcher;
+    return () => {
+      batcher.clear();
+      if (warmupBatcherRef.current === batcher) warmupBatcherRef.current = null;
+    };
+  }, [indexToken]);
 
   useEffect(() => {
     thumbSizeRef.current = view.thumbSize;
@@ -237,67 +319,6 @@ export default function ImageGrid() {
     return () => window.clearTimeout(timeoutId);
   }, [scrollMemoryKey, scrollTop, setSearchScrollPosition]);
 
-  useEffect(() => {
-    const commitThumbSize = (next: number) => {
-      if (next === thumbSizeRef.current) return;
-      thumbSizeRef.current = next;
-      setView({ thumbSize: next });
-    };
-
-    const onWheel = (event: WheelEvent) => {
-      if (!event.ctrlKey && !event.metaKey && !event.altKey) return;
-      const container = containerRef.current;
-      if (!container) return;
-      const browserZoomModifier = event.ctrlKey || event.metaKey;
-      if (browserZoomModifier) event.preventDefault();
-      const target = event.target instanceof Node ? event.target : null;
-      if (
-        view.viewMode !== 'grid' ||
-        selectedIndex !== null ||
-        showSettings ||
-        !target ||
-        !container.contains(target)
-      ) return;
-      if (!browserZoomModifier) event.preventDefault();
-      if (event.deltaY === 0) return;
-      const next = Math.max(40, Math.min(600, thumbSizeRef.current + (event.deltaY > 0 ? -20 : 20)));
-      commitThumbSize(next);
-    };
-
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (!event.ctrlKey && !event.metaKey) return;
-      if (!containerRef.current) return;
-      const key = event.key;
-      if (key === '+' || key === '=' || key === '-') {
-        event.preventDefault();
-        if (
-          view.viewMode !== 'grid' ||
-          selectedIndex !== null ||
-          showSettings ||
-          shouldIgnoreViewerShortcut(event.target)
-        ) return;
-        const delta = key === '-' ? -20 : 20;
-        const next = Math.max(40, Math.min(600, thumbSizeRef.current + delta));
-        commitThumbSize(next);
-      } else if (key === '0') {
-        event.preventDefault();
-        if (
-          view.viewMode === 'grid' &&
-          selectedIndex === null &&
-          !showSettings &&
-          !shouldIgnoreViewerShortcut(event.target)
-        ) commitThumbSize(200);
-      }
-    };
-
-    window.addEventListener('keydown', onKeyDown, { passive: false });
-    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
-    return () => {
-      window.removeEventListener('keydown', onKeyDown);
-      window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
-    };
-  }, [selectedIndex, setView, showSettings, view.viewMode]);
-
   const loadedOrderedIds = useMemo(
     () => searchResults.filter((img): img is ImageFile => Boolean(img)).map((img) => img.id),
     [searchResults]
@@ -345,16 +366,105 @@ export default function ImageGrid() {
     return items;
   }, [clientFilteredVisible, isClientFiltered, searchResults]);
 
+  useEffect(() => {
+    const availableIds = keyboardSelectionItems.map((item) => item.image.id);
+    setRovingImageId((current) => (
+      current && availableIds.includes(current) ? current : availableIds[0] ?? null
+    ));
+  }, [keyboardSelectionItems]);
+
   const selectedIdSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const searchResultIndexById = useMemo(
     () => buildImageIndexById(searchResults),
     [searchResults]
   );
+  const selectedZoomAnchorIndex = useMemo(() => {
+    const selectedId = selectedIds[selectedIds.length - 1];
+    if (!selectedId) return null;
+    if (isClientFiltered) {
+      const filteredIndex = clientFilteredVisible.findIndex((item) => item.image.id === selectedId);
+      return filteredIndex >= 0 ? filteredIndex : null;
+    }
+    return searchResultIndexById.get(selectedId) ?? null;
+  }, [clientFilteredVisible, isClientFiltered, searchResultIndexById, selectedIds]);
+
+  useEffect(() => {
+    const commitThumbSize = (next: number) => {
+      const clamped = clampThumbnailSize(next);
+      if (clamped === thumbSizeRef.current) return;
+      thumbSizeRef.current = clamped;
+      setView({ thumbSize: clamped });
+    };
+
+    const canZoomGallery = () => (
+      view.viewMode === 'grid' &&
+      selectedIndex === null &&
+      !showSettings &&
+      Boolean(containerRef.current)
+    );
+
+    const onWheel = (event: WheelEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || !canZoomGallery() || event.deltaY === 0) return;
+      if (
+        shouldIgnoreGalleryZoomShortcut(event.target) ||
+        shouldIgnoreViewerShortcut(document.body)
+      ) return;
+      const container = containerRef.current;
+      if (!container) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const anchorElement = target?.closest<HTMLElement>('[data-grid-index]') ?? null;
+      const selectedAlreadyAnchored = selectedZoomAnchorIndex !== null &&
+        previousGridMetricsRef.current?.anchorIndex === selectedZoomAnchorIndex;
+      const scrollEl = container.closest('.viewer-main') as HTMLElement | null;
+      if (!selectedAlreadyAnchored && anchorElement && container.contains(anchorElement)) {
+        previousGridMetricsRef.current = withGridPointerAnchor(
+          previousGridMetricsRef.current,
+          Number.parseInt(anchorElement.dataset.gridIndex ?? '', 10),
+          Number.parseFloat(anchorElement.style.top),
+          scrollEl?.scrollTop ?? previousGridMetricsRef.current?.scrollTop ?? 0
+        );
+      }
+
+      event.preventDefault();
+      commitThumbSize(thumbSizeRef.current + (event.deltaY > 0 ? -THUMB_ZOOM_STEP : THUMB_ZOOM_STEP));
+    };
+
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((!event.ctrlKey && !event.metaKey) || event.altKey || !canZoomGallery()) return;
+      if (
+        shouldIgnoreGalleryZoomShortcut(event.target) ||
+        shouldIgnoreViewerShortcut(document.body)
+      ) return;
+
+      const key = event.key;
+      const next = key === '+' || key === '='
+        ? thumbSizeRef.current + THUMB_ZOOM_STEP
+        : key === '-' || key === '_'
+          ? thumbSizeRef.current - THUMB_ZOOM_STEP
+          : key === '0'
+            ? DEFAULT_THUMB_SIZE
+            : null;
+      if (next === null) return;
+
+      event.preventDefault();
+      commitThumbSize(next);
+    };
+
+    window.addEventListener('wheel', onWheel, { passive: false, capture: true });
+    window.addEventListener('keydown', onKeyDown, { passive: false, capture: true });
+    return () => {
+      window.removeEventListener('wheel', onWheel, { capture: true } as EventListenerOptions);
+      window.removeEventListener('keydown', onKeyDown, { capture: true } as EventListenerOptions);
+    };
+  }, [selectedIndex, selectedZoomAnchorIndex, setView, showSettings, view.viewMode]);
   const modalImageIdKey = modalImageIds.join('\u0001');
 
   useEffect(() => {
     if (!isClientFiltered || modalImageIds.length === 0) return;
-    if (showFavOnly) return;
+    // Favorite/unrated membership changes are reconciled only by the explicit
+    // local mutation that caused them. Reacting here would also move the modal
+    // during shared-state hydration or when a filter is merely toggled.
+    if (showFavOnly || showUnfavOnly || !showEnhancedOnly) return;
     const currentId = selectedIndex !== null ? searchResults[selectedIndex]?.id ?? null : null;
     const nextState = reconcileModalOrderAfterFilterChange(
       currentId,
@@ -383,7 +493,9 @@ export default function ImageGrid() {
     selectedIndex,
     setModalImageIds,
     setSelectedIndex,
+    showEnhancedOnly,
     showFavOnly,
+    showUnfavOnly,
   ]);
 
   const handleImageDragStart = (event: React.DragEvent, imageId: string, filename: string, fullUrl: string) => {
@@ -396,6 +508,7 @@ export default function ImageGrid() {
 
   const openImageDetail = (image: ImageFile, sourceIndex: number) => {
     markImageSeen(image.id);
+    setRovingImageId(image.id);
     openPreviewTab(image, { makeActive: true, pin: true });
     openModalAtImage(
       image.id,
@@ -404,19 +517,56 @@ export default function ImageGrid() {
     );
   };
 
+  const selectFromPrimaryControl = (
+    event: React.MouseEvent<HTMLButtonElement> | React.KeyboardEvent<HTMLButtonElement>,
+    image: ImageFile,
+  ) => {
+    markImageSeen(image.id);
+    setRovingImageId(image.id);
+    selectImage(
+      image,
+      isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
+      { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
+    );
+  };
+
+  const handlePrimaryControlKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    image: ImageFile,
+    sourceIndex: number,
+  ) => {
+    if (event.key === ' ' || event.key === 'Spacebar') {
+      event.preventDefault();
+      selectFromPrimaryControl(event, image);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      openImageDetail(image, sourceIndex);
+    }
+  };
+
   const aspectRatioValue = view.aspectMode === 'square' ? 1 : 2 / 3;
 
   const gridColumns = useMemo(() => {
     if (view.viewMode !== 'grid') return 1;
-    if (view.columns > 0) return view.columns;
     const available = Math.max(1, viewportWidth - horizontalPadding);
-    return Math.max(1, Math.floor((available + GRID_GAP) / (Math.max(40, view.thumbSize) + GRID_GAP)));
+    return getThumbnailGridColumns({
+      availableWidth: available,
+      thumbSize: view.thumbSize,
+      gap: GRID_GAP,
+      explicitColumns: view.columns,
+    });
   }, [horizontalPadding, view.columns, view.thumbSize, view.viewMode, viewportWidth]);
 
   const gridCellWidth = useMemo(() => {
     if (view.viewMode !== 'grid') return 0;
     const available = Math.max(1, viewportWidth - horizontalPadding);
-    return Math.max(40, Math.floor((available - (gridColumns - 1) * GRID_GAP) / gridColumns));
+    return getThumbnailGridCellWidth({
+      availableWidth: available,
+      columns: gridColumns,
+      gap: GRID_GAP,
+    });
   }, [gridColumns, horizontalPadding, view.viewMode, viewportWidth]);
 
   const gridCellHeight = useMemo(() => {
@@ -433,7 +583,9 @@ export default function ImageGrid() {
     const onKeyDown = (event: KeyboardEvent) => {
       if (!arrowKeys.has(event.key)) return;
       if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
-      if (shouldIgnoreViewerShortcut(event.target)) return;
+      const target = event.target instanceof Element ? event.target : null;
+      const isPrimaryImageControl = Boolean(target?.closest('[data-image-primary="true"]'));
+      if (shouldIgnoreViewerShortcut(event.target) && !isPrimaryImageControl) return;
 
       const currentId = selectedIds[selectedIds.length - 1] ?? null;
       const currentIndex = currentId
@@ -453,6 +605,8 @@ export default function ImageGrid() {
 
       event.preventDefault();
       markImageSeen(targetItem.image.id);
+      setRovingImageId(targetItem.image.id);
+      pendingPrimaryFocusIdRef.current = targetItem.image.id;
       selectImage(
         targetItem.image,
         isClientFiltered ? filteredOrderedIds : loadedOrderedIds
@@ -658,6 +812,12 @@ export default function ImageGrid() {
       : 'nearby'
   );
 
+  const visibleSelectedZoomAnchorIndex = selectedZoomAnchorIndex !== null &&
+    selectedZoomAnchorIndex >= visiblePriorityRange.start &&
+    selectedZoomAnchorIndex <= visiblePriorityRange.end
+    ? selectedZoomAnchorIndex
+    : null;
+
   useLayoutEffect(() => {
     if (view.viewMode !== 'grid') {
       previousThumbSizeRef.current = view.thumbSize;
@@ -668,20 +828,15 @@ export default function ImageGrid() {
     const rowHeight = Math.max(1, gridCellHeight + GRID_GAP);
     const previousMetrics = previousGridMetricsRef.current;
     const previousThumbSize = previousThumbSizeRef.current;
+    const thumbSizeChanged = previousThumbSize !== view.thumbSize;
+    const geometryChanged = Boolean(previousMetrics && (
+      previousMetrics.gridColumns !== gridColumns ||
+      previousMetrics.rowHeight !== rowHeight
+    ));
+    const shouldPreservePreviousAnchor = thumbSizeChanged || geometryChanged;
     const container = containerRef.current;
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    const anchorIndex = previousThumbSize !== view.thumbSize
-      ? previousMetrics?.anchorIndex ?? getZoomAnchorIndex({
-        sectionLayout,
-        scrollTop,
-        viewportHeight,
-        contentWidth: Math.max(0, viewportWidth - horizontalPadding),
-        contentOffsetTop: verticalPaddingTop,
-        rowHeight,
-        gridColumns,
-        fullCount,
-      }) ?? undefined
-      : getZoomAnchorIndex({
+    const centeredAnchorIndex = getZoomAnchorIndex({
         sectionLayout,
         scrollTop,
         viewportHeight,
@@ -691,6 +846,13 @@ export default function ImageGrid() {
         gridColumns,
         fullCount,
       }) ?? undefined;
+    const previousAnchorWasVisibleSelection = selectedZoomAnchorIndex !== null &&
+      previousMetrics?.anchorIndex === selectedZoomAnchorIndex;
+    const anchorIndex = shouldPreservePreviousAnchor
+      ? previousAnchorWasVisibleSelection
+        ? selectedZoomAnchorIndex ?? undefined
+        : previousMetrics?.anchorIndex ?? visibleSelectedZoomAnchorIndex ?? centeredAnchorIndex
+      : visibleSelectedZoomAnchorIndex ?? centeredAnchorIndex;
     const anchorTop = anchorIndex !== undefined
       ? getGridItemTop(sectionLayout, anchorIndex, rowHeight, gridColumns)
       : null;
@@ -709,7 +871,7 @@ export default function ImageGrid() {
 
     if (
       previousMetrics &&
-      previousThumbSize !== view.thumbSize &&
+      shouldPreservePreviousAnchor &&
       previousMetrics.fullCount > 0
     ) {
       if (scrollEl) {
@@ -731,6 +893,7 @@ export default function ImageGrid() {
     gridCellHeight,
     gridColumns,
     horizontalPadding,
+    selectedZoomAnchorIndex,
     sectionLayout,
     scrollTop,
     view.thumbSize,
@@ -739,6 +902,7 @@ export default function ImageGrid() {
     viewportHeight,
     viewportWidth,
     virtualRange.totalHeight,
+    visibleSelectedZoomAnchorIndex,
   ]);
 
   useEffect(() => {
@@ -781,7 +945,10 @@ export default function ImageGrid() {
   ]);
 
   useEffect(() => {
-    if (!isClientFiltered) return;
+    if (!isClientFiltered) {
+      clientFilterPagingDemandRef.current = null;
+      return;
+    }
     if (searchTotal <= 0) return;
 
     if (loadedSearchCount >= searchTotal) return;
@@ -793,9 +960,26 @@ export default function ImageGrid() {
     const targetMatches = view.viewMode === 'list'
       ? visibleRows + OVERSCAN_ROWS * 6
       : gridColumns * (visibleRows + OVERSCAN_ROWS * 6);
-    const needsMoreMatches = clientFilteredVisible.length < Math.max(24, targetMatches);
+    const matchBuffer = Math.max(24, targetMatches);
     const isNearFilteredEnd = virtualRange.end >= Math.max(0, clientFilteredVisible.length - 1);
-    if (!needsMoreMatches && !isNearFilteredEnd) return;
+    const pagingContextKey = `${scrollMemoryKey}\u0001${indexToken ?? ''}`;
+    const previousDemand = clientFilterPagingDemandRef.current;
+    const sameContext = previousDemand?.contextKey === pagingContextKey;
+    let targetMatchCount = sameContext
+      ? Math.max(matchBuffer, previousDemand.targetMatchCount)
+      : matchBuffer;
+
+    if (isNearFilteredEnd) {
+      // Keep the demand made at the old bottom alive while sparse source pages
+      // arrive. Newly appended matches move the bottom away from scrollTop;
+      // recomputing only `isNearFilteredEnd` would stop after one batch.
+      targetMatchCount = Math.max(
+        targetMatchCount,
+        clientFilteredVisible.length + matchBuffer,
+      );
+    }
+    clientFilterPagingDemandRef.current = { contextKey: pagingContextKey, targetMatchCount };
+    if (clientFilteredVisible.length >= targetMatchCount) return;
 
     const firstMissing = searchResults.findIndex((image) => image === null);
     if (firstMissing < 0) return;
@@ -808,7 +992,9 @@ export default function ImageGrid() {
     loadedSearchCount,
     searchResults,
     searchTotal,
+    indexToken,
     isClientFiltered,
+    scrollMemoryKey,
     view.viewMode,
     viewportHeight,
     virtualRange.end,
@@ -849,14 +1035,17 @@ export default function ImageGrid() {
     if (visiblePriorityRange.end < visiblePriorityRange.start) return;
 
     const warmPaths: string[] = [];
+    const now = Date.now();
     for (let i = visiblePriorityRange.start; i <= visiblePriorityRange.end; i++) {
       const image = isClientFiltered
         ? clientFilteredVisible[i]?.image
         : searchResults[i];
       if (!image) continue;
       const key = `${scrollMemoryKey}\u0001${image.id}`;
-      if (visibleWarmRef.current.has(key)) continue;
-      visibleWarmRef.current.add(key);
+      const lastWarmAt = visibleWarmRef.current.get(key);
+      if (lastWarmAt !== undefined && now - lastWarmAt < VISIBLE_THUMB_RESEND_MS) continue;
+      visibleWarmRef.current.delete(key);
+      visibleWarmRef.current.set(key, now);
       warmPaths.push(image.id);
     }
 
@@ -865,9 +1054,14 @@ export default function ImageGrid() {
       contextKey: scrollMemoryKey,
       priority: 'visible',
     });
+    if (warmPaths.length > 0) {
+      // Visible cards must preempt the delayed nearby/overscan batch. Their
+      // <img> requests still work independently if this best-effort warmup fails.
+      warmupBatcherRef.current?.flushHighPriority();
+    }
     if (visibleWarmRef.current.size > 1200) {
-      const trimmed = Array.from(visibleWarmRef.current).slice(-800);
-      visibleWarmRef.current = new Set(trimmed);
+      const trimmed = Array.from(visibleWarmRef.current.entries()).slice(-800);
+      visibleWarmRef.current = new Map(trimmed);
     }
   }, [
     clientFilteredVisible,
@@ -955,7 +1149,8 @@ export default function ImageGrid() {
     if (!revealImageId) return;
     const container = containerRef.current;
     const scrollEl = container?.closest('.viewer-main') as HTMLElement | null;
-    if (!scrollEl) return;
+    if (!container || !scrollEl) return;
+    const primaryContainer = container;
 
     const visibleIndex = isClientFiltered
       ? filteredOrderedIds.indexOf(revealImageId)
@@ -980,6 +1175,17 @@ export default function ImageGrid() {
       scrollEl.scrollTop = targetTop;
       setScrollTop(targetTop);
       consumeRevealImage();
+      if (pendingPrimaryFocusIdRef.current === revealImageId) {
+        requestAnimationFrame(() => {
+          const primaryControl = Array.from(
+            primaryContainer.querySelectorAll<HTMLButtonElement>('[data-image-primary="true"]')
+          ).find((control) => control.dataset.imageId === revealImageId);
+          if (primaryControl) {
+            primaryControl.focus();
+            pendingPrimaryFocusIdRef.current = null;
+          }
+        });
+      }
     });
   }, [
     consumeRevealImage,
@@ -994,6 +1200,36 @@ export default function ImageGrid() {
     view.viewMode,
     viewportHeight,
   ]);
+
+  const rovingVirtualIndex = rovingImageId
+    ? (isClientFiltered
+      ? clientFilteredVisible.findIndex((item) => item.image.id === rovingImageId)
+      : searchResultIndexById.get(rovingImageId) ?? -1)
+    : -1;
+  const rovingIsRendered = rovingVirtualIndex >= virtualRange.start && rovingVirtualIndex <= virtualRange.end;
+  const fallbackRovingImage = virtualRange.start >= 0
+    ? (isClientFiltered
+      ? clientFilteredVisible[virtualRange.start]?.image ?? null
+      : searchResults[virtualRange.start] ?? null)
+    : null;
+  const effectiveRovingImageId = rovingIsRendered
+    ? rovingImageId
+    : fallbackRovingImage?.id ?? rovingImageId;
+
+  if (searchError && fullCount === 0) {
+    return (
+      <div className="empty-state">
+        <ScanErrorNotice
+          subject="search"
+          message={searchError}
+          canRetry
+          recoveryAction={searchErrorKind === 'session-expired' ? 'rescan' : 'retry'}
+          onRetry={searchErrorKind === 'session-expired' ? rescanExpiredSearchSession : retrySearch}
+          onDismiss={dismissSearchError}
+        />
+      </div>
+    );
+  }
 
   if (!isSearching && fullCount === 0) {
     return (
@@ -1034,6 +1270,7 @@ export default function ImageGrid() {
 
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
+    const isEnhanced = Boolean(enhancedSourceIds[image.id]);
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
@@ -1047,41 +1284,54 @@ export default function ImageGrid() {
         key={`slot-list-${virtualIndex}`}
         className={`list-item virtual-list-item ${isSelected ? 'is-selected' : ''} ${isUnseen ? 'is-unseen' : ''} ${showDateSeparator ? 'has-date-separator' : ''}`}
         style={{ top, height }}
-        draggable
-        onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
-        onClick={(event) => {
-          markImageSeen(image.id);
-          selectImage(
-            image,
-            isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
-            { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
-          );
-        }}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          openImageDetail(image, sourceIndex);
-        }}
+        role="group"
+        aria-label={`Image ${image.filename}`}
       >
         {showDateSeparator && <div className="date-separator list-date-separator">{dateLabel}</div>}
-        <div className="list-thumb">
-          <CachedImage
-            src={image.fileUrl}
-            requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
-            fallbackSrc={image.fullUrl}
-            cacheKind="thumb"
-            alt={image.filename}
-            loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
-            decoding="async"
-            fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
-          />
-        </div>
-        <div className="list-info">
-          <span className="list-filename">{image.filename}</span>
-          <span className="list-path" title={image.id}>{image.id}</span>
-          <span className="list-prompt">
-            {image.metadata?.prompt?.substring(0, 150) || '(no metadata)'}
-          </span>
-        </div>
+        <button
+          className="list-item-primary"
+          type="button"
+          data-image-primary="true"
+          data-image-id={image.id}
+          aria-label={`Select ${image.filename}${isSelected ? ', selected' : ''}. Press Enter to open.`}
+          aria-pressed={isSelected}
+          tabIndex={effectiveRovingImageId === image.id ? 0 : -1}
+          draggable
+          onFocus={() => setRovingImageId(image.id)}
+          onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
+          onClick={(event) => selectFromPrimaryControl(event, image)}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            openImageDetail(image, sourceIndex);
+          }}
+          onKeyDown={(event) => handlePrimaryControlKeyDown(event, image, sourceIndex)}
+        >
+          <div className={`list-thumb ${statusBorderStyles.thumbnailHost}`}>
+            <CachedImage
+              src={image.fileUrl}
+              requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
+              fallbackSrc={image.fullUrl}
+              cacheKind="thumb"
+              alt={image.filename}
+              loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
+              decoding="async"
+              fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
+            />
+            <ThumbnailStatusBorderOverlay
+              favorite={isFav}
+              enhanced={isEnhanced}
+              settings={thumbnailStatusBorders}
+              placement="list"
+            />
+          </div>
+          <div className="list-info">
+            <span className="list-filename">{image.filename}</span>
+            <span className="list-path" title={image.id}>{image.id}</span>
+            <span className="list-prompt">
+              {image.metadata?.prompt?.substring(0, 150) || '(no metadata)'}
+            </span>
+          </div>
+        </button>
         <div className="list-actions">
           <button
             className={`card-fav-step ${isFav ? 'active' : ''}`}
@@ -1092,14 +1342,16 @@ export default function ImageGrid() {
             }}
             style={{ position: 'static' }}
             title="Decrease favorite level"
+            aria-label={`Decrease favorite level for ${image.filename}`}
           >
-            -
+            <Minus size={13} aria-hidden="true" />
           </button>
           <button
             className={`card-fav ${isFav ? 'active' : ''}`}
             onClick={(event) => { event.stopPropagation(); cycleFavoriteLevel(image.id); }}
             style={{ opacity: 1, position: 'static' }}
             title="Increase favorite level"
+            aria-label={`Increase favorite level for ${image.filename}`}
           >
             <svg width="16" height="16" viewBox="0 0 24 24"
               fill={isFav ? 'var(--favorite)' : 'none'}
@@ -1128,6 +1380,7 @@ export default function ImageGrid() {
         <div
           key={`slot-grid-${virtualIndex}`}
           className="image-card virtual-grid-item placeholder"
+          data-grid-index={virtualIndex}
           style={{ top, left, width, height }}
         />
       );
@@ -1135,6 +1388,7 @@ export default function ImageGrid() {
 
     const favLevel = favorites[image.id] ?? 0;
     const isFav = favLevel > 0;
+    const isEnhanced = Boolean(enhancedSourceIds[image.id]);
     const isSelected = selectedIdSet.has(image.id);
     const isUnseen = isUnseenMarkerVisible(view.showUnseenMarkers, Boolean(seenImageIds[image.id]));
     const thumbPriority = getThumbPriority(virtualIndex);
@@ -1148,37 +1402,54 @@ export default function ImageGrid() {
       <div
         key={`slot-grid-${virtualIndex}`}
         className={`image-card virtual-grid-item ${isSelected ? 'is-selected' : ''} ${isUnseen ? 'is-unseen' : ''} ${showDateSeparator ? 'has-date-separator' : ''}`}
+        data-grid-index={virtualIndex}
         style={{ top, left, width, height }}
-        draggable
-        onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
-        onClick={(event) => {
-          markImageSeen(image.id);
-          selectImage(
-            image,
-            isClientFiltered ? filteredOrderedIds : loadedOrderedIds,
-            { range: event.shiftKey, toggle: event.ctrlKey || event.metaKey }
-          );
-        }}
-        onDoubleClick={(event) => {
-          event.stopPropagation();
-          openImageDetail(image, sourceIndex);
-        }}
+        role="group"
+        aria-label={`Image ${image.filename}`}
       >
         {showDateSeparator && (
           <div className="date-separator card-date-separator">
             {compactGridActions ? compactDateLabel : dateLabel}
           </div>
         )}
-        <CachedImage
-          src={image.fileUrl}
-          requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
-          fallbackSrc={image.fullUrl}
-          cacheKind="thumb"
-          alt={image.filename}
-          loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
-          decoding="async"
-          fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
-          style={imageObjectStyle}
+        <button
+          className="image-card-primary"
+          type="button"
+          data-image-primary="true"
+          data-image-id={image.id}
+          aria-label={`Select ${image.filename}${isSelected ? ', selected' : ''}. Press Enter to open.`}
+          aria-pressed={isSelected}
+          tabIndex={effectiveRovingImageId === image.id ? 0 : -1}
+          draggable
+          onFocus={() => setRovingImageId(image.id)}
+          onDragStart={(event) => handleImageDragStart(event, image.id, image.filename, image.fullUrl)}
+          onClick={(event) => selectFromPrimaryControl(event, image)}
+          onDoubleClick={(event) => {
+            event.stopPropagation();
+            openImageDetail(image, sourceIndex);
+          }}
+          onKeyDown={(event) => handlePrimaryControlKeyDown(event, image, sourceIndex)}
+        >
+          <CachedImage
+            src={image.fileUrl}
+            requestSrc={withThumbPriorityParams(image.fileUrl, thumbPriority)}
+            fallbackSrc={image.fullUrl}
+            cacheKind="thumb"
+            alt={image.filename}
+            loading={thumbPriority === 'visible' ? 'eager' : 'lazy'}
+            decoding="async"
+            fetchPriority={thumbPriority === 'visible' ? 'high' : 'auto'}
+            style={imageObjectStyle}
+          />
+          <div className="card-overlay" aria-hidden="true">
+            <span className="card-filename">{image.filename}</span>
+          </div>
+        </button>
+        <ThumbnailStatusBorderOverlay
+          favorite={isFav}
+          enhanced={isEnhanced}
+          settings={thumbnailStatusBorders}
+          placement="grid"
         />
         {compactGridActions ? (
           favLevel > 0 && (
@@ -1199,8 +1470,9 @@ export default function ImageGrid() {
                 decreaseFavoriteLevel(image.id);
               }}
               title="Decrease favorite level"
+              aria-label={`Decrease favorite level for ${image.filename}`}
             >
-              -
+              <Minus size={13} aria-hidden="true" />
             </button>
             <button
               className={`card-fav ${isFav ? 'active' : ''}`}
@@ -1209,6 +1481,7 @@ export default function ImageGrid() {
                 cycleFavoriteLevel(image.id);
               }}
               title="Increase favorite level"
+              aria-label={`Increase favorite level for ${image.filename}`}
             >
               <svg width="16" height="16" viewBox="0 0 24 24"
                 fill={isFav ? 'var(--favorite)' : 'none'}
@@ -1219,9 +1492,6 @@ export default function ImageGrid() {
             </button>
           </div>
         )}
-        <div className="card-overlay">
-          <span className="card-filename">{image.filename}</span>
-        </div>
       </div>
     );
   };
@@ -1257,10 +1527,24 @@ export default function ImageGrid() {
 
   return (
     <div className="grid-container" ref={containerRef}
-      onClick={(e) => { if (e.target === e.currentTarget) closeAllPreviews(); }}>
+      onClick={(e) => { if (e.target === e.currentTarget) clearSelection(); }}>
+      {searchError && (
+        <ScanErrorNotice
+          subject="search"
+          message={searchError}
+          canRetry
+          recoveryAction={searchErrorKind === 'session-expired' ? 'rescan' : 'retry'}
+          onRetry={searchErrorKind === 'session-expired' ? rescanExpiredSearchSession : retrySearch}
+          onDismiss={dismissSearchError}
+        />
+      )}
       <div
         className={`virtual-canvas ${view.viewMode === 'list' ? 'is-list' : 'is-grid'} display-style-${view.displayStyle}`}
+        data-testid="image-grid-background"
         style={{ height: virtualRange.totalHeight }}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) clearSelection();
+        }}
       >
         {items}
       </div>

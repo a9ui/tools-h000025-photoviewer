@@ -3,8 +3,9 @@
 Native WPF (.NET 8) PhotoViewer surface. It uses native controls only: no server,
 Node, Chrome, localhost, webview, or WebView2.
 
-This project started as the Claude WPF UI shell and now includes the first real
-browse and practical viewer slice:
+This project started as a WPF UI shell and is now the native PhotoViewer
+implementation. The normative current behavior is documented in
+`../../docs/wpf-product-spec.md`; this README focuses on launch and verification:
 
 - landing folder-set picker with multi-folder selection and pasted folder paths
 - recursive image file scan
@@ -13,35 +14,98 @@ browse and practical viewer slice:
 - right preview using the selected real image, including lazy PNG `tEXt/parameters` metadata and explicit current-selection PNG Info, Prompt, and Negative Copy actions when present
 - modal preview using the selected real image
 - browser-aligned modal favorite `+1` / `-1` controls with the current `0..5` level visible
-- search across filename, path, prompt, group, size, and modified date
-- favorites-only and unseen-only filters
+- debounced background search across filename and indexed PNG prompt, with comma-AND grammar
+- independent exact Favorite Lv1-Lv5 filters, All/Unrated, bulk Favorite, and unseen-only filters
+- manual Created/Birth From/To date filter; runtime/write state is only `none|manual`, while legacy relative tokens migrate once to a fixed manual range; no Quick Search or Today/7d/30d/year presets
+- persisted collapsible Folders section, Ctrl/Shift bucket selection, and Show/Hide selected/all/invert controls
+- full catalog with bounded/recycling Grid and List realization (no 1,200-image product cap)
+- WPF-owned persistent, checksummed Prompt/dimension index with source-identity validation, restart reuse, partial refresh, safe corruption fallback, and visible Viewer progress
+- anchored 40..600 gallery zoom that leaves sidebar/text/List dimensions unchanged
+- guarded Windows Recycle Bin-only source Delete with confirmation and adjacent-image continuation
+- resizable/persisted right preview panel and multi-selection actions
+- guarded native FileDrop Copy from Grid, List, and right preview to Explorer, preserving display-order multi-selection
+- guarded Show in folder actions in Right Preview and Modal; they select the canonical active source in Explorer without modifying it
+- preview tabs with pin/close/reopen/close-all, drag/Alt+Shift reorder, middle-close, reload restoration, external delete/rename reconciliation, and cancellable hover decode
+- modal first/last wrap, chrome toggle, accessible edge/swipe navigation, transient feedback, zoom/pan/flip, metadata Prompt chips that append to search, and Original/Enhanced display
 - refresh active folder
 - open the selected real image with the OS default app
-- lightweight WPF state for last folder, search query, selected image, and card size
+- versioned, normalized, unknown-field-preserving WPF state written through a bounded process lock and atomic replace
+- editable App Settings key bindings for implemented viewer actions, with context-aware conflict rejection, hot apply, reset, and reload persistence; Settings/Delete retain a fixed Escape rescue key
 - `--shot` UI smoke capture
 - `--shot --folder <path>` real-folder smoke capture
 - `--shot --query <text>` filtered search smoke capture
 - `--shot --perf-log <path>` load timing capture for WPF performance evidence
+- `--shot-width <px> --shot-height <px>` exact content viewport capture; `--folders-collapsed`, `--show-unseen-dots`, and `--clear-selection` reproduce Browser comparison states
 - `--modal-nav-smoke <path>` modal previous/next selected-path sync smoke
 - `--grid-realization-smoke <path>` grid initial-realization and batch-append smoke
 - `--scroll-realization-smoke <path>` repeated grid scroll/advance realization guard smoke
 - `--favorite-smoke <path>` selected-image favorite toggle/filter/reload smoke
 - `--favorite-level-smoke <path>` selected-image favorite level adjustment/reload smoke
-- `--favorite-filter-smoke <path>` favorite threshold and unrated-only filter smoke
+- `--favorite-filter-smoke <path>` independent exact Favorite levels and unrated-only filter smoke
 - `--favorite-import-smoke <path>` bounded `pvu_fav_levels` import policy smoke
 - `--preview-tabs-smoke <path>` preview tab open/pin/hover/activate/close/restore/reload smoke
+- `--preview-tab-hover-smoke <path>` cancellable/stale-safe/corrupt-safe preview tab hover decode smoke
+- `--preview-tab-reorder-smoke <path>` drag/keyboard reorder, middle-close, focus/Automation, and reload-order smoke
 - `--preview-decode-smoke <path>` latest-selection async preview decode smoke
 - `--png-metadata-smoke <path>` lazy active-preview and read-only modal Prompt / Negative / Settings tab plus PNG `parameters` metadata smoke
+- `--metadata-index-smoke <path>` TEMP-only cold/warm/partial/corrupt/future/decode-failure/prune/cancel persistent-index smoke
+- `--explorer-reveal-smoke <path>` temp-only injected Explorer `/select,` action, guard, focus, and isolation smoke
 - `--shortcut-typing-smoke <path>` editable-text shortcut guard smoke
 - `--seen-smoke <path>` real-folder seen/unseen filter and reload smoke
 - `--seen-import-smoke <path>` bounded `pvu_seen_images` import policy smoke
 - `--shared-seen-smoke <path>` shared `.cache/seen.json` and legacy merge smoke
+- `--shared-state-writer-smoke <path>` temp-only generation/coalescing/fault/Retry/reload-barrier/close-drain writer contract smoke
+- `--shared-state-latency-smoke <path>` temp-only small-control and 100,000-entry Favorite/Seen responsiveness profile
 - `--shared-recent-smoke <path>` shared `.cache/recent-folders.json` import/write-through smoke
 - `--folder-set-smoke <path>` landing folder-set and shared recent smoke
-- `--folder-bucket-smoke <path>` folder bucket show/hide smoke
+- `--diagnostics-smoke <path>` temp-only App Settings About / Diagnostics privacy and clipboard-failure smoke
+- `--settings-unseen-dots-smoke <path>` temp-only sidebar/App Settings Unseen dots synchronization, persistence, accessibility, and Seen/cache isolation smoke
+- `--key-bindings-smoke <path> --key-root <temp-path> --key-phase write|reload` temp-only editable-binding conflict/hot-apply and separate-process reload/reset participant
+- `--scan-cancel-smoke <path>` temp-only enumeration/metadata Cancel scan, generation, focus, immediate-rescan, and no-partial-publish smoke
+- `--cross-runtime-recent-smoke <path>` temp-only WPF participant for the Browser/WPF/third-writer shared-recent stress
+- `--recent-write-ownership-smoke <path>` temp-only explicit folder-set commit ownership, retry, and byte-isolation smoke
+- `--folder-bucket-smoke <path>` folder bucket range selection, show/hide, collapse, migration, and reload smoke
 - `--grid-zoom-smoke <path>` thumbnail size zoom smoke
+- `--p0b-smoke <path>` 1,201-image catalog, bounded-grid, exact search/modal, zoom-anchor, and recycling-list smoke
+- `--p0c-smoke <path>` guarded source Recycle Bin workflow with injected temp-only backend smoke
+- `--delete-correctness-smoke <path>` temp-only protected project/app-root, single/bulk ownership reconciliation, retained Favorite/Seen/Enhancement history, reload, and partial-failure smoke
+- `--delete-race-smoke <path>` temp-only preview/modal decode, sparse rapid Delete, bulk partial failure, concurrent Refresh tombstone, and same-name regeneration smoke
+- `--external-stale-source-smoke <path>` temp-only external delete/rename/corrupt-source Refresh, tab/pin/modal/focus/state recovery, and shared-history isolation smoke
+- `--decode-mutation-smoke <path>` temp-only active Preview/Modal truncate, lock, same-path replace/recreate, Refresh generation, bitmap release, and shared-state isolation smoke
+- `--p0d-smoke <path>` 5,000-image integrated P0 gate with temp-only persistence and enhancement sentinel
+- `--catalog-stress-smoke <path> --count 20000` exact/bounded 20,000-image far-tail canonical/visual Grid-List-Grid selection, search, modal, and heartbeat gate
 - `--aspect-smoke <path>` browser-aligned aspect mode smoke
-- `--date-filter-smoke <path>` browser-aligned date preset/manual range smoke
+- `--date-filter-smoke <path>` browser-aligned manual Created/Birth From/To smoke
+- `--search-stall-smoke <path>` 5,000-image rapid-query dispatcher responsiveness smoke
+- `--rapid-ui-state-smoke <path>` temp-only rapid search/selection/layout/panel/filter/tab final-state and heartbeat stress
+- `--focus-filter-race-smoke <path>` temp-only 20-run search/filter/focus/Grid-List/selection/tab/modal dispatcher reconciliation stress
+- `--shutdown-state-smoke <path>` sub-debounce close flush, stale-work cancellation, refusal, and atomic-residue smoke
+- `scripts/verify-wpf-modal-wrap.ps1` first/last modal navigation wrap verifier
+- `scripts/verify-wpf-modal-interaction.ps1` chrome/edge/swipe/feedback and gesture-conflict verifier
+- `scripts/verify-wpf-prompt-tag-search.ps1` temp-only Prompt chip/search/focus/persistence/isolation verifier
+- `scripts/verify-wpf-file-drag-out.ps1` temp-only threshold/payload/path-guard/selection/isolation verifier without invoking an OS drag
+- `scripts/verify-wpf-explorer-reveal.ps1` temp-only Right Preview/Modal Explorer reveal verifier without starting Explorer
+- `scripts/verify-wpf-rapid-ui-state.ps1` medium-catalog stale-result/final-state/reload/enhancement-isolation stress
+- `scripts/verify-wpf-shutdown-state.ps1` temp-only exactly-once close persistence and protected/contended-state verifier
+- `scripts/verify-wpf-crash-lock-recovery.ps1` actual-process fresh/live lock protection, abrupt-exit stale recovery, atomic-temp cleanup, schema protection, and Browser/WPF concurrency verifier
+- `scripts/verify-wpf-shared-state-writer.ps1` generation-aware Favorite/Seen actor, coalescing, external merge, fault rollback/Retry, reload-barrier, malformed protection, and close/reopen verifier
+- `scripts/verify-wpf-shared-state-latency.ps1 -Repetitions 3` bounded-process 50/65/110ms absolute and `max(control*2.5, control+10ms)` noise-aware relative gate for 100,000-entry shared stores, including executable legacy-regression self-tests
+- `scripts/verify-wpf-recent-write-ownership.ps1` temp-only shared Recent ownership/latest-merge/retry verifier
+- `scripts/verify-wpf-partial-scan.ps1` temp-only missing/disconnected multi-root publication, retry ownership, and cancel/stale isolation verifier
+- `scripts/verify-wpf-scan-materialization-race.ps1` temp-only existence-snapshot-to-catalog-publication source disappearance and UI/state ownership verifier
+- `scripts/verify-wpf-scan-boundary.ps1` temp-only outside/cyclic junction boundary and source-isolation verifier
+- `scripts/verify-wpf-monitor-work-area.ps1` current-monitor maximize, exact unchanged restore, disconnected/downsized/DPI-equivalent bounded restore, and fallback verifier
+- `scripts/verify-wpf-external-stale-source.ps1` temp-only external source lifecycle, recoverable decode, focus, state, and history-isolation verifier
+- `scripts/verify-wpf-decode-mutation.ps1` temp-only in-place source mutation, stale-immediate clearing, latest-generation recovery, and bitmap-retention verifier
+- `scripts/verify-wpf-delete-race.ps1` temp-only destructive-workflow race, stale-publish rejection, failed/cancel non-tombstone, and fresh same-name regeneration verifier
+- `scripts/verify-wpf-folder-buckets.ps1` isolated Folder selection/collapse persistence verifier
+- `scripts/verify-wpf-preview-tab-reorder.ps1` isolated preview-tab reorder/focus verifier
+- `scripts/verify-wpf-key-bindings.ps1` two-process editable key binding, reserved/conflict rejection, wheel/Landing isolation, 100k logical selection, latest-writer unknown merge, hot-apply, reset, Escape rescue, and passive-enhancement verifier
+- `scripts/verify-wpf-metadata-index.ps1` TEMP-only persistent metadata index safety gate plus two-process cold→warm restart proof
+- `scripts/verify-wpf-catalog-stress.ps1 -Count 20000` temp-only large-catalog structural and metric verifier
+- `scripts/verify-wpf-product.ps1` aggregate every focused WPF verifier (`-SkipStress` for the short loop)
+- `--bulk-favorite-smoke <path>` atomic multi-selection Favorite transaction smoke
+- `--bulk-recycle-smoke <path>` temp-only cancel/partial-failure/neighbor/empty Recycle workflow smoke
 
 It preserves the enhancement guardrail: browsing, preview, and modal actions do
 not start enhancement jobs or background enhancement workers.
@@ -60,8 +124,14 @@ Fast direct launch from the project root uses the Release executable instead of
 .\start_wpf.bat
 ```
 
-If the Release executable is missing, the launcher builds it once and then runs
-it directly. To force a rebuild before launch:
+The normal launcher accepts a Release executable only when its adjacent
+`PhotoViewer.Wpf.exe.launch.json` binds the executable hash to this exact repo
+root, project/target path, git revision, and WPF source-content fingerprint.
+Missing/unproven output, another worktree/revision, source drift, or executable
+tampering rebuilds before launch. `bin`, `obj`, and transient root-level
+`*_wpftmp.csproj` build output never enters the source fingerprint. A successful
+build records provenance atomically; build or provenance failure exits without
+launching the old executable. To force a rebuild before launch:
 
 ```powershell
 $env:PHOTOVIEWER_WPF_REBUILD = "1"
@@ -99,8 +169,37 @@ dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.c
 ```
 
 The perf log separates `MetadataMs`, `MetadataWorkers`, and
-`MetadataCompleted` from UI-thread `MaterializeMs`, so large-folder header
-reads remain measurable without hiding them inside tile creation time.
+`MetadataCompleted` from UI-thread `MaterializeMs`, and also records persistent
+index hit/miss, read/write, load-state, and write-result metrics. PNG catalog
+indexing reads IHDR dimensions and the bounded pre-IDAT `parameters` chunk from
+one stream, does not retain redundant full-catalog result maps, and waits behind
+active viewport-thumbnail work so scrolling pixels keep priority.
+
+The durable Prompt/dimension index is WPF-owned derived data under the WPF state
+owner directory's `metadata-index-v1` folder, keyed by normalized folder set.
+It never owns or rewrites Browser Favorite, Seen, Recent, thumbnail cache,
+Enhancement jobs, or source images. Restart all-hits reuse the exact index bytes;
+source identity changes refresh only stale entries. Corrupt or malformed data
+falls back to source reads, future schema is preserved, and incomplete/canceled
+runs keep the last complete index. Progress and the final reused/refreshed result
+remain visible in the Viewer sidebar or footer.
+
+Focused persistence and separate-process restart verification:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-metadata-index.ps1
+```
+
+The 2026-07-19 exact 100,000-image / 100-folder closeout measured the cold
+metadata phase at 26,659 ms and a separate-window warm reuse at 213 ms. Warm
+full load was 3,928 ms with 100,000 hits, zero misses, zero index-write time,
+unchanged SHA-256/mtime, Grid/List realization 15/9, far-tail index 99,999,
+zero-pixel zoom-anchor drift, and no Enhancement reads/candidates. The
+TEMP-only command is:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-catalog-stress.ps1 -Count 100000 -FolderCount 100 -OverallTimeoutSeconds 180
+```
 
 Preview decode smoke selects one fixture image and immediately selects another,
 then verifies that the deferred decode applies only to the latest selection:
@@ -165,6 +264,71 @@ level up/down, clear, final persistence, reload, and favorites-only filtering:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --favorite-level-smoke "$env:TEMP\photoviewer-wpf-favorite-level-smoke.json" --folder .\local-native\ui-mockup --favorites-path "$env:TEMP\photoviewer-wpf-favorite-levels.json"
 ```
 
+P0A sidebar contract smoke uses only temporary state/favorites/seen files. It verifies exact independent favorite levels (including All and Unrated), expanded/collapsible Folders, and default-off unseen dots without altering seen state:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0a-smoke "$env:TEMP\photoviewer-wpf-p0a-smoke.json"
+```
+
+The same `ShowUnseenDots` state is available from both the sidebar and App
+Settings. Either checkbox updates the other immediately; the setting defaults
+OFF, persists across reload, and changes only dot visibility. The focused smoke
+keeps all persistence under a temporary root and proves the Seen JSON, source
+fixture, favorites, recent history after folder-open setup, and enhancement jobs
+stay byte-identical while the two controls are exercised:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-settings-unseen-dots.ps1
+```
+
+P0C adds the App Settings `Confirm before delete` default (persisted in the WPF
+state), a Cancel-first confirmation dialog, and one guarded source-delete command
+used by Grid/List selection, right preview, modal, and `Delete`. Production sends
+only to the Windows Recycle Bin and never hard-deletes on failure. Its smoke creates
+only a temporary fixture and injects a fake backend which moves files to a temporary
+fake recycle folder; it does not exercise the user's actual Windows Recycle Bin:
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0c-smoke "$env:TEMP\photoviewer-wpf-p0c-smoke.json"
+```
+
+Delete validation rejects a source when either its lexical or canonical path is
+inside the repository/project root or the running app root, even if that root was
+opened as an active source folder. Successful single and bulk Recycle operations
+share one reconciliation path: only catalog/selection/tab/pin/closed-history/
+preview/modal and persisted UI references are purged. Favorite, Seen, Recent, and
+Enhancement history remain under their own ownership. The focused verifier uses
+only temporary sources, protected-root injection, and a fake Recycle backend:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-delete-correctness.ps1
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-delete-race.ps1
+```
+
+P0D is the integrated local-native gate. It builds and removes a temporary
+5,000-image fixture and verifies catalog completeness; bounded, recycling List
+realization at the first, middle, and final scroll positions; favorites/dots/folder
+controls; anchored zoom; fake Recycle Bin continuation; reload state; malformed
+field protection; future JSON preservation; cross-process temp+rename lock merges;
+and a byte-identical enhancement-jobs sentinel. It never uses browser, port 3000,
+the real Recycle Bin, or user cache:
+
+```powershell
+.\scripts\verify-wpf-p0.ps1
+```
+
+The shared persistence lock is `<target>.lock`: create-new JSON ownership, a
+2-second/25-ms bounded background retry, and a conservative 30-second stale-file
+recovery. Interactive WPF actions make one attempt and yield on contention so the
+UI does not wait behind another writer. If that attempt removes a lock older than
+30 seconds, it performs one immediate create-new retry so the first user action
+recovers the crash. A successfully acquired lock removes only target-specific WPF
+and Browser atomic-temp orphans; fresh/live locks and unrelated temp files remain
+authoritative and untouched. Delete still has an unavoidable filesystem
+TOCTOU window between canonical-path validation and the Windows Recycle Bin API;
+the command revalidates immediately before that call, but adversarial reparse-point
+swaps remain a documented post-P1S hardening item.
+
 Favorite import smoke writes a temporary explicit browser-state export and
 imports only bounded favorite fields into the accepted WPF favorites JSON:
 `browserLocalStorage.pvu_fav_levels` object-map entries and
@@ -216,11 +380,30 @@ local WPF state persistence, and favorites/seen isolation:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --folder-set-smoke "$env:TEMP\photoviewer-wpf-folder-set-smoke.json" --folder .\local-native\ui-mockup
 ```
 
+While recursive enumeration or metadata loading is active, Landing exposes a
+single `Cancel scan` action. Cancellation invalidates only that load generation,
+keeps the ordered folder draft, clears progress with a polite status, and returns
+focus to `Open folder set`. A canceled run cannot publish a partial catalog,
+current folder, state, recent entry, or Seen entry, and a delayed completion
+cannot overwrite an immediate newer rescan. The verifier injects delayed worker
+completion under a temporary root and covers both phases, double cancel, focus /
+Automation, source/cache isolation, and final newer-run ownership:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-scan-cancel.ps1
+```
+
 Grid zoom smoke verifies thumbnail size controls and the same card-width helper
 used by zoom shortcut and wheel paths:
 
 ```powershell
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --grid-zoom-smoke "$env:TEMP\photoviewer-wpf-grid-zoom-smoke.json" --folder .\local-native\ui-mockup
+```
+
+P0B creates a temporary offscreen 1,201-image fixture. It proves that the complete catalog is searchable and modal-addressable beyond the old 1,200 boundary while Grid stays bounded, List uses recycling virtualization, and Grid captures the actual ScrollViewer center-near card before 200→300→80→200 zoom. The smoke reports anchor identity and pixel drift (target ≤8px), plus sidebar/right-panel invariance; List thumbnail size remains unchanged.
+
+```powershell
+dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --p0b-smoke "$env:TEMP\photoviewer-wpf-p0b-smoke.json"
 ```
 
 Aspect smoke creates a temporary three-image real-folder fixture and verifies
@@ -238,6 +421,15 @@ evidence, and exits. It can be run through either launch path:
 dotnet run --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --startup-smoke "$env:TEMP\photoviewer-wpf-startup-dotnet-run.json" --startup-mode dotnet-run
 .\local-native\PhotoViewer.Wpf\bin\Release\net8.0-windows\PhotoViewer.Wpf.exe --startup-smoke "$env:TEMP\photoviewer-wpf-startup-release-exe.json" --startup-mode release-exe
 ```
+
+## Historical milestone notes (non-normative)
+
+The remaining `M*`, issue-number, old `Current Limits`, and old `Design Evidence`
+sections preserve how the WPF surface evolved. Their claims are point-in-time
+evidence and may describe controls or gaps that were later removed or completed.
+They must not override `../../docs/wpf-product-spec.md` or its live completion
+ledger. In particular, the M21 Today/7d/30d/year UI is retired; only manual
+Created/Birth From/To is current.
 
 ## WPF M2 First Performance Slice
 
@@ -451,11 +643,23 @@ canonical `.cache/recent-folders.json` only when local WPF state has no
 `LastFolder`. The shared file shape is the browser-accepted versioned positive
 folder-set JSON with `lastFolderSet`, `recentFolderSets`, and `updatedAtUtc`.
 
-WPF writes the current folder through as a one-entry folder set after local state
-save, preserving existing shared folder sets additively. Malformed shared recent
-JSON is not overwritten; local WPF `state.json` still saves so passive browsing
-is not blocked. No richer multi-folder WPF history UI is added in this slice.
-WinForms and browser code remain untouched by this WPF lane.
+WPF writes a folder set only after an explicit open/change has committed. Search,
+layout/settings saves, active-folder refresh, and window close never rewrite the
+shared Recent file. A successful set is written at most once per window until a
+different set commits; a failed lock/write is not memoized, so the next explicit
+commit retries. Under the lock WPF rereads the latest file, prepends the new set,
+caps distinct history at 12, and preserves unknown fields. Malformed shared recent
+JSON is not overwritten; local WPF `state.json` still saves so browsing is not
+blocked.
+
+## Cross-runtime recent stress
+
+`scripts/verify-cross-runtime-recent.ps1` starts no browser server and uses a
+fresh temp root. It races 20 Browser route writes, 20 real WPF writes, and 20
+independent protocol-compatible writes against one `recent-folders.json`. The
+verifier requires valid JSON, schema/unknown-field preservation, no `.lock` or
+`.tmp` residue, all three newest owner markers in the bounded 12-set history,
+and documents `lastFolderSet` as last-successful-lock-holder wins.
 
 ## WPF M14 Performance Final Gate
 
@@ -515,6 +719,11 @@ direct Release executable launch. The script builds
 only when that target is missing or when `PHOTOVIEWER_WPF_REBUILD=1` is set.
 The old development route remains available with
 `PHOTOVIEWER_WPF_DOTNET_RUN=1`.
+
+The direct route is .NET-only and inherits the project-root working directory;
+it does not start or require Node, localhost, or the Browser server. It also
+does not kill an existing WPF process: simultaneous instances continue through
+the application's bounded shared-state locks.
 
 The dedicated `--startup-smoke` route records shell readiness timing without
 writing user state. It is intended for comparing process wall time for
@@ -656,6 +865,42 @@ text-input guard and the outside-input shortcuts together:
 dotnet run --no-build --project .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -- --shortcut-typing-smoke $env:TEMP\wpf-shortcut-typing-smoke.json --folder .\local-native\ui-mockup
 ```
 
+## Editable key bindings
+
+App Settings exposes only implemented WPF actions. Each row records a chord,
+shows active-context conflicts inline, resets to compatible defaults, and saves
+through ViewerState v2. A successful save hot-applies in the current process;
+the same bindings reload in a separate process. Settings and Recycle
+confirmation retain a fixed Escape rescue key. All Windows-key chords,
+Tab-based chords, Windows secure/system chords, Ctrl+Escape, and Alt+Escape are
+rejected; reopen uses Ctrl+Shift+T only.
+
+Gallery/Viewer bindings are inactive on Landing and while Settings or Recycle
+confirmation is open. Ctrl/Win-wheel does not resize cards over an input or
+button. In Modal, wheel zoom is limited to the image/image-area; metadata
+sidebar wheel input remains native scrolling. Ctrl+A stores the complete
+filtered selection as canonical paths while projecting selection only to
+realized containers, so a 100,000-item selection does not populate 100,000 WPF
+`SelectedItems`. `scripts/verify-wpf-key-bindings.ps1` proves these boundaries,
+external nested-unknown delete/add merge behavior, source/job isolation, and
+two-process persistence using TEMP-only fixtures.
+
+## WPF Native Folder Drag-In
+
+Explorer folder drops now work on both Landing and the Viewer gallery. The WPF
+surface accepts only existing absolute folders, resolves canonical paths,
+deduplicates case-insensitively, and appends by reference: Landing updates the
+draft folder set and Viewer rescans the merged set. Files and folders are never
+copied, moved, or deleted. File payloads, missing folders, and relative paths
+are refused with a status message; existing image drag-out remains Copy-only.
+
+The focused verifier uses only temporary source fixtures and isolated
+state/favorites/seen/recent/jobs paths:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-folder-drag-in.ps1
+```
+
 ## WPF M50 Modal Metadata Tabs
 
 The #306 slice aligns the existing read-only modal metadata sidebar with the
@@ -678,9 +923,39 @@ metadata and copy state preserved.
 | `App.xaml.cs` | startup and `--shot` / `--query` / `--perf-log` / WPF smoke capture paths |
 | `MainWindow.xaml` | custom chrome, sidebar, grouped grid/list, preview, modal, overlays |
 | `MainWindow.xaml.cs` | folder scan, image thumbnail decode, load/modal timing, search/filter, state, selection wiring |
+| `SharedStoreWriter.cs` | generation-aware single-writer actor for large Favorite/Seen stores |
+| `ExpandCollapseButton.cs` | native Folders UI Automation `ExpandCollapse` provider |
 | `Converters.cs` | simple WPF value converters |
 
-## Current Limits
+## Current verified hardening (2026-07-18)
+
+- The product catalog is not capped at 1,200. The final standalone 20,000-image
+  gate publishes all 20,000 entries with no silent truncation, bounds Grid
+  realization to 384 and List realization to 22, and proves the far-tail
+  canonical path plus `SelectedItems` and container visual selection before and
+  after Grid -> List -> Grid. The round trip took 32ms; dispatcher/external probe
+  maxima were 292/254ms on the acceptance machine. The aggregate catalog run was
+  also green with an external maximum of 248ms.
+- Shared Favorite/Seen files at 1 MiB or larger use independent generation-aware
+  writer actors. A successful write re-reads latest disk state under the existing
+  process lock and atomically replaces it; failed current generations roll back and
+  retain Retry, while newer generations are never reverted.
+- Three final 100,000-entry jitter-margin runs recorded large-store modal-next
+  p95 7.159/9.803/12.169ms, Favorite action p95 45.148/41.155/42.445ms, and
+  dispatcher max gap 50.561/50.412/55.704ms. All runs pass the 50/65/110ms
+  absolute gates and the noise-aware `max(control*2.5, control+10ms)` relative
+  gate. The verifier self-test accepts bounded scheduling jitter while rejecting
+  a relative regression and the historical P1 186/251/460ms baseline.
+- Folders exposes a real UI Automation `ExpandCollapse` state. The focused smoke
+  drives Expanded -> Collapsed -> Expanded through the Automation peer and verifies
+  persistence/migration without touching user state.
+- The current full local gate is 46/46 checks PASS in 241,988ms with
+  `-IncludeReloadSoak`. Separate shared Favorite/Seen and shared Recent
+  cross-runtime verifiers are green for 20 iterations each.
+- These measurements are machine evidence, not universal hardware guarantees. The
+  normative behavior and current limitations remain in `../../docs/wpf-product-spec.md`.
+
+## Historical limits at the time of those milestones (non-normative)
 
 - Folder scan is bounded to the first 1,200 images sorted by modified time.
 - The grid still uses the shell `WrapPanel`, but initial card realization is
@@ -727,9 +1002,36 @@ metadata and copy state preserved.
 - Existing WinForms `PhotoViewer.Native` remains separate and is not modified by
   this WPF lane.
 
-## Design Evidence
+## Historical design evidence (non-normative)
 
-Design source of truth:
+These files explain the early shell only and are not the current source of truth:
 
 - `../ui-mockup/photoviewer-ui-mockup.html`
 - rendered WPF previews in `../ui-mockup/wpf-*.png`
+
+Current visual/product truth is the live Browser contract plus the real WPF
+`--shot` output described in `../../docs/wpf-product-spec.md`.
+
+`scripts/verify-wpf-visual-layout.ps1` renders Landing, Viewer, Settings,
+Folders collapsed, and Unseen dots at exact 1280x820 and 1024x700 content
+viewports. The audit pairs the 1280x820 outputs with the matching live Browser
+references; WPF Landing exposes the same App Settings entry, and a cleared
+selection shows only the empty preview guidance rather than stale actions.
+
+Recursive scan does not descend into nested junctions, symbolic links, or
+other reparse-point directories. The scan-boundary verifier proves that only
+in-root images are indexed and that outside/cyclic targets and source files
+remain untouched.
+
+A partial multi-root scan keeps indexing every available root when another
+selected root is missing or becomes unavailable. The complete ordered folder
+set remains in WPF state and shared Recent so Refresh can retry it; only a
+successful current generation may commit those stores. Cancelled or stale runs
+publish neither catalog nor ownership changes.
+
+If a source disappears or loses access after enumeration's final existence
+snapshot but before its `FileInfo` is materialized, WPF skips only that source,
+reports a recoverable warning, and publishes survivor-based metrics and UI
+state. The current selection, Preview tabs, Modal, and persisted references are
+reconciled to the surviving catalog; unrelated stores and remaining sources
+are not rewritten.

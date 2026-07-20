@@ -1,3 +1,5 @@
+import { matchesFavoriteLevel, type FavoriteFilterLevel } from './browserUiPreferences';
+
 export type FolderSortBy = 'name-asc' | 'name-desc' | 'count-desc' | 'count-asc';
 
 export interface FolderBucket {
@@ -13,6 +15,24 @@ export interface ResultCountLabelArgs {
   dateFrom?: string;
   dateTo?: string;
   hiddenFolders?: string[];
+  loadedCount?: number;
+  shownCount?: number;
+}
+
+export interface LoadedResultCountArgs {
+  searchResults: Array<{ id: string } | null | undefined>;
+  favorites: Record<string, number>;
+  showFavOnly: boolean;
+  showUnfavOnly: boolean;
+  favoriteFilterLevels: FavoriteFilterLevel[];
+  showEnhancedOnly: boolean;
+  enhancedSourceIds: Record<string, true>;
+}
+
+export interface ClientFilterMutationNavigation {
+  shouldSync: boolean;
+  orderedIds: string[];
+  nextId: string | null;
 }
 
 export interface GridMetricsSnapshot {
@@ -25,6 +45,32 @@ export interface GridMetricsSnapshot {
   anchorIndex?: number;
   anchorTop?: number;
   anchorViewportOffset?: number;
+}
+
+export function withGridPointerAnchor(
+  metrics: GridMetricsSnapshot | null,
+  anchorIndex: number,
+  anchorTop: number,
+  scrollTop: number
+): GridMetricsSnapshot | null {
+  if (
+    !metrics ||
+    !Number.isInteger(anchorIndex) ||
+    anchorIndex < 0 ||
+    anchorIndex >= metrics.fullCount ||
+    !Number.isFinite(anchorTop) ||
+    !Number.isFinite(scrollTop)
+  ) {
+    return metrics;
+  }
+
+  return {
+    ...metrics,
+    scrollTop,
+    anchorIndex,
+    anchorTop,
+    anchorViewportOffset: anchorTop - scrollTop,
+  };
 }
 
 export interface ArrowSelectionArgs {
@@ -85,6 +131,100 @@ export function getEmptyResultMessage(searchQuery: string, hasClientFilters: boo
   return 'No supported images were found in the selected folders.';
 }
 
+/**
+ * Server search is sparse/paged. Count only materialized entries, then apply
+ * the same client-side predicates used by the gallery before calling it shown.
+ */
+export function getLoadedResultCounts({
+  searchResults,
+  favorites,
+  showFavOnly,
+  showUnfavOnly,
+  favoriteFilterLevels,
+  showEnhancedOnly,
+  enhancedSourceIds,
+}: LoadedResultCountArgs) {
+  let loadedCount = 0;
+  let shownCount = 0;
+  const hasClientFilters = showFavOnly || showUnfavOnly || showEnhancedOnly;
+
+  for (const image of searchResults) {
+    if (!image) continue;
+    loadedCount += 1;
+    const level = favorites[image.id] ?? 0;
+    const matchesFavorite = showFavOnly
+      ? matchesFavoriteLevel(level, favoriteFilterLevels)
+      : showUnfavOnly
+        ? level === 0
+        : true;
+    const matchesEnhanced = showEnhancedOnly ? Boolean(enhancedSourceIds[image.id]) : true;
+    if (matchesFavorite && matchesEnhanced) shownCount += 1;
+  }
+
+  return {
+    loadedCount,
+    shownCount: hasClientFilters ? shownCount : loadedCount,
+    hasClientFilters,
+  };
+}
+
+export function getClientFilteredLoadedIds({
+  searchResults,
+  favorites,
+  showFavOnly,
+  showUnfavOnly,
+  favoriteFilterLevels,
+  showEnhancedOnly,
+  enhancedSourceIds,
+}: LoadedResultCountArgs): string[] {
+  const orderedIds: string[] = [];
+  for (const image of searchResults) {
+    if (!image) continue;
+    const level = favorites[image.id] ?? 0;
+    const matchesFavorite = showFavOnly
+      ? matchesFavoriteLevel(level, favoriteFilterLevels)
+      : showUnfavOnly
+        ? level === 0
+        : true;
+    const matchesEnhanced = showEnhancedOnly ? Boolean(enhancedSourceIds[image.id]) : true;
+    if (matchesFavorite && matchesEnhanced) orderedIds.push(image.id);
+  }
+  return orderedIds;
+}
+
+/**
+ * Resolve the image that should take over when a local mutation removes the
+ * current image from an exact client-side filter. The pre-mutation order is
+ * authoritative: prefer the next surviving image, then the previous one.
+ * `shouldSync` stays false for matching changes and unrelated/currently hidden
+ * images so hydration or filter changes cannot accidentally move the viewer.
+ */
+export function nextAfterClientFilterMutation(
+  currentId: string | null,
+  previousOrderedIds: readonly string[],
+  nextOrderedIds: readonly string[]
+): ClientFilterMutationNavigation {
+  const previousIds = Array.from(new Set(previousOrderedIds.filter(Boolean)));
+  const orderedIds = Array.from(new Set(nextOrderedIds.filter(Boolean)));
+  const previousIndex = currentId ? previousIds.indexOf(currentId) : -1;
+  if (!currentId || previousIndex < 0 || orderedIds.includes(currentId)) {
+    return { shouldSync: false, orderedIds, nextId: currentId };
+  }
+
+  const nextIdSet = new Set(orderedIds);
+  for (let index = previousIndex + 1; index < previousIds.length; index += 1) {
+    if (nextIdSet.has(previousIds[index])) {
+      return { shouldSync: true, orderedIds, nextId: previousIds[index] };
+    }
+  }
+  for (let index = previousIndex - 1; index >= 0; index -= 1) {
+    if (nextIdSet.has(previousIds[index])) {
+      return { shouldSync: true, orderedIds, nextId: previousIds[index] };
+    }
+  }
+  return { shouldSync: true, orderedIds, nextId: null };
+}
+
 export function sortFolderBuckets(
   buckets: FolderBucket[],
   sortBy: FolderSortBy
@@ -112,6 +252,8 @@ export function getResultCountLabel({
   dateFrom,
   dateTo,
   hiddenFolders = [],
+  loadedCount,
+  shownCount,
 }: ResultCountLabelArgs): string {
   const hasServerFilters = Boolean(
     searchQuery.trim() ||
@@ -120,26 +262,52 @@ export function getResultCountLabel({
     hiddenFolders.length > 0
   );
 
+  const fallbackShownCount = hasServerFilters ? searchTotal : totalIndexed;
+  const shown = Math.max(0, Math.trunc(shownCount ?? loadedCount ?? fallbackShownCount));
+  const shownLabel = `${shown.toLocaleString()} shown`;
+
   return hasServerFilters
-    ? `${searchTotal.toLocaleString()} filtered / ${totalIndexed.toLocaleString()} indexed`
-    : `${totalIndexed.toLocaleString()} indexed`;
+    ? `${shownLabel} · ${searchTotal.toLocaleString()} filtered · ${totalIndexed.toLocaleString()} indexed`
+    : `${shownLabel} · ${totalIndexed.toLocaleString()} indexed`;
 }
 
 export function getZoomCenteredScrollTop(
   previous: GridMetricsSnapshot,
   next: GridMetricsSnapshot
 ): number {
+  const previousScrollTop = Number.isFinite(previous.scrollTop)
+    ? Math.max(0, previous.scrollTop)
+    : 0;
+  const hasFiniteNextBounds = Number.isFinite(next.viewportHeight) &&
+    Number.isFinite(next.totalHeight) &&
+    next.viewportHeight >= 0 &&
+    next.totalHeight >= 0;
+  const maxScrollTop = hasFiniteNextBounds
+    ? Math.max(0, next.totalHeight - next.viewportHeight)
+    : previousScrollTop;
   if (
+    !Number.isFinite(previous.viewportHeight) ||
+    !Number.isFinite(previous.rowHeight) ||
+    !Number.isFinite(previous.gridColumns) ||
+    !Number.isFinite(previous.fullCount) ||
+    !Number.isFinite(next.viewportHeight) ||
+    !Number.isFinite(next.rowHeight) ||
+    !Number.isFinite(next.gridColumns) ||
+    !Number.isFinite(next.fullCount) ||
+    !Number.isFinite(next.totalHeight) ||
     previous.fullCount <= 0 ||
+    next.fullCount <= 0 ||
     previous.gridColumns <= 0 ||
     next.gridColumns <= 0 ||
     previous.rowHeight <= 0 ||
-    next.rowHeight <= 0
+    next.rowHeight <= 0 ||
+    previous.viewportHeight < 0 ||
+    next.viewportHeight < 0 ||
+    next.totalHeight < 0
   ) {
-    return previous.scrollTop;
+    return clamp(previousScrollTop, 0, maxScrollTop);
   }
 
-  const maxScrollTop = Math.max(0, next.totalHeight - next.viewportHeight);
   if (
     previous.anchorIndex !== undefined &&
     previous.anchorIndex === next.anchorIndex &&
@@ -151,7 +319,7 @@ export function getZoomCenteredScrollTop(
     return clamp(next.anchorTop - previous.anchorViewportOffset, 0, maxScrollTop);
   }
 
-  const previousCenterY = previous.scrollTop + previous.viewportHeight / 2;
+  const previousCenterY = previousScrollTop + previous.viewportHeight / 2;
   const previousRow = clamp(
     Math.floor(previousCenterY / previous.rowHeight),
     0,

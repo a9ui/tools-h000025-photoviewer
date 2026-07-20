@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
+import { RotateCcw, Pin, PinOff, X } from 'lucide-react';
 import { useImageStore } from '../store/ImageContext';
 import CachedImage from './CachedImage';
 
@@ -9,6 +10,8 @@ interface HoverPreviewState {
   left: number;
   top: number;
 }
+
+type PreviewTabDropPosition = 'before' | 'after';
 
 export default function BottomPreviewTabs() {
   const {
@@ -20,19 +23,78 @@ export default function BottomPreviewTabs() {
     setActivePreviewId,
     setSelectedIndex,
     closePreviewTab,
+    reorderPreviewTab,
     togglePinPreviewTab,
+    closedPreviewTabCount,
     restoreLastClosedPreview,
   } = useImageStore();
 
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
-
-  if (previewTabIds.length === 0) return null;
+  const [draggedTabId, setDraggedTabId] = useState<string | null>(null);
+  const [dropTarget, setDropTarget] = useState<{ id: string; position: PreviewTabDropPosition } | null>(null);
+  const [focusedTabId, setFocusedTabId] = useState<string | null>(
+    () => activePreviewId ?? previewTabIds[0] ?? null
+  );
+  const tabRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const restoreButtonRef = useRef<HTMLButtonElement>(null);
+  const previousTabCountRef = useRef(previewTabIds.length);
+  const focusRestoredTabRef = useRef(false);
 
   const activeId = activePreviewId;
   const hoveredImage = hoverPreview ? previewById[hoverPreview.id] : null;
 
+  useEffect(() => {
+    setFocusedTabId((current) => (
+      current && previewTabIds.includes(current)
+        ? current
+        : activePreviewId && previewTabIds.includes(activePreviewId)
+          ? activePreviewId
+          : previewTabIds[0] ?? null
+    ));
+  }, [activePreviewId, previewTabIds]);
+
+  useEffect(() => {
+    const previouslyHadTabs = previousTabCountRef.current > 0;
+    previousTabCountRef.current = previewTabIds.length;
+    if (previouslyHadTabs && previewTabIds.length === 0 && closedPreviewTabCount > 0) {
+      restoreButtonRef.current?.focus();
+      return;
+    }
+    if (focusRestoredTabRef.current && previewTabIds.length > 0) {
+      const nextId = activePreviewId ?? previewTabIds[0];
+      tabRefs.current[nextId]?.focus();
+      focusRestoredTabRef.current = false;
+    }
+  }, [activePreviewId, closedPreviewTabCount, previewTabIds]);
+
+  const restoreRecentPreview = () => {
+    focusRestoredTabRef.current = true;
+    restoreLastClosedPreview();
+  };
+
+  if (previewTabIds.length === 0) {
+    if (closedPreviewTabCount === 0) return null;
+    return (
+      <div className="bottom-preview-tabs bottom-preview-restore-surface" role="region" aria-label="Recently closed preview tabs">
+        <button
+          ref={restoreButtonRef}
+          className="bottom-preview-action-btn"
+          type="button"
+          onClick={restoreRecentPreview}
+          aria-keyshortcuts="Control+Shift+T Meta+Shift+T"
+          aria-label={`Restore last closed preview tab. ${closedPreviewTabCount} recently closed tab${closedPreviewTabCount === 1 ? '' : 's'} available.`}
+          title={`Restore recently closed tab (${closedPreviewTabCount} available)`}
+        >
+          <RotateCcw size={14} aria-hidden="true" />
+          Restore
+        </button>
+        <span className="bottom-preview-restore-count" aria-hidden="true">{closedPreviewTabCount}</span>
+      </div>
+    );
+  }
+
   const showHoverPreview = (
-    event: React.MouseEvent<HTMLButtonElement>,
+    event: React.MouseEvent<HTMLElement>,
     id: string
   ) => {
     const rect = event.currentTarget.getBoundingClientRect();
@@ -46,66 +108,185 @@ export default function BottomPreviewTabs() {
     setHoverPreview({ id, left, top });
   };
 
+  const moveTabFocus = (id: string, direction: 'next' | 'previous' | 'first' | 'last') => {
+    const currentIndex = previewTabIds.indexOf(id);
+    if (currentIndex < 0) return;
+    const nextIndex = direction === 'first'
+      ? 0
+      : direction === 'last'
+        ? previewTabIds.length - 1
+        : (currentIndex + (direction === 'next' ? 1 : -1) + previewTabIds.length) % previewTabIds.length;
+    const nextId = previewTabIds[nextIndex];
+    setFocusedTabId(nextId);
+    tabRefs.current[nextId]?.focus();
+  };
+
+  const reorderFromDrop = (id: string, targetId: string, position: PreviewTabDropPosition) => {
+    const sourceIndex = previewTabIds.indexOf(id);
+    const targetIndex = previewTabIds.indexOf(targetId);
+    if (sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) return;
+    let destinationIndex = position === 'before' ? targetIndex : targetIndex + 1;
+    if (sourceIndex < destinationIndex) destinationIndex -= 1;
+    reorderPreviewTab(id, destinationIndex);
+  };
+
+  const moveTabWithKeyboard = (id: string, direction: 'previous' | 'next') => {
+    const sourceIndex = previewTabIds.indexOf(id);
+    if (sourceIndex < 0) return;
+    const destinationIndex = sourceIndex + (direction === 'previous' ? -1 : 1);
+    if (destinationIndex < 0 || destinationIndex >= previewTabIds.length) return;
+    reorderPreviewTab(id, destinationIndex);
+    setFocusedTabId(id);
+    window.requestAnimationFrame(() => tabRefs.current[id]?.focus());
+  };
+
+  const getDropPosition = (event: React.DragEvent<HTMLDivElement>): PreviewTabDropPosition => {
+    const bounds = event.currentTarget.getBoundingClientRect();
+    return event.clientX < bounds.left + bounds.width / 2 ? 'before' : 'after';
+  };
+
   return (
     <div className="bottom-preview-tabs">
-      <div className="bottom-preview-actions">
-        <button className="bottom-preview-action-btn" onClick={restoreLastClosedPreview} title="Restore recently closed tab">
-          Restore
-        </button>
-      </div>
-      <div className="bottom-preview-tabs-scroll">
+      {closedPreviewTabCount > 0 && (
+        <div className="bottom-preview-actions">
+          <button
+            className="bottom-preview-action-btn"
+            type="button"
+            onClick={restoreRecentPreview}
+            aria-keyshortcuts="Control+Shift+T Meta+Shift+T"
+            aria-label={`Restore last closed preview tab. ${closedPreviewTabCount} recently closed tab${closedPreviewTabCount === 1 ? '' : 's'} available.`}
+            title={`Restore recently closed tab (${closedPreviewTabCount} available)`}
+          >
+            <RotateCcw size={14} aria-hidden="true" />
+            Restore
+          </button>
+        </div>
+      )}
+      <div className="bottom-preview-tabs-scroll" role="tablist" aria-label="Open preview tabs">
         {previewTabIds.map((id) => {
           const img = previewById[id];
           const label = img?.filename ?? id.split(/[/\\]/).pop() ?? id;
           const isActive = id === activeId;
           const isPinned = pinnedPreviewIds.includes(id);
           const openFullView = () => {
+            setFocusedTabId(id);
             setActivePreviewId(id);
             const idx = searchResults.findIndex((entry) => entry?.id === id);
             if (idx >= 0) setSelectedIndex(idx);
           };
-          const closeByMiddleClick = (event: { button: number; preventDefault: () => void; stopPropagation: () => void }) => {
+          const closeByMiddleClick = (event: React.MouseEvent<HTMLButtonElement>) => {
             if (event.button !== 1) return;
             event.preventDefault();
             event.stopPropagation();
             closePreviewTab(id);
           };
+          const onTabKeyDown = (event: React.KeyboardEvent<HTMLButtonElement>) => {
+            if (event.altKey && event.shiftKey && event.key === 'ArrowRight') {
+              event.preventDefault();
+              moveTabWithKeyboard(id, 'next');
+            } else if (event.altKey && event.shiftKey && event.key === 'ArrowLeft') {
+              event.preventDefault();
+              moveTabWithKeyboard(id, 'previous');
+            } else if (event.key === 'ArrowRight') {
+              event.preventDefault();
+              moveTabFocus(id, 'next');
+            } else if (event.key === 'ArrowLeft') {
+              event.preventDefault();
+              moveTabFocus(id, 'previous');
+            } else if (event.key === 'Home') {
+              event.preventDefault();
+              moveTabFocus(id, 'first');
+            } else if (event.key === 'End') {
+              event.preventDefault();
+              moveTabFocus(id, 'last');
+            } else if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              openFullView();
+            }
+          };
 
           return (
-            <button
+            <div
               key={id}
-              className={`bottom-preview-tab ${isActive ? 'active' : ''}`}
-              onClick={openFullView}
-              onMouseDown={closeByMiddleClick}
-              onMouseUp={closeByMiddleClick}
-              onAuxClick={closeByMiddleClick}
-              onPointerDownCapture={(event) => closeByMiddleClick(event)}
+              data-testid={`bottom-preview-tab-${id}`}
+              data-preview-tab-id={id}
+              className={`bottom-preview-tab ${isActive ? 'active' : ''} ${draggedTabId === id ? 'is-dragging' : ''} ${dropTarget?.id === id ? `is-drop-${dropTarget.position}` : ''}`}
+              draggable
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = 'move';
+                event.dataTransfer.setData('text/plain', id);
+                setDraggedTabId(id);
+                setDropTarget(null);
+              }}
+              onDragOver={(event) => {
+                if (!draggedTabId || draggedTabId === id) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = 'move';
+                setDropTarget({
+                  id,
+                  position: getDropPosition(event),
+                });
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const sourceId = draggedTabId || event.dataTransfer.getData('text/plain');
+                const position = dropTarget?.id === id ? dropTarget.position : getDropPosition(event);
+                if (sourceId) reorderFromDrop(sourceId, id, position);
+                setDraggedTabId(null);
+                setDropTarget(null);
+              }}
+              onDragEnd={() => {
+                setDraggedTabId(null);
+                setDropTarget(null);
+              }}
               onMouseEnter={(event) => showHoverPreview(event, id)}
               onMouseMove={(event) => showHoverPreview(event, id)}
               onMouseLeave={() => setHoverPreview((prev) => (prev?.id === id ? null : prev))}
-              title={label}
             >
-              <span className="bottom-preview-tab-label">{label}</span>
-              <span
+              <button
+                ref={(element) => { tabRefs.current[id] = element; }}
+                className="bottom-preview-tab-main"
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                aria-label={`Open preview ${label}`}
+                aria-keyshortcuts="Alt+Shift+ArrowLeft Alt+Shift+ArrowRight"
+                aria-posinset={previewTabIds.indexOf(id) + 1}
+                aria-setsize={previewTabIds.length}
+                tabIndex={focusedTabId === id ? 0 : -1}
+                onClick={openFullView}
+                onAuxClick={closeByMiddleClick}
+                onFocus={() => setFocusedTabId(id)}
+                onKeyDown={onTabKeyDown}
+                title={`${label} — drag to reorder, or Alt+Shift+Left/Right`}
+              >
+                <span className="bottom-preview-tab-label">{label}</span>
+              </button>
+              <button
                 className={`bottom-preview-tab-pin ${isPinned ? 'active' : ''}`}
                 onClick={(event) => {
                   event.stopPropagation();
                   togglePinPreviewTab(id);
                 }}
                 title={isPinned ? 'Unpin tab' : 'Pin tab'}
+                aria-label={`${isPinned ? 'Unpin' : 'Pin'} preview ${label}`}
+                type="button"
               >
-                {isPinned ? 'P' : 'p'}
-              </span>
-              <span
+                {isPinned ? <PinOff size={13} aria-hidden="true" /> : <Pin size={13} aria-hidden="true" />}
+              </button>
+              <button
                 className="bottom-preview-tab-close"
                 onClick={(event) => {
                   event.stopPropagation();
                   closePreviewTab(id);
                 }}
+                aria-label={`Close preview ${label}`}
+                title={`Close ${label}`}
+                type="button"
               >
-                x
-              </span>
-            </button>
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
           );
         })}
       </div>

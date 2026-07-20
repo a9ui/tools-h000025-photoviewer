@@ -25,6 +25,17 @@
     <SolidColorBrush x:Key="AccentLight" Color="#818CF8"/>
     <SolidColorBrush x:Key="Favorite" Color="#F43F5E"/>
     <SolidColorBrush x:Key="FavoriteText" Color="#FECDD3"/>
+    <SolidColorBrush x:Key="FavoriteThumbnailStatusBorderBrush" Color="#FACC15"/>
+    <LinearGradientBrush x:Key="EnhancedThumbnailStatusBorderBrush" StartPoint="0,0" EndPoint="1,1">
+      <GradientStop Color="#FF1744" Offset="0"/>
+      <GradientStop Color="#FF9100" Offset="0.142857"/>
+      <GradientStop Color="#FFEA00" Offset="0.285714"/>
+      <GradientStop Color="#00E676" Offset="0.428571"/>
+      <GradientStop Color="#00B8D4" Offset="0.571429"/>
+      <GradientStop Color="#2979FF" Offset="0.714286"/>
+      <GradientStop Color="#AA00FF" Offset="0.857143"/>
+      <GradientStop Color="#FF1744" Offset="1"/>
+    </LinearGradientBrush>
     <SolidColorBrush x:Key="Success" Color="#10B981"/>
     <SolidColorBrush x:Key="Danger" Color="#EF4444"/>
     <SolidColorBrush x:Key="DangerText" Color="#FECACA"/>
@@ -292,6 +303,108 @@
       </Setter>
     </Style>
 
+    <!-- Dark date input: keep the sidebar controls inside the viewer surface. -->
+    <Style x:Key="DarkDatePicker" TargetType="DatePicker">
+      <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+      <Setter Property="Background" Value="{StaticResource BgTertiary}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource GlassBorder}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="FontSize" Value="11.5"/>
+      <Setter Property="Template">
+        <Setter.Value>
+          <ControlTemplate TargetType="DatePicker">
+            <Grid>
+              <Border x:Name="InputBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="6">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="28"/>
+                  </Grid.ColumnDefinitions>
+                  <DatePickerTextBox x:Name="PART_TextBox" Grid.Column="0" Padding="7,0,3,0" Background="Transparent" BorderThickness="0" Foreground="{TemplateBinding Foreground}" CaretBrush="{StaticResource AccentLight}" VerticalContentAlignment="Center"/>
+                  <Button x:Name="PART_Button" Grid.Column="1" Background="Transparent" BorderThickness="0" Foreground="{StaticResource TextSecondary}" Focusable="False" ToolTip="Open calendar">
+                    <Path Data="M4,6 h16 v14 h-16 z M4,10 h16 M8,3 v6 M16,3 v6" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.35" Stretch="Uniform" Width="14" Height="14"/>
+                  </Button>
+                </Grid>
+              </Border>
+              <Popup x:Name="PART_Popup" Placement="Bottom" StaysOpen="False" AllowsTransparency="True">
+                <Border Background="{StaticResource BgElevated}" BorderBrush="{StaticResource GlassBorderHover}" BorderThickness="1" CornerRadius="8" Padding="4" SnapsToDevicePixels="True">
+                  <Calendar x:Name="PART_Calendar" Background="{StaticResource BgElevated}" Foreground="{StaticResource TextPrimary}" BorderBrush="{StaticResource GlassBorder}"/>
+                </Border>
+              </Popup>
+            </Grid>
+            <ControlTemplate.Triggers>
+              <Trigger Property="IsMouseOver" Value="True">
+                <Setter TargetName="InputBorder" Property="BorderBrush" Value="{StaticResource GlassBorderHover}"/>
+                <Setter TargetName="InputBorder" Property="Background" Value="{StaticResource BgElevated}"/>
+              </Trigger>
+              <Trigger Property="IsKeyboardFocusWithin" Value="True">
+                <Setter TargetName="InputBorder" Property="BorderBrush" Value="{StaticResource AccentLight}"/>
+              </Trigger>
+              <Trigger Property="IsEnabled" Value="False">
+                <Setter TargetName="InputBorder" Property="Opacity" Value="0.42"/>
+              </Trigger>
+            </ControlTemplate.Triggers>
+          </ControlTemplate>
+        </Setter.Value>
+      </Setter>
+      <Style.Resources>
+        <Style TargetType="DatePickerTextBox">
+          <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+          <Setter Property="CaretBrush" Value="{StaticResource AccentLight}"/>
+          <Setter Property="Background" Value="Transparent"/>
+          <Setter Property="BorderThickness" Value="0"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="DatePickerTextBox">
+                <Border Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                  <ScrollViewer x:Name="PART_ContentHost" VerticalContentAlignment="{TemplateBinding VerticalContentAlignment}"/>
+                </Border>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+        <Style TargetType="CalendarDayButton">
+          <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+          <Setter Property="Background" Value="Transparent"/>
+          <Setter Property="BorderBrush" Value="Transparent"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="CalendarDayButton">
+                <Border x:Name="Day" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Margin="1">
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Day" Property="Background" Value="{StaticResource HoverFill}"/></Trigger>
+                  <Trigger Property="IsSelected" Value="True"><Setter TargetName="Day" Property="Background" Value="{StaticResource Accent}"/><Setter Property="Foreground" Value="White"/></Trigger>
+                  <Trigger Property="IsToday" Value="True"><Setter TargetName="Day" Property="BorderBrush" Value="{StaticResource AccentLight}"/></Trigger>
+                  <Trigger Property="IsInactive" Value="True"><Setter Property="Foreground" Value="{StaticResource TextTertiary}"/></Trigger>
+                  <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.38"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+        <Style TargetType="CalendarButton">
+          <Setter Property="Foreground" Value="{StaticResource TextPrimary}"/>
+          <Setter Property="Background" Value="Transparent"/>
+          <Setter Property="BorderBrush" Value="Transparent"/>
+          <Setter Property="Template">
+            <Setter.Value>
+              <ControlTemplate TargetType="CalendarButton">
+                <Border x:Name="CalendarButtonBorder" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="4" Margin="1">
+                  <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                </Border>
+                <ControlTemplate.Triggers>
+                  <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="CalendarButtonBorder" Property="Background" Value="{StaticResource HoverFill}"/></Trigger>
+                  <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.38"/></Trigger>
+                </ControlTemplate.Triggers>
+              </ControlTemplate>
+            </Setter.Value>
+          </Setter>
+        </Style>
+      </Style.Resources>
+    </Style>
+
     <!-- ═══════════ Favorite stepper buttons ═══════════ -->
     <Style x:Key="StepButton" TargetType="Button">
       <Setter Property="Foreground" Value="{StaticResource FavoriteText}"/>
@@ -330,12 +443,12 @@
                   <Grid>
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
-                    <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Image Source="{Binding Thumbnail}" Stretch="{Binding CardThumbnailStretch}" RenderOptions.BitmapScalingMode="HighQuality"/>
 
                     <!-- unseen dot -->
                     <Ellipse Width="8" Height="8" Margin="8" HorizontalAlignment="Left" VerticalAlignment="Top"
                              Fill="{StaticResource AccentLight}"
-                             Visibility="{Binding Unseen, Converter={StaticResource BoolToVis}}"/>
+                             Visibility="{Binding ShowUnseenDot, Converter={StaticResource BoolToVis}}"/>
 
                     <!-- favorite count pill -->
                     <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="7"
@@ -359,6 +472,12 @@
                       <TextBlock Text="{Binding FileName}" VerticalAlignment="Bottom" Foreground="#EAFFFFFF"
                                  FontSize="12" TextTrimming="CharacterEllipsis"/>
                     </Border>
+
+                    <!-- Status borders stay above hover chrome and bind to the tile's existing O(1) state. -->
+                    <Border CornerRadius="11" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                            IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
+                    <Border CornerRadius="8" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
+                            IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
                   </Grid>
                 </Border>
               </Grid>
@@ -401,6 +520,11 @@
                     <Rectangle Fill="{Binding ArtBase}"/>
                     <Rectangle Fill="{Binding ArtGlow}"/>
                     <Image Source="{Binding Thumbnail}" Stretch="UniformToFill" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    <Border CornerRadius="6" BorderBrush="{DynamicResource EnhancedThumbnailStatusBorderBrush}" BorderThickness="3"
+                            IsHitTestVisible="False" Visibility="{Binding Enhanced, Converter={StaticResource BoolToVis}}"/>
+                    <Border CornerRadius="4" Margin="4" BorderBrush="{DynamicResource FavoriteThumbnailStatusBorderBrush}" BorderThickness="2"
+                            IsHitTestVisible="False" Visibility="{Binding Fav, Converter={StaticResource CountToVis}}"/>
+                    <Ellipse Width="8" Height="8" Margin="7" HorizontalAlignment="Left" VerticalAlignment="Top" Fill="{StaticResource AccentLight}" Visibility="{Binding ShowUnseenDot, Converter={StaticResource BoolToVis}}"/>
                   </Grid>
                 </Border>
                 <StackPanel Grid.Column="1" VerticalAlignment="Center">

@@ -105,11 +105,20 @@ function describeDiagnostics(job: EnhancementJob) {
   return parts.join(' / ');
 }
 
-export async function createEnhancementJob(sourceId: string, settings = getEnhancementSettings()) {
+export async function createEnhancementJob(
+  sourceId: string,
+  settings = getEnhancementSettings(),
+  indexToken?: string | null
+) {
   const requestJob = async (confirmLargeJob = false) => fetch('/api/enhance/jobs', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sourceId, ...settings, ...(confirmLargeJob ? { confirmLargeJob: true } : {}) }),
+    body: JSON.stringify({
+      sourceId,
+      ...settings,
+      ...(indexToken ? { indexToken } : {}),
+      ...(confirmLargeJob ? { confirmLargeJob: true } : {}),
+    }),
   });
   let res = await requestJob();
   let data = await res.json().catch(() => ({}));
@@ -270,7 +279,7 @@ function statusLabel(status: EnhancementJobStatus) {
 }
 
 export default function EnhanceQueuePanel() {
-  const { view, setView } = useImageStore();
+  const { view, setView, indexToken } = useImageStore();
   const [jobs, setJobs] = useState<EnhancementJob[]>([]);
   const [error, setError] = useState('');
   const activeJobs = useMemo(() => jobs.filter((job) => job.status === 'queued' || job.status === 'running'), [jobs]);
@@ -318,7 +327,8 @@ export default function EnhanceQueuePanel() {
   };
 
   const openSource = async (sourcePath: string) => {
-    await fetch(`/api/open?path=${encodeURIComponent(sourcePath)}`, { method: 'POST' });
+    const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
+    await fetch(`/api/open?path=${encodeURIComponent(sourcePath)}${tokenParam}`, { method: 'POST' });
   };
 
   if (jobs.length === 0 && !error) return null;

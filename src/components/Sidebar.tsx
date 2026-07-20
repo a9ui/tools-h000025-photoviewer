@@ -1,10 +1,12 @@
 'use client';
 
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
-import { getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
+import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
+import { useDialogFocus } from '../lib/useDialogFocus';
+import { MAX_THUMB_SIZE, MIN_THUMB_SIZE, THUMB_ZOOM_STEP } from '../lib/thumbnailSizing';
 
 function createRandomSeed() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
@@ -19,7 +21,9 @@ export default function Sidebar() {
     startScan,
     totalIndexed,
     searchTotal,
+    searchResults,
     searchQuery,
+    favorites,
     showFavOnly,
     setShowFavOnly,
     showUnfavOnly,
@@ -29,6 +33,7 @@ export default function Sidebar() {
     clearFavoriteFilterLevels,
     showEnhancedOnly,
     setShowEnhancedOnly,
+    enhancedSourceIds,
     setShowSettings,
     setPhase,
     perfEnabled,
@@ -42,7 +47,11 @@ export default function Sidebar() {
   const [lastSelectedFolderKey, setLastSelectedFolderKey] = useState<string | null>(null);
   const [addingFolder, setAddingFolder] = useState(false);
   const [folderActionError, setFolderActionError] = useState('');
-  const [foldersExpanded, setFoldersExpanded] = useState(true);
+  const foldersToggleRef = useRef<HTMLButtonElement>(null);
+  const foldersContentRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const [isMobile, setIsMobile] = useState(false);
+  const foldersExpanded = view.foldersExpanded;
 
   const hiddenFolderSet = useMemo(() => new Set(view.hiddenFolders), [view.hiddenFolders]);
   const selectedFolderSet = useMemo(() => new Set(selectedFolderKeys), [selectedFolderKeys]);
@@ -50,6 +59,23 @@ export default function Sidebar() {
     () => sortFolderBuckets(folderBuckets, view.folderSortBy),
     [folderBuckets, view.folderSortBy]
   );
+  const loadedResultCounts = useMemo(() => getLoadedResultCounts({
+    searchResults,
+    favorites,
+    showFavOnly,
+    showUnfavOnly,
+    favoriteFilterLevels,
+    showEnhancedOnly,
+    enhancedSourceIds,
+  }), [
+    enhancedSourceIds,
+    favoriteFilterLevels,
+    favorites,
+    searchResults,
+    showEnhancedOnly,
+    showFavOnly,
+    showUnfavOnly,
+  ]);
   const resultCountLabel = useMemo(() => getResultCountLabel({
     searchQuery,
     searchTotal,
@@ -57,7 +83,18 @@ export default function Sidebar() {
     dateFrom: view.dateFrom,
     dateTo: view.dateTo,
     hiddenFolders: view.hiddenFolders,
-  }), [searchQuery, searchTotal, totalIndexed, view.dateFrom, view.dateTo, view.hiddenFolders]);
+    loadedCount: loadedResultCounts.loadedCount,
+    shownCount: loadedResultCounts.shownCount,
+  }), [
+    loadedResultCounts.loadedCount,
+    loadedResultCounts.shownCount,
+    searchQuery,
+    searchTotal,
+    totalIndexed,
+    view.dateFrom,
+    view.dateTo,
+    view.hiddenFolders,
+  ]);
 
   useEffect(() => {
     if (!dirPath) {
@@ -105,6 +142,21 @@ export default function Sidebar() {
     setLastSelectedFolderKey((prev) => (prev && available.has(prev) ? prev : null));
   }, [folderBuckets]);
 
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 768px)');
+    const sync = () => setIsMobile(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
+  }, []);
+
+  useDialogFocus({
+    open: isMobile && view.sidebarOpen,
+    dialogRef: drawerRef,
+    onEscape: () => setView({ sidebarOpen: false }),
+  });
+
   if (!view.sidebarOpen) return null;
 
   const toggleFolderVisibility = (folderKey: string) => {
@@ -115,7 +167,7 @@ export default function Sidebar() {
     setView({ hiddenFolders: next });
   };
 
-  const selectFolder = (folderKey: string, event: React.MouseEvent) => {
+  const selectFolder = (folderKey: string, event: React.MouseEvent<HTMLElement>) => {
     const additive = event.ctrlKey || event.metaKey;
     const range = event.shiftKey && lastSelectedFolderKey;
     const sortedKeys = sortedFolderBuckets.map((folder) => folder.key);
@@ -178,6 +230,13 @@ export default function Sidebar() {
     });
   };
 
+  const toggleFoldersExpanded = () => {
+    const focusedChild = foldersExpanded
+      && Boolean(foldersContentRef.current?.contains(document.activeElement));
+    if (focusedChild) foldersToggleRef.current?.focus();
+    setView({ foldersExpanded: !foldersExpanded });
+  };
+
   const addFolderFromSidebar = async () => {
     if (addingFolder) return;
     setAddingFolder(true);
@@ -215,7 +274,16 @@ export default function Sidebar() {
   };
 
   return (
-    <aside className="sidebar">
+    <>
+      {isMobile && <button type="button" className="sidebar-drawer-backdrop" aria-label="Close filters" onClick={() => setView({ sidebarOpen: false })} />}
+      <aside
+        ref={drawerRef}
+        className={`sidebar ${isMobile ? 'sidebar-drawer' : ''}`}
+        role={isMobile ? 'dialog' : undefined}
+        aria-modal={isMobile || undefined}
+        aria-label={isMobile ? 'Filters and display options' : undefined}
+        tabIndex={isMobile ? -1 : undefined}
+      >
       <div className="sidebar-section">
         <div className="sidebar-section-header">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -225,7 +293,7 @@ export default function Sidebar() {
         </div>
 
         <p className="sidebar-path" title={dirPath}>{summarizeDirSet(dirPath) || dirPath}</p>
-        <p className="sidebar-meta">{resultCountLabel}</p>
+        <p className="sidebar-meta" aria-label={`Results: ${resultCountLabel}`}>{resultCountLabel}</p>
         <div className="sidebar-actions">
           <button className="sidebar-link" onClick={() => void addFolderFromSidebar()} disabled={addingFolder}>
             {addingFolder ? 'Adding folder...' : 'Add folder'}
@@ -320,11 +388,12 @@ export default function Sidebar() {
 
       <div className="sidebar-section">
         <button
+          ref={foldersToggleRef}
           type="button"
           className="sidebar-section-header sidebar-section-toggle"
           aria-expanded={foldersExpanded}
           aria-controls="sidebar-folders-content"
-          onClick={() => setFoldersExpanded((expanded) => !expanded)}
+          onClick={toggleFoldersExpanded}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M3 4h18M3 12h18M3 20h18" />
@@ -335,7 +404,7 @@ export default function Sidebar() {
           </svg>
         </button>
 
-        <div id="sidebar-folders-content" hidden={!foldersExpanded}>
+        <div ref={foldersContentRef} id="sidebar-folders-content" hidden={!foldersExpanded}>
             {loadingFolders && <p className="sidebar-meta">Loading folder list...</p>}
 
             {!loadingFolders && folderBuckets.length === 0 && (
@@ -346,20 +415,29 @@ export default function Sidebar() {
               <>
             <div className="sidebar-pills" style={{ marginBottom: '0.5rem' }}>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'name-asc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'name-asc' })}
+                aria-pressed={view.folderSortBy === 'name-asc'}
+                aria-label="Sort folders A to Z"
               >
                 A-Z
               </button>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'name-desc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'name-desc' })}
+                aria-pressed={view.folderSortBy === 'name-desc'}
+                aria-label="Sort folders Z to A"
               >
                 Z-A
               </button>
               <button
+                type="button"
                 className={`pill ${view.folderSortBy === 'count-desc' ? 'active' : ''}`}
                 onClick={() => setView({ folderSortBy: 'count-desc' })}
+                aria-pressed={view.folderSortBy === 'count-desc'}
+                aria-label="Sort folders by image count"
               >
                 Count
               </button>
@@ -392,7 +470,8 @@ export default function Sidebar() {
                     key={folder.key}
                     className={`sidebar-folder-item ${isVisible ? 'is-active' : ''} ${isSelected ? 'is-selected' : ''}`}
                     title={`${folder.label} (${folder.count})`}
-                    onClick={(event) => selectFolder(folder.key, event)}
+                    role="group"
+                    aria-label={`Folder ${folder.label}`}
                   >
                     <input
                       type="checkbox"
@@ -400,13 +479,20 @@ export default function Sidebar() {
                       checked={isSelected}
                       onChange={() => {}}
                       onClick={(event) => {
-                        event.stopPropagation();
                         selectFolder(folder.key, event);
                       }}
                       aria-label={`Select ${folder.label}`}
                     />
-                    <span className="sidebar-folder-label">{folder.label}</span>
-                    <span className="sidebar-folder-count">{folder.count.toLocaleString()}</span>
+                    <button
+                      type="button"
+                      className="sidebar-folder-primary"
+                      onClick={(event) => selectFolder(folder.key, event)}
+                      aria-pressed={isSelected}
+                      aria-label={`Select folder ${folder.label}, ${folder.count.toLocaleString()} images`}
+                    >
+                      <span className="sidebar-folder-label">{folder.label}</span>
+                      <span className="sidebar-folder-count">{folder.count.toLocaleString()}</span>
+                    </button>
                     <button
                       type="button"
                       className={`sidebar-folder-visibility ${isVisible ? 'is-visible' : ''}`}
@@ -415,6 +501,8 @@ export default function Sidebar() {
                         toggleFolderVisibility(folder.key);
                       }}
                       title={isVisible ? 'Hide folder' : 'Show folder'}
+                      aria-pressed={isVisible}
+                      aria-label={`${isVisible ? 'Hide' : 'Show'} folder ${folder.label}`}
                     >
                       {isVisible ? 'Shown' : 'Hidden'}
                     </button>
@@ -513,18 +601,21 @@ export default function Sidebar() {
           </div>
         </div>
 
-        <div className="sidebar-row">
+        <div className="sidebar-row sidebar-size-row" role="group" aria-label="Thumbnail size control">
           <span className="sidebar-row-label">Size</span>
           <input
             type="range"
             className="sidebar-slider"
-            min={40}
-            max={600}
-            step={20}
+            aria-label="Thumbnail size"
+            min={MIN_THUMB_SIZE}
+            max={MAX_THUMB_SIZE}
+            step={THUMB_ZOOM_STEP}
             value={view.thumbSize}
             onChange={(e) => setView({ thumbSize: parseInt(e.target.value, 10) })}
           />
-          <span className="sidebar-row-value">{view.thumbSize}px</span>
+          <span className="sidebar-row-value">
+            {view.thumbSize >= MAX_THUMB_SIZE ? '1 column' : `${view.thumbSize}px`}
+          </span>
         </div>
       </div>
 
@@ -546,6 +637,7 @@ export default function Sidebar() {
           Settings
         </button>
       </div>
-    </aside>
+      </aside>
+    </>
   );
 }

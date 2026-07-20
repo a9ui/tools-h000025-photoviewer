@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageProvider, useImageStore } from '../store/ImageContext';
 import SearchBar from '../components/SearchBar';
 import ImageGrid from '../components/ImageGrid';
@@ -10,42 +10,84 @@ import Sidebar from '../components/Sidebar';
 import RightPreviewPanel from '../components/RightPreviewPanel';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
-import { getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
+import { ScanProgressStatus } from '../components/ScanProgressStatus';
+import { ScanErrorNotice } from '../components/ScanErrorNotice';
+import { getLoadedResultCounts, getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
 import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDirSet } from '../lib/pathSet';
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
-import { sharedRecentToLocalMemory } from '../lib/recentFolders';
-import { FolderOpen, RefreshCw, Sparkles } from 'lucide-react';
+import {
+  mergeRecentFolderMemories,
+  normalizeRecentFolderMemory,
+  rememberRecentFolderSet,
+  sharedRecentToLocalMemory,
+} from '../lib/recentFolders';
+import { useDialogFocus } from '../lib/useDialogFocus';
+import { getFavoriteDeleteProtection, shouldConfirmSourceDelete } from '../lib/favoriteDeleteProtection';
+import {
+  formatBulkRecycleProgress,
+  recycleImagesSequentially,
+  snapshotBulkRecycleTargets,
+} from '../lib/bulkRecycle';
+import { FolderOpen, RefreshCw, Settings, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
   const {
-    phase, dirPath, setDirPath, startScan, scanProgress,
-    searchTotal, totalIndexed, searchQuery,
+    phase, dirPath, setDirPath, startScan, cancelScan, scanProgress, scanError, dismissScanError,
+    searchTotal, searchResults, totalIndexed, searchQuery,
     setPhase, view, setView,
-    selectedIds, clearSelection, deleteImage,
+    selectedIds, deleteImage,
     cycleFavoriteLevel, decreaseFavoriteLevel, selectedIndex,
-    keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview,
+    keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview, setShowSettings,
+    favorites, showFavOnly, showUnfavOnly, favoriteFilterLevels, showEnhancedOnly, enhancedSourceIds,
   } = useImageStore();
 
   const [browseError, setBrowseError] = useState('');
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const bulkDeleteConfirmRef = useRef<HTMLDivElement>(null);
+  const bulkDeleteCancelRef = useRef<HTMLButtonElement>(null);
+  const bulkDeleteReturnFocusRef = useRef<HTMLButtonElement>(null);
+  const bulkDeleteActiveRef = useRef(false);
+  const [bulkDeleteTargets, setBulkDeleteTargets] = useState<string[]>([]);
+  const [bulkDeleteFavoriteCount, setBulkDeleteFavoriteCount] = useState(0);
+  const [isBulkDeleting, setIsBulkDeleting] = useState(false);
+  const [bulkDeleteMessage, setBulkDeleteMessage] = useState('');
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
   const [lastDirSet, setLastDirSet] = useState('');
   const [pasteFolders, setPasteFolders] = useState('');
+  const [scanNotice, setScanNotice] = useState('');
+  const openFolderSetRef = useRef<HTMLButtonElement>(null);
+  const restoreFocusAfterScanCancelRef = useRef(false);
   const selectedFolders = useMemo(() => parseDirSet(dirPath), [dirPath]);
   const selectedCount = selectedIds.length;
-  const scanProgressTotal = Math.max(0, scanProgress?.total ?? 0);
-  const scanProgressProcessed = Math.max(0, scanProgress?.processed ?? 0);
-  const scanProgressPercent = scanProgressTotal > 0
-    ? Math.min(100, Math.round((scanProgressProcessed / scanProgressTotal) * 100))
-    : 0;
-  const scanProgressUnit = scanProgress?.message?.startsWith('[')
-    ? 'overall'
-    : scanProgress?.stage === 'preparing'
-      ? 'folders'
-      : 'files';
-  const scanProgressMessage = scanProgress?.message ?? (
-    scanProgress?.stage === 'preparing' ? 'Preparing file list...' : 'Scanning files...'
-  );
+  const cancelBulkDelete = useCallback(() => {
+    if (bulkDeleteActiveRef.current) return;
+    setShowBulkDeleteConfirm(false);
+    setBulkDeleteTargets([]);
+    setBulkDeleteFavoriteCount(0);
+  }, []);
+  useDialogFocus({
+    open: showBulkDeleteConfirm,
+    dialogRef: bulkDeleteConfirmRef,
+    initialFocusRef: bulkDeleteCancelRef,
+    onEscape: cancelBulkDelete,
+  });
+  const loadedResultCounts = useMemo(() => getLoadedResultCounts({
+    searchResults,
+    favorites,
+    showFavOnly,
+    showUnfavOnly,
+    favoriteFilterLevels,
+    showEnhancedOnly,
+    enhancedSourceIds,
+  }), [
+    enhancedSourceIds,
+    favoriteFilterLevels,
+    favorites,
+    searchResults,
+    showEnhancedOnly,
+    showFavOnly,
+    showUnfavOnly,
+  ]);
   const resultCountLabel = getResultCountLabel({
     searchQuery,
     searchTotal,
@@ -53,10 +95,12 @@ function ViewerApp() {
     dateFrom: view.dateFrom,
     dateTo: view.dateTo,
     hiddenFolders: view.hiddenFolders,
+    loadedCount: loadedResultCounts.loadedCount,
+    shownCount: loadedResultCounts.shownCount,
   });
 
   const rememberLastDirSet = useCallback((dir: string) => {
-    const normalized = formatDirSet(parseDirSet(dir));
+    const normalized = normalizeRecentFolderMemory({ lastDirSet: dir }).lastDirSet;
     if (!normalized) return;
     setLastDirSet(normalized);
     try {
@@ -82,7 +126,9 @@ function ViewerApp() {
           const sharedRes = await fetch('/api/recent-folders', { cache: 'no-store' });
           const sharedData = sharedRes.ok ? await sharedRes.json() : null;
           if (sharedData?.ok && !sharedData.malformed && sharedData.recent) {
-            const sharedMemory = sharedRecentToLocalMemory(sharedData.recent);
+            const sharedMemory = normalizeRecentFolderMemory(
+              sharedRecentToLocalMemory(sharedData.recent)
+            );
             if (sharedMemory.recentDirs.length > 0 || sharedMemory.lastDirSet) {
               activeRecentDirs = sharedMemory.recentDirs;
               activeLastDirSet = sharedMemory.lastDirSet;
@@ -111,31 +157,21 @@ function ViewerApp() {
         .then((res) => res.ok ? res.json() : null)
         .then((data) => {
           if (!data) return;
-          const legacyRecent = Array.isArray(data.recentDirs)
-            ? data.recentDirs
-              .filter((v: unknown): v is string => typeof v === 'string')
-              .map((v: string) => formatDirSet(parseDirSet(v)))
-              .filter(Boolean)
-            : [];
-          const legacyLast = typeof data.lastDirSet === 'string'
-            ? formatDirSet(parseDirSet(data.lastDirSet))
-            : '';
-          if (legacyRecent.length === 0 && !legacyLast) return;
+          const legacyMemory = normalizeRecentFolderMemory({
+            recentDirs: data.recentDirs,
+            lastDirSet: data.lastDirSet,
+          });
+          if (legacyMemory.recentDirs.length === 0 && !legacyMemory.lastDirSet) return;
 
-          const combined = [
-            ...(serverLegacyAlreadyImported ? activeRecentDirs : legacyRecent),
-            ...(serverLegacyAlreadyImported ? legacyRecent : activeRecentDirs),
-          ].filter(Boolean);
-          const seen = new Set<string>();
-          const nextRecent = combined.filter((value) => {
-            const key = value.toLowerCase();
-            if (seen.has(key)) return false;
-            seen.add(key);
-            return true;
-          }).slice(0, 8);
-          const nextLast = serverLegacyAlreadyImported
-            ? (activeLastDirSet || legacyLast)
-            : (legacyLast || activeLastDirSet);
+          const currentMemory = normalizeRecentFolderMemory({
+            recentDirs: activeRecentDirs,
+            lastDirSet: activeLastDirSet,
+          });
+          const mergedMemory = serverLegacyAlreadyImported
+            ? mergeRecentFolderMemories(currentMemory, legacyMemory)
+            : mergeRecentFolderMemories(legacyMemory, currentMemory);
+          const nextRecent = mergedMemory.recentDirs;
+          const nextLast = mergedMemory.lastDirSet;
 
           setRecentDirs(nextRecent);
           if (nextLast) setLastDirSet(nextLast);
@@ -158,11 +194,14 @@ function ViewerApp() {
   }, [dirPath, rememberLastDirSet]);
 
   const rememberRecentDir = useCallback((dir: string) => {
-    const normalized = formatDirSet(parseDirSet(dir));
+    const normalized = normalizeRecentFolderMemory({ lastDirSet: dir }).lastDirSet;
     if (!normalized) return;
     rememberLastDirSet(normalized);
     setRecentDirs((prev) => {
-      const next = [normalized, ...prev.filter((v) => v !== normalized)].slice(0, 8);
+      const next = rememberRecentFolderSet({
+        recentDirs: prev,
+        lastDirSet: normalized,
+      }, normalized).recentDirs;
       try {
         localStorage.setItem('pvu_recent_dirs', JSON.stringify(next));
       } catch {
@@ -193,12 +232,26 @@ function ViewerApp() {
   ) => {
     const targetDir = formatDirSet(parseDirSet(overrideDir ?? dirPath));
     if (!targetDir) return;
+    setScanNotice('');
     startScan({
       full: Boolean(event?.shiftKey),
       dir: targetDir,
       onComplete: rememberRecentDir,
     });
   }, [dirPath, rememberRecentDir, startScan]);
+
+  const handleCancelScan = useCallback(() => {
+    if (phase !== 'scanning') return;
+    restoreFocusAfterScanCancelRef.current = true;
+    setScanNotice('Scan cancelled. Folder selection preserved.');
+    cancelScan();
+  }, [cancelScan, phase]);
+
+  useEffect(() => {
+    if (phase !== 'landing' || !restoreFocusAfterScanCancelRef.current) return;
+    restoreFocusAfterScanCancelRef.current = false;
+    openFolderSetRef.current?.focus();
+  }, [phase]);
 
   const handleBrowseFolders = useCallback(async () => {
     try {
@@ -243,14 +296,46 @@ function ViewerApp() {
     }
   }, [decreaseFavoriteLevel, selectedCount, selectedIds]);
 
-  const deleteSelected = useCallback(async () => {
-    if (selectedCount === 0) return;
-    const targets = [...selectedIds];
-    for (const id of targets) {
-      await deleteImage(id);
+  const deleteSelected = useCallback(async (
+    requestedTargets: readonly string[],
+    favoriteConfirmed = false,
+  ) => {
+    if (bulkDeleteActiveRef.current) return;
+    const targets = snapshotBulkRecycleTargets(requestedTargets);
+    if (targets.length === 0) return;
+
+    bulkDeleteActiveRef.current = true;
+    setIsBulkDeleting(true);
+    setShowBulkDeleteConfirm(false);
+    setBulkDeleteMessage(`Moving 0/${targets.length} image(s) to Recycle Bin.`);
+    try {
+      const result = await recycleImagesSequentially(
+        targets,
+        (id) => deleteImage(id, { favoriteConfirmed }),
+        (progress) => {
+        setBulkDeleteMessage(formatBulkRecycleProgress(progress));
+        },
+      );
+      setBulkDeleteMessage(formatBulkRecycleProgress(result));
+    } finally {
+      bulkDeleteActiveRef.current = false;
+      setIsBulkDeleting(false);
+      setBulkDeleteTargets([]);
+      setBulkDeleteFavoriteCount(0);
+      window.requestAnimationFrame(() => bulkDeleteReturnFocusRef.current?.focus());
     }
-    clearSelection();
-  }, [clearSelection, deleteImage, selectedCount, selectedIds]);
+  }, [deleteImage]);
+
+  const requestBulkDelete = useCallback(() => {
+    if (bulkDeleteActiveRef.current) return;
+    const targets = snapshotBulkRecycleTargets(selectedIds);
+    if (targets.length === 0) return;
+    const protection = getFavoriteDeleteProtection(targets, favorites);
+    setBulkDeleteTargets(targets);
+    setBulkDeleteFavoriteCount(protection.favoriteCount);
+    if (shouldConfirmSourceDelete(confirmBeforeDelete, protection)) setShowBulkDeleteConfirm(true);
+    else void deleteSelected(targets);
+  }, [confirmBeforeDelete, deleteSelected, favorites, selectedIds]);
 
   useEffect(() => {
     if (phase !== 'viewer') return;
@@ -262,8 +347,7 @@ function ViewerApp() {
 
       if (event.key === keyBindings.deleteImage) {
         event.preventDefault();
-        if (confirmBeforeDelete) setShowBulkDeleteConfirm(true);
-        else void deleteSelected();
+        requestBulkDelete();
         return;
       }
       if (event.key.toLowerCase() === keyBindings.toggleFavorite.toLowerCase()) {
@@ -280,14 +364,13 @@ function ViewerApp() {
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
-    confirmBeforeDelete,
-    deleteSelected,
     keyBindings.decreaseFavorite,
     keyBindings.deleteImage,
     keyBindings.toggleFavorite,
     lowerSelectedFavorite,
     markSelectedAsFavorite,
     phase,
+    requestBulkDelete,
     selectedCount,
     selectedIndex,
   ]);
@@ -306,7 +389,17 @@ function ViewerApp() {
 
   if (phase === 'landing' || phase === 'scanning') {
     return (
-      <div className="landing">
+      <>
+        <div className="landing">
+        <button
+          className="landing-settings-btn"
+          type="button"
+          onClick={() => setShowSettings(true)}
+          aria-label="Open settings and runtime version"
+        >
+          <Settings size={17} aria-hidden="true" />
+          Settings
+        </button>
         <h1 className="landing-title">PhotoViewer</h1>
         <p className="landing-subtitle">Index and search Stable Diffusion PNG metadata locally</p>
 
@@ -316,16 +409,23 @@ function ViewerApp() {
               className="browse-btn"
               onClick={handleBrowseFolders}
               disabled={phase === 'scanning'}
-              title="Add folders"
+              title={phase === 'scanning' ? 'Adding folders is unavailable while scanning.' : 'Add folders'}
+              aria-label={phase === 'scanning' ? 'Adding folders is unavailable while scanning.' : 'Add folders'}
               type="button"
             >
               <FolderOpen size={18} aria-hidden="true" />
               Add folder
             </button>
             <button
+              ref={openFolderSetRef}
               className="scan-btn"
               onClick={(event) => handleStartScan(event)}
               disabled={phase === 'scanning' || selectedFolders.length === 0}
+              aria-label={phase === 'scanning'
+                ? 'Scanning in progress. Opening a folder set is unavailable until scanning completes.'
+                : selectedFolders.length === 0
+                  ? 'Open folder set is unavailable because no folders are selected.'
+                  : 'Open folder set'}
               type="button"
             >
               {phase === 'scanning' ? 'Scanning...' : 'Open folder set'}
@@ -346,7 +446,7 @@ function ViewerApp() {
                     onClick={() => removeFolder(folder)}
                     disabled={phase === 'scanning'}
                   >
-                    ×
+                    <X size={14} aria-hidden="true" />
                   </button>
                 </div>
               ))
@@ -408,29 +508,30 @@ function ViewerApp() {
             </div>
           </div>
         )}
-        {browseError && <p className="landing-error">{browseError}</p>}
+        {browseError && <p className="landing-error" role="alert">{browseError}</p>}
+        {scanError && (
+          <ScanErrorNotice
+            message={scanError}
+            canRetry={phase !== 'scanning' && selectedFolders.length > 0}
+            onRetry={() => handleStartScan()}
+            onDismiss={dismissScanError}
+          />
+        )}
 
-        {phase === 'scanning' && scanProgress && (
+        {phase === 'landing' && scanNotice && (
           <div className="progress-container">
-            <div className="progress-label">
-              <span>
-                {scanProgressProcessed.toLocaleString()} / {scanProgressTotal.toLocaleString()} {scanProgressUnit}
-                {scanProgress.stage !== 'preparing' && scanProgress.newFiles > 0 && ` (${scanProgress.newFiles} new)`}
-              </span>
-              <span>{scanProgressPercent}%</span>
+            <div className="progress-waiting" role="status" aria-live="polite" aria-atomic="true">
+              {scanNotice}
             </div>
-            <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{
-                  width: `${scanProgressPercent}%`,
-                }}
-              />
-            </div>
-            <div className="progress-waiting">{scanProgressMessage}</div>
           </div>
         )}
-      </div>
+
+        {phase === 'scanning' && scanProgress && (
+          <ScanProgressStatus progress={scanProgress} onCancel={handleCancelScan} />
+        )}
+        </div>
+        <SettingsModal />
+      </>
     );
   }
 
@@ -439,6 +540,7 @@ function ViewerApp() {
       <div className="viewer">
         <header className="viewer-header">
           <button
+            ref={bulkDeleteReturnFocusRef}
             className="icon-btn sidebar-toggle-btn"
             onClick={() => setView({ sidebarOpen: !view.sidebarOpen })}
             title={view.sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}
@@ -460,7 +562,7 @@ function ViewerApp() {
             <RefreshCw size={18} aria-hidden="true" />
           </button>
           <SearchBar />
-          <span className="header-stats">{resultCountLabel}</span>
+          <span className="header-stats" aria-label={`Results: ${resultCountLabel}`}>{resultCountLabel}</span>
           <button
             className="icon-btn sidebar-toggle-btn"
             onClick={() => setView({ rightPanelOpen: !view.rightPanelOpen })}
@@ -480,6 +582,18 @@ function ViewerApp() {
           </button>
         </header>
 
+        {bulkDeleteMessage && (
+          <div
+            className="bulk-message viewer-bulk-message"
+            role="status"
+            aria-live="polite"
+            aria-atomic="true"
+            aria-busy={isBulkDeleting}
+          >
+            {bulkDeleteMessage}
+          </div>
+        )}
+
         <div className="viewer-body">
           <Sidebar />
           <main className="viewer-main">
@@ -495,28 +609,32 @@ function ViewerApp() {
 
       {showBulkDeleteConfirm && (
         <div className="confirm-overlay">
-          <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowBulkDeleteConfirm(false)} />
-          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title">
+          <div className="confirm-backdrop" aria-hidden="true" onClick={cancelBulkDelete} />
+          <div ref={bulkDeleteConfirmRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="bulk-delete-title" tabIndex={-1}>
             <h3 id="bulk-delete-title">Move selected images to Recycle Bin?</h3>
-            <p>{selectedCount} image(s) will be moved to Recycle Bin.</p>
-            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
-              <input
-                type="checkbox"
-                checked={!confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
-              />
-              <span>Do not ask again</span>
-            </label>
+            <p>{bulkDeleteTargets.length} image(s) will be moved to Recycle Bin.</p>
+            {bulkDeleteFavoriteCount > 0 ? (
+              <p role="status">
+                {bulkDeleteFavoriteCount} favorite image(s) are included. Favorite images always require confirmation.
+              </p>
+            ) : (
+              <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+                <input
+                  type="checkbox"
+                  checked={!confirmBeforeDelete}
+                  onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+                />
+                <span>Do not ask again</span>
+              </label>
+            )}
             <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setShowBulkDeleteConfirm(false)}>Cancel</button>
+              <button ref={bulkDeleteCancelRef} className="btn-cancel" onClick={cancelBulkDelete}>Cancel</button>
               <button
                 className="btn-danger"
-                onClick={async () => {
-                  setShowBulkDeleteConfirm(false);
-                  await deleteSelected();
-                }}
+                onClick={() => void deleteSelected(bulkDeleteTargets, true)}
+                disabled={isBulkDeleting || bulkDeleteTargets.length === 0}
               >
-                Move to Recycle Bin
+                {isBulkDeleting ? 'Moving...' : 'Move to Recycle Bin'}
               </button>
             </div>
           </div>
@@ -530,18 +648,11 @@ function readStoredFolderMemory(): { recentDirs: string[]; lastDirSet: string } 
   if (typeof window === 'undefined') return { recentDirs: [], lastDirSet: '' };
   try {
     const raw = localStorage.getItem('pvu_recent_dirs');
-    const recentDirs = raw
-      ? JSON.parse(raw)
-        .filter((v: unknown): v is string => typeof v === 'string')
-        .map((v: string) => formatDirSet(parseDirSet(v)))
-        .filter(Boolean)
-        .slice(0, 8)
-      : [];
     const last = localStorage.getItem('pvu_last_dir_set');
-    return {
-      recentDirs,
-      lastDirSet: last ? formatDirSet(parseDirSet(last)) : '',
-    };
+    return normalizeRecentFolderMemory({
+      recentDirs: raw ? JSON.parse(raw) : [],
+      lastDirSet: last,
+    });
   } catch {
     return { recentDirs: [], lastDirSet: '' };
   }

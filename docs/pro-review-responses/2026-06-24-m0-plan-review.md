@@ -1,7 +1,7 @@
 # PRO Review Response: H000025 M0 Plan
 
-Source conversation:
-https://chatgpt.com/g/g-p-6a3b8904d18c8191bd0023cb75f44cf0-codexyong-photoviewer/c/6a3b8aa1-9e34-83ee-85bd-221bfea4fe2c
+Source conversation: private ChatGPT Project conversation; URL intentionally
+omitted from the public repository.
 
 Model setting reported by Chrome subagent: Pro extended.
 

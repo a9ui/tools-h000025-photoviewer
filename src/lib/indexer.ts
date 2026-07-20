@@ -131,8 +131,10 @@ function isRecentlyActiveScanTarget(mtime: number, now: number) {
 
 async function buildScanTargetSignature(
   rootDir: string,
-  target: ScanTarget
+  target: ScanTarget,
+  signal?: AbortSignal
 ): Promise<{ signature: string; failed: boolean }> {
+  throwIfScanAborted(signal);
   const nested: Array<{ path: string; mtime: number }> = [];
   if (!target.recursive) {
     return { signature: buildFolderSignature(target.mtime, nested), failed: false };
@@ -145,8 +147,10 @@ async function buildScanTargetSignature(
       stats: true,
       followSymbolicLinks: false,
     })) as Array<string | { path: string; stats?: fs.Stats }>;
+    throwIfScanAborted(signal);
 
     for (const entry of directories) {
+      throwIfScanAborted(signal);
       const entryPath = typeof entry === 'string' ? entry : entry.path;
       const absPath = path.resolve(entryPath);
       const rel = path.relative(rootDir, absPath);
@@ -160,7 +164,8 @@ async function buildScanTargetSignature(
         mtime: stat.mtimeMs,
       });
     }
-  } catch {
+  } catch (error) {
+    if (isScanAbortedError(error)) throw error;
     // Missing permission or a transient directory read failure should not break scan.
     // The target folder mtime still gives the fast path a conservative baseline.
     return { signature: buildFolderSignature(target.mtime, nested), failed: true };
@@ -191,6 +196,15 @@ function loadCache(dirPath: string): CacheData {
   return emptyCache;
 }
 
+function cloneCache(cache: CacheData): CacheData {
+  return {
+    ...cache,
+    files: Object.fromEntries(
+      Object.entries(cache.files).map(([filePath, entry]) => [filePath, { ...entry }])
+    ),
+  };
+}
+
 function saveCache(cache: CacheData) {
   ensureDir(CACHE_DIR);
   const p = cacheFilePath(cache.dirPath);
@@ -215,6 +229,22 @@ export type ScanCallback = (
 ) => void;
 export interface ScanOptions {
   forceFull?: boolean;
+  signal?: AbortSignal;
+}
+
+export class ScanAbortedError extends Error {
+  constructor() {
+    super('Scan aborted');
+    this.name = 'ScanAbortedError';
+  }
+}
+
+export function isScanAbortedError(error: unknown): error is ScanAbortedError {
+  return error instanceof ScanAbortedError;
+}
+
+function throwIfScanAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new ScanAbortedError();
 }
 
 /**
@@ -226,8 +256,11 @@ export async function scanDirectory(
   onProgress?: ScanCallback,
   options: ScanOptions = {}
 ): Promise<ImageFile[]> {
+  throwIfScanAborted(options.signal);
   const normalised = path.resolve(dirPath);
-  const cache = loadCache(normalised);
+  // Keep mutations private until the scan has completed. An aborted scan must
+  // not leak a partial snapshot into the next scan through the memory cache.
+  const cache = cloneCache(loadCache(normalised));
   const folderSignatures = loadFolderSignatures(normalised);
   const nextFolderSignatures: Record<string, string> = {};
   const cachedByScanKey = new Map<string, string[]>();
@@ -249,6 +282,7 @@ export async function scanDirectory(
   let skippedCachedFiles = 0;
 
   const rootStat = fs.statSync(normalised);
+  throwIfScanAborted(options.signal);
   if (!rootStat.isDirectory()) {
     throw new Error(`Scan target is not a directory: ${normalised}`);
   }
@@ -257,6 +291,7 @@ export async function scanDirectory(
   scanTargets.push({ key: SCAN_ROOT_KEY, absPath: normalised, recursive: false, mtime: rootStat.mtimeMs });
 
   for (const entry of rootEntries) {
+    throwIfScanAborted(options.signal);
     if (!entry.isDirectory()) continue;
     const absPath = path.resolve(normalised, entry.name);
     try {
@@ -304,8 +339,14 @@ export async function scanDirectory(
   };
 
   for (const target of scanTargets) {
+    throwIfScanAborted(options.signal);
     currentScanKeys.add(target.key);
-    const { signature: currentSignature, failed: signatureFailed } = await buildScanTargetSignature(normalised, target);
+    const { signature: currentSignature, failed: signatureFailed } = await buildScanTargetSignature(
+      normalised,
+      target,
+      options.signal,
+    );
+    throwIfScanAborted(options.signal);
 
     const previousSignature = folderSignatures[target.key];
     const cachedPaths = cachedByScanKey.get(target.key) ?? [];
@@ -341,11 +382,13 @@ export async function scanDirectory(
         onlyFiles: true,
         followSymbolicLinks: false,
       })) as Array<string | { path: string; stats?: fs.Stats }>;
+      throwIfScanAborted(options.signal);
       allEntries.push(...entries);
       if (!signatureFailed) {
         nextFolderSignatures[target.key] = currentSignature;
       }
-    } catch {
+    } catch (error) {
+      if (isScanAbortedError(error)) throw error;
       failedScanKeys.add(target.key);
       changedScanKeys.delete(target.key);
     }
@@ -392,6 +435,7 @@ export async function scanDirectory(
   }
 
   for (const entry of allEntries) {
+    throwIfScanAborted(options.signal);
     const entryPath = typeof entry === 'string' ? entry : entry.path;
     const norm = path.resolve(entryPath);
     currentPaths.add(norm);
@@ -431,6 +475,7 @@ export async function scanDirectory(
     }
 
     const metadata = extractSDMetadata(norm);
+    throwIfScanAborted(options.signal);
     cache.files[norm] = { mtime, size, createdAt, metadata };
     changed = true;
     newFiles++;
@@ -445,6 +490,7 @@ export async function scanDirectory(
   }
 
   for (const p of existingPaths) {
+    throwIfScanAborted(options.signal);
     if (!currentPaths.has(p)) {
       delete cache.files[p];
       changed = true;
@@ -452,6 +498,7 @@ export async function scanDirectory(
   }
 
   if (changed) {
+    throwIfScanAborted(options.signal);
     cache.lastScan = new Date().toISOString();
     saveCache(cache);
   }
@@ -480,19 +527,79 @@ function buildImageFiles(cache: CacheData): ImageFile[] {
   });
 }
 
-let _index: ImageFile[] = [];
-let _sortedBySort = new Map<string, ImageFile[]>();
-let _searchTextById: Map<string, string> | null = null;
-let _searchCache = new Map<string, ImageFile[]>();
-let _tagCache: Array<{ tag: string; count: number }> | null = null;
-let _folderCache = new Map<string, FolderBucket[]>();
+const INDEX_SESSION_TTL_MS = 30 * 60 * 1000;
+const MAX_INDEX_SESSIONS = 8;
 
-function invalidateDerivedCaches() {
-  _sortedBySort = new Map<string, ImageFile[]>();
-  _searchTextById = null;
-  _searchCache = new Map<string, ImageFile[]>();
-  _tagCache = null;
-  _folderCache = new Map<string, FolderBucket[]>();
+type IndexState = {
+  images: ImageFile[];
+  sortedBySort: Map<string, ImageFile[]>;
+  searchTextById: Map<string, string> | null;
+  searchCache: Map<string, ImageFile[]>;
+  tagCache: Array<{ tag: string; count: number }> | null;
+  folderCache: Map<string, FolderBucket[]>;
+};
+
+type IndexSession = {
+  state: IndexState;
+  lastUsedAt: number;
+};
+
+function createIndexState(images: ImageFile[] = []): IndexState {
+  return {
+    images,
+    sortedBySort: new Map<string, ImageFile[]>(),
+    searchTextById: null,
+    searchCache: new Map<string, ImageFile[]>(),
+    tagCache: null,
+    folderCache: new Map<string, FolderBucket[]>(),
+  };
+}
+
+let fallbackIndexState = createIndexState();
+const indexSessions = new Map<string, IndexSession>();
+
+function invalidateDerivedCaches(state: IndexState) {
+  state.sortedBySort = new Map<string, ImageFile[]>();
+  state.searchTextById = null;
+  state.searchCache = new Map<string, ImageFile[]>();
+  state.tagCache = null;
+  state.folderCache = new Map<string, FolderBucket[]>();
+}
+
+function createIndexSessionToken(canonicalKey: string) {
+  return `idx_${crypto.createHash('sha256').update(canonicalKey).digest('base64url').slice(0, 32)}`;
+}
+
+function pruneIndexSessions(now = Date.now()) {
+  for (const [token, session] of indexSessions) {
+    if (now - session.lastUsedAt > INDEX_SESSION_TTL_MS) indexSessions.delete(token);
+  }
+  if (indexSessions.size <= MAX_INDEX_SESSIONS) return;
+  const oldest = [...indexSessions.entries()]
+    .sort(([, a], [, b]) => a.lastUsedAt - b.lastUsedAt)
+    .slice(0, indexSessions.size - MAX_INDEX_SESSIONS);
+  for (const [token] of oldest) indexSessions.delete(token);
+}
+
+function getIndexState(indexToken?: string): IndexState | null {
+  if (!indexToken) {
+    ensureIndexLoaded();
+    return fallbackIndexState;
+  }
+  pruneIndexSessions();
+  const session = indexSessions.get(indexToken);
+  if (!session) return null;
+  session.lastUsedAt = Date.now();
+  return session.state;
+}
+
+export function hasIndexSession(indexToken: string | null | undefined) {
+  if (!indexToken) return true;
+  return getIndexState(indexToken) !== null;
+}
+
+export function clearIndexSessionsForTests() {
+  indexSessions.clear();
 }
 
 function compareByFilename(a: ImageFile, b: ImageFile) {
@@ -509,29 +616,29 @@ function getRandomSortKey(imageId: string, seed: string) {
   return hash >>> 0;
 }
 
-function rememberSortedSource(cacheKey: string, sorted: ImageFile[]) {
+function rememberSortedSource(state: IndexState, cacheKey: string, sorted: ImageFile[]) {
   if (cacheKey.startsWith('random:')) {
-    for (const key of _sortedBySort.keys()) {
+    for (const key of state.sortedBySort.keys()) {
       if (key.startsWith('random:') && key !== cacheKey) {
-        _sortedBySort.delete(key);
+        state.sortedBySort.delete(key);
       }
     }
   }
-  _sortedBySort.set(cacheKey, sorted);
+  state.sortedBySort.set(cacheKey, sorted);
 }
 
-function getSortedSource(sortBy: SortBy, randomSeed = '') {
+function getSortedSource(state: IndexState, sortBy: SortBy, randomSeed = '') {
   const cacheKey = sortBy === 'random' ? `${sortBy}:${randomSeed || 'default'}` : sortBy;
-  const cached = _sortedBySort.get(cacheKey);
+  const cached = state.sortedBySort.get(cacheKey);
   if (cached) return cached;
 
   let sorted: ImageFile[];
   switch (sortBy) {
     case 'oldest':
-      sorted = [..._index].sort((a, b) => a.mtime - b.mtime);
+      sorted = [...state.images].sort((a, b) => a.mtime - b.mtime);
       break;
     case 'created-newest':
-      sorted = [..._index].sort((a, b) => {
+      sorted = [...state.images].sort((a, b) => {
         const byCreated = (b.createdAt ?? b.mtime) - (a.createdAt ?? a.mtime);
         if (byCreated !== 0) return byCreated;
         const byModified = b.mtime - a.mtime;
@@ -540,7 +647,7 @@ function getSortedSource(sortBy: SortBy, randomSeed = '') {
       });
       break;
     case 'created-oldest':
-      sorted = [..._index].sort((a, b) => {
+      sorted = [...state.images].sort((a, b) => {
         const byCreated = (a.createdAt ?? a.mtime) - (b.createdAt ?? b.mtime);
         if (byCreated !== 0) return byCreated;
         const byModified = a.mtime - b.mtime;
@@ -549,11 +656,11 @@ function getSortedSource(sortBy: SortBy, randomSeed = '') {
       });
       break;
     case 'name':
-      sorted = [..._index].sort(compareByFilename);
+      sorted = [...state.images].sort(compareByFilename);
       break;
     case 'random': {
       const seed = randomSeed || 'default';
-      sorted = _index
+      sorted = state.images
         .map((image) => ({ image, randomKey: getRandomSortKey(image.id, seed) }))
         .sort((a, b) => {
           const bySeed = a.randomKey - b.randomKey;
@@ -565,21 +672,21 @@ function getSortedSource(sortBy: SortBy, randomSeed = '') {
     }
     case 'newest':
     default:
-      sorted = [..._index].sort((a, b) => b.mtime - a.mtime);
+      sorted = [...state.images].sort((a, b) => b.mtime - a.mtime);
       break;
   }
 
-  rememberSortedSource(cacheKey, sorted);
+  rememberSortedSource(state, cacheKey, sorted);
   return sorted;
 }
 
-function ensureSearchTextCache() {
-  if (_searchTextById) return;
-  _searchTextById = new Map<string, string>();
-  for (const image of _index) {
+function ensureSearchTextCache(state: IndexState) {
+  if (state.searchTextById) return;
+  state.searchTextById = new Map<string, string>();
+  for (const image of state.images) {
     const prompt = image.metadata?.prompt?.toLowerCase() || '';
     const filename = image.filename.toLowerCase();
-    _searchTextById.set(image.id, `${prompt}\n${filename}`);
+    state.searchTextById.set(image.id, `${prompt}\n${filename}`);
   }
 }
 
@@ -657,6 +764,7 @@ function buildSearchCacheKey(
 }
 
 function buildFilteredAndSorted(
+  state: IndexState,
   query: string,
   sortBy: SortBy,
   dateFrom?: string,
@@ -665,14 +773,14 @@ function buildFilteredAndSorted(
   hiddenFolders?: string[],
   randomSeed?: string
 ): ImageFile[] {
-  const source = getSortedSource(sortBy, randomSeed);
+  const source = getSortedSource(state, sortBy, randomSeed);
   const terms = query
     .split(',')
     .map((token) => token.trim().toLowerCase())
     .filter(Boolean);
 
   if (terms.length > 0) {
-    ensureSearchTextCache();
+    ensureSearchTextCache(state);
   }
 
   const normalizedDirs = normalizeDirPaths(dirPath);
@@ -705,7 +813,7 @@ function buildFilteredAndSorted(
     if (created < fromTs || created > toTs) continue;
 
     if (terms.length > 0) {
-      const haystack = _searchTextById?.get(image.id) ?? '';
+      const haystack = state.searchTextById?.get(image.id) ?? '';
       if (!terms.every((term) => haystack.includes(term))) continue;
     }
 
@@ -715,34 +823,50 @@ function buildFilteredAndSorted(
   return filtered;
 }
 
-function pushSearchCache(key: string, items: ImageFile[]) {
-  if (_searchCache.has(key)) {
-    _searchCache.delete(key);
+function pushSearchCache(state: IndexState, key: string, items: ImageFile[]) {
+  if (state.searchCache.has(key)) {
+    state.searchCache.delete(key);
   }
-  _searchCache.set(key, items);
+  state.searchCache.set(key, items);
 
-  while (_searchCache.size > MAX_SEARCH_CACHE_ENTRIES) {
-    const oldest = _searchCache.keys().next().value as string | undefined;
+  while (state.searchCache.size > MAX_SEARCH_CACHE_ENTRIES) {
+    const oldest = state.searchCache.keys().next().value as string | undefined;
     if (!oldest) break;
-    _searchCache.delete(oldest);
+    state.searchCache.delete(oldest);
   }
 }
 
-export function getIndex(): ImageFile[] {
-  ensureIndexLoaded();
-  return _index;
+export function getIndex(indexToken?: string): ImageFile[] {
+  return getIndexState(indexToken)?.images ?? [];
 }
 
-export function setIndex(images: ImageFile[]) {
-  _index = images.map((image) => ({
+function normalizeIndexImages(images: ImageFile[]) {
+  return images.map((image) => ({
     ...image,
     metadata: toSearchMetadata(image.metadata ?? null),
   }));
-  invalidateDerivedCaches();
+}
+
+export function setIndex(images: ImageFile[], canonicalSessionKey?: string) {
+  const normalizedImages = normalizeIndexImages(images);
+  fallbackIndexState = createIndexState(normalizedImages);
+  if (!canonicalSessionKey) {
+    if (images.length === 0) clearIndexSessionsForTests();
+    return undefined;
+  }
+
+  const token = createIndexSessionToken(canonicalSessionKey);
+  pruneIndexSessions();
+  indexSessions.set(token, {
+    state: createIndexState(normalizedImages),
+    lastUsedAt: Date.now(),
+  });
+  pruneIndexSessions();
+  return token;
 }
 
 function ensureIndexLoaded() {
-  if (_index.length > 0) return;
+  if (fallbackIndexState.images.length > 0) return;
 
   ensureDir(CACHE_DIR);
   const seen = new Map<string, ImageFile>();
@@ -769,8 +893,7 @@ function ensureIndexLoaded() {
     // no cache dir yet
   }
 
-  _index = Array.from(seen.values());
-  invalidateDerivedCaches();
+  fallbackIndexState = createIndexState(Array.from(seen.values()));
 }
 
 export function searchIndex(
@@ -783,15 +906,17 @@ export function searchIndex(
   favIds?: Set<string>,
   dirPath?: string,
   hiddenFolders?: string[],
-  randomSeed?: string
+  randomSeed?: string,
+  indexToken?: string
 ): { results: ImageFile[]; total: number; page: number; totalPages: number } {
-  ensureIndexLoaded();
+  const state = getIndexState(indexToken);
+  if (!state) return { results: [], total: 0, page: 0, totalPages: 1 };
 
   const key = buildSearchCacheKey(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
-  let filtered = _searchCache.get(key);
+  let filtered = state.searchCache.get(key);
   if (!filtered) {
-    filtered = buildFilteredAndSorted(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
-    pushSearchCache(key, filtered);
+    filtered = buildFilteredAndSorted(state, query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
+    pushSearchCache(state, key, filtered);
   }
 
   const pageSize = Number.isFinite(size) ? Math.max(1, Math.trunc(size)) : 100;
@@ -815,12 +940,13 @@ function cleanTag(raw: string): string {
   return s;
 }
 
-export function getTags(limit = MAX_TAG_RESULTS): Array<{ tag: string; count: number }> {
-  ensureIndexLoaded();
+export function getTags(limit = MAX_TAG_RESULTS, indexToken?: string): Array<{ tag: string; count: number }> {
+  const state = getIndexState(indexToken);
+  if (!state) return [];
 
-  if (!_tagCache) {
+  if (!state.tagCache) {
     const tagCounts = new Map<string, number>();
-    for (const image of _index) {
+    for (const image of state.images) {
       const prompt = image.metadata?.prompt;
       if (!prompt) continue;
 
@@ -833,26 +959,31 @@ export function getTags(limit = MAX_TAG_RESULTS): Array<{ tag: string; count: nu
       }
     }
 
-    _tagCache = [...tagCounts.entries()]
+    state.tagCache = [...tagCounts.entries()]
       .sort((a, b) => b[1] - a[1])
       .map(([tag, count]) => ({ tag, count }));
   }
 
-  return _tagCache.slice(0, Math.max(1, limit));
+  return state.tagCache.slice(0, Math.max(1, limit));
 }
 
-export function getFolderBuckets(dirPath: string, limit = 200): Array<{ key: string; label: string; count: number }> {
-  ensureIndexLoaded();
+export function getFolderBuckets(
+  dirPath: string,
+  limit = 200,
+  indexToken?: string,
+): Array<{ key: string; label: string; count: number }> {
+  const state = getIndexState(indexToken);
+  if (!state) return [];
 
   const normalizedDirs = normalizeDirPaths(dirPath);
   if (normalizedDirs.length === 0) return [];
 
   const cacheKey = `${normalizedDirs.join('\u0001')}|${limit}`;
-  const cached = _folderCache.get(cacheKey);
+  const cached = state.folderCache.get(cacheKey);
   if (cached) return cached;
 
   const counts = new Map<string, number>();
-  for (const image of _index) {
+  for (const image of state.images) {
     const folderKey = getFolderKeyForDirs(image.id, normalizedDirs);
     if (folderKey === OUTSIDE_FOLDER_KEY) continue;
     counts.set(folderKey, (counts.get(folderKey) || 0) + 1);
@@ -870,7 +1001,7 @@ export function getFolderBuckets(dirPath: string, limit = 200): Array<{ key: str
       count,
     }));
 
-  _folderCache.set(cacheKey, buckets);
+  state.folderCache.set(cacheKey, buckets);
   return buckets;
 }
 
@@ -888,9 +1019,22 @@ function formatFolderBucketLabel(key: string, normalizedDirs: string[]) {
   return key === ROOT_FOLDER_KEY ? '(root)' : key;
 }
 
-export function removeFromIndex(absPath: string) {
-  _index = _index.filter((img) => img.id !== absPath);
-  invalidateDerivedCaches();
+export function removeFromIndex(absPath: string, indexToken?: string) {
+  const targetState = getIndexState(indexToken);
+  if (targetState) {
+    targetState.images = targetState.images.filter((img) => img.id !== absPath);
+    invalidateDerivedCaches(targetState);
+  }
+  if (fallbackIndexState !== targetState) {
+    fallbackIndexState.images = fallbackIndexState.images.filter((img) => img.id !== absPath);
+    invalidateDerivedCaches(fallbackIndexState);
+  }
+  for (const session of indexSessions.values()) {
+    if (session.state === targetState) continue;
+    if (!session.state.images.some((image) => image.id === absPath)) continue;
+    session.state.images = session.state.images.filter((image) => image.id !== absPath);
+    invalidateDerivedCaches(session.state);
+  }
 
   const normalised = path.resolve(absPath);
   for (const cache of cacheByDir.values()) {

@@ -4,11 +4,16 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useImageStore } from '../store/ImageContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
-import { buildImageIndexById, removeImageSlot } from '../lib/imageListState';
+import { useDialogFocus } from '../lib/useDialogFocus';
+import { buildImageIndexById } from '../lib/imageListState';
 import { buildPngMetadataRows, formatPngMetadataRowsForCopy } from '../lib/pngMetadataRows';
 import { isInteractiveShortcutTarget } from '../lib/viewerUi';
+import { formatFileSizeMb } from '../lib/displayedAsset';
 import CachedImage from './CachedImage';
+import ModalFilmstrip, { type ModalFilmstripItem } from './ModalFilmstrip';
 import { cancelEnhancementJob, createEnhancementJob, deleteEnhancementOutput, getEnhancementSettings } from './EnhanceQueuePanel';
+import { MetadataTabList, type MetadataTab } from './MetadataTabList';
+import { ChevronLeft, ChevronRight, Minus, X } from 'lucide-react';
 
 type PointerGesture = {
   mode: 'pan' | 'swipe';
@@ -48,6 +53,14 @@ type ModalEnhancementJob = {
   };
 };
 
+type DisplayedAssetResponse = {
+  success?: boolean;
+  opened?: 'source' | 'enhanced';
+  sizeBytes?: number;
+  fallback?: { code?: string; message?: string };
+  error?: string;
+};
+
 function isActiveEnhancementJob(job: ModalEnhancementJob | null) {
   return job?.status === 'queued' || job?.status === 'running';
 }
@@ -77,6 +90,8 @@ function formatEnhancementDetails(job: ModalEnhancementJob | null) {
 
 const MAX_READY_FULL_IMAGE_IDS = 120;
 const FULL_IMAGE_KEY_SEPARATOR = '\u0000';
+export const MODAL_CHROME_TRANSIENT_MS = 900;
+export const MODAL_FILMSTRIP_HOVER_ZONE_PX = 128;
 
 function splitPromptTags(prompt: string): string[] {
   const seen = new Set<string>();
@@ -143,6 +158,16 @@ function formatShortcutKey(key: string) {
   return map[key] || key.toUpperCase();
 }
 
+function shouldKeepNativeInteractiveKey(target: EventTarget | null, key: string) {
+  const element = target && typeof (target as Element).closest === 'function'
+    ? target as Element
+    : null;
+  if (!element || !isInteractiveShortcutTarget(target)) return false;
+  const button = element.closest('button');
+  if (!button) return true;
+  return key === 'Enter' || key === ' ';
+}
+
 function getFullImageKey(id: string, fullUrl: string) {
   return `${id}${FULL_IMAGE_KEY_SEPARATOR}${fullUrl}`;
 }
@@ -158,6 +183,7 @@ export default function ImageModal() {
     modalImageIds,
     setModalImageIds,
     ensureSearchRange,
+    resolveModalNavigationTarget,
     cycleFavoriteLevel,
     decreaseFavoriteLevel,
     favorites,
@@ -165,21 +191,28 @@ export default function ImageModal() {
     requestRevealImage,
     keyBindings,
     deleteImage,
-    openExternal,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
     view,
+    setView,
+    indexToken,
+    reportImageSessionExpired,
   } = useImageStore();
 
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
-  const [sidebarTab, setSidebarTab] = useState<'prompt' | 'negative' | 'settings'>('prompt');
+  const [sidebarTab, setSidebarTab] = useState<MetadataTab>('prompt');
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
+  const [isMobileSheet, setIsMobileSheet] = useState(false);
   const [copied, setCopied] = useState(false);
   const [flipped, setFlipped] = useState(false);
-  const [chromeHidden, setChromeHidden] = useState(false);
+  const [manualChromeVisible, setManualChromeVisible] = useState(true);
+  const [transientChromeVisible, setTransientChromeVisible] = useState(false);
+  const [filmstripHoverVisible, setFilmstripHoverVisible] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isEnhancing, setIsEnhancing] = useState(false);
   const [showEnhanced, setShowEnhanced] = useState(false);
+  const [displayedAssetSizeBytes, setDisplayedAssetSizeBytes] = useState<number | null>(null);
+  const [displayedAssetStatus, setDisplayedAssetStatus] = useState('');
   const [enhancementJobs, setEnhancementJobs] = useState<ModalEnhancementJob[]>([]);
   const [enhanceError, setEnhanceError] = useState('');
   const [selectedEnhancedJobId, setSelectedEnhancedJobId] = useState('');
@@ -196,7 +229,16 @@ export default function ImageModal() {
   const pendingSingleClick = useRef<number | null>(null);
   const previousSelectedIndexRef = useRef<number | null>(null);
   const favoriteFeedbackTimer = useRef<number | null>(null);
+  const chromeIdleTimer = useRef<number | null>(null);
   const enhancedDisplayChoiceRef = useRef<Record<string, boolean>>({});
+  const modalBodyRef = useRef<HTMLDivElement>(null);
+  const modalCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const metadataSidebarRef = useRef<HTMLElement>(null);
+  const confirmPanelRef = useRef<HTMLDivElement>(null);
+  const confirmCancelButtonRef = useRef<HTMLButtonElement>(null);
+  const navigationRequestRef = useRef(0);
+  const navigationPendingRef = useRef(false);
+  const displayedAssetRequestRef = useRef(0);
 
   useEffect(() => {
     const previousSelectedIndex = previousSelectedIndexRef.current;
@@ -204,7 +246,9 @@ export default function ImageModal() {
       setZoom(1);
       setPan({ x: 0, y: 0 });
       setSwipeOffset(0);
-      setChromeHidden(false);
+      setManualChromeVisible(true);
+      setTransientChromeVisible(false);
+      setFilmstripHoverVisible(false);
       setSidebarCollapsed(true);
       pointerGesture.current = null;
       if (pendingSingleClick.current !== null) {
@@ -238,6 +282,10 @@ export default function ImageModal() {
       window.clearTimeout(favoriteFeedbackTimer.current);
       favoriteFeedbackTimer.current = null;
     }
+    if (chromeIdleTimer.current !== null) {
+      window.clearTimeout(chromeIdleTimer.current);
+      chromeIdleTimer.current = null;
+    }
   }, []);
 
   useEffect(() => {
@@ -268,61 +316,44 @@ export default function ImageModal() {
     setSwipeOffset(0);
   }, []);
 
-  const goPrev = useCallback(() => {
+  const applyNavigationResolution = useCallback((resolution: Awaited<ReturnType<typeof resolveModalNavigationTarget>>) => {
+    if (resolution.status !== 'found') return;
+    if (resolution.filteredOrderedIds !== null) {
+      setModalImageIds(resolution.filteredOrderedIds);
+    } else if (modalImageIds.length > 0) {
+      setModalImageIds([]);
+    }
+    setSelectedIndex(resolution.index);
+  }, [modalImageIds.length, setModalImageIds, setSelectedIndex]);
+
+  const navigate = useCallback(async (intent: 'prev' | 'next') => {
     if (selectedIndex === null || searchTotal <= 0) return;
+    if (navigationPendingRef.current) return;
     setFlipped(false);
-
-    const current = searchResults[selectedIndex];
-    if (current && modalImageIds.length > 0) {
-      const currentOrderIndex = modalImageIds.indexOf(current.id);
-      const nextId = modalImageIds[
-        currentOrderIndex > 0 ? currentOrderIndex - 1 : modalImageIds.length - 1
-      ];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) {
-        setSelectedIndex(nextIndex);
+    navigationPendingRef.current = true;
+    const requestId = ++navigationRequestRef.current;
+    try {
+      const resolution = await resolveModalNavigationTarget(selectedIndex, intent);
+      if (navigationRequestRef.current !== requestId) return;
+      applyNavigationResolution(resolution);
+    } finally {
+      if (navigationRequestRef.current === requestId) {
+        navigationPendingRef.current = false;
       }
-      return;
     }
+  }, [applyNavigationResolution, resolveModalNavigationTarget, searchTotal, selectedIndex]);
 
-    if (modalImageIds.length > 0) {
-      const nextId = modalImageIds[modalImageIds.length - 1];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) setSelectedIndex(nextIndex);
-      return;
-    }
-
-    setSelectedIndex(selectedIndex > 0 ? selectedIndex - 1 : searchTotal - 1);
-  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+  const goPrev = useCallback(() => {
+    void navigate('prev');
+  }, [navigate]);
 
   const goNext = useCallback(() => {
-    if (selectedIndex === null || searchTotal <= 0) return;
-    setFlipped(false);
-
-    const current = searchResults[selectedIndex];
-    if (current && modalImageIds.length > 0) {
-      const currentOrderIndex = modalImageIds.indexOf(current.id);
-      const nextId = modalImageIds[
-        currentOrderIndex >= 0 && currentOrderIndex < modalImageIds.length - 1 ? currentOrderIndex + 1 : 0
-      ];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) {
-        setSelectedIndex(nextIndex);
-      }
-      return;
-    }
-
-    if (modalImageIds.length > 0) {
-      const nextId = modalImageIds[0];
-      const nextIndex = searchResultIndexById.get(nextId) ?? -1;
-      if (nextIndex >= 0) setSelectedIndex(nextIndex);
-      return;
-    }
-
-    setSelectedIndex(selectedIndex < searchTotal - 1 ? selectedIndex + 1 : 0);
-  }, [modalImageIds, searchResultIndexById, searchResults, searchTotal, selectedIndex, setSelectedIndex]);
+    void navigate('next');
+  }, [navigate]);
 
   const close = useCallback(() => {
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = false;
     const current = selectedIndex !== null ? searchResults[selectedIndex] : null;
     if (current) {
       requestRevealImage(current.id);
@@ -330,8 +361,35 @@ export default function ImageModal() {
     setSelectedIndex(null);
     setModalImageIds([]);
     setFlipped(false);
-    setChromeHidden(false);
+    setManualChromeVisible(true);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
   }, [requestRevealImage, searchResults, selectedIndex, setModalImageIds, setSelectedIndex]);
+
+  useDialogFocus({
+    open: selectedIndex !== null,
+    dialogRef: modalBodyRef,
+    initialFocusRef: modalCloseButtonRef,
+  });
+  useEffect(() => {
+    if (typeof window.matchMedia !== 'function') return;
+    const media = window.matchMedia('(max-width: 768px)');
+    const sync = () => setIsMobileSheet(media.matches);
+    sync();
+    media.addEventListener?.('change', sync);
+    return () => media.removeEventListener?.('change', sync);
+  }, []);
+  useDialogFocus({
+    open: isMobileSheet && !sidebarCollapsed && selectedIndex !== null,
+    dialogRef: metadataSidebarRef,
+    onEscape: () => setSidebarCollapsed(true),
+  });
+  useDialogFocus({
+    open: showConfirmDelete,
+    dialogRef: confirmPanelRef,
+    initialFocusRef: confirmCancelButtonRef,
+    onEscape: () => setShowConfirmDelete(false),
+  });
 
   const img = selectedIndex !== null ? searchResults[selectedIndex] : null;
   const modalEdgeRatio = clampModalEdgeRatio(view.modalEdgeRatio);
@@ -340,14 +398,23 @@ export default function ImageModal() {
   const modalCounter = modalOrderIndex >= 0
     ? `${modalOrderIndex + 1} / ${modalImageIds.length}`
     : `${(selectedIndex ?? 0) + 1} / ${searchTotal}`;
+  const filmstripOpen = view.modalFilmstripOpen !== false;
+  const chromeHidden = !manualChromeVisible && !transientChromeVisible && !showConfirmDelete;
+  const filmstripInLayout = manualChromeVisible && filmstripOpen;
+  const filmstripOverlayVisible = filmstripHoverVisible && !filmstripInLayout;
+  const cursorHidden = chromeHidden && !filmstripOverlayVisible;
+  const filmstripTotal = modalImageIds.length > 0 ? modalImageIds.length : searchTotal;
+  const filmstripActiveIndex = modalOrderIndex >= 0 ? modalOrderIndex : (selectedIndex ?? -1);
   const favLevel = img ? (favorites[img.id] ?? 0) : 0;
   const isFav = favLevel > 0;
+  const shouldConfirmImageDelete = confirmBeforeDelete || isFav;
   const currentEnhancementJobs = img ? enhancementJobs.filter((job) => job.sourceId === img.id) : [];
   const succeededEnhancementJobs = currentEnhancementJobs.filter((job) => job.status === 'succeeded' && job.outputPath);
   const activeEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'running' || job.status === 'queued') ?? null;
   const failedEnhancementJob = currentEnhancementJobs.find((job) => job.status === 'failed' && job.errorMessage) ?? null;
   const visibleEnhanceError = enhanceError || failedEnhancementJob?.errorMessage || '';
   const selectedEnhancedJob = succeededEnhancementJobs.find((job) => job.id === selectedEnhancedJobId) ?? succeededEnhancementJobs[0] ?? null;
+  const displayedEnhancedJobId = selectedEnhancedJob?.id ?? '';
   const enhancedSrc = selectedEnhancedJob
     ? `/api/enhance/output?jobId=${encodeURIComponent(selectedEnhancedJob.id)}`
     : '';
@@ -358,6 +425,34 @@ export default function ImageModal() {
   const fullImageReady = fullImageKey
     ? readyFullImageKeys.includes(fullImageKey) && !failedFullImageKeys.includes(fullImageKey)
     : false;
+
+  const getFilmstripItem = useCallback((logicalIndex: number): ModalFilmstripItem | null => {
+    if (logicalIndex < 0 || logicalIndex >= filmstripTotal) return null;
+    if (modalImageIds.length > 0) {
+      const id = modalImageIds[logicalIndex];
+      const sourceIndex = searchResultIndexById.get(id);
+      const image = sourceIndex === undefined ? null : searchResults[sourceIndex];
+      return image && sourceIndex !== undefined ? { image, sourceIndex } : null;
+    }
+    const image = searchResults[logicalIndex];
+    return image ? { image, sourceIndex: logicalIndex } : null;
+  }, [filmstripTotal, modalImageIds, searchResultIndexById, searchResults]);
+
+  const requestFilmstripRange = useCallback((startIndex: number, endIndex: number) => {
+    if (modalImageIds.length === 0) ensureSearchRange(startIndex, endIndex);
+  }, [ensureSearchRange, modalImageIds.length]);
+
+  const selectFilmstripItem = useCallback((item: ModalFilmstripItem) => {
+    if (item.sourceIndex === selectedIndex && item.image.id === img?.id) return;
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = false;
+    setFlipped(false);
+    setSelectedIndex(item.sourceIndex);
+  }, [img?.id, selectedIndex, setSelectedIndex]);
+
+  const toggleFilmstrip = useCallback(() => {
+    setView({ modalFilmstripOpen: !filmstripOpen });
+  }, [filmstripOpen, setView]);
 
   useEffect(() => {
     if (img) markImageSeen(img.id);
@@ -384,7 +479,8 @@ export default function ImageModal() {
     };
     const loadJobs = async () => {
       try {
-        const res = await fetch(`/api/enhance/jobs?sourceId=${encodeURIComponent(img.id)}`, { cache: 'no-store' });
+        const tokenParam = indexToken ? `&indexToken=${encodeURIComponent(indexToken)}` : '';
+        const res = await fetch(`/api/enhance/jobs?sourceId=${encodeURIComponent(img.id)}${tokenParam}`, { cache: 'no-store' });
         const data = await res.json();
         if (!res.ok || cancelled) return;
         const jobs = Array.isArray(data.jobs) ? data.jobs as ModalEnhancementJob[] : [];
@@ -438,7 +534,7 @@ export default function ImageModal() {
       }
       window.removeEventListener('pvu-enhance-jobs-changed', onChanged);
     };
-  }, [img, pendingAutoShowJobId]);
+  }, [img, indexToken, pendingAutoShowJobId]);
 
   const showFavoriteFeedback = useCallback((level: number) => {
     setFavoriteFeedback({ level, token: Date.now() });
@@ -532,46 +628,55 @@ export default function ImageModal() {
     selectedIndex,
   ]);
 
-  const handleDelete = useCallback(async () => {
+  const handleDelete = useCallback(async (favoriteConfirmed = false) => {
     if (!img || isDeleting) return;
     const deletedIndex = selectedIndex ?? -1;
-    const currentOrder = modalImageIds.length > 0
-      ? modalImageIds
-      : searchResults.filter((image): image is NonNullable<typeof image> => Boolean(image)).map((image) => image.id);
-    const currentOrderIndex = currentOrder.indexOf(img.id);
-    const remainingOrder = currentOrder.filter((id) => id !== img.id);
-    const nextId = remainingOrder.length > 0
-      ? remainingOrder[Math.min(Math.max(0, currentOrderIndex), remainingOrder.length - 1)]
-      : null;
-    const resultsAfterDelete = removeImageSlot(searchResults, img.id);
-    const nextIndexAfterDelete = nextId
-      ? resultsAfterDelete.findIndex((image) => image?.id === nextId)
-      : -1;
+    navigationRequestRef.current += 1;
+    navigationPendingRef.current = true;
     setIsDeleting(true);
     setShowConfirmDelete(false);
-    const ok = await deleteImage(img.id);
-    if (!ok) {
-      setIsDeleting(false);
-      return;
-    }
+    let deletionSucceeded = false;
+    try {
+      const ok = await deleteImage(img.id, { favoriteConfirmed });
+      if (!ok) return;
+      deletionSucceeded = true;
 
-    if (!nextId || searchTotal <= 1) {
-      close();
-    } else if (nextIndexAfterDelete >= 0) {
-      setModalImageIds(remainingOrder);
-      setSelectedIndex(nextIndexAfterDelete);
-    } else if (deletedIndex >= searchTotal - 1) {
-      setSelectedIndex(Math.max(0, deletedIndex - 1));
+      const resolution = await resolveModalNavigationTarget(deletedIndex, 'delete');
+      if (resolution.status === 'found') {
+        applyNavigationResolution(resolution);
+      } else if (resolution.status === 'empty' || resolution.status === 'unavailable') {
+        // The deleted path no longer exists. An unavailable neighbor must not
+        // leave a blank modal, and closing must not reveal the deleted path.
+        setSelectedIndex(null);
+        setModalImageIds([]);
+        setFlipped(false);
+        setManualChromeVisible(true);
+        setTransientChromeVisible(false);
+        setFilmstripHoverVisible(false);
+      }
+      // A stale result belongs to a replaced query/index window. Do not let it
+      // close or move the newer window.
+    } catch {
+      if (deletionSucceeded) {
+        setSelectedIndex(null);
+        setModalImageIds([]);
+        setFlipped(false);
+        setManualChromeVisible(true);
+        setTransientChromeVisible(false);
+        setFilmstripHoverVisible(false);
+      }
+    } finally {
+      navigationPendingRef.current = false;
+      setIsDeleting(false);
     }
-    setIsDeleting(false);
-  }, [close, deleteImage, img, isDeleting, modalImageIds, searchResults, searchTotal, selectedIndex, setModalImageIds, setSelectedIndex]);
+  }, [applyNavigationResolution, deleteImage, img, isDeleting, resolveModalNavigationTarget, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   const handleEnhance = useCallback(async () => {
     if (!img || isEnhancing || isActiveEnhancementJob(activeEnhancementJob)) return;
     setIsEnhancing(true);
     setEnhanceError('');
     try {
-      const job = await createEnhancementJob(img.id, getEnhancementSettings());
+      const job = await createEnhancementJob(img.id, getEnhancementSettings(), indexToken);
       setSelectedEnhancedJobId(job.id);
       setPendingAutoShowJobId(job.id);
     } catch (error) {
@@ -579,7 +684,7 @@ export default function ImageModal() {
     } finally {
       setIsEnhancing(false);
     }
-  }, [activeEnhancementJob, img, isEnhancing]);
+  }, [activeEnhancementJob, img, indexToken, isEnhancing]);
 
   const handleDeleteEnhancedOutput = useCallback(async () => {
     if (!selectedEnhancedJob) return;
@@ -602,12 +707,140 @@ export default function ImageModal() {
 
   const toggleEnhancedView = useCallback(() => {
     if (!img || !hasEnhancedOutput) return;
+    setDisplayedAssetStatus('');
     setShowEnhanced((current) => {
       const next = !current;
       enhancedDisplayChoiceRef.current[img.id] = next;
       return next;
     });
   }, [hasEnhancedOutput, img]);
+
+  const resolveDisplayedAsset = useCallback(async (launch: boolean) => {
+    if (!img) return;
+    const requestId = ++displayedAssetRequestRef.current;
+    const params = new URLSearchParams({ path: img.id });
+    if (indexToken) params.set('indexToken', indexToken);
+    if (showEnhanced && displayedEnhancedJobId) {
+      params.set('display', 'enhanced');
+      params.set('jobId', displayedEnhancedJobId);
+    }
+
+    try {
+      const response = await fetch(`/api/open?${params.toString()}`, {
+        method: launch ? 'POST' : 'GET',
+        cache: 'no-store',
+      });
+      const data = await response.json() as DisplayedAssetResponse;
+      if (requestId !== displayedAssetRequestRef.current) return;
+      if (!response.ok || !data.success) {
+        setDisplayedAssetStatus(data.error || (launch
+          ? 'Could not open the displayed image. You can retry.'
+          : 'Could not read the displayed file size.'));
+        if (!launch) setDisplayedAssetSizeBytes(null);
+        return;
+      }
+
+      setDisplayedAssetSizeBytes(typeof data.sizeBytes === 'number' ? data.sizeBytes : null);
+      if (data.fallback) {
+        enhancedDisplayChoiceRef.current[img.id] = false;
+        setShowEnhanced(false);
+        setDisplayedAssetStatus(data.fallback.message || 'Enhanced output is unavailable; using Original instead.');
+      } else if (launch) {
+        setDisplayedAssetStatus(data.opened === 'enhanced'
+          ? 'Opened the displayed Enhanced image.'
+          : 'Opened the displayed Original image.');
+      }
+    } catch {
+      if (requestId !== displayedAssetRequestRef.current) return;
+      setDisplayedAssetStatus(launch
+        ? 'Could not open the displayed image. You can retry.'
+        : 'Could not read the displayed file size.');
+      if (!launch) setDisplayedAssetSizeBytes(null);
+    }
+  }, [displayedEnhancedJobId, img, indexToken, showEnhanced]);
+
+  useEffect(() => {
+    setDisplayedAssetStatus('');
+  }, [img?.id]);
+
+  useEffect(() => {
+    if (!img) {
+      displayedAssetRequestRef.current += 1;
+      setDisplayedAssetSizeBytes(null);
+      setDisplayedAssetStatus('');
+      return;
+    }
+    void resolveDisplayedAsset(false);
+    return () => {
+      displayedAssetRequestRef.current += 1;
+    };
+  }, [img, resolveDisplayedAsset]);
+
+  const clearChromeIdleTimer = useCallback(() => {
+    if (chromeIdleTimer.current === null) return;
+    window.clearTimeout(chromeIdleTimer.current);
+    chromeIdleTimer.current = null;
+  }, []);
+
+  const scheduleTransientChromeHide = useCallback(() => {
+    clearChromeIdleTimer();
+    if (selectedIndex === null || showConfirmDelete || manualChromeVisible) return;
+    chromeIdleTimer.current = window.setTimeout(() => {
+      chromeIdleTimer.current = null;
+      setTransientChromeVisible(false);
+    }, MODAL_CHROME_TRANSIENT_MS);
+  }, [clearChromeIdleTimer, manualChromeVisible, selectedIndex, showConfirmDelete]);
+
+  const revealChromeForActivity = useCallback(() => {
+    if (selectedIndex === null || showConfirmDelete || manualChromeVisible) return;
+    setTransientChromeVisible(true);
+    scheduleTransientChromeHide();
+  }, [manualChromeVisible, scheduleTransientChromeHide, selectedIndex, showConfirmDelete]);
+
+  const toggleManualChrome = useCallback(() => {
+    clearChromeIdleTimer();
+    const nextVisible = !manualChromeVisible;
+    setManualChromeVisible(nextVisible);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
+  }, [clearChromeIdleTimer, manualChromeVisible]);
+
+  const handleModalPointerMove = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
+    if (selectedIndex === null || showConfirmDelete) return;
+    revealChromeForActivity();
+    if (event.pointerType === 'touch') return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const distanceFromBottom = rect.bottom - event.clientY;
+    const isNearBottom = distanceFromBottom >= 0 && distanceFromBottom <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
+    setFilmstripHoverVisible(isNearBottom);
+  }, [revealChromeForActivity, selectedIndex, showConfirmDelete]);
+
+  const handleModalPointerLeave = useCallback(() => {
+    setFilmstripHoverVisible(false);
+  }, []);
+
+  useEffect(() => {
+    if (selectedIndex === null) {
+      clearChromeIdleTimer();
+      return;
+    }
+    if (showConfirmDelete) {
+      clearChromeIdleTimer();
+      setFilmstripHoverVisible(false);
+      return;
+    }
+    if (manualChromeVisible) {
+      clearChromeIdleTimer();
+      setTransientChromeVisible(false);
+      return;
+    }
+    if (!transientChromeVisible) {
+      clearChromeIdleTimer();
+      return;
+    }
+    scheduleTransientChromeHide();
+    return clearChromeIdleTimer;
+  }, [clearChromeIdleTimer, manualChromeVisible, scheduleTransientChromeHide, selectedIndex, showConfirmDelete, transientChromeVisible]);
 
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
     if (e.defaultPrevented || e.altKey || e.ctrlKey || e.metaKey) return;
@@ -616,15 +849,16 @@ export default function ImageModal() {
       close();
       return;
     }
-    if (isInteractiveShortcutTarget(e.target)) return;
+    if (shouldKeepNativeInteractiveKey(e.target, key)) return;
     if (showConfirmDelete || isDeleting) return;
+    revealChromeForActivity();
 
     if (key === keyBindings.prevImage) goPrev();
     else if (key === keyBindings.nextImage) goNext();
     else if (isShortcutKey(key, keyBindings.toggleFavorite) && img) increaseFavorite();
     else if (isShortcutKey(key, keyBindings.decreaseFavorite) && img) decreaseFavorite();
     else if (key === keyBindings.deleteImage) {
-      if (confirmBeforeDelete) setShowConfirmDelete(true);
+      if (shouldConfirmImageDelete) setShowConfirmDelete(true);
       else void handleDelete();
     } else if (isShortcutKey(key, keyBindings.flipHorizontal)) setFlipped((f) => !f);
     else if (key === keyBindings.zoomIn || key === '+') {
@@ -641,6 +875,10 @@ export default function ImageModal() {
       e.preventDefault();
       resetZoom();
     }
+    else if (isShortcutKey(key, keyBindings.toggleFilmstrip)) {
+      e.preventDefault();
+      toggleFilmstrip();
+    }
     else if (key.toLowerCase() === 'e' && hasEnhancedOutput) {
       e.preventDefault();
       toggleEnhancedView();
@@ -653,8 +891,11 @@ export default function ImageModal() {
       e.preventDefault();
       setSidebarCollapsed((prev) => !prev);
     }
-    else if (key === 'Enter' && img) openExternal(img.id);
-  }, [close, confirmBeforeDelete, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openExternal, resetZoom, showConfirmDelete, toggleEnhancedView]);
+    else if (key === 'Enter' && img) {
+      e.preventDefault();
+      void resolveDisplayedAsset(true);
+    }
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {
@@ -680,6 +921,7 @@ export default function ImageModal() {
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-topbar')) return;
     if (target.closest('.modal-sidebar')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
 
     const startsOnImage = Boolean(target.closest('.modal-main-image'));
     const mode = zoom > 1 && startsOnImage ? 'pan' : 'swipe';
@@ -763,11 +1005,11 @@ export default function ImageModal() {
   }, []);
 
   const runModalClickAction = useCallback((action: ModalClickAction) => {
-    if (action === 'toggleChrome') setChromeHidden((hidden) => !hidden);
+    if (action === 'toggleChrome') toggleManualChrome();
     else if (action === 'prev') goPrev();
     else if (action === 'next') goNext();
     else close();
-  }, [close, goNext, goPrev]);
+  }, [close, goNext, goPrev, toggleManualChrome]);
 
   const scheduleSingleClickAction = useCallback((action: ModalClickAction) => {
     if (pendingSingleClick.current !== null) {
@@ -797,6 +1039,7 @@ export default function ImageModal() {
     }
     const target = e.target as HTMLElement;
     if (target.closest('.zoom-indicator')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
     const { x, width } = getRelativeClickPosition(e);
     const clickTarget = target.closest('.modal-main-image') || isPointOnMainImage(e.currentTarget, e.clientX, e.clientY)
       ? 'image'
@@ -810,6 +1053,7 @@ export default function ImageModal() {
     const target = e.target as HTMLElement;
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-sidebar')) return;
+    if (target.closest('.modal-filmstrip-shell')) return;
     if (!target.closest('.modal-main-image') && !isPointOnMainImage(e.currentTarget, e.clientX, e.clientY)) return;
     setSidebarCollapsed((prev) => !prev);
   }, [cancelSingleClickAction]);
@@ -841,7 +1085,7 @@ export default function ImageModal() {
     return (
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
-        <div className="modal-body" role="dialog" aria-modal="true" aria-label="Image preview loading">
+        <div ref={modalBodyRef} className="modal-body" role="dialog" aria-modal="true" aria-label="Image preview loading" tabIndex={-1}>
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">Loading...</span>
@@ -870,7 +1114,9 @@ export default function ImageModal() {
     setSelectedIndex(null);
     setModalImageIds([]);
     setFlipped(false);
-    setChromeHidden(false);
+    setManualChromeVisible(true);
+    setTransientChromeVisible(false);
+    setFilmstripHoverVisible(false);
     setSearchQuery([...currentTags, tag].join(', '));
   };
 
@@ -879,20 +1125,33 @@ export default function ImageModal() {
       <div className="modal-overlay">
         <div className="modal-backdrop" aria-hidden="true" onClick={close} />
 
-        <div className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''}`} role="dialog" aria-modal="true" aria-label={`Image preview: ${img.filename}`}>
+        <div
+          ref={modalBodyRef}
+          className={`modal-body ${chromeHidden ? 'chrome-hidden' : ''} ${cursorHidden ? 'cursor-hidden' : ''}`}
+          role="dialog"
+          aria-modal="true"
+          aria-label={`Image preview: ${img.filename}`}
+          tabIndex={-1}
+          onPointerMove={handleModalPointerMove}
+          onPointerLeave={handleModalPointerLeave}
+          data-manual-chrome={manualChromeVisible ? 'visible' : 'hidden'}
+        >
           <div className="modal-topbar">
             <div className="modal-topbar-left">
               <span className="modal-filename">{img.filename}</span>
               <span className="modal-counter">{modalCounter}</span>
+              <span className="modal-file-size" aria-label="Displayed file size">{formatFileSizeMb(displayedAssetSizeBytes)}</span>
             </div>
             <div className="modal-topbar-right">
               <button className={`modal-icon-btn ${isFav ? 'fav-active' : ''}`} onClick={increaseFavorite} title="Favorite +1" aria-label="Increase favorite level">
                 F
                 {favLevel > 0 && <span style={{ marginLeft: 4, fontSize: 11, fontWeight: 700 }}>{favLevel}</span>}
               </button>
-              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1" aria-label="Decrease favorite level">-</button>
+              <button className="modal-icon-btn" onClick={decreaseFavorite} title="Favorite -1" aria-label="Decrease favorite level">
+                <Minus size={16} aria-hidden="true" />
+              </button>
               <button className="modal-icon-btn" onClick={() => setFlipped((f) => !f)} title="Flip" aria-label="Flip horizontally">H</button>
-              <button className="modal-icon-btn" onClick={() => openExternal(img.id)} title="Open external" aria-label="Open in external viewer">O</button>
+              <button className="modal-icon-btn" onClick={() => void resolveDisplayedAsset(true)} title="Open external" aria-label="Open in external viewer">O</button>
               <button
                 className="modal-icon-btn"
                 onClick={(event) => {
@@ -920,7 +1179,7 @@ export default function ImageModal() {
                   title="Cancel enhancement"
                   aria-label="Cancel enhancement"
                 >
-                  X
+                  <X size={16} aria-hidden="true" />
                 </button>
               )}
               {visibleEnhanceError && !enhancementInProgress && (
@@ -975,7 +1234,7 @@ export default function ImageModal() {
               <button
                 className="modal-icon-btn"
                 onClick={() => {
-                  if (confirmBeforeDelete) setShowConfirmDelete(true);
+                  if (shouldConfirmImageDelete) setShowConfirmDelete(true);
                   else void handleDelete();
                 }}
                 title="Move to Recycle Bin"
@@ -985,27 +1244,49 @@ export default function ImageModal() {
                 {isDeleting ? '...' : 'D'}
               </button>
               <button
-                className="modal-icon-btn"
+                className={`modal-icon-btn ${filmstripOpen ? 'fav-active' : ''}`}
+                onClick={toggleFilmstrip}
+                title={`${filmstripOpen ? 'Hide' : 'Show'} filmstrip (${formatShortcutKey(keyBindings.toggleFilmstrip)})`}
+                aria-label={`${filmstripOpen ? 'Hide' : 'Show'} image filmstrip`}
+                aria-expanded={filmstripOpen}
+                aria-controls="modal-filmstrip"
+                aria-keyshortcuts={formatShortcutKey(keyBindings.toggleFilmstrip)}
+              >
+                FS
+              </button>
+              <button
+                className="modal-icon-btn modal-metadata-toggle"
                 onClick={() => setSidebarCollapsed((prev) => !prev)}
                 title={sidebarCollapsed ? 'Show sidebar' : 'Hide sidebar'}
                 aria-label={sidebarCollapsed ? 'Show metadata sidebar' : 'Hide metadata sidebar'}
+                aria-expanded={!sidebarCollapsed}
+                aria-controls="modal-metadata-sidebar"
               >
-                {sidebarCollapsed ? '<' : '>'}
+                {sidebarCollapsed
+                  ? <ChevronLeft size={16} aria-hidden="true" />
+                  : <ChevronRight size={16} aria-hidden="true" />}
               </button>
-              <button className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">x</button>
+              <button ref={modalCloseButtonRef} className="modal-icon-btn close" onClick={close} title="Close" aria-label="Close image preview">
+                <X size={16} aria-hidden="true" />
+              </button>
             </div>
           </div>
+          <div className="modal-displayed-asset-status" role="status" aria-live="polite">
+            {displayedAssetStatus}
+          </div>
 
-          <div
-            className="modal-image-area"
-            onWheel={handleWheel}
-            onPointerDown={handlePointerDown}
-            onPointerMove={handlePointerMove}
-            onPointerUp={finishPointerGesture}
-            onPointerCancel={cancelPointerGesture}
-            onClick={handleImageAreaClick}
-            onDoubleClick={handleImageAreaDoubleClick}
-          >
+          <div className="modal-main-column" data-testid="modal-main-column">
+            <div
+              className="modal-image-area"
+              data-testid="modal-image-area"
+              onWheel={handleWheel}
+              onPointerDown={handlePointerDown}
+              onPointerMove={handlePointerMove}
+              onPointerUp={finishPointerGesture}
+              onPointerCancel={cancelPointerGesture}
+              onClick={handleImageAreaClick}
+              onDoubleClick={handleImageAreaDoubleClick}
+            >
             <div
               className="modal-edge-zone left"
               style={{ width: modalEdgeZoneWidth }}
@@ -1020,6 +1301,26 @@ export default function ImageModal() {
             >
               <span>&gt;</span>
             </div>
+            {!fullImageReady && (
+              <CachedImage
+                key={`thumb-preview-${img.id}`}
+                src={img.fileUrl}
+                requestSrc={`${img.fileUrl}${img.fileUrl.includes('?') ? '&' : '?'}priority=visible`}
+                fallbackSrc={img.fullUrl}
+                cacheKind="thumb"
+                alt={img.filename}
+                className={`modal-main-image modal-thumb-preview is-thumb-preview ${swipeOffset !== 0 ? 'dragging' : ''}`}
+                loading="eager"
+                decoding="async"
+                fetchPriority="high"
+                onClick={handleImageClick}
+                onDoubleClick={handleImageDoubleClick}
+                style={{
+                  transform: `translate(${pan.x + swipeOffset}px, ${pan.y}px) scale(${zoom}) scaleX(${flipped ? -1 : 1})`,
+                }}
+                draggable={false}
+              />
+            )}
             <CachedImage
               key={fullImageKey}
               src={modalImageSrc}
@@ -1027,7 +1328,7 @@ export default function ImageModal() {
               fallbackSrc={img.fullUrl}
               cacheKind="display"
               alt={img.filename}
-              className={`modal-main-image ${swipeOffset !== 0 ? 'dragging' : ''} ${fullImageReady ? 'is-full-ready' : 'is-full-loading'}`}
+              className={`modal-main-image modal-full-image ${swipeOffset !== 0 ? 'dragging' : ''} ${fullImageReady ? 'is-full-ready' : 'is-full-loading'}`}
               loading="eager"
               decoding="async"
               fetchPriority="high"
@@ -1035,6 +1336,10 @@ export default function ImageModal() {
               onDoubleClick={handleImageDoubleClick}
               onError={(event) => {
                 rememberFullImageFailed(fullImageKey);
+              }}
+              onSessionExpired={() => {
+                rememberFullImageFailed(fullImageKey);
+                reportImageSessionExpired();
               }}
               onLoad={(event) => {
                 const currentSrc = event.currentTarget.currentSrc || event.currentTarget.src;
@@ -1048,29 +1353,84 @@ export default function ImageModal() {
               draggable={false}
             />
 
-            <div className="zoom-indicator">
-              <span>{Math.round(zoom * 100)}%</span>
-              <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">x</button>
+              <div className="zoom-indicator">
+                <span>{Math.round(zoom * 100)}%</span>
+                <button className="zoom-reset" onClick={resetZoom} title="Reset zoom" aria-label="Reset zoom">
+                  <X size={14} aria-hidden="true" />
+                </button>
+              </div>
+
+              {favoriteFeedback && (
+                <div className="modal-favorite-feedback" key={favoriteFeedback.token} aria-live="polite">
+                  <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
+                  </svg>
+                  <span>{favoriteFeedback.level > 0 ? favoriteFeedback.level : 'OFF'}</span>
+                </div>
+              )}
             </div>
 
-            {favoriteFeedback && (
-              <div className="modal-favorite-feedback" key={favoriteFeedback.token} aria-live="polite">
-                <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
-                  <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 0 0 0-7.78z" />
-                </svg>
-                <span>{favoriteFeedback.level > 0 ? favoriteFeedback.level : 'OFF'}</span>
-              </div>
+            {filmstripInLayout && (
+              <ModalFilmstrip
+                total={filmstripTotal}
+                activeIndex={filmstripActiveIndex}
+                getItem={getFilmstripItem}
+                onNeedRange={requestFilmstripRange}
+                onSelect={selectFilmstripItem}
+                onNavigate={(intent) => {
+                  if (intent === 'prev') goPrev();
+                  else goNext();
+                }}
+                onCollapse={toggleFilmstrip}
+                onSessionExpired={reportImageSessionExpired}
+                toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
+                presentation="layout"
+              />
+            )}
+
+            {filmstripOverlayVisible && (
+              <ModalFilmstrip
+                total={filmstripTotal}
+                activeIndex={filmstripActiveIndex}
+                getItem={getFilmstripItem}
+                onNeedRange={requestFilmstripRange}
+                onSelect={selectFilmstripItem}
+                onNavigate={(intent) => {
+                  if (intent === 'prev') goPrev();
+                  else goNext();
+                }}
+                onCollapse={() => setFilmstripHoverVisible(false)}
+                onSessionExpired={reportImageSessionExpired}
+                toggleShortcut={formatShortcutKey(keyBindings.toggleFilmstrip)}
+                presentation="overlay"
+              />
             )}
           </div>
 
-          <aside className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}>
-            <div className="sidebar-tabs">
-              <button className={`sidebar-tab ${sidebarTab === 'prompt' ? 'active' : ''}`} onClick={() => setSidebarTab('prompt')}>Prompt</button>
-              <button className={`sidebar-tab ${sidebarTab === 'negative' ? 'active' : ''}`} onClick={() => setSidebarTab('negative')}>Negative</button>
-              <button className={`sidebar-tab ${sidebarTab === 'settings' ? 'active' : ''}`} onClick={() => setSidebarTab('settings')}>Settings</button>
-            </div>
+          {isMobileSheet && !sidebarCollapsed && (
+            <button type="button" className="modal-sheet-backdrop" aria-label="Close metadata sidebar" onClick={() => setSidebarCollapsed(true)} />
+          )}
+          <aside
+            ref={metadataSidebarRef}
+            id="modal-metadata-sidebar"
+            className={`modal-sidebar ${sidebarCollapsed ? 'hidden' : ''}`}
+            role={isMobileSheet ? 'dialog' : undefined}
+            aria-modal={isMobileSheet || undefined}
+            aria-label={isMobileSheet ? 'Image metadata' : undefined}
+            tabIndex={isMobileSheet ? -1 : undefined}
+          >
+            <MetadataTabList
+              activeTab={sidebarTab}
+              onActiveTabChange={setSidebarTab}
+              panelId="modal-metadata-panel"
+            />
 
             <div className="sidebar-content">
+              <div
+                id="modal-metadata-panel"
+                role="tabpanel"
+                aria-labelledby={`modal-metadata-panel-tab-${sidebarTab}`}
+              >
               {sidebarTab === 'prompt' && (
                 <div className="meta-section">
                   <div className="meta-header">
@@ -1112,6 +1472,7 @@ export default function ImageModal() {
                   <code className="meta-code">{settingsRaw || 'No settings metadata.'}</code>
                 </div>
               )}
+              </div>
 
               <div className="meta-section png-metadata-section">
                 <div className="meta-header">
@@ -1152,6 +1513,8 @@ export default function ImageModal() {
               {' | '}
               <kbd>{formatShortcutKey(keyBindings.enhanceImage)}</kbd> AI
               {' | '}
+              <kbd>{formatShortcutKey(keyBindings.toggleFilmstrip)}</kbd> Filmstrip
+              {' | '}
               <kbd>E</kbd> Original/Upscaled
               {' | '}
               <kbd>Del</kbd> Recycle
@@ -1163,20 +1526,24 @@ export default function ImageModal() {
       {showConfirmDelete && (
         <div className="confirm-overlay">
           <div className="confirm-backdrop" aria-hidden="true" onClick={() => setShowConfirmDelete(false)} />
-          <div className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title">
+          <div ref={confirmPanelRef} className="confirm-panel" role="alertdialog" aria-modal="true" aria-labelledby="image-delete-title" tabIndex={-1}>
             <h3 id="image-delete-title">Move this image to Recycle Bin?</h3>
             <p>{img.filename}</p>
-            <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
-              <input
-                type="checkbox"
-                checked={!confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
-              />
-              <span>Do not ask again</span>
-            </label>
+            {isFav ? (
+              <p role="status">This image is favorite level {favLevel}. Favorite images always require confirmation.</p>
+            ) : (
+              <label className="sidebar-toggle" style={{ justifyContent: 'center', marginBottom: '1rem' }}>
+                <input
+                  type="checkbox"
+                  checked={!confirmBeforeDelete}
+                  onChange={(e) => setConfirmBeforeDelete(!e.target.checked)}
+                />
+                <span>Do not ask again</span>
+              </label>
+            )}
             <div className="confirm-actions">
-              <button className="btn-cancel" onClick={() => setShowConfirmDelete(false)}>Cancel</button>
-              <button className="btn-danger" onClick={() => void handleDelete()} disabled={isDeleting}>
+              <button ref={confirmCancelButtonRef} className="btn-cancel" onClick={() => setShowConfirmDelete(false)}>Cancel</button>
+              <button className="btn-danger" onClick={() => void handleDelete(true)} disabled={isDeleting}>
                 {isDeleting ? 'Moving...' : 'Move to Recycle Bin'}
               </button>
             </div>

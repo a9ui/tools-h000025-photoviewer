@@ -19,6 +19,7 @@ export type ThumbnailWarmupBatcherOptions = {
   dispatch: (paths: string[], dirPath: string, priority: ThumbnailWarmupPriority) => void;
   delayMs?: number;
   dedupeMs?: number;
+  highPriorityDedupeMs?: number;
   now?: () => number;
   setTimer?: (callback: () => void, delayMs: number) => TimerId;
   clearTimer?: (timerId: TimerId) => void;
@@ -32,6 +33,7 @@ export type ThumbnailWarmupEnqueueOptions = {
 
 const DEFAULT_DELAY_MS = 40;
 const DEFAULT_DEDUPE_MS = 3500;
+const DEFAULT_HIGH_PRIORITY_DEDUPE_MS = 900;
 const PRIORITY_RANK: Record<ThumbnailWarmupPriority, number> = {
   focused: 0,
   visible: 1,
@@ -50,6 +52,7 @@ export function createThumbnailWarmupBatcher({
   dispatch,
   delayMs = DEFAULT_DELAY_MS,
   dedupeMs = DEFAULT_DEDUPE_MS,
+  highPriorityDedupeMs = DEFAULT_HIGH_PRIORITY_DEDUPE_MS,
   now = () => Date.now(),
   setTimer = (callback, delay) => setTimeout(callback, delay),
   clearTimer = (timerId) => clearTimeout(timerId),
@@ -58,6 +61,17 @@ export function createThumbnailWarmupBatcher({
   const sent = new Map<string, SentWarmup>();
   let sequence = 0;
   let timerId: TimerId | null = null;
+
+  const highPriorityDedupeWindowMs = Math.min(dedupeMs, Math.max(0, highPriorityDedupeMs));
+
+  const getSkipWindowMs = (
+    previousPriority: ThumbnailWarmupPriority,
+    nextPriority: ThumbnailWarmupPriority
+  ) => (
+    previousPriority === 'nearby' || nextPriority === 'nearby'
+      ? dedupeMs
+      : highPriorityDedupeWindowMs
+  );
 
   const pruneSent = (currentTime: number) => {
     for (const [key, record] of sent) {
@@ -82,8 +96,7 @@ export function createThumbnailWarmupBatcher({
   ) => {
     const record = sent.get(key);
     if (!record) return false;
-    if (currentTime - record.sentAt > dedupeMs) {
-      sent.delete(key);
+    if (currentTime - record.sentAt > getSkipWindowMs(record.priority, priority)) {
       return false;
     }
     return !isHigherPriority(priority, record.priority);
@@ -124,14 +137,17 @@ export function createThumbnailWarmupBatcher({
     }
   };
 
-  function flush() {
+  function flush(allowedPriorities?: ReadonlySet<ThumbnailWarmupPriority>) {
     if (pending.size === 0) return;
 
     const currentTime = now();
-    const records = Array.from(pending.entries())
+    const selectedEntries = Array.from(pending.entries())
+      .filter(([, record]) => !allowedPriorities || allowedPriorities.has(record.priority));
+    if (selectedEntries.length === 0) return;
+    const records = selectedEntries
       .map(([key, record]) => ({ key, ...record }))
       .sort((a, b) => PRIORITY_RANK[a.priority] - PRIORITY_RANK[b.priority] || a.sequence - b.sequence);
-    pending.clear();
+    for (const [key] of selectedEntries) pending.delete(key);
 
     const groups = new Map<string, PendingWarmup[]>();
     for (const record of records) {
@@ -166,7 +182,8 @@ export function createThumbnailWarmupBatcher({
 
   return {
     enqueue,
-    flush,
+    flush: () => flush(),
+    flushHighPriority: () => flush(new Set<ThumbnailWarmupPriority>(['focused', 'visible'])),
     clear,
     getPendingCount: () => pending.size,
     getSentCount: () => sent.size,

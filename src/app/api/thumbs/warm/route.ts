@@ -38,6 +38,9 @@ export async function GET() {
 
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => ({}));
+  const indexToken = typeof (body as { indexToken?: unknown }).indexToken === 'string'
+    ? (body as { indexToken: string }).indexToken
+    : undefined;
   const dirs = normalizeDirPaths((body as { dir?: unknown }).dir);
   const directPaths = Array.isArray((body as { paths?: unknown }).paths)
     ? (body as { paths: unknown[] }).paths
@@ -64,7 +67,13 @@ export async function POST(request: NextRequest) {
         { status: 400 }
       );
     }
-    const paths = directPaths.filter((imagePath) => isInsideAnyDir(imagePath, dirs));
+    const indexedPaths = indexToken
+      ? new Set(getIndex(indexToken).map((image) => path.resolve(image.id).toLowerCase()))
+      : null;
+    const paths = directPaths.filter((imagePath) => (
+      isInsideAnyDir(imagePath, dirs) &&
+      (!indexedPaths || indexedPaths.has(imagePath.toLowerCase()))
+    ));
     return NextResponse.json({
       ok: true,
       warmup: enqueueThumbnails(paths.slice(0, Math.min(limit, DIRECT_WARMUP_LIMIT)), priority),
@@ -72,7 +81,7 @@ export async function POST(request: NextRequest) {
   }
 
   const paths = collectLimitedThumbnailWarmupPaths(
-    getIndex(),
+    getIndex(indexToken),
     (imagePath) => isInsideAnyDir(imagePath, dirs),
     limit
   );

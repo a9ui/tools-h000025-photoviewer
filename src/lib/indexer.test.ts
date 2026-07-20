@@ -2,9 +2,9 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ImageFile } from './types';
-import { getFolderBuckets, scanDirectory, searchIndex, setIndex } from './indexer';
+import { getFolderBuckets, getIndex, getTags, ScanAbortedError, scanDirectory, searchIndex, setIndex } from './indexer';
 
 const ONE_BY_ONE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -53,6 +53,7 @@ function makeIndexedImage(filename: string, index: number): ImageFile {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   setIndex([]);
   for (const filePath of cacheFiles.splice(0)) {
     fs.rmSync(filePath, { force: true });
@@ -63,6 +64,48 @@ afterEach(() => {
 });
 
 describe('scanDirectory', () => {
+  it('keeps independent bounded index snapshots for separate viewer folder sets', () => {
+    const alpha = makeIndexedImage('set-a\\alpha.png', 1);
+    alpha.metadata = { prompt: 'alpha-tag, shared-tag', negativePrompt: '', settings: {} };
+    const beta = makeIndexedImage('set-b\\beta.png', 2);
+    beta.metadata = { prompt: 'beta-tag, shared-tag', negativePrompt: '', settings: {} };
+
+    const tokenA = setIndex([alpha], 'c:\\PhotoViewerTest\\set-a');
+    const tokenB = setIndex([beta], 'c:\\PhotoViewerTest\\set-b');
+    expect(tokenA).toMatch(/^idx_/);
+    expect(tokenB).toMatch(/^idx_/);
+    expect(tokenA).not.toBe(tokenB);
+
+    expect(searchIndex('', 0, 20, 'name', undefined, undefined, undefined, undefined, undefined, undefined, tokenA)
+      .results.map((image) => image.filename)).toEqual(['set-a\\alpha.png']);
+    expect(searchIndex('', 0, 20, 'name', undefined, undefined, undefined, undefined, undefined, undefined, tokenB)
+      .results.map((image) => image.filename)).toEqual(['set-b\\beta.png']);
+    expect(getTags(20, tokenA)).toEqual([{ tag: 'alpha-tag', count: 1 }, { tag: 'shared-tag', count: 1 }]);
+    expect(getTags(20, tokenB)).toEqual([{ tag: 'beta-tag', count: 1 }, { tag: 'shared-tag', count: 1 }]);
+    expect(getFolderBuckets('C:\\PhotoViewerTest', 20, tokenA).map((folder) => folder.key)).toEqual(['set-a']);
+    expect(getFolderBuckets('C:\\PhotoViewerTest', 20, tokenB).map((folder) => folder.key)).toEqual(['set-b']);
+
+    // Legacy tokenless callers retain the latest active-index behaviour.
+    expect(searchIndex('', 0, 20, 'name').results.map((image) => image.filename)).toEqual(['set-b\\beta.png']);
+    expect(setIndex([alpha], 'c:\\PhotoViewerTest\\set-a')).toBe(tokenA);
+    expect(getIndex(tokenA).map((image) => image.filename)).toEqual(['set-a\\alpha.png']);
+  });
+
+  it('expires idle snapshots and bounds the session map', () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-07-18T00:00:00Z'));
+    const firstToken = setIndex([makeIndexedImage('first.png', 1)], 'c:\\session-0');
+    for (let index = 1; index <= 8; index += 1) {
+      vi.advanceTimersByTime(1);
+      setIndex([makeIndexedImage(`image-${index}.png`, index)], `c:\\session-${index}`);
+    }
+    expect(getIndex(firstToken).map((image) => image.filename)).toEqual([]);
+
+    const ttlToken = setIndex([makeIndexedImage('ttl.png', 1)], 'c:\\ttl');
+    vi.advanceTimersByTime(30 * 60 * 1000 + 1);
+    expect(getIndex(ttlToken).map((image) => image.filename)).toEqual([]);
+  });
+
   it('detects new PNGs added inside nested folders after folder-signature caching', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'photoviewer-indexer-'));
     createdRoots.push(root);
@@ -106,6 +149,30 @@ describe('scanDirectory', () => {
 
     const verifiedRefresh = await scanDirectory(root, undefined, { forceFull: true });
     expect(verifiedRefresh[0].mtime).toBeGreaterThan(initial[0].mtime);
+  });
+
+  it('abandons a scan without publishing a partial cache snapshot', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'photoviewer-indexer-'));
+    createdRoots.push(root);
+    rememberCacheFiles(root);
+
+    const imagePath = path.join(root, 'abortable.png');
+    writePng(imagePath);
+    const initial = await scanDirectory(root);
+    const cachePath = path.join(process.cwd(), '.cache', `index_${cacheHash(root)}.json`);
+    const before = fs.readFileSync(cachePath, 'utf-8');
+
+    const future = new Date(Date.now() + 3000);
+    fs.utimesSync(imagePath, future, future);
+    const abortController = new AbortController();
+
+    await expect(scanDirectory(root, (_processed, _total, _newFiles, status) => {
+      if (status?.stage === 'scanning') abortController.abort();
+    }, { forceFull: true, signal: abortController.signal })).rejects.toBeInstanceOf(ScanAbortedError);
+
+    expect(fs.readFileSync(cachePath, 'utf-8')).toBe(before);
+    const recovered = await scanDirectory(root, undefined, { forceFull: true });
+    expect(recovered[0].mtime).toBeGreaterThan(initial[0].mtime);
   });
 
   it('indexes newly added non-PNG image files', async () => {

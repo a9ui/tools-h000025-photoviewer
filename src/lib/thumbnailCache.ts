@@ -24,6 +24,7 @@ export const MAX_THUMB_CONCURRENCY = Math.max(
 );
 const WARMUP_RESERVED_VISIBLE_SLOTS = MAX_THUMB_CONCURRENCY >= 6 ? 2 : 1;
 const MAX_WARMUP_WORKERS = Math.max(1, MAX_THUMB_CONCURRENCY - WARMUP_RESERVED_VISIBLE_SLOTS);
+export const MAX_PENDING_WARM_THUMB_TASKS = 1200;
 
 type WarmupState = {
   running: boolean;
@@ -38,8 +39,10 @@ type WarmupState = {
 };
 
 interface ThumbTask {
+  cacheKey: string;
   priority: number;
   sequence: number;
+  warmup: boolean;
   started: boolean;
   run: () => Promise<void>;
   resolve: () => void;
@@ -217,16 +220,65 @@ function takeNextThumbTask(): ThumbTask | null {
   for (let i = 1; i < thumbQueue.length; i++) {
     const current = thumbQueue[i];
     const best = thumbQueue[bestIndex];
-    if (
-      current.priority < best.priority ||
-      (current.priority === best.priority && current.sequence < best.sequence)
-    ) {
+    if (compareThumbnailQueueEntries(current, best) < 0) {
       bestIndex = i;
     }
   }
 
   const [task] = thumbQueue.splice(bestIndex, 1);
   return task ?? null;
+}
+
+export type ThumbnailQueuePolicyEntry = Pick<ThumbTask, 'priority' | 'sequence' | 'warmup'>;
+
+export function compareThumbnailQueueEntries(
+  first: ThumbnailQueuePolicyEntry,
+  second: ThumbnailQueuePolicyEntry,
+) {
+  if (first.priority !== second.priority) return first.priority - second.priority;
+  // A real image response waiting on the same decode class always owns the
+  // slot before speculative warmup work.
+  if (first.warmup !== second.warmup) return first.warmup ? 1 : -1;
+  // Visible/nearby warmups describe a moving viewport. Newer work is more
+  // likely to remain on screen; background catalog warmup stays FIFO.
+  if (first.warmup && first.priority <= 1) return second.sequence - first.sequence;
+  return first.sequence - second.sequence;
+}
+
+export function selectSupersededWarmupQueueEntries<T extends ThumbnailQueuePolicyEntry>(
+  entries: readonly T[],
+  maximum = MAX_PENDING_WARM_THUMB_TASKS,
+): T[] {
+  const warmupTasks = entries
+    .filter((task) => task.warmup)
+    // Discard the least relevant class first, then the oldest request inside
+    // that class. Direct response work is never eligible for trimming.
+    .sort((first, second) => (
+      second.priority - first.priority || first.sequence - second.sequence
+    ));
+  return warmupTasks.slice(0, Math.max(0, warmupTasks.length - Math.max(0, maximum)));
+}
+
+function trimSupersededWarmupTasks() {
+  const superseded = selectSupersededWarmupQueueEntries(
+    thumbQueue.filter((task) => !task.started),
+  );
+  for (const task of superseded) {
+    const index = thumbQueue.indexOf(task);
+    if (index >= 0) thumbQueue.splice(index, 1);
+    if (pendingThumbs.get(task.cacheKey) === task) pendingThumbs.delete(task.cacheKey);
+    task.reject(new Error('Thumbnail warmup superseded by a newer viewport.'));
+  }
+}
+
+function promotePendingTask(task: ThumbTask, priority: number, warmup: boolean) {
+  if (task.started) return;
+  if (priority < task.priority) task.priority = priority;
+  if (!warmup) {
+    task.warmup = false;
+  } else if (priority <= 1) {
+    task.sequence = thumbJobSequence++;
+  }
 }
 
 function runNextThumbJob() {
@@ -249,16 +301,15 @@ function runNextThumbJob() {
 export async function ensureThumbnail(
   resolved: string,
   priority: number,
-  cacheVersion?: string
+  cacheVersion?: string,
+  warmup = false,
 ): Promise<ThumbnailResult> {
   ensureThumbDir();
   const thumbPath = await getThumbnailPath(resolved, cacheVersion);
 
   const pending = pendingThumbs.get(thumbPath);
   if (pending) {
-    if (!pending.started && priority < pending.priority) {
-      pending.priority = priority;
-    }
+    promotePendingTask(pending, priority, warmup);
     await pending.promise;
     return { thumbPath, created: true };
   }
@@ -273,16 +324,14 @@ export async function ensureThumbnail(
       const currentThumbPath = await getThumbnailPath(resolved, currentVersion);
       const currentPending = pendingThumbs.get(currentThumbPath);
       if (currentPending) {
-        if (!currentPending.started && priority < currentPending.priority) {
-          currentPending.priority = priority;
-        }
+        promotePendingTask(currentPending, priority, warmup);
         await currentPending.promise;
         return { thumbPath: currentThumbPath, created: true, versionMatched: false };
       }
       if (fs.existsSync(/*turbopackIgnore: true*/ currentThumbPath) && await isUsableCachedImage(currentThumbPath)) {
         return { thumbPath: currentThumbPath, created: false, versionMatched: false };
       }
-      return ensureThumbnail(resolved, priority, currentVersion).then((result) => ({
+      return ensureThumbnail(resolved, priority, currentVersion, warmup).then((result) => ({
         ...result,
         versionMatched: false,
       }));
@@ -299,8 +348,10 @@ export async function ensureThumbnail(
   });
 
   const task: ThumbTask = {
+    cacheKey: thumbPath,
     priority,
     sequence: thumbJobSequence++,
+    warmup,
     started: false,
     resolve: resolveTask,
     reject: rejectTask,
@@ -317,12 +368,13 @@ export async function ensureThumbnail(
 
   pendingThumbs.set(thumbPath, task);
   thumbQueue.push(task);
+  if (warmup) trimSupersededWarmupTasks();
   runNextThumbJob();
 
   try {
     await promise;
   } finally {
-    pendingThumbs.delete(thumbPath);
+    if (pendingThumbs.get(thumbPath) === task) pendingThumbs.delete(thumbPath);
   }
 
   return { thumbPath, created: true, versionMatched: true };
@@ -381,8 +433,10 @@ export async function ensureDisplayImage(
   });
 
   const task: ThumbTask = {
+    cacheKey: displayPath,
     priority,
     sequence: thumbJobSequence++,
+    warmup: false,
     started: false,
     resolve: resolveTask,
     reject: rejectTask,
@@ -404,7 +458,7 @@ export async function ensureDisplayImage(
   try {
     await promise;
   } finally {
-    pendingThumbs.delete(displayPath);
+    if (pendingThumbs.get(displayPath) === task) pendingThumbs.delete(displayPath);
   }
 
   return { displayPath, created: true, versionMatched: true };
@@ -413,7 +467,7 @@ export async function ensureDisplayImage(
 export function enqueueThumbnails(paths: string[], priority: number) {
   const uniquePaths = Array.from(new Set(paths.filter(Boolean)));
   for (const target of uniquePaths) {
-    void ensureThumbnail(target, priority).catch(() => {
+    void ensureThumbnail(target, priority, undefined, true).catch(() => {
       // Best-effort warmup; visible image requests can retry.
     });
   }
@@ -448,7 +502,7 @@ export function startThumbnailWarmup(paths: string[], source: string) {
       warmupState.current = target;
       warmupState.queued = Math.max(0, uniquePaths.length - currentIndex - 1);
       try {
-        await ensureThumbnail(target, 3);
+        await ensureThumbnail(target, 3, undefined, true);
         warmupState.completed += 1;
       } catch {
         warmupState.failed += 1;
@@ -482,6 +536,8 @@ export function getThumbnailWarmupState(): WarmupState & {
   activeThumbJobs: number;
   pendingThumbs: number;
   queuedThumbJobs: number;
+  queuedWarmupJobs: number;
+  maxPendingWarmupTasks: number;
   maxConcurrency: number;
   maxWarmupWorkers: number;
 } {
@@ -490,6 +546,8 @@ export function getThumbnailWarmupState(): WarmupState & {
     activeThumbJobs,
     pendingThumbs: pendingThumbs.size,
     queuedThumbJobs: thumbQueue.length,
+    queuedWarmupJobs: thumbQueue.filter((task) => task.warmup).length,
+    maxPendingWarmupTasks: MAX_PENDING_WARM_THUMB_TASKS,
     maxConcurrency: MAX_THUMB_CONCURRENCY,
     maxWarmupWorkers: MAX_WARMUP_WORKERS,
   };

@@ -52,8 +52,9 @@ Then inspect GitHub milestone, issues, PRs, Actions, SQLite jobs, and local
 Copy-time defaults are conservative. Project AGENTS may turn a lane ON when the
 project needs it and the workspace smoke/preflight passes.
 
-- Agmsg: ON for short pointers, ACKs, and status only.
-  Read: `..\..\System\docs\agmsg.md`, `..\..\System\docs\services.md`.
+- Agmsg: OFF for this project. Do not use Agmsg for status, consultation,
+  milestone closeout, or handoff unless the user explicitly turns it back on.
+  GitHub, SQLite, project-local docs, and Codex tasks carry durable state.
 - LRB Oracle: ON after local ON/status preflight; ZIP or sanitized packs are
   fallback.
   Read: `..\..\System\docs\oracle.md`, `..\..\System\docs\services.md`.
@@ -80,7 +81,7 @@ Tools root:
 powershell -ExecutionPolicy Bypass -File ..\..\System\scripts\check-services.ps1
 ```
 
-If GitHub CLI, Cursor/Composer, pnpm, SQLite, agmsg, GrokCLI, Linear, Chrome /
+If GitHub CLI, Cursor/Composer, pnpm, SQLite, GrokCLI, Linear, Chrome /
 ChatGPT Project access, or git push fails, record the concrete command and fix
 in the project issue/PR and reflect reusable rules back into the Tools system
 guidance.

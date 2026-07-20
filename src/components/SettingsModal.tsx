@@ -1,9 +1,20 @@
 'use client';
 
-import React, { useCallback, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
-import type { KeyBindings } from '../lib/types';
+import {
+  DEFAULT_KEY_BINDINGS,
+  DEFAULT_THUMBNAIL_STATUS_BORDERS,
+  THUMBNAIL_STATUS_BORDER_RAINBOW,
+  type KeyBindings,
+  type ThumbnailStatusBorderSettings,
+  type ThumbnailStatusBorderSettingsPatch,
+} from '../lib/types';
 import { clampModalEdgeRatio } from '../lib/modalNavigation';
+import { useDialogFocus } from '../lib/useDialogFocus';
+import { getKeyBindingConflicts } from '../lib/keyBindings';
+import RuntimeDiagnosticsSection from './RuntimeDiagnosticsSection';
+import statusBorderStyles from './SettingsModalStatusBorders.module.css';
 
 const KEY_LABELS: Record<keyof KeyBindings, string> = {
   nextImage: 'Next image',
@@ -14,6 +25,7 @@ const KEY_LABELS: Record<keyof KeyBindings, string> = {
   closeModal: 'Close modal',
   flipHorizontal: 'Flip horizontal',
   enhanceImage: 'Enhance image',
+  toggleFilmstrip: 'Toggle modal filmstrip',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   zoomReset: 'Reset zoom',
@@ -27,29 +39,242 @@ export default function SettingsModal() {
     setKeyBindings,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
+    thumbnailStatusBorders,
+    setThumbnailStatusBorders,
     view,
     setView,
   } = useImageStore();
 
   const [recording, setRecording] = useState<keyof KeyBindings | null>(null);
+  const [draftKeyBindings, setDraftKeyBindings] = useState<KeyBindings>(keyBindings);
+  const [confirmDraft, setConfirmDraft] = useState(confirmBeforeDelete);
+  const [thumbnailBordersDraft, setThumbnailBordersDraft] = useState<ThumbnailStatusBorderSettings>(thumbnailStatusBorders);
+  const [failedConfirmValue, setFailedConfirmValue] = useState<boolean | null>(null);
+  const [keyBindingsSaveError, setKeyBindingsSaveError] = useState('');
+  const [confirmSaveError, setConfirmSaveError] = useState('');
+  const [thumbnailBordersSaveError, setThumbnailBordersSaveError] = useState('');
+  const [savingKeyBindings, setSavingKeyBindings] = useState(false);
+  const [savingConfirm, setSavingConfirm] = useState(false);
+  const [savingThumbnailBorders, setSavingThumbnailBorders] = useState(false);
   const modalEdgePercent = Math.round(clampModalEdgeRatio(view.modalEdgeRatio) * 100);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const keyBindingsSaveAttemptRef = useRef(0);
+  const confirmSaveAttemptRef = useRef(0);
+  const thumbnailBordersSaveAttemptRef = useRef(0);
+  const dirtyKeyBindingActionsRef = useRef<Set<keyof KeyBindings>>(new Set());
+  const dirtyThumbnailBorderStatusesRef = useRef<Set<keyof ThumbnailStatusBorderSettings>>(new Set());
+  const enhancedSolidColorRef = useRef(
+    thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
+      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
+      : thumbnailStatusBorders.enhanced.color,
+  );
+  const close = useCallback(() => {
+    keyBindingsSaveAttemptRef.current += 1;
+    confirmSaveAttemptRef.current += 1;
+    thumbnailBordersSaveAttemptRef.current += 1;
+    setShowSettings(false);
+    setRecording(null);
+    setDraftKeyBindings(keyBindings);
+    setConfirmDraft(confirmBeforeDelete);
+    setThumbnailBordersDraft(thumbnailStatusBorders);
+    setFailedConfirmValue(null);
+    setKeyBindingsSaveError('');
+    setConfirmSaveError('');
+    setThumbnailBordersSaveError('');
+    dirtyKeyBindingActionsRef.current.clear();
+    dirtyThumbnailBorderStatusesRef.current.clear();
+    enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color === THUMBNAIL_STATUS_BORDER_RAINBOW
+      ? DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color
+      : thumbnailStatusBorders.enhanced.color;
+  }, [confirmBeforeDelete, keyBindings, setShowSettings, thumbnailStatusBorders]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    const dirtyActions = dirtyKeyBindingActionsRef.current;
+    if (dirtyActions.size === 0) {
+      setDraftKeyBindings(keyBindings);
+      setKeyBindingsSaveError('');
+      setRecording(null);
+      return;
+    }
+    setDraftKeyBindings((current) => {
+      const merged = { ...keyBindings };
+      for (const action of dirtyActions) merged[action] = current[action];
+      return merged;
+    });
+  }, [keyBindings, showSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    setConfirmDraft(confirmBeforeDelete);
+    setFailedConfirmValue(null);
+    setConfirmSaveError('');
+  }, [confirmBeforeDelete, showSettings]);
+
+  useEffect(() => {
+    if (!showSettings) return;
+    const dirtyStatuses = dirtyThumbnailBorderStatusesRef.current;
+    setThumbnailBordersDraft((current) => ({
+      favorite: dirtyStatuses.has('favorite') ? current.favorite : thumbnailStatusBorders.favorite,
+      enhanced: dirtyStatuses.has('enhanced') ? current.enhanced : thumbnailStatusBorders.enhanced,
+    }));
+    if (!dirtyStatuses.has('enhanced')
+      && thumbnailStatusBorders.enhanced.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
+      enhancedSolidColorRef.current = thumbnailStatusBorders.enhanced.color;
+    }
+    setThumbnailBordersSaveError('');
+  }, [showSettings, thumbnailStatusBorders]);
+
+  useDialogFocus({
+    open: showSettings,
+    dialogRef: panelRef,
+    initialFocusRef: closeButtonRef,
+    onEscape: close,
+  });
+
+  const conflicts = useMemo(
+    () => getKeyBindingConflicts(draftKeyBindings),
+    [draftKeyBindings]
+  );
+  const conflictByAction = useMemo(() => {
+    const next = new Map<keyof KeyBindings, Array<keyof KeyBindings>>();
+    for (const conflict of conflicts) {
+      for (const action of conflict.actions) {
+        next.set(action, conflict.actions.filter((item) => item !== action));
+      }
+    }
+    return next;
+  }, [conflicts]);
+  const hasBindingConflicts = conflicts.length > 0;
 
   const handleKeyCapture = useCallback((e: React.KeyboardEvent, action: keyof KeyBindings) => {
     e.preventDefault();
     e.stopPropagation();
-    setKeyBindings({ ...keyBindings, [action]: e.key });
+    setDraftKeyBindings((current) => ({ ...current, [action]: e.key }));
+    dirtyKeyBindingActionsRef.current.add(action);
+    setKeyBindingsSaveError('');
     setRecording(null);
-  }, [keyBindings, setKeyBindings]);
+  }, []);
+  const saveKeyBindings = useCallback(async () => {
+    if (hasBindingConflicts || savingKeyBindings) return;
+    const attempt = keyBindingsSaveAttemptRef.current + 1;
+    keyBindingsSaveAttemptRef.current = attempt;
+    setSavingKeyBindings(true);
+    setKeyBindingsSaveError('');
+    try {
+      const result = await setKeyBindings(draftKeyBindings);
+      if (keyBindingsSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setKeyBindingsSaveError(`${result.error} Draft preserved; retry when ready.`);
+        return;
+      }
+      close();
+    } catch {
+      if (keyBindingsSaveAttemptRef.current !== attempt) return;
+      setKeyBindingsSaveError('Could not reach the local settings service. Draft preserved; retry when ready.');
+    } finally {
+      setSavingKeyBindings(false);
+    }
+  }, [close, draftKeyBindings, hasBindingConflicts, savingKeyBindings, setKeyBindings]);
+  const resetKeyBindings = useCallback(() => {
+    setDraftKeyBindings(DEFAULT_KEY_BINDINGS);
+    dirtyKeyBindingActionsRef.current = new Set(Object.keys(DEFAULT_KEY_BINDINGS) as Array<keyof KeyBindings>);
+    setKeyBindingsSaveError('');
+    setRecording(null);
+  }, []);
+
+  const saveConfirmBeforeDelete = useCallback(async (nextValue: boolean) => {
+    if (savingConfirm) return;
+    const savedValue = confirmBeforeDelete;
+    const attempt = confirmSaveAttemptRef.current + 1;
+    confirmSaveAttemptRef.current = attempt;
+    setConfirmDraft(nextValue);
+    setFailedConfirmValue(null);
+    setConfirmSaveError('');
+    setSavingConfirm(true);
+    try {
+      const result = await setConfirmBeforeDelete(nextValue);
+      if (confirmSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setConfirmDraft(savedValue);
+        setFailedConfirmValue(nextValue);
+        setConfirmSaveError(`${result.error} The saved value was restored.`);
+        return;
+      }
+      setConfirmDraft(nextValue);
+    } catch {
+      if (confirmSaveAttemptRef.current !== attempt) return;
+      setConfirmDraft(savedValue);
+      setFailedConfirmValue(nextValue);
+      setConfirmSaveError('Could not reach the local settings service. The saved value was restored.');
+    } finally {
+      setSavingConfirm(false);
+    }
+  }, [confirmBeforeDelete, savingConfirm, setConfirmBeforeDelete]);
+
+  const updateThumbnailBorderDraft = useCallback((
+    status: keyof ThumbnailStatusBorderSettings,
+    patch: Partial<ThumbnailStatusBorderSettings[typeof status]>,
+  ) => {
+    dirtyThumbnailBorderStatusesRef.current.add(status);
+    if (status === 'enhanced'
+      && typeof patch.color === 'string'
+      && patch.color !== THUMBNAIL_STATUS_BORDER_RAINBOW) {
+      enhancedSolidColorRef.current = patch.color;
+    }
+    setThumbnailBordersSaveError('');
+    setThumbnailBordersDraft((current) => ({
+      ...current,
+      [status]: { ...current[status], ...patch },
+    }));
+  }, []);
+
+  const resetThumbnailBorders = useCallback(() => {
+    dirtyThumbnailBorderStatusesRef.current = new Set(['favorite', 'enhanced']);
+    enhancedSolidColorRef.current = DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite.color;
+    setThumbnailBordersSaveError('');
+    setThumbnailBordersDraft({
+      favorite: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.favorite },
+      enhanced: { ...DEFAULT_THUMBNAIL_STATUS_BORDERS.enhanced },
+    });
+  }, []);
+
+  const saveThumbnailBorders = useCallback(async () => {
+    if (savingThumbnailBorders) return;
+    const dirtyStatuses = [...dirtyThumbnailBorderStatusesRef.current];
+    if (dirtyStatuses.length === 0) return;
+    const patch: ThumbnailStatusBorderSettingsPatch = {};
+    for (const status of dirtyStatuses) patch[status] = thumbnailBordersDraft[status];
+    const attempt = thumbnailBordersSaveAttemptRef.current + 1;
+    thumbnailBordersSaveAttemptRef.current = attempt;
+    setSavingThumbnailBorders(true);
+    setThumbnailBordersSaveError('');
+    try {
+      const result = await setThumbnailStatusBorders(patch);
+      if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
+      if (!result.ok) {
+        setThumbnailBordersSaveError(`${result.error} Draft preserved; retry when ready.`);
+        return;
+      }
+      dirtyThumbnailBorderStatusesRef.current.clear();
+    } catch {
+      if (thumbnailBordersSaveAttemptRef.current !== attempt) return;
+      setThumbnailBordersSaveError('Could not reach the local settings service. Draft preserved; retry when ready.');
+    } finally {
+      setSavingThumbnailBorders(false);
+    }
+  }, [savingThumbnailBorders, setThumbnailStatusBorders, thumbnailBordersDraft]);
 
   if (!showSettings) return null;
 
   return (
     <div className="settings-overlay">
-      <div className="settings-backdrop" aria-hidden="true" onClick={() => { setShowSettings(false); setRecording(null); }} />
-      <div className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div className="settings-backdrop" aria-hidden="true" onClick={close} />
+      <div ref={panelRef} className="settings-panel" role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
         <div className="settings-header">
           <h2 id="settings-title">Settings</h2>
-          <button className="icon-btn" onClick={() => { setShowSettings(false); setRecording(null); }} title="Close" aria-label="Close settings">
+          <button ref={closeButtonRef} className="icon-btn" onClick={close} title="Close" aria-label="Close settings">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -58,6 +283,8 @@ export default function SettingsModal() {
         </div>
 
         <div className="settings-body">
+          <RuntimeDiagnosticsSection />
+
           <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
             Behavior
           </h3>
@@ -66,13 +293,28 @@ export default function SettingsModal() {
             <label className="sidebar-toggle">
               <input
                 aria-label="Confirm before delete"
+                aria-describedby={confirmSaveError ? 'confirm-delete-save-error' : undefined}
                 type="checkbox"
-                checked={confirmBeforeDelete}
-                onChange={(e) => setConfirmBeforeDelete(e.target.checked)}
+                checked={confirmDraft}
+                disabled={savingConfirm}
+                onChange={(e) => { void saveConfirmBeforeDelete(e.target.checked); }}
               />
-              <span>{confirmBeforeDelete ? 'Enabled' : 'Disabled'}</span>
+              <span>{savingConfirm ? 'Saving…' : confirmDraft ? 'Enabled' : 'Disabled'}</span>
             </label>
           </div>
+          {confirmSaveError && failedConfirmValue !== null && (
+            <div id="confirm-delete-save-error" className="settings-save-error" role="alert">
+              <span>{confirmSaveError}</span>
+              <button
+                type="button"
+                className="sidebar-link"
+                disabled={savingConfirm}
+                onClick={() => { void saveConfirmBeforeDelete(failedConfirmValue); }}
+              >
+                {savingConfirm ? 'Retrying…' : 'Retry delete confirmation change'}
+              </button>
+            </div>
+          )}
           <div className="setting-row">
             <span className="setting-label">Unseen dots</span>
             <label className="sidebar-toggle">
@@ -85,6 +327,88 @@ export default function SettingsModal() {
               <span>{view.showUnseenMarkers ? 'Enabled' : 'Disabled'}</span>
             </label>
           </div>
+          <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '1rem 0 0.35rem' }}>
+            Thumbnail status borders
+          </h3>
+          {(['favorite', 'enhanced'] as const).map((status) => {
+            const label = status === 'favorite' ? 'Favorite' : 'AI enhanced';
+            const preference = thumbnailBordersDraft[status];
+            const isEnhanced = status === 'enhanced';
+            const isRainbow = isEnhanced && preference.color === THUMBNAIL_STATUS_BORDER_RAINBOW;
+            return (
+              <div className="setting-row" key={status}>
+                <span className="setting-label">{label} thumbnail border</span>
+                <div className={statusBorderStyles.control}>
+                  <label className="sidebar-toggle">
+                    <input
+                      aria-label={`Show ${status} thumbnail border`}
+                      type="checkbox"
+                      checked={preference.enabled}
+                      disabled={savingThumbnailBorders}
+                      onChange={(event) => updateThumbnailBorderDraft(status, { enabled: event.target.checked })}
+                    />
+                    <span>{preference.enabled ? 'Enabled' : 'Disabled'}</span>
+                  </label>
+                  {isEnhanced && (
+                    <select
+                      className={statusBorderStyles.styleSelect}
+                      aria-label="AI enhanced thumbnail border style"
+                      value={isRainbow ? THUMBNAIL_STATUS_BORDER_RAINBOW : 'solid'}
+                      disabled={!preference.enabled || savingThumbnailBorders}
+                      onChange={(event) => updateThumbnailBorderDraft('enhanced', {
+                        color: event.target.value === THUMBNAIL_STATUS_BORDER_RAINBOW
+                          ? THUMBNAIL_STATUS_BORDER_RAINBOW
+                          : enhancedSolidColorRef.current,
+                      })}
+                    >
+                      <option value={THUMBNAIL_STATUS_BORDER_RAINBOW}>Rainbow</option>
+                      <option value="solid">Single color</option>
+                    </select>
+                  )}
+                  {isRainbow && (
+                    <span
+                      className={statusBorderStyles.rainbowSwatch}
+                      aria-label="Rainbow border preview"
+                      role="img"
+                    />
+                  )}
+                  <input
+                    className={statusBorderStyles.colorInput}
+                    aria-label={`${label} thumbnail border color`}
+                    type="color"
+                    value={isRainbow ? '#facc15' : preference.color}
+                    disabled={!preference.enabled || savingThumbnailBorders || isRainbow}
+                    onChange={(event) => updateThumbnailBorderDraft(status, { color: event.target.value })}
+                  />
+                  <code className={statusBorderStyles.colorValue}>
+                    {isRainbow ? 'Rainbow' : preference.color}
+                  </code>
+                </div>
+              </div>
+            );
+          })}
+          <div className="sidebar-actions" style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="sidebar-link" onClick={resetThumbnailBorders} disabled={savingThumbnailBorders}>
+              Reset border defaults
+            </button>
+            <button
+              type="button"
+              className="sidebar-link"
+              onClick={() => { void saveThumbnailBorders(); }}
+              disabled={savingThumbnailBorders}
+            >
+              {savingThumbnailBorders
+                ? 'Saving thumbnail borders…'
+                : thumbnailBordersSaveError
+                  ? 'Retry save thumbnail borders'
+                  : 'Save thumbnail borders'}
+            </button>
+          </div>
+          {thumbnailBordersSaveError && (
+            <p className="settings-save-error" role="alert">
+              {thumbnailBordersSaveError}
+            </p>
+          )}
           <div className="setting-row">
             <span className="setting-label">Modal edge navigation zone</span>
             <div className="setting-range-control">
@@ -103,18 +427,54 @@ export default function SettingsModal() {
           <h3 style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', margin: '1rem 0' }}>
             Key bindings
           </h3>
-          {(Object.keys(KEY_LABELS) as (keyof KeyBindings)[]).map((action) => (
+          {(Object.keys(KEY_LABELS) as (keyof KeyBindings)[]).map((action) => {
+            const conflictsWith = conflictByAction.get(action) ?? [];
+            const errorId = `key-binding-error-${action}`;
+            return (
             <div key={action} className="setting-row">
               <span className="setting-label">{KEY_LABELS[action]}</span>
               <button
+                type="button"
                 className={`setting-key ${recording === action ? 'recording' : ''}`}
                 onClick={() => setRecording(action)}
                 onKeyDown={recording === action ? (e) => handleKeyCapture(e, action) : undefined}
+                aria-label={`${KEY_LABELS[action]} binding`}
+                aria-invalid={conflictsWith.length > 0 || undefined}
+                aria-describedby={conflictsWith.length > 0 ? errorId : undefined}
               >
-                {recording === action ? 'Press key...' : formatKey(keyBindings[action])}
+                {recording === action ? 'Press key...' : formatKey(draftKeyBindings[action])}
               </button>
+              {conflictsWith.length > 0 && (
+                <p id={errorId} className="sidebar-error" role="alert">
+                  Also assigned to {conflictsWith.map((item) => KEY_LABELS[item]).join(', ')}.
+                </p>
+              )}
             </div>
-          ))}
+            );
+          })}
+          <div className="sidebar-actions" style={{ marginTop: '0.75rem' }}>
+            <button type="button" className="sidebar-link" onClick={resetKeyBindings} disabled={savingKeyBindings}>
+              Reset to defaults
+            </button>
+            <button
+              type="button"
+              className="sidebar-link"
+              onClick={() => { void saveKeyBindings(); }}
+              disabled={hasBindingConflicts || savingKeyBindings}
+              aria-describedby={keyBindingsSaveError ? 'key-bindings-save-error' : undefined}
+            >
+              {savingKeyBindings
+                ? 'Saving key bindings…'
+                : keyBindingsSaveError
+                  ? 'Retry save key bindings'
+                  : 'Save key bindings'}
+            </button>
+          </div>
+          {keyBindingsSaveError && (
+            <p id="key-bindings-save-error" className="settings-save-error" role="alert">
+              {keyBindingsSaveError}
+            </p>
+          )}
         </div>
       </div>
     </div>

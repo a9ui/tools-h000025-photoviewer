@@ -2,11 +2,70 @@ import { describe, expect, it } from 'vitest';
 
 import {
   buildSharedRecentFolders,
+  mergeRecentFolderMemories,
+  normalizeRecentFolderMemory,
   normalizeSharedRecentFolders,
+  rememberRecentFolderSet,
   sharedRecentToLocalMemory,
 } from './recentFolders';
 
 describe('shared recent folders', () => {
+  it('normalizes browser-local single and multi-folder sets case-insensitively', () => {
+    const memory = normalizeRecentFolderMemory({
+      recentDirs: [
+        'C:/Newest\nD:/Extra\nC:/NEWEST',
+        'c:/newest\nd:/extra',
+        'E:/Second',
+        'F:/Third',
+        'G:/Fourth',
+        'H:/Fifth',
+        'I:/Sixth',
+        'J:/Seventh',
+        'K:/Eighth',
+        'L:/Over limit',
+      ],
+      lastDirSet: 'M:/Last\nm:/last',
+    });
+
+    expect(memory).toEqual({
+      recentDirs: [
+        'C:/Newest\nD:/Extra',
+        'E:/Second',
+        'F:/Third',
+        'G:/Fourth',
+        'H:/Fifth',
+        'I:/Sixth',
+        'J:/Seventh',
+        'K:/Eighth',
+        'L:/Over limit',
+      ],
+      lastDirSet: 'M:/Last',
+    });
+  });
+
+  it('remembers the latest spelling first without leaving a case-only duplicate', () => {
+    expect(rememberRecentFolderSet({
+      recentDirs: ['C:/Images\nD:/Extra', 'E:/Old'],
+      lastDirSet: 'E:/Old',
+    }, 'c:/images\nd:/extra')).toEqual({
+      recentDirs: ['c:/images\nd:/extra', 'E:/Old'],
+      lastDirSet: 'c:/images\nd:/extra',
+    });
+  });
+
+  it('merges additive memory in caller recency order with case-insensitive identity', () => {
+    expect(mergeRecentFolderMemories({
+      recentDirs: ['C:/Current', 'D:/Keep'],
+      lastDirSet: 'C:/Current',
+    }, {
+      recentDirs: ['c:/current', 'E:/Legacy'],
+      lastDirSet: 'E:/Legacy',
+    })).toEqual({
+      recentDirs: ['C:/Current', 'D:/Keep', 'E:/Legacy'],
+      lastDirSet: 'C:/Current',
+    });
+  });
+
   it('normalizes shared recent folder sets into positive unique folder sets', () => {
     const shared = normalizeSharedRecentFolders({
       version: 1,
