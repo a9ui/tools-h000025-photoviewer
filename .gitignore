@@ -22,6 +22,11 @@ test-results/
 *.db-wal
 *.db-shm
 *.tsbuildinfo
+*.bundle
+security-artifacts/
+gitleaks*.json
+trufflehog*.jsonl
+public-surface*.json
 tmp/
 artifacts/perf/*.json
 !artifacts/perf/.gitkeep
