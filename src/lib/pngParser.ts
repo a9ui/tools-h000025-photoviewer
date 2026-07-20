@@ -7,65 +7,111 @@ export interface ParsedMetadata {
   settings: Record<string, string>;
 }
 
+const PNG_SIGNATURE = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+const PNG_CHUNK_OVERHEAD_BYTES = 12; // length + type + CRC
+const MAX_PNG_TEXT_KEYWORD_BYTES = 79;
+
+// Keep Browser metadata limits aligned with the WPF reader. The limit applies
+// to the complete tEXt payload, including the keyword and separator byte.
+export const MAX_PNG_METADATA_CHUNK_BYTES = 4 * 1024 * 1024;
+export const MAX_PNG_TEXT_BYTES_BEFORE_IDAT = 16 * 1024 * 1024;
+export const MAX_PNG_CHUNKS_BEFORE_IDAT = 1024;
+
+function readExact(fd: number, buffer: Buffer, position: number): boolean {
+  let total = 0;
+  while (total < buffer.length) {
+    const bytesRead = fs.readSync(
+      fd,
+      buffer,
+      total,
+      buffer.length - total,
+      position + total,
+    );
+    if (bytesRead <= 0) return false;
+    total += bytesRead;
+  }
+  return true;
+}
+
 /**
- * Read only the PNG header chunks (up to IDAT) and extract the
- * tEXt chunk whose keyword is "parameters".
+ * Read only bounded PNG header chunks (up to IDAT) and extract the first tEXt
+ * chunk whose keyword is "parameters".
  *
- * This avoids reading the entire multi-MB image into memory.
+ * Declared PNG chunk sizes are untrusted. Every chunk must fit inside the
+ * actual file before its payload is touched, unrelated tEXt chunks are inspected
+ * through a bounded keyword prefix, and the parameters payload has a hard cap.
  */
 export function extractSDMetadata(filePath: string): ParsedMetadata | null {
   let fd: number | null = null;
   try {
     fd = fs.openSync(filePath, 'r');
-
-    // Verify PNG signature (8 bytes)
-    const sig = Buffer.alloc(8);
-    fs.readSync(fd, sig, 0, 8, 0);
-    if (sig.toString('hex') !== '89504e470d0a1a0a') {
-      return null; // not a valid PNG
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || !Number.isSafeInteger(stat.size) || stat.size < PNG_SIGNATURE.length) {
+      return null;
     }
 
-    let offset = 8;
-    const headerBuf = Buffer.alloc(8); // 4 bytes length + 4 bytes type
+    const signature = Buffer.alloc(PNG_SIGNATURE.length);
+    if (!readExact(fd, signature, 0) || !signature.equals(PNG_SIGNATURE)) {
+      return null;
+    }
 
-    while (true) {
-      const bytesRead = fs.readSync(fd, headerBuf, 0, 8, offset);
-      if (bytesRead < 8) break;
+    const header = Buffer.alloc(8); // 4-byte length + 4-byte type
+    let offset = PNG_SIGNATURE.length;
+    let chunksBeforeIdat = 0;
+    let textBytesBeforeIdat = 0;
 
-      const chunkLength = headerBuf.readUInt32BE(0);
-      const chunkType = headerBuf.toString('ascii', 4, 8);
+    while (stat.size - offset >= PNG_CHUNK_OVERHEAD_BYTES) {
+      chunksBeforeIdat += 1;
+      if (chunksBeforeIdat > MAX_PNG_CHUNKS_BEFORE_IDAT) return null;
+      if (!readExact(fd, header, offset)) return null;
 
-      // Stop once we hit image data – metadata always comes before IDAT
-      if (chunkType === 'IDAT') break;
+      const chunkLength = header.readUInt32BE(0);
+      const chunkType = header.toString('ascii', 4, 8);
+      const remainingAfterHeader = stat.size - (offset + header.length);
+
+      // Four trailing CRC bytes are mandatory. Subtraction avoids allowing a
+      // malicious declared length to wrap or advance beyond the real file.
+      if (remainingAfterHeader < 4 || chunkLength > remainingAfterHeader - 4) {
+        return null;
+      }
+
+      if (chunkType === 'IDAT' || chunkType === 'IEND') return null;
 
       if (chunkType === 'tEXt') {
-        // Read the entire tEXt chunk data
-        const dataBuf = Buffer.alloc(chunkLength);
-        fs.readSync(fd, dataBuf, 0, chunkLength, offset + 8);
+        textBytesBeforeIdat += chunkLength;
+        if (textBytesBeforeIdat > MAX_PNG_TEXT_BYTES_BEFORE_IDAT) return null;
 
-        // tEXt chunk: keyword\0text
-        const nullIdx = dataBuf.indexOf(0);
-        if (nullIdx >= 0) {
-          const keyword = dataBuf.toString('ascii', 0, nullIdx);
+        // PNG tEXt keywords are 1-79 bytes followed by NUL. Read only enough to
+        // identify the keyword so unrelated chunks never require full payload
+        // allocation.
+        const prefixLength = Math.min(chunkLength, MAX_PNG_TEXT_KEYWORD_BYTES + 1);
+        const prefix = Buffer.alloc(prefixLength);
+        if (!readExact(fd, prefix, offset + header.length)) return null;
+
+        const nullIndex = prefix.indexOf(0);
+        if (nullIndex > 0 && nullIndex <= MAX_PNG_TEXT_KEYWORD_BYTES) {
+          const keyword = prefix.toString('latin1', 0, nullIndex);
           if (keyword === 'parameters') {
-            const rawText = dataBuf.toString('utf-8', nullIdx + 1);
-            fs.closeSync(fd);
-            return parseSDText(rawText);
+            if (chunkLength > MAX_PNG_METADATA_CHUNK_BYTES) return null;
+
+            const data = Buffer.alloc(chunkLength);
+            if (!readExact(fd, data, offset + header.length)) return null;
+
+            return parseSDText(data.toString('utf8', nullIndex + 1));
           }
         }
       }
 
-      // Move to next chunk: 8 (header) + chunkLength (data) + 4 (CRC)
-      offset += 8 + chunkLength + 4;
+      offset += PNG_CHUNK_OVERHEAD_BYTES + chunkLength;
     }
 
-    fs.closeSync(fd);
     return null;
   } catch {
-    if (fd !== null) {
-      try { fs.closeSync(fd); } catch { /* ignore */ }
-    }
     return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* ignore close failures */ }
+    }
   }
 }
 
