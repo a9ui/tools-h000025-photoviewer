@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ImageProvider, useImageStore } from '../store/ImageContext';
+import { AlbumProvider, useAlbumStore } from '../store/AlbumContext';
 import SearchBar from '../components/SearchBar';
 import ImageGrid from '../components/ImageGrid';
 import ImageModal from '../components/ImageModal';
@@ -10,6 +11,8 @@ import Sidebar from '../components/Sidebar';
 import RightPreviewPanel from '../components/RightPreviewPanel';
 import BottomPreviewTabs from '../components/BottomPreviewTabs';
 import EnhanceQueuePanel from '../components/EnhanceQueuePanel';
+import AlbumLibrary from '../components/AlbumLibrary';
+import AlbumPicker from '../components/AlbumPicker';
 import { ScanProgressStatus } from '../components/ScanProgressStatus';
 import { ScanErrorNotice } from '../components/ScanErrorNotice';
 import { getLoadedResultCounts, getResultCountLabel, shouldIgnoreViewerShortcut } from '../lib/viewerUi';
@@ -28,7 +31,7 @@ import {
   recycleImagesSequentially,
   snapshotBulkRecycleTargets,
 } from '../lib/bulkRecycle';
-import { FolderOpen, RefreshCw, Settings, Sparkles, X } from 'lucide-react';
+import { FolderOpen, FolderPlus, Library, RefreshCw, Settings, Sparkles, X } from 'lucide-react';
 
 function ViewerApp() {
   const {
@@ -40,6 +43,14 @@ function ViewerApp() {
     keyBindings, confirmBeforeDelete, setConfirmBeforeDelete, restoreLastClosedPreview, setShowSettings,
     favorites, showFavOnly, showUnfavOnly, favoriteFilterLevels, showEnhancedOnly, enhancedSourceIds,
   } = useImageStore();
+  const {
+    activeSource,
+    setLibraryOpen,
+    openPicker,
+    removeMembers,
+    closeAlbum,
+    recycleSource,
+  } = useAlbumStore();
 
   const [browseError, setBrowseError] = useState('');
   const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
@@ -311,7 +322,9 @@ function ViewerApp() {
     try {
       const result = await recycleImagesSequentially(
         targets,
-        (id) => deleteImage(id, { favoriteConfirmed }),
+        (id) => activeSource
+          ? recycleSource(id, { favoriteConfirmed })
+          : deleteImage(id, { favoriteConfirmed }),
         (progress) => {
         setBulkDeleteMessage(formatBulkRecycleProgress(progress));
         },
@@ -324,7 +337,7 @@ function ViewerApp() {
       setBulkDeleteFavoriteCount(0);
       window.requestAnimationFrame(() => bulkDeleteReturnFocusRef.current?.focus());
     }
-  }, [deleteImage]);
+  }, [activeSource, deleteImage, recycleSource]);
 
   const requestBulkDelete = useCallback(() => {
     if (bulkDeleteActiveRef.current) return;
@@ -358,17 +371,24 @@ function ViewerApp() {
       if (event.key.toLowerCase() === keyBindings.decreaseFavorite.toLowerCase()) {
         event.preventDefault();
         lowerSelectedFavorite();
+        return;
+      }
+      if (event.key.toLowerCase() === keyBindings.addToAlbum.toLowerCase()) {
+        event.preventDefault();
+        openPicker();
       }
     };
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [
+    keyBindings.addToAlbum,
     keyBindings.decreaseFavorite,
     keyBindings.deleteImage,
     keyBindings.toggleFavorite,
     lowerSelectedFavorite,
     markSelectedAsFavorite,
+    openPicker,
     phase,
     requestBulkDelete,
     selectedCount,
@@ -399,6 +419,15 @@ function ViewerApp() {
         >
           <Settings size={17} aria-hidden="true" />
           Settings
+        </button>
+        <button
+          className="landing-settings-btn landing-albums-btn"
+          type="button"
+          onClick={() => setLibraryOpen(true)}
+          aria-label="Open Album library"
+        >
+          <Library size={17} aria-hidden="true" />
+          Albums
         </button>
         <h1 className="landing-title">PhotoViewer</h1>
         <p className="landing-subtitle">Index and search Stable Diffusion PNG metadata locally</p>
@@ -531,6 +560,8 @@ function ViewerApp() {
         )}
         </div>
         <SettingsModal />
+        <AlbumLibrary />
+        <AlbumPicker />
       </>
     );
   }
@@ -562,7 +593,15 @@ function ViewerApp() {
             <RefreshCw size={18} aria-hidden="true" />
           </button>
           <SearchBar />
-          <span className="header-stats" aria-label={`Results: ${resultCountLabel}`}>{resultCountLabel}</span>
+          <span className="header-stats" aria-label={`Results: ${activeSource ? `${activeSource.images.length} available of ${activeSource.members.length} Album members` : resultCountLabel}`}>
+            {activeSource ? `${activeSource.images.length}/${activeSource.members.length} in ${activeSource.album.name}` : resultCountLabel}
+          </span>
+          <button className="icon-btn sidebar-toggle-btn" onClick={() => setLibraryOpen(true)} title="Open Album library" aria-label="Open Album library">
+            <Library size={18} aria-hidden="true" />
+          </button>
+          <button className="icon-btn sidebar-toggle-btn" onClick={() => openPicker()} title="Add selected images to Album" aria-label="Add selected images to Album" disabled={selectedCount === 0}>
+            <FolderPlus size={18} aria-hidden="true" />
+          </button>
           <button
             className="icon-btn sidebar-toggle-btn"
             onClick={() => setView({ rightPanelOpen: !view.rightPanelOpen })}
@@ -597,6 +636,24 @@ function ViewerApp() {
         <div className="viewer-body">
           <Sidebar />
           <main className="viewer-main">
+            {activeSource && (
+              <div className="album-source-banner" role="status">
+                <div>
+                  <strong>{activeSource.album.name}</strong>
+                  <span>
+                    {activeSource.members.filter((member) => member.availability === 'current').length} current · {' '}
+                    {activeSource.members.filter((member) => member.availability === 'outside').length} outside catalog · {' '}
+                    {activeSource.members.filter((member) => member.availability === 'missing').length} missing
+                  </span>
+                </div>
+                <div className="album-source-actions">
+                  <button className="btn-secondary" disabled={selectedCount === 0} onClick={() => void removeMembers(activeSource.album.id, { paths: selectedIds })}>
+                    Remove selected from Album
+                  </button>
+                  <button className="btn-secondary" onClick={closeAlbum}>Return to catalog</button>
+                </div>
+              </div>
+            )}
             <ImageGrid />
           </main>
           <RightPreviewPanel />
@@ -605,6 +662,8 @@ function ViewerApp() {
         <ImageModal />
         <EnhanceQueuePanel />
         <SettingsModal />
+        <AlbumLibrary />
+        <AlbumPicker />
       </div>
 
       {showBulkDeleteConfirm && (
@@ -661,7 +720,9 @@ function readStoredFolderMemory(): { recentDirs: string[]; lastDirSet: string } 
 export default function App() {
   return (
     <ImageProvider>
-      <ViewerApp />
+      <AlbumProvider>
+        <ViewerApp />
+      </AlbumProvider>
     </ImageProvider>
   );
 }

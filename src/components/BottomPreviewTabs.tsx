@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { RotateCcw, Pin, PinOff, X } from 'lucide-react';
 import { useImageStore } from '../store/ImageContext';
+import { useOptionalAlbumStore } from '../store/AlbumContext';
 import CachedImage from './CachedImage';
 
 interface HoverPreviewState {
@@ -18,7 +19,7 @@ export default function BottomPreviewTabs() {
     previewTabIds,
     activePreviewId,
     previewById,
-    searchResults,
+    searchResults: catalogSearchResults,
     pinnedPreviewIds,
     setActivePreviewId,
     setSelectedIndex,
@@ -28,6 +29,8 @@ export default function BottomPreviewTabs() {
     closedPreviewTabCount,
     restoreLastClosedPreview,
   } = useImageStore();
+  const { activeSource } = useOptionalAlbumStore();
+  const searchResults = activeSource ? activeSource.images : catalogSearchResults;
 
   const [hoverPreview, setHoverPreview] = useState<HoverPreviewState | null>(null);
   const [draggedTabId, setDraggedTabId] = useState<string | null>(null);

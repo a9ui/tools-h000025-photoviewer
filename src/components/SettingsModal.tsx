@@ -26,6 +26,7 @@ const KEY_LABELS: Record<keyof KeyBindings, string> = {
   flipHorizontal: 'Flip horizontal',
   enhanceImage: 'Enhance image',
   toggleFilmstrip: 'Toggle modal filmstrip',
+  addToAlbum: 'Add selection to Album',
   zoomIn: 'Zoom in',
   zoomOut: 'Zoom out',
   zoomReset: 'Reset zoom',

@@ -13,14 +13,18 @@
 
 `local-native/ui-mockup/**`は初期shellの歴史資料であり非正規。そこに残るQuick Search、Today/7d/30d/year、threshold favorite chip、旧sidebar構成を現行仕様として復活させない。視覚QAはreal WPFの`--shot`出力と同一stateの現行Browserを使う。
 
-Album v1はshared storage checkpointまで実装済みである。WPFはBrowserと同じ
+Album v1はshared storageとbasic product surfaceまで実装済みである。WPFはBrowserと同じ
 `.cache/albums.json` v1、opaque Album/member id、document/Album revision、
 create/update/delete/add/remove/recent/source-cleanup operation、target-scoped
 create-new lock、latest-on-disk mutation、flush済みtempからのatomic publish、
 malformed/future拒否、unknown-field保持を使う。`verify-wpf-album-store.ps1`は
-Browser→WPF→Browserの同一file interleave、stale revision conflict、residue 0を
-検証する。disabled header buttonはまだproduct surfaceではなく、library/picker、
-Album source navigation、availability、Modal/Filmstrip、shortcut/focusは未実装である。
+Browser→WPF→Browserの同一file interleave、barrier付き同時writer、stale revision
+conflict、residue 0を検証する。header Album buttonはlibraryを開き、create/rename/
+delete/pin/cover/add/remove、current catalog memberだけのAlbum source、Album member順の
+filter/Modal navigation、catalog復帰を提供する。outside/missingは件数とunavailableを
+明示し、任意absolute pathを黙って開かない。source Recycle成功後だけ全Album membershipを
+cleanupし、失敗時はtombstoneを保持する。`addToAlbum` shortcutは既定Bだが、既存Filmstrip
+Bを検出したmigrationではGへ割り当てる。
 
 ## 1. 製品目的と非目標
 

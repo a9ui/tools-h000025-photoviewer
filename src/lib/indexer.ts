@@ -865,6 +865,23 @@ export function setIndex(images: ImageFile[], canonicalSessionKey?: string) {
   return token;
 }
 
+/**
+ * Registers a guarded secondary source (for example an Album) without replacing
+ * either the fallback index or the active catalog session. Every image route
+ * still validates the returned token against this exact path set.
+ */
+export function createIndexSession(images: ImageFile[], canonicalSessionKey: string) {
+  const normalizedImages = normalizeIndexImages(images);
+  const token = createIndexSessionToken(canonicalSessionKey);
+  pruneIndexSessions();
+  indexSessions.set(token, {
+    state: createIndexState(normalizedImages),
+    lastUsedAt: Date.now(),
+  });
+  pruneIndexSessions();
+  return token;
+}
+
 function ensureIndexLoaded() {
   if (fallbackIndexState.images.length > 0) return;
 

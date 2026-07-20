@@ -12,6 +12,9 @@
 - Member: opaque `id`, canonical absolute `imagePath`, `addedAtUtc`; unknown
   fields preserved. Metadata remains owned by the active catalog/index and is
   not duplicated into Album storage.
+- v1 shared membership accepts the Browser/WPF common image formats PNG, JPEG,
+  WebP, AVIF, and GIF. WPF-only BMP/TIFF catalog support is not silently written
+  into a store that Browser cannot open.
 - Membership identity is canonical path identity (Windows case-insensitive).
   Adding an existing identity is idempotent. A member id stays stable across
   catalog reloads and temporary disappearance.
@@ -58,10 +61,11 @@ Runtime status is derived, not persisted as destructive cleanup:
 
 Album source/session ordering is the Album member order. Browser may serve an
 outside member only through a guarded Album source session/token that validates
-membership; WPF may load the same existing canonical member locally. If a safe
-session cannot be established, Browser exposes `outside` as unavailable rather
-than falling back to an unrestricted raw-path URL. Missing members remain visible
-but unavailable in both clients.
+membership. WPF v1 deliberately exposes outside members as unavailable until
+their folder is part of the current catalog; it does not silently open an
+arbitrary absolute path. If a safe session cannot be established, Browser also
+exposes `outside` as unavailable rather than falling back to an unrestricted
+raw-path URL. Missing members remain visible but unavailable in both clients.
 
 ## Browser/WPF interaction semantics
 

@@ -39,6 +39,7 @@ internal enum ViewerKeyAction
     ModalZoomOut,
     ModalZoomReset,
     ToggleModalFilmstrip,
+    AddToAlbum,
 }
 
 internal sealed record KeyBindingDefinition(
@@ -318,6 +319,7 @@ internal static class KeyBindingSettings
         Def(ViewerKeyAction.ModalZoomOut, "modalZoomOut", "Modal zoom out", "Decrease modal image zoom.", ShortcutContext.Modal, Key.OemMinus),
         Def(ViewerKeyAction.ModalZoomReset, "modalZoomReset", "Reset modal zoom", "Reset modal zoom, pan, and flip state.", ShortcutContext.Modal, Key.D0),
         Def(ViewerKeyAction.ToggleModalFilmstrip, "toggleModalFilmstrip", "Toggle modal filmstrip", "Pin or unpin the modal thumbnail filmstrip. Bottom-edge hover remains transient.", ShortcutContext.Modal, Key.T),
+        Def(ViewerKeyAction.AddToAlbum, "addToAlbum", "Add selection to Album", "Open the shared Album picker for the current selection. Existing members remain unchanged.", ShortcutContext.Viewer, Key.B),
     ];
 
     private static readonly Dictionary<ViewerKeyAction, KeyBindingDefinition> ByAction =
@@ -333,6 +335,7 @@ internal static class KeyBindingSettings
         out Dictionary<string, JsonElement>? unknownEntries)
     {
         var normalized = CreateDefaults();
+        bool addToAlbumPersisted = false;
         Dictionary<string, JsonElement>? unknown = null;
         if (persisted is not null)
         {
@@ -350,7 +353,19 @@ internal static class KeyBindingSettings
                     && IsAllowedForAction(definition.Action, chord, out _))
                 {
                     normalized[definition.Action] = chord;
+                    if (definition.Action == ViewerKeyAction.AddToAlbum)
+                        addToAlbumPersisted = true;
                 }
+            }
+        }
+
+        if (!addToAlbumPersisted)
+        {
+            foreach (Key candidate in new[] { Key.B, Key.G, Key.V, Key.Y })
+            {
+                normalized[ViewerKeyAction.AddToAlbum] = new KeyChord(candidate, ModifierKeys.None);
+                if (FindConflicts(normalized).Count == 0)
+                    break;
             }
         }
 

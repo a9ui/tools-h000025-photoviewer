@@ -19,3 +19,11 @@
    adopted content. On the final adopted head rerun all tree/provenance proofs
    and authoritative runtime matrix. Push/merge/close remain explicit-user
    actions outside this plan.
+
+## Status at checkpoint 2
+
+Steps 1-7 are green on the current local-main worktree. Browser full unit,
+typecheck, lint, build and isolated Album Playwright passed. WPF focused Album,
+56-check aggregate with reload soak, and exact 100,000 catalog passed. Step 8
+is the active durable-doc/GitHub/SQLite checkpoint; step 9 remains intentionally
+frozen because local main is now ahead of PR #322 head.

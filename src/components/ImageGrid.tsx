@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react';
+import React, { useCallback, useMemo, useRef, useEffect, useLayoutEffect, useState } from 'react';
 import type { ImageFile } from '../lib/types';
 import type { ThumbnailStatusBorderSettings } from '../lib/types';
 import { useImageStore } from '../store/ImageContext';
+import { useOptionalAlbumStore } from '../store/AlbumContext';
 import { isUnseenMarkerVisible, matchesFavoriteLevel } from '../lib/browserUiPreferences';
 import {
   getArrowSelectionIndex,
@@ -213,7 +214,16 @@ function getZoomAnchorIndex({
 
 export default function ImageGrid() {
   const {
-    searchQuery, searchResults, searchTotal, isSearching, searchError, searchErrorKind, ensureSearchRange, retrySearch, rescanExpiredSearchSession, dismissSearchError,
+    searchQuery: catalogSearchQuery,
+    searchResults: catalogSearchResults,
+    searchTotal: catalogSearchTotal,
+    isSearching: catalogIsSearching,
+    searchError: catalogSearchError,
+    searchErrorKind: catalogSearchErrorKind,
+    ensureSearchRange: ensureCatalogSearchRange,
+    retrySearch: retryCatalogSearch,
+    rescanExpiredSearchSession: rescanCatalogSession,
+    dismissSearchError: dismissCatalogSearchError,
     selectImage, openPreviewTab, cycleFavoriteLevel, decreaseFavoriteLevel, favorites, view, setView, selectedIds, showFavOnly, showUnfavOnly, favoriteFilterLevels,
     showEnhancedOnly, enhancedSourceIds,
     closeAllPreviews, clearSelection, setSearchScrollPosition, getSearchScrollPosition,
@@ -221,8 +231,28 @@ export default function ImageGrid() {
     modalImageIds, setModalImageIds, selectedIndex, setSelectedIndex,
     requestRevealImage, showSettings,
     thumbnailStatusBorders,
-    dirPath, indexToken,
+    dirPath, indexToken: catalogIndexToken,
   } = useImageStore();
+  const { activeSource, refreshActiveSource } = useOptionalAlbumStore();
+  const searchQuery = activeSource ? '' : catalogSearchQuery;
+  const searchResults = activeSource ? activeSource.images : catalogSearchResults;
+  const searchTotal = activeSource ? activeSource.images.length : catalogSearchTotal;
+  const isSearching = activeSource ? false : catalogIsSearching;
+  const searchError = activeSource ? null : catalogSearchError;
+  const searchErrorKind = activeSource ? null : catalogSearchErrorKind;
+  const indexToken = activeSource?.sourceToken ?? catalogIndexToken;
+  const ensureSearchRange = useCallback((start: number, end: number) => {
+    if (!activeSource) ensureCatalogSearchRange(start, end);
+  }, [activeSource, ensureCatalogSearchRange]);
+  const retrySearch = useCallback(() => {
+    if (activeSource) void refreshActiveSource();
+    else retryCatalogSearch();
+  }, [activeSource, refreshActiveSource, retryCatalogSearch]);
+  const rescanExpiredSearchSession = useCallback(() => {
+    if (activeSource) void refreshActiveSource();
+    else rescanCatalogSession();
+  }, [activeSource, refreshActiveSource, rescanCatalogSession]);
+  const dismissSearchError = activeSource ? () => {} : dismissCatalogSearchError;
 
   const containerRef = useRef<HTMLDivElement>(null);
   const thumbSizeRef = useRef(view.thumbSize);

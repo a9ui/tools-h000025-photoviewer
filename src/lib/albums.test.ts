@@ -139,4 +139,14 @@ describe('shared Album store', () => {
     expect(result.document!.albums.every((album) => album.members.length === 0)).toBe(true);
     expect(result.document!.albums.map((album) => album.revision)).toEqual(beforeAlbumRevisions.map((revision) => revision + 1));
   });
+
+  it('rejects paths that are not supported by both Browser and WPF', async () => {
+    await mutateAlbums(target, { action: 'create', name: 'Shared', albumId: 'shared' });
+    const result = await mutateAlbums(target, {
+      action: 'add',
+      albumId: 'shared',
+      paths: [path.join(root, 'unsupported.bmp')],
+    });
+    expect(result).toMatchObject({ ok: false, changed: false, error: 'paths must contain bounded absolute supported image paths.' });
+  });
 });

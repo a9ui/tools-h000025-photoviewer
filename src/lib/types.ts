@@ -64,6 +64,7 @@ export interface KeyBindings {
   flipHorizontal: string;
   enhanceImage: string;
   toggleFilmstrip: string;
+  addToAlbum: string;
   zoomIn: string;
   zoomOut: string;
   zoomReset: string;
@@ -79,6 +80,7 @@ export const DEFAULT_KEY_BINDINGS: KeyBindings = {
   flipHorizontal: 'h',
   enhanceImage: 'a',
   toggleFilmstrip: 't',
+  addToAlbum: 'b',
   zoomIn: '=',
   zoomOut: '-',
   zoomReset: '0',

@@ -13,6 +13,15 @@ const wpfExecutable = path.resolve('local-native/PhotoViewer.Wpf/bin/Release/net
 const canRunWpf = process.platform === 'win32' && await fs.stat(wpfExecutable).then(() => true).catch(() => false);
 const crossRuntimeDescribe = canRunWpf ? describe : describe.skip;
 
+async function waitForFile(target: string, timeoutMs = 10_000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (await fs.stat(target).then(() => true).catch(() => false)) return;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${target}`);
+}
+
 let root = '';
 
 beforeEach(async () => {
@@ -92,6 +101,43 @@ crossRuntimeDescribe('Browser/WPF Album store compatibility', () => {
     expect(stored.futureRoot).toEqual({ keep: true });
     expect(stored.albums.find((album: { id: string }) => album.id === 'browser-before').futureAlbum).toEqual(['keep']);
     expect(stored.albums.find((album: { id: string }) => album.id === 'browser-before').members[0].futureMember).toBe(42);
+    expect((await fs.readdir(root)).filter((name) => name.endsWith('.lock') || name.endsWith('.tmp'))).toEqual([]);
+  });
+
+  it('serializes simultaneous Browser and WPF writers without lost updates', async () => {
+    const target = path.join(root, 'albums.json');
+    const resultPath = path.join(root, 'wpf-concurrent-result.json');
+    const readyPath = path.join(root, 'wpf-ready');
+    const goPath = path.join(root, 'start');
+    const countPerRuntime = 16;
+
+    const wpfRun = execFileAsync(wpfExecutable, [
+      '--album-concurrent-writer-smoke', resultPath,
+      '--album-path', target,
+      '--count', String(countPerRuntime),
+      '--prefix', 'wpf',
+      '--ready-path', readyPath,
+      '--go-path', goPath,
+    ], { windowsHide: true, timeout: 30_000 });
+    await waitForFile(readyPath);
+    const browserRun = Promise.all(Array.from({ length: countPerRuntime }, (_, index) => mutateAlbums(target, {
+      action: 'create' as const,
+      name: `Browser concurrent ${index}`,
+      albumId: `browser-${String(index).padStart(3, '0')}`,
+    })));
+    await fs.writeFile(goPath, 'go', 'utf8');
+
+    const [browserResults] = await Promise.all([browserRun, wpfRun]);
+    expect(browserResults.every((result) => result.ok)).toBe(true);
+    const wpfResult = JSON.parse(await fs.readFile(resultPath, 'utf8'));
+    expect(wpfResult).toMatchObject({ ok: true, count: countPerRuntime });
+
+    const final = await readAlbums(target);
+    expect(final).toMatchObject({ ok: true, document: { revision: countPerRuntime * 2 } });
+    if (!final.ok) throw new Error(final.error);
+    expect(final.document.albums).toHaveLength(countPerRuntime * 2);
+    expect(final.document.albums.filter((album) => album.id.startsWith('browser-'))).toHaveLength(countPerRuntime);
+    expect(final.document.albums.filter((album) => album.id.startsWith('wpf-'))).toHaveLength(countPerRuntime);
     expect((await fs.readdir(root)).filter((name) => name.endsWith('.lock') || name.endsWith('.tmp'))).toEqual([]);
   });
 });

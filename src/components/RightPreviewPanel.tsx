@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
+import { useOptionalAlbumStore } from '../store/AlbumContext';
 import CachedImage from './CachedImage';
 import { EnhanceSettingsControls, createEnhancementJob, getEnhancementSettings } from './EnhanceQueuePanel';
 import { useDialogFocus } from '../lib/useDialogFocus';
@@ -60,14 +61,18 @@ export default function RightPreviewPanel() {
     favorites,
     openExternal,
     selectedIds,
-    searchResults,
-    deleteImage,
+    searchResults: catalogSearchResults,
+    deleteImage: deleteCatalogImage,
     view,
     setView,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
-    indexToken,
+    indexToken: catalogIndexToken,
   } = useImageStore();
+  const { activeSource, recycleSource } = useOptionalAlbumStore();
+  const searchResults = activeSource ? activeSource.images : catalogSearchResults;
+  const deleteImage = activeSource ? recycleSource : deleteCatalogImage;
+  const indexToken = activeSource?.sourceToken ?? catalogIndexToken;
 
   const [confirmBulkDelete, setConfirmBulkDelete] = useState(false);
   const [bulkDeleteFavoriteCount, setBulkDeleteFavoriteCount] = useState(0);

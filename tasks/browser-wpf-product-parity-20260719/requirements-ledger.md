@@ -103,10 +103,10 @@
 
 | Requirement | Browser | WPF | Current truth / completion gate |
 | --- | --- | --- | --- |
-| folderとは別に任意画像をまとめるAlbum/tag-like collection | shared model/store/API core implemented、UI pending | shared model/store core implemented、UI pending | `albums.json` v1 contract採用。product surface/source sessionは未完 |
-| create/rename/delete/pin/cover/recent | operation API/store implemented | store operations implemented、disabled placeholder | Browser library/pickerとWPF basic UIへの接続が必要 |
-| selected images add/remove、Album内filter/view/Modal | add/remove/bulk store operationのみ | add/remove/bulk store operationのみ | current/outside/missing availability、GallerySource/ModalSource、Filmstrip、focusを継続実装 |
-| Browser/WPF同時更新でlost updateしない | implemented core | implemented core | shared create-new lock、latest-disk mutation、revision conflict、atomic publish、unknown保持。cross-runtime revision 2→6→7 green |
+| folderとは別に任意画像をまとめるAlbum/tag-like collection | implemented v1 library/picker/source | implemented v1 basic library/source | Browserはguarded outside session、WPFはoutside明示unavailable。missing tombstoneを保持 |
+| create/rename/delete/pin/cover/recent | operation API + library implemented | identical store operations + library implemented | opaque id、recent順、cover member guard、conflict時reloadを採用 |
+| selected images add/remove、Album内filter/view/Modal | bulk picker、Album順Gallery/Modal/Filmstrip、別remove/Recycle | selection add/remove、current-only Album順filter/Modal、catalog復帰 | Recycle成功後だけmembership cleanup。Search結果配列をAlbumで上書きしない |
+| Browser/WPF同時更新でlost updateしない | implemented | implemented | shared create-new lock、latest-disk mutation、revision conflict、atomic publish、unknown保持。barrier付き16+16同時writerでrevision 32、lost 0、residue 0 |
 
 ## 10. 完了判定
 

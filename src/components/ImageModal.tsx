@@ -2,6 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
+import { useOptionalAlbumStore } from '../store/AlbumContext';
 import { clampModalEdgeRatio, getModalClickAction, getSwipeNavigation, type ModalClickAction } from '../lib/modalNavigation';
 import { loadCachedImageUrl } from '../lib/clientImageCache';
 import { useDialogFocus } from '../lib/useDialogFocus';
@@ -174,30 +175,66 @@ function getFullImageKey(id: string, fullUrl: string) {
 
 export default function ImageModal() {
   const {
-    searchResults,
-    searchTotal,
-    searchQuery,
+    searchResults: catalogSearchResults,
+    searchTotal: catalogSearchTotal,
+    searchQuery: catalogSearchQuery,
     setSearchQuery,
     selectedIndex,
     setSelectedIndex,
     modalImageIds,
     setModalImageIds,
-    ensureSearchRange,
-    resolveModalNavigationTarget,
+    ensureSearchRange: ensureCatalogSearchRange,
+    resolveModalNavigationTarget: resolveCatalogNavigationTarget,
     cycleFavoriteLevel,
     decreaseFavoriteLevel,
     favorites,
     markImageSeen,
     requestRevealImage,
     keyBindings,
-    deleteImage,
+    deleteImage: deleteCatalogImage,
     confirmBeforeDelete,
     setConfirmBeforeDelete,
     view,
     setView,
-    indexToken,
-    reportImageSessionExpired,
+    indexToken: catalogIndexToken,
+    reportImageSessionExpired: reportCatalogSessionExpired,
   } = useImageStore();
+  const { activeSource, recycleSource, refreshActiveSource, openPicker } = useOptionalAlbumStore();
+  const searchResults = activeSource ? activeSource.images : catalogSearchResults;
+  const searchTotal = activeSource ? activeSource.images.length : catalogSearchTotal;
+  const searchQuery = activeSource ? '' : catalogSearchQuery;
+  const indexToken = activeSource?.sourceToken ?? catalogIndexToken;
+  const ensureSearchRange = useCallback((start: number, end: number) => {
+    if (!activeSource) ensureCatalogSearchRange(start, end);
+  }, [activeSource, ensureCatalogSearchRange]);
+  const reportImageSessionExpired = useCallback(() => {
+    if (activeSource) void refreshActiveSource();
+    else reportCatalogSessionExpired();
+  }, [activeSource, refreshActiveSource, reportCatalogSessionExpired]);
+  const resolveModalNavigationTarget = useCallback(async (
+    currentIndex: number,
+    intent: 'prev' | 'next' | 'delete',
+  ) => {
+    if (!activeSource) return resolveCatalogNavigationTarget(currentIndex, intent);
+    if (searchResults.length === 0) return { status: 'empty' as const, filteredOrderedIds: [] };
+    const currentId = searchResults[currentIndex]?.id;
+    const orderedIds = modalImageIds.length > 0
+      ? modalImageIds.filter((id) => searchResults.some((image) => image?.id === id))
+      : searchResults.flatMap((image) => image ? [image.id] : []);
+    if (orderedIds.length === 0) return { status: 'empty' as const, filteredOrderedIds: [] };
+    const position = Math.max(0, orderedIds.indexOf(currentId ?? ''));
+    const nextPosition = intent === 'prev'
+      ? (position - 1 + orderedIds.length) % orderedIds.length
+      : intent === 'delete'
+        ? Math.min(position, orderedIds.length - 1)
+        : (position + 1) % orderedIds.length;
+    const id = orderedIds[nextPosition];
+    const index = searchResults.findIndex((image) => image?.id === id);
+    return index >= 0
+      ? { status: 'found' as const, index, id, filteredOrderedIds: orderedIds }
+      : { status: 'unavailable' as const, filteredOrderedIds: orderedIds };
+  }, [activeSource, modalImageIds, resolveCatalogNavigationTarget, searchResults]);
+  const deleteImage = activeSource ? recycleSource : deleteCatalogImage;
 
   const [showConfirmDelete, setShowConfirmDelete] = useState(false);
   const [sidebarTab, setSidebarTab] = useState<MetadataTab>('prompt');
@@ -641,6 +678,10 @@ export default function ImageModal() {
       if (!ok) return;
       deletionSucceeded = true;
 
+      // Album recycling selects the next surviving member from the refreshed
+      // Album source. Catalog deletion keeps its sparse-search resolver.
+      if (activeSource) return;
+
       const resolution = await resolveModalNavigationTarget(deletedIndex, 'delete');
       if (resolution.status === 'found') {
         applyNavigationResolution(resolution);
@@ -669,7 +710,7 @@ export default function ImageModal() {
       navigationPendingRef.current = false;
       setIsDeleting(false);
     }
-  }, [applyNavigationResolution, deleteImage, img, isDeleting, resolveModalNavigationTarget, selectedIndex, setModalImageIds, setSelectedIndex]);
+  }, [activeSource, applyNavigationResolution, deleteImage, img, isDeleting, resolveModalNavigationTarget, selectedIndex, setModalImageIds, setSelectedIndex]);
 
   const handleEnhance = useCallback(async () => {
     if (!img || isEnhancing || isActiveEnhancementJob(activeEnhancementJob)) return;
@@ -879,6 +920,10 @@ export default function ImageModal() {
       e.preventDefault();
       toggleFilmstrip();
     }
+    else if (isShortcutKey(key, keyBindings.addToAlbum) && img) {
+      e.preventDefault();
+      openPicker([img.id]);
+    }
     else if (key.toLowerCase() === 'e' && hasEnhancedOutput) {
       e.preventDefault();
       toggleEnhancedView();
@@ -895,7 +940,7 @@ export default function ImageModal() {
       e.preventDefault();
       void resolveDisplayedAsset(true);
     }
-  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
+  }, [close, decreaseFavorite, enhancementInProgress, goNext, goPrev, handleDelete, handleEnhance, hasEnhancedOutput, img, increaseFavorite, isDeleting, isEnhancing, keyBindings, openPicker, resetZoom, resolveDisplayedAsset, revealChromeForActivity, shouldConfirmImageDelete, showConfirmDelete, toggleEnhancedView, toggleFilmstrip]);
 
   useEffect(() => {
     if (selectedIndex !== null) {

@@ -445,6 +445,7 @@ internal static class AlbumStore
                     || !TryString(member["imagePath"], out string imagePath)
                     || imagePath.Length is < 1 or > MaxPathLength
                     || !Path.IsPathFullyQualified(imagePath)
+                    || !IsSupportedImagePath(imagePath)
                     || !canonicalPaths.Add(Path.GetFullPath(imagePath))
                     || !TryUtc(member["addedAtUtc"], out string addedAtUtc))
                 {
@@ -607,7 +608,13 @@ internal static class AlbumStore
 
     private static bool ValidPaths(IReadOnlyList<string> paths)
         => paths.Count is > 0 and <= MaxMutationPaths
-            && paths.All(path => !string.IsNullOrWhiteSpace(path) && path.Length <= MaxPathLength && Path.IsPathFullyQualified(path));
+            && paths.All(path => !string.IsNullOrWhiteSpace(path)
+                && path.Length <= MaxPathLength
+                && Path.IsPathFullyQualified(path)
+                && IsSupportedImagePath(path));
+
+    private static bool IsSupportedImagePath(string imagePath)
+        => Path.GetExtension(imagePath).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".avif" or ".gif";
 
     private static bool IsBoundedId(string value) => value.Length is > 0 and <= 256;
     private static bool TryId(JsonNode? node, out string value) => TryString(node, out value) && IsBoundedId(value);

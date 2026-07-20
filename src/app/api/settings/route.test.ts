@@ -192,10 +192,29 @@ describe('settings route write safety', () => {
       keyBindings: {
         nextImage: 't',
         toggleFilmstrip: 'b',
+        addToAlbum: 'g',
       },
     });
     expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual({
       keyBindings: { nextImage: 't' },
+    });
+  });
+
+  it('migrates Add to Album away from an existing legacy B filmstrip binding', async () => {
+    await fs.writeFile(target, JSON.stringify({
+      keyBindings: { toggleFilmstrip: 'b' },
+    }), 'utf8');
+
+    const response = await GET();
+    expect(await response.json()).toMatchObject({
+      malformed: false,
+      keyBindings: {
+        toggleFilmstrip: 'b',
+        addToAlbum: 'g',
+      },
+    });
+    expect(JSON.parse(await fs.readFile(target, 'utf8'))).toEqual({
+      keyBindings: { toggleFilmstrip: 'b' },
     });
   });
 

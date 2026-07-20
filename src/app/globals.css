@@ -3367,3 +3367,212 @@ a { color: inherit; text-decoration: none; }
     width: auto;
   }
 }
+
+/* Album v1 uses an isolated dialog/source surface; it does not replace catalog search state. */
+.landing-albums-btn {
+  right: 7.8rem;
+}
+
+.album-dialog-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: grid;
+  place-items: center;
+  padding: 1rem;
+}
+
+.album-dialog-backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border: 0;
+  background: rgb(3 7 18 / 76%);
+  cursor: default;
+}
+
+.album-dialog {
+  position: relative;
+  width: min(720px, 96vw);
+  max-height: min(760px, 90vh);
+  overflow: auto;
+  border: 1px solid var(--border, #303647);
+  border-radius: 12px;
+  background: var(--bg-secondary, #171a22);
+  color: var(--text-primary, #f4f6fb);
+  box-shadow: 0 24px 70px rgb(0 0 0 / 45%);
+  padding: 1rem;
+}
+
+.album-picker {
+  width: min(560px, 96vw);
+}
+
+.album-dialog-header,
+.album-create-row,
+.album-row-actions,
+.album-inline-form,
+.album-delete-confirm,
+.album-source-banner,
+.album-source-actions {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+}
+
+.album-dialog-header {
+  justify-content: space-between;
+  margin-bottom: .9rem;
+}
+
+.album-dialog-header h2,
+.album-dialog-header p {
+  margin: 0;
+}
+
+.album-dialog-header p,
+.album-row small,
+.album-picker-option small,
+.album-source-banner span {
+  display: block;
+  color: var(--text-secondary, #aab0c0);
+  font-size: .78rem;
+}
+
+.album-create-row input,
+.album-inline-form input {
+  min-width: 0;
+  flex: 1;
+  border: 1px solid var(--border, #303647);
+  border-radius: 7px;
+  background: var(--bg-tertiary, #202532);
+  color: inherit;
+  padding: .58rem .7rem;
+}
+
+.album-list,
+.album-picker-list {
+  display: grid;
+  gap: .55rem;
+  margin-top: .9rem;
+}
+
+.album-row {
+  border: 1px solid var(--border, #303647);
+  border-radius: 9px;
+  padding: .55rem;
+  background: var(--bg-primary, #10131a);
+}
+
+.album-row.active {
+  border-color: var(--accent, #7c8cff);
+}
+
+.album-open,
+.album-picker-option {
+  display: flex;
+  align-items: center;
+  gap: .65rem;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  padding: .4rem;
+  cursor: pointer;
+}
+
+.album-open span,
+.album-picker-option span {
+  flex: 1;
+}
+
+.album-row-actions {
+  justify-content: flex-end;
+  margin-top: .25rem;
+}
+
+.album-inline-form,
+.album-delete-confirm {
+  margin-top: .55rem;
+}
+
+.album-delete-confirm {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  color: #fecaca;
+}
+
+.album-delete-confirm span {
+  margin-right: auto;
+}
+
+.album-error {
+  color: #fca5a5;
+}
+
+.album-empty {
+  color: var(--text-secondary, #aab0c0);
+  text-align: center;
+  padding: 1rem;
+}
+
+.album-source-banner {
+  justify-content: space-between;
+  flex-wrap: wrap;
+  border-bottom: 1px solid var(--border, #303647);
+  background: var(--bg-secondary, #171a22);
+  padding: .55rem .8rem;
+}
+
+.album-source-actions {
+  flex-wrap: wrap;
+}
+
+.icon-btn.danger {
+  color: #fca5a5;
+}
+
+.sidebar-album-active {
+  display: grid;
+  gap: .2rem;
+  margin-bottom: .45rem;
+  color: var(--text-secondary, #aab0c0);
+  font-size: .78rem;
+}
+
+.sidebar-album-list {
+  display: grid;
+  gap: .2rem;
+  margin-bottom: .35rem;
+}
+
+.sidebar-album-list button {
+  display: flex;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  padding: .32rem .38rem;
+  text-align: left;
+}
+
+.sidebar-album-list button:hover,
+.sidebar-album-list button.active {
+  background: var(--bg-tertiary, #202532);
+}
+
+@media (max-width: 680px) {
+  .landing-albums-btn {
+    right: auto;
+    left: 1rem;
+  }
+
+  .album-source-banner,
+  .album-source-actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}

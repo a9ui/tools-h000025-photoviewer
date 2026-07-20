@@ -131,7 +131,7 @@
 
         <!-- right cluster -->
         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
-          <Button Style="{StaticResource IconButton}" Foreground="#6EE7B7" ToolTip="Album mutation is deferred" IsEnabled="False" Opacity="0.45" WindowChrome.IsHitTestVisibleInChrome="True">
+          <Button x:Name="OpenAlbumsButton" Style="{StaticResource IconButton}" Foreground="#6EE7B7" ToolTip="Open shared Albums (B)" Click="OpenAlbums_Click" AutomationProperties.Name="Open shared Albums" WindowChrome.IsHitTestVisibleInChrome="True">
             <Path Data="M12,5 v14 M5,12 h14" Stroke="#6EE7B7" StrokeThickness="2" Stretch="Uniform" Width="17" Height="17"/>
           </Button>
           <TextBlock x:Name="HeaderStats" Text="3 selected · 12,480 images · 4 folders" Foreground="{StaticResource TextTertiary}" FontSize="12" Margin="6,0,8,0" VerticalAlignment="Center"/>

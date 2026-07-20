@@ -18,6 +18,7 @@ type SettingsDocument = Record<string, unknown>;
 const KEY_BINDING_NAMES = Object.keys(DEFAULT_KEY_BINDINGS) as Array<keyof KeyBindings>;
 const MAX_KEY_BINDING_LENGTH = 64;
 const FILMSTRIP_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.toggleFilmstrip, 'b', 'g', 'v', 'y'] as const;
+const ADD_TO_ALBUM_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.addToAlbum, 'g', 'v', 'y'] as const;
 
 function settingsPath() {
   return process.env.PVU_SETTINGS_PATH
@@ -74,11 +75,23 @@ function publicSettings(document: SettingsDocument): AppSettings {
   // visible to the normal Settings conflict repair flow.
   if (typeof storedBindings.toggleFilmstrip !== 'string') {
     const usedKeys = new Set(KEY_BINDING_NAMES
-      .filter((name) => name !== 'toggleFilmstrip')
+      .filter((name) => name !== 'toggleFilmstrip' && (name !== 'addToAlbum' || typeof storedBindings.addToAlbum === 'string'))
       .map((name) => normalizeKeyBinding(keyBindings[name])));
     keyBindings.toggleFilmstrip = FILMSTRIP_MIGRATION_KEYS.find(
       (candidate) => !usedKeys.has(normalizeKeyBinding(candidate)),
     ) ?? DEFAULT_KEY_BINDINGS.toggleFilmstrip;
+  }
+
+  // Album v1 historically suggested B, but a migrated filmstrip may already
+  // own it. Allocate the first free candidate without rewriting an explicit
+  // user binding or introducing a silent collision.
+  if (typeof storedBindings.addToAlbum !== 'string') {
+    const usedKeys = new Set(KEY_BINDING_NAMES
+      .filter((name) => name !== 'addToAlbum')
+      .map((name) => normalizeKeyBinding(keyBindings[name])));
+    keyBindings.addToAlbum = ADD_TO_ALBUM_MIGRATION_KEYS.find(
+      (candidate) => !usedKeys.has(normalizeKeyBinding(candidate)),
+    ) ?? DEFAULT_KEY_BINDINGS.addToAlbum;
   }
 
   return {

@@ -115,6 +115,13 @@ public partial class MainWindow : Window
     private readonly HashSet<string> _hiddenFolderBuckets = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedFolderBucketKeys = new(StringComparer.OrdinalIgnoreCase);
     private readonly HashSet<string> _selectedPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _activeAlbumMemberPaths = new(StringComparer.OrdinalIgnoreCase);
+    private readonly Dictionary<string, int> _activeAlbumMemberOrder = new(StringComparer.OrdinalIgnoreCase);
+    private string? _activeAlbumId;
+    private string? _activeAlbumName;
+    private int _activeAlbumMemberCount;
+    private int _activeAlbumOutsideCount;
+    private int _activeAlbumMissingCount;
     private readonly Dictionary<string, ManagedEnhancedOutput> _enhancedOutputs = new(StringComparer.OrdinalIgnoreCase);
     private readonly List<string> _restoredPreviewTabPaths = [];
     private readonly SemaphoreSlim _thumbnailDecodeGate = new(MaxThumbnailDecodeWorkers, MaxThumbnailDecodeWorkers);
@@ -819,6 +826,9 @@ public partial class MainWindow : Window
 
     private sealed record FilterSnapshot(
         FilterTileSnapshot[] Tiles,
+        bool AlbumActive,
+        FrozenSet<string> AlbumMemberPaths,
+        FrozenDictionary<string, int> AlbumMemberOrder,
         string[] QueryTokens,
         bool FavoritesOnly,
         bool UnfavoriteOnly,
@@ -881,6 +891,67 @@ public partial class MainWindow : Window
     private sealed record EnhancementApiResponse(bool Ok, int StatusCode, JsonElement? Payload, string Error);
 
     private async void OpenFolder_Click(object sender, RoutedEventArgs e) => await ChooseAndLoadFolderAsync();
+
+    private void OpenAlbums_Click(object sender, RoutedEventArgs e) => ShowAlbumLibrary();
+
+    private bool ShowAlbumLibrary()
+    {
+        IReadOnlyList<string> selected = SelectedTiles()
+            .Where(static tile => tile.IsRealFile)
+            .Select(static tile => tile.Path)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var window = new AlbumLibraryWindow(
+            this,
+            selected,
+            _allTiles.Where(static tile => tile.IsRealFile).Select(static tile => tile.Path),
+            ActivateAlbumSource,
+            RefreshActiveAlbumSource);
+        window.ShowDialog();
+        return true;
+    }
+
+    private void ActivateAlbumSource(AlbumEntry? album)
+    {
+        _activeAlbumMemberPaths.Clear();
+        _activeAlbumMemberOrder.Clear();
+        if (album is null)
+        {
+            _activeAlbumId = null;
+            _activeAlbumName = null;
+            _activeAlbumMemberCount = 0;
+            _activeAlbumOutsideCount = 0;
+            _activeAlbumMissingCount = 0;
+            ApplyFilters(selectFirst: false);
+            UpdateFolderStats();
+            return;
+        }
+
+        _activeAlbumId = album.Id;
+        _activeAlbumName = album.Name;
+        _activeAlbumMemberCount = album.Members.Count;
+        _activeAlbumMemberPaths.UnionWith(album.Members.Select(static member => member.ImagePath));
+        for (int index = 0; index < album.Members.Count; index++)
+            _activeAlbumMemberOrder[album.Members[index].ImagePath] = index;
+        var catalogPaths = _allTiles.Where(static tile => tile.IsRealFile)
+            .Select(static tile => tile.Path)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+        _activeAlbumMissingCount = album.Members.Count(member => !File.Exists(member.ImagePath));
+        _activeAlbumOutsideCount = album.Members.Count(member => File.Exists(member.ImagePath) && !catalogPaths.Contains(member.ImagePath));
+        ApplyFilters(selectFirst: false);
+        UpdateFolderStats();
+    }
+
+    private void RefreshActiveAlbumSource()
+    {
+        if (_activeAlbumId is null)
+            return;
+        AlbumReadResult read = AlbumStore.Read(AlbumStore.ResolvePath());
+        AlbumEntry? active = read.Supported
+            ? read.Document?.Albums.FirstOrDefault(album => album.Id == _activeAlbumId)
+            : null;
+        ActivateAlbumSource(active);
+    }
 
     private async Task ChooseAndLoadFolderAsync()
     {
@@ -1183,6 +1254,8 @@ public partial class MainWindow : Window
             folderBucketViewMs = folderBucketViewWatch.ElapsedMilliseconds;
 
             FolderPathText.Text = resolvedFolderSummary;
+            if (_activeAlbumId is not null)
+                RefreshActiveAlbumSource();
             var initialFilterWatch = Stopwatch.StartNew();
             ApplyFilters(selectFirst: false);
             initialFilterWatch.Stop();
@@ -7172,6 +7245,9 @@ public partial class MainWindow : Window
                 tile.FolderBucketKey,
                 tile.ModifiedUtc,
                 tile.CreatedUtc)).ToArray(),
+            _activeAlbumId is not null,
+            _activeAlbumMemberPaths.ToFrozenSet(StringComparer.OrdinalIgnoreCase),
+            _activeAlbumMemberOrder.ToFrozenDictionary(StringComparer.OrdinalIgnoreCase),
             query.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries),
             FavoriteOnlyFilter?.IsChecked == true,
             UnfavoriteOnlyFilter?.IsChecked == true,
@@ -7200,8 +7276,15 @@ public partial class MainWindow : Window
         }
 
         cancellationToken.ThrowIfCancellationRequested();
-        IEnumerable<FilterTileSnapshot> ordered = snapshot.SortBy switch
+        IEnumerable<FilterTileSnapshot> ordered;
+        if (snapshot.AlbumActive)
         {
+            ordered = filtered.OrderBy(tile => snapshot.AlbumMemberOrder.TryGetValue(tile.Path, out int index) ? index : int.MaxValue);
+        }
+        else
+        {
+            ordered = snapshot.SortBy switch
+            {
             SortModifiedOldestValue => filtered
                 .OrderBy(static tile => tile.ModifiedUtc)
                 .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
@@ -7225,12 +7308,15 @@ public partial class MainWindow : Window
                 .OrderByDescending(static tile => tile.ModifiedUtc)
                 .ThenBy(static tile => tile.FileName, StringComparer.OrdinalIgnoreCase)
                 .ThenBy(static tile => tile.Path, StringComparer.OrdinalIgnoreCase),
-        };
+            };
+        }
         return new FilterResult(ordered.Select(static tile => tile.Tile).ToList());
     }
 
     private static bool MatchesFilterSnapshot(FilterTileSnapshot tile, FilterSnapshot snapshot)
     {
+        if (snapshot.AlbumActive && (!tile.IsRealFile || !snapshot.AlbumMemberPaths.Contains(tile.Path)))
+            return false;
         foreach (string token in snapshot.QueryTokens)
         {
             if (!ContainsText(tile.FileName, token) && !ContainsText(tile.Prompt, token))
@@ -7477,7 +7563,9 @@ public partial class MainWindow : Window
         int total = _allTiles.Count;
         string imageText = visible == total ? $"{total:N0} images" : $"{visible:N0} / {total:N0} images";
         string folderText = _currentFolderSet.Count == 0 ? "sample" : $"{_currentFolderSet.Count:N0} folder(s)";
-        HeaderStats.Text = $"{selected:N0} selected - {imageText} - {folderText}";
+        HeaderStats.Text = _activeAlbumId is null
+            ? $"{selected:N0} selected - {imageText} - {folderText}"
+            : $"{selected:N0} selected - {visible:N0}/{_activeAlbumMemberCount:N0} in {_activeAlbumName} - {_activeAlbumOutsideCount:N0} outside unavailable - {_activeAlbumMissingCount:N0} missing";
     }
 
     private void UpdateGridMetrics(LoadMetrics metrics)
@@ -10864,6 +10952,7 @@ public partial class MainWindow : Window
             SetDeleteStatus($"Move to Recycle Bin failed: {result.Reason}. Retry is available.", isFailure: true, retryTile: tile);
             return false;
         }
+        bool albumCleanupSucceeded = CleanupAlbumMembershipAfterRecycle([tile.Path]);
 
         bool modalManualChromeWasVisible = _modalManualChromeVisible;
         bool refreshModal = ReconcileSuccessfulSourceRecycle([tile]);
@@ -10891,7 +10980,10 @@ public partial class MainWindow : Window
             CloseModal();
         }
 
-        SetDeleteStatus($"Moved {tile.FileName} to Recycle Bin.");
+        SetDeleteStatus(albumCleanupSucceeded
+            ? $"Moved {tile.FileName} to Recycle Bin. Album membership was reconciled."
+            : $"Moved {tile.FileName} to Recycle Bin, but Album cleanup failed. Missing membership was preserved for recovery.",
+            isFailure: !albumCleanupSucceeded);
         SaveState();
         return true;
     }
@@ -10928,6 +11020,7 @@ public partial class MainWindow : Window
             SetStatusToast($"No selected images were moved to Recycle Bin. {failed.Count:N0} failed; they remain selected. {reason}");
             return false;
         }
+        bool albumCleanupSucceeded = CleanupAlbumMembershipAfterRecycle(succeeded.Select(static tile => tile.Path).ToList());
 
         bool modalManualChromeWasVisible = _modalManualChromeVisible;
         bool refreshModal = ReconcileSuccessfulSourceRecycle(succeeded);
@@ -10964,20 +11057,43 @@ public partial class MainWindow : Window
         }
 
         SaveState();
-        if (failed.Count == 0)
+        if (failed.Count == 0 && albumCleanupSucceeded)
         {
-            SetStatusToast($"Moved {succeeded.Count:N0} selected images to Recycle Bin.");
+            SetStatusToast($"Moved {succeeded.Count:N0} selected images to Recycle Bin. Album membership was reconciled.");
         }
         else
         {
             string firstReason = failed.Count > 0 ? $" {failed[0].Reason}" : "";
-            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}");
+            string cleanupReason = albumCleanupSucceeded ? "" : " Album cleanup failed; missing membership was preserved for recovery.";
+            SetStatusToast($"Moved {succeeded.Count:N0} image(s); {failed.Count:N0} failed and remain selected.{firstReason}{cleanupReason}");
         }
         return true;
     }
 
     private int FavoriteLevelForDelete(Tile tile)
         => Math.Max(Math.Clamp(tile.Fav, 0, 5), FavoriteLevelForPath(tile.Path));
+
+    private bool CleanupAlbumMembershipAfterRecycle(IReadOnlyList<string> recycledPaths)
+    {
+        string[] sharedPaths = recycledPaths
+            .Where(path => Path.GetExtension(path).ToLowerInvariant() is ".png" or ".jpg" or ".jpeg" or ".webp" or ".avif" or ".gif")
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (sharedPaths.Length == 0)
+            return true;
+        try
+        {
+            AlbumMutationResult result = AlbumStore.CleanupPaths(AlbumStore.ResolvePath(), sharedPaths);
+            if (!result.Ok)
+                return false;
+            RefreshActiveAlbumSource();
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
 
     /// <summary>
     /// Reconciles WPF-owned UI references after the Recycle Bin backend has
@@ -12035,6 +12151,8 @@ public partial class MainWindow : Window
             return SetFavoriteLevelForSelection(5);
         if (MatchesBinding(ViewerKeyAction.RecycleCurrentImage, key, modifiers))
             return RequestDeleteSelected();
+        if (MatchesBinding(ViewerKeyAction.AddToAlbum, key, modifiers))
+            return ShowAlbumLibrary();
         if (MatchesBinding(ViewerKeyAction.ReopenLastClosedPreviewTab, key, modifiers))
             return RestoreLastClosedPreviewTab();
         if (MatchesBinding(ViewerKeyAction.MovePreviewTabLeft, key, modifiers))
@@ -12861,6 +12979,23 @@ public partial class MainWindow : Window
             && ModalArtGlow.Visibility == Visibility.Visible;
     public void CloseModalForSmoke() => CloseModal();
     public int FilteredCountForSmoke => _tiles.Count;
+    public bool ActivateAlbumForSmoke(string albumId)
+    {
+        AlbumReadResult read = AlbumStore.Read(AlbumStore.ResolvePath());
+        AlbumEntry? album = read.Supported
+            ? read.Document?.Albums.FirstOrDefault(candidate => candidate.Id == albumId)
+            : null;
+        ActivateAlbumSource(album);
+        return album is not null;
+    }
+    public void ReturnToCatalogForSmoke() => ActivateAlbumSource(null);
+    public string? ActiveAlbumIdForSmoke => _activeAlbumId;
+    public int ActiveAlbumOutsideCountForSmoke => _activeAlbumOutsideCount;
+    public int ActiveAlbumMissingCountForSmoke => _activeAlbumMissingCount;
+    public bool AlbumUiContractForSmoke
+        => OpenAlbumsButton.IsEnabled
+            && string.Equals(AutomationProperties.GetName(OpenAlbumsButton), "Open shared Albums", StringComparison.Ordinal)
+            && (OpenAlbumsButton.ToolTip?.ToString()?.Contains("B", StringComparison.OrdinalIgnoreCase) ?? false);
     public int SelectedCountForSmoke => _selectedPaths.Count;
     public List<string> SelectedFileNamesForSmoke => SelectedTiles().Select(static tile => tile.FileName).ToList();
     public FileDragOutSmokeSnapshot BuildFileDropPayloadForSmoke(string originFileName, bool originWasSelected)

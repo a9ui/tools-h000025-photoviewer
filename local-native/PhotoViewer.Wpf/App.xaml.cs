@@ -630,6 +630,20 @@ public partial class App : Application
             return;
         }
 
+        int albumConcurrentWriterSmokeIdx = Array.IndexOf(e.Args, "--album-concurrent-writer-smoke");
+        if (albumConcurrentWriterSmokeIdx >= 0 && albumConcurrentWriterSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureAlbumConcurrentWriterSmoke(e.Args[albumConcurrentWriterSmokeIdx + 1], e.Args);
+            return;
+        }
+
+        int albumUiSmokeIdx = Array.IndexOf(e.Args, "--album-ui-smoke");
+        if (albumUiSmokeIdx >= 0 && albumUiSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureAlbumUiSmoke(e.Args[albumUiSmokeIdx + 1], e.Args);
+            return;
+        }
+
         new MainWindow().Show();
     }
 
@@ -770,6 +784,167 @@ public partial class App : Application
         Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
         File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
         Shutdown(ok ? 0 : 1);
+    }
+
+    private void CaptureAlbumConcurrentWriterSmoke(string resultPath, IReadOnlyList<string> args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string? albumPathValue = ArgValue(args.ToArray(), "--album-path");
+        string? readyPathValue = ArgValue(args.ToArray(), "--ready-path");
+        string? goPathValue = ArgValue(args.ToArray(), "--go-path");
+        string prefix = ArgValue(args.ToArray(), "--prefix") ?? "wpf-concurrent";
+        bool countValid = int.TryParse(ArgValue(args.ToArray(), "--count"), out int count) && count is >= 1 and <= 100;
+        object result;
+        bool ok = false;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(albumPathValue) || !countValid)
+                throw new ArgumentException("Album concurrent writer smoke requires --album-path and --count 1-100");
+            string albumPath = Path.GetFullPath(albumPathValue);
+            if (!string.IsNullOrWhiteSpace(readyPathValue))
+            {
+                string readyPath = Path.GetFullPath(readyPathValue);
+                Directory.CreateDirectory(Path.GetDirectoryName(readyPath)!);
+                File.WriteAllText(readyPath, "ready");
+            }
+            if (!string.IsNullOrWhiteSpace(goPathValue))
+            {
+                string goPath = Path.GetFullPath(goPathValue);
+                var wait = Stopwatch.StartNew();
+                while (!File.Exists(goPath) && wait.Elapsed < TimeSpan.FromSeconds(15))
+                    Thread.Sleep(10);
+                if (!File.Exists(goPath))
+                    throw new TimeoutException("Album concurrent writer start barrier timed out");
+            }
+
+            var statuses = new List<string>(count);
+            for (int index = 0; index < count; index++)
+            {
+                AlbumMutationResult mutation = AlbumStore.Create(
+                    albumPath,
+                    $"WPF concurrent {index}",
+                    expectedRevision: null,
+                    albumId: $"{prefix}-{index:D3}");
+                statuses.Add(mutation.Status.ToString());
+            }
+            AlbumReadResult final = AlbumStore.Read(albumPath);
+            ok = statuses.All(static status => status == AlbumMutationStatus.Succeeded.ToString())
+                && final.Supported
+                && final.Document is not null
+                && Enumerable.Range(0, count).All(index => final.Document.Albums.Any(album => album.Id == $"{prefix}-{index:D3}"));
+            result = new
+            {
+                ok,
+                count,
+                statuses,
+                finalRevision = final.Document?.Revision,
+                albumCount = final.Document?.Albums.Count,
+            };
+        }
+        catch (Exception ex)
+        {
+            result = new { ok = false, message = ex.Message };
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+        File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        Shutdown(ok ? 0 : 1);
+    }
+
+    private void CaptureAlbumUiSmoke(string resultPath, IReadOnlyList<string> args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string? albumPathValue = ArgValue(args.ToArray(), "--album-path");
+        string? previousAlbumPath = Environment.GetEnvironmentVariable("PHOTOVIEWER_WPF_ALBUMS_PATH");
+        if (string.IsNullOrWhiteSpace(albumPathValue))
+        {
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(new { ok = false, message = "album UI smoke requires --album-path" }));
+            Shutdown(1);
+            return;
+        }
+
+        string albumPath = Path.GetFullPath(albumPathValue);
+        string smokeRoot = Path.GetDirectoryName(albumPath)!;
+        string catalog = Path.Combine(smokeRoot, "catalog");
+        string outside = Path.Combine(smokeRoot, "outside");
+        Directory.CreateDirectory(catalog);
+        Directory.CreateDirectory(outside);
+        string currentPath = Path.Combine(catalog, "current-a.png");
+        string secondCurrentPath = Path.Combine(catalog, "current-b.png");
+        string outsidePath = Path.Combine(outside, "outside.png");
+        string missingPath = Path.Combine(smokeRoot, "missing.png");
+        WriteSmokePng(currentPath, 72, 54, Color.FromRgb(70, 125, 205));
+        WriteSmokePng(secondCurrentPath, 72, 54, Color.FromRgb(90, 145, 225));
+        WriteSmokePng(outsidePath, 72, 54, Color.FromRgb(195, 95, 125));
+        string catalogBefore = FolderFingerprint(catalog);
+        string outsideBefore = FolderFingerprint(outside);
+        Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ALBUMS_PATH", albumPath);
+
+        ShutdownMode = ShutdownMode.OnExplicitShutdown;
+        var window = HiddenWindow();
+        window.Show();
+        window.Dispatcher.InvokeAsync(async () =>
+        {
+            bool ok = false;
+            object result;
+            try
+            {
+                AlbumMutationResult created = AlbumStore.Create(albumPath, "WPF UI Album", 0, "album-ui");
+                AlbumMutationResult added = AlbumStore.AddMembers(albumPath, "album-ui", [secondCurrentPath, currentPath, outsidePath, missingPath], created.Document?.Revision);
+                await window.LoadFolderAsync(catalog);
+                bool activated = window.ActivateAlbumForSmoke("album-ui");
+                bool currentOnly = window.FilteredFileNamesForSmoke().SequenceEqual(["current-b.png", "current-a.png"], StringComparer.OrdinalIgnoreCase);
+                bool unavailableExplicit = window.ActiveAlbumOutsideCountForSmoke == 1
+                    && window.ActiveAlbumMissingCountForSmoke == 1
+                    && window.HeaderStatsForSmoke.Contains("outside unavailable", StringComparison.OrdinalIgnoreCase)
+                    && window.HeaderStatsForSmoke.Contains("missing", StringComparison.OrdinalIgnoreCase);
+                bool uiContract = window.AlbumUiContractForSmoke;
+                bool defaultShortcut = window.KeyBindingTextForSmoke("addToAlbum", draft: false) == "B";
+
+                using JsonDocument legacyDocument = JsonDocument.Parse("{\"toggleModalFilmstrip\":\"B\"}");
+                var legacyBindings = legacyDocument.RootElement.EnumerateObject()
+                    .ToDictionary(static property => property.Name, static property => property.Value.Clone(), StringComparer.Ordinal);
+                Dictionary<ViewerKeyAction, KeyChord> migrated = KeyBindingSettings.NormalizePersisted(legacyBindings, out _);
+                bool collisionAwareShortcut = migrated[ViewerKeyAction.ToggleModalFilmstrip].DisplayText == "B"
+                    && migrated[ViewerKeyAction.AddToAlbum].DisplayText == "G";
+
+                window.ReturnToCatalogForSmoke();
+                bool catalogRestored = window.ActiveAlbumIdForSmoke is null && window.FilteredCountForSmoke == 2;
+                bool sourceUntouched = string.Equals(catalogBefore, FolderFingerprint(catalog), StringComparison.Ordinal)
+                    && string.Equals(outsideBefore, FolderFingerprint(outside), StringComparison.Ordinal);
+                bool noResidue = !File.Exists(albumPath + ".lock")
+                    && !Directory.EnumerateFiles(smokeRoot, "*.tmp", SearchOption.TopDirectoryOnly).Any();
+                ok = created.Ok && added.Ok && activated && currentOnly && unavailableExplicit && uiContract
+                    && defaultShortcut && collisionAwareShortcut && catalogRestored && sourceUntouched && noResidue;
+                result = new
+                {
+                    ok,
+                    activated,
+                    currentOnly,
+                    unavailableExplicit,
+                    uiContract,
+                    defaultShortcut,
+                    collisionAwareShortcut,
+                    catalogRestored,
+                    sourceUntouched,
+                    noResidue,
+                    header = window.HeaderStatsForSmoke,
+                };
+            }
+            catch (Exception ex)
+            {
+                result = new { ok = false, message = ex.Message };
+            }
+            finally
+            {
+                try { window.Close(); } catch { }
+                Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_ALBUMS_PATH", previousAlbumPath);
+            }
+            Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+            File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+            Shutdown(ok ? 0 : 1);
+        }, DispatcherPriority.ContextIdle);
     }
 
     private void CaptureScanBoundarySmoke(string resultPath, IReadOnlyList<string> args)

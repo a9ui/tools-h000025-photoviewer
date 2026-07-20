@@ -3,6 +3,7 @@ import { promises as fs } from 'fs';
 import path from 'path';
 
 import { withFileWriteLock } from './fileWriteLock';
+import { isSupportedImagePath } from './imageFormats';
 
 export const ALBUMS_VERSION = 1;
 export const MAX_ALBUM_NAME_LENGTH = 120;
@@ -146,6 +147,7 @@ function validateDocument(parsed: unknown): { ok: true; document: AlbumsDocument
         || memberValue.imagePath.length === 0
         || memberValue.imagePath.length > MAX_ALBUM_PATH_LENGTH
         || !path.isAbsolute(memberValue.imagePath)
+        || !isSupportedImagePath(memberValue.imagePath)
         || !isUtcStamp(memberValue.addedAtUtc)
         || memberIds.has(memberValue.id)) {
         return { ok: false, futureVersion: false, error: 'albums.json contains an invalid or duplicate member.' };
@@ -236,7 +238,7 @@ function validateMutation(mutation: AlbumMutation) {
     && ((mutation.memberIds?.length ?? 0) > MAX_ALBUM_MUTATION_PATHS
       || (mutation.paths?.length ?? 0) > MAX_ALBUM_MUTATION_PATHS)) return 'remove memberIds and paths must be bounded arrays.';
   const paths = 'paths' in mutation && Array.isArray(mutation.paths) ? mutation.paths : [];
-  if (paths.some((value) => typeof value !== 'string' || !value || value.length > MAX_ALBUM_PATH_LENGTH || !path.isAbsolute(value))) return 'paths must contain bounded absolute paths.';
+  if (paths.some((value) => typeof value !== 'string' || !value || value.length > MAX_ALBUM_PATH_LENGTH || !path.isAbsolute(value) || !isSupportedImagePath(value))) return 'paths must contain bounded absolute supported image paths.';
   if (mutation.action === 'remove' && mutation.memberIds && mutation.memberIds.some((id) => !isBoundedToken(id))) return 'memberIds must contain bounded ids.';
   if (mutation.action === 'update' && mutation.coverMemberId !== undefined && mutation.coverMemberId !== null && !isBoundedToken(mutation.coverMemberId)) return 'coverMemberId must be null or a bounded id.';
   return null;

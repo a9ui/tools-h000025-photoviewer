@@ -8,6 +8,10 @@ import { GET, POST } from './route';
 import { DELETE as DELETE_ALBUM, PATCH } from './[id]/route';
 import { DELETE as REMOVE_MEMBERS, POST as ADD_MEMBERS } from './[id]/members/route';
 import { POST as MARK_RECENT } from './[id]/recent/route';
+import { POST as BUILD_SOURCE } from './[id]/source/route';
+import { POST as CLEANUP_PATHS } from './members/cleanup/route';
+import { clearIndexSessionsForTests, setIndex } from '@/lib/indexer';
+import type { ImageFile } from '@/lib/types';
 
 let root = '';
 let target = '';
@@ -17,11 +21,13 @@ beforeEach(async () => {
   root = await fs.mkdtemp(path.join(os.tmpdir(), 'pvu-albums-route-'));
   target = path.join(root, 'albums.json');
   process.env.PVU_ALBUMS_PATH = target;
+  clearIndexSessionsForTests();
 });
 
 afterEach(async () => {
   if (previousOverride === undefined) delete process.env.PVU_ALBUMS_PATH;
   else process.env.PVU_ALBUMS_PATH = previousOverride;
+  clearIndexSessionsForTests();
   await fs.rm(root, { recursive: true, force: true });
 });
 
@@ -122,5 +128,64 @@ describe('Album operation API', () => {
       { expectedRevision: 4 },
     ), context(albumId));
     expect(await deletedResponse.json()).toMatchObject({ ok: true, document: { revision: 5, albums: [], recentAlbumIds: [] } });
+  });
+
+  it('builds a guarded source and keeps Recycle cleanup as a separate operation', async () => {
+    const currentPath = path.join(root, 'current.jpg');
+    const outsidePath = path.join(root, 'outside.png');
+    const missingPath = path.join(root, 'missing.webp');
+    await fs.writeFile(currentPath, 'current');
+    await fs.writeFile(outsidePath, 'outside');
+    const catalogImage: ImageFile = {
+      id: currentPath,
+      filename: 'current.jpg',
+      absolutePath: currentPath,
+      fileUrl: `/api/image?path=${encodeURIComponent(currentPath)}&thumb=true`,
+      displayUrl: `/api/image?path=${encodeURIComponent(currentPath)}&display=true`,
+      fullUrl: `/api/image?path=${encodeURIComponent(currentPath)}`,
+      metadata: null,
+      createdAt: 1,
+      mtime: 1,
+    };
+    const catalogIndexToken = setIndex([catalogImage], 'route-catalog');
+
+    const created = await (await POST(request(JSON.stringify({ name: 'Source' })))).json();
+    const albumId = created.album.id as string;
+    await ADD_MEMBERS(operationRequest(
+      `http://127.0.0.1/api/albums/${albumId}/members`,
+      'POST',
+      { paths: [currentPath, outsidePath, missingPath], expectedRevision: 1 },
+    ), context(albumId));
+
+    const sourceResponse = await BUILD_SOURCE(operationRequest(
+      `http://127.0.0.1/api/albums/${albumId}/source`,
+      'POST',
+      { catalogIndexToken, expectedRevision: 2 },
+    ), context(albumId));
+    expect(sourceResponse.status).toBe(200);
+    const source = await sourceResponse.json();
+    expect(source).toMatchObject({
+      ok: true,
+      source: {
+        documentRevision: 2,
+        members: [
+          { imagePath: currentPath, availability: 'current' },
+          { imagePath: outsidePath, availability: 'outside' },
+          { imagePath: missingPath, availability: 'missing', image: null },
+        ],
+      },
+    });
+    expect(source.source.images).toHaveLength(2);
+
+    const cleanupResponse = await CLEANUP_PATHS(operationRequest(
+      'http://127.0.0.1/api/albums/members/cleanup',
+      'POST',
+      { paths: [currentPath], expectedRevision: 2 },
+    ));
+    expect(await cleanupResponse.json()).toMatchObject({ ok: true, document: { revision: 3 } });
+    const remaining = await GET();
+    expect(await remaining.json()).toMatchObject({
+      document: { albums: [{ members: [{ imagePath: outsidePath }, { imagePath: missingPath }] }] },
+    });
   });
 });

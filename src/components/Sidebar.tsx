@@ -2,6 +2,7 @@
 
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useImageStore } from '../store/ImageContext';
+import { useOptionalAlbumStore } from '../store/AlbumContext';
 import { getLoadedResultCounts, getResultCountLabel, sortFolderBuckets, type FolderBucket } from '../lib/viewerUi';
 import { appendDirSet, summarizeDirSet } from '../lib/pathSet';
 import { FAVORITE_FILTER_LEVELS } from '../lib/browserUiPreferences';
@@ -40,6 +41,16 @@ export default function Sidebar() {
     setPerfEnabled,
     perfStats,
   } = useImageStore();
+  const { document: albumDocument, albums, activeSource, setLibraryOpen, openAlbum, closeAlbum } = useOptionalAlbumStore();
+  const sidebarAlbums = useMemo(() => {
+    const recentOrder = new Map((albumDocument?.recentAlbumIds ?? []).map((id, index) => [id, index]));
+    return [...albums]
+      .sort((left, right) => {
+        if (left.pinned !== right.pinned) return left.pinned ? -1 : 1;
+        return (recentOrder.get(left.id) ?? 999) - (recentOrder.get(right.id) ?? 999);
+      })
+      .slice(0, 6);
+  }, [albumDocument?.recentAlbumIds, albums]);
 
   const [folderBuckets, setFolderBuckets] = useState<FolderBucket[]>([]);
   const [loadingFolders, setLoadingFolders] = useState(false);
@@ -284,6 +295,30 @@ export default function Sidebar() {
         aria-label={isMobile ? 'Filters and display options' : undefined}
         tabIndex={isMobile ? -1 : undefined}
       >
+      <div className="sidebar-section">
+        <div className="sidebar-section-header">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" /><path d="M7 4V2M17 4V2" />
+          </svg>
+          <span>Albums</span>
+        </div>
+        {activeSource && (
+          <div className="sidebar-album-active">
+            <strong>{activeSource.album.name}</strong>
+            <span>{activeSource.images.length}/{activeSource.members.length} available</span>
+            <button className="sidebar-link" onClick={closeAlbum}>Return to catalog</button>
+          </div>
+        )}
+        <div className="sidebar-album-list">
+          {sidebarAlbums.map((album) => (
+            <button key={album.id} className={activeSource?.album.id === album.id ? 'active' : ''} onClick={() => void openAlbum(album.id)}>
+              <span>{album.pinned ? '● ' : ''}{album.name}</span><small>{album.members.length}</small>
+            </button>
+          ))}
+        </div>
+        <button className="sidebar-link" onClick={() => setLibraryOpen(true)}>Manage Albums</button>
+      </div>
+
       <div className="sidebar-section">
         <div className="sidebar-section-header">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">

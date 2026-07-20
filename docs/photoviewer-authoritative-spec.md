@@ -420,7 +420,7 @@ TextBox、ComboBox、DatePicker、Button、Landing、Settings/Delete overlayはg
 
 ### 7.8 WPF right-click / Ctrl+C / Album
 
-現行mainのXAML/code-behindにproduct image context menuはない。Clipboard操作はsafe diagnosticsとPrompt/Negative/PNG metadata textで、画像file/bitmap copyではない。headerのAlbum controlはdisabledで「Album mutation is deferred」。Album v1のshared storage/operation coreはBrowser/WPF双方に存在するが、library/picker/source UIは未実装である。したがってcontext menu、Ctrl+C画像copy、Album product surfaceはSection 14のPENDING。
+現行mainのXAML/code-behindにproduct image context menuはない。Clipboard操作はsafe diagnosticsとPrompt/Negative/PNG metadata textで、画像file/bitmap copyではない。headerのAlbum controlは有効でbasic libraryを開く。Browser/WPFは同じAlbum v1 store/operationを使い、create/rename/delete/pin/cover/recent/add/remove、current/outside/missing表示、current memberのAlbum順navigation、別操作のmembership remove/source Recycleを提供する。WPF v1のoutside memberは明示unavailableで、任意absolute pathを黙って開かない。したがってcontext menuとCtrl+C画像copyはSection 14のPENDINGだが、Album v1はimplementedである。
 
 ## 8. Favorite / Seen契約
 
@@ -568,6 +568,9 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | `/api/settings` | GET/PUT | default hydration、known field validation、unknown field保持、partial update |
 | `/api/recent-folders` | GET/PUT | version 1 bounded last/recent folder sets、malformed保護 |
 | `/api/search-history` | GET/PUT/DELETE | GET list。malformed/future/read failureはHTTP 200 + `ok:false`。PUT complete query commit/MRU、DELETE oneまたはclear。raw query過大等invalidは400、mutation時のprotected documentは409、mutation lock/I/O failureは503 |
+| `/api/albums`、`/api/albums/:id`、`.../members`、`.../recent` | GET/POST/PATCH/DELETE | full snapshot PUTなし。create/rename/delete/pin/cover/add/remove/bulk/recentをoperation単位で実行し、optional expected revision、protected 409、Busy/I/O 503を返す |
+| `/api/albums/:id/source` | POST 200 | active catalog tokenとAlbum membershipを検証してcurrent/outside/missingを分類し、current+guarded outsideだけのopaque source sessionを作る。raw path URLを返さない |
+| `/api/albums/members/cleanup` | POST 200 | PhotoViewer source Recycle成功後だけcanonical pathを全Albumから除外する。Recycle失敗や外部消失では呼ばずtombstoneを保持 |
 | `/api/legacy-state` | GET 200 | bounded empty legacy response。browser profileを直接読まない |
 | `/api/enhance/presets` | GET | preset inventory |
 | `/api/enhance/isolation` | GET | enqueue/worker metricsとqueue state |
@@ -597,6 +600,7 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | Modal manual/transient UI + Filmstrip parity | manual表示固定、非表示cursor、900ms transient、下端overlay、hidden-state維持 | 同じmanual/transient契約、専用row/overlay、button-focus shortcut、ViewerState保存 | **implemented** (`f6f63d3`, `a091ec7`, `c3d4ff5`)。WPF focused smokeで全項目true |
 | 表示中Original/Enhancedの容量とexternal open | exact `0.00MB`、toggle即更新、GET/HEAD passive、POST-only launch、active index/type/existence + managed lexical/real ownership | exact `0.00MB`、toggle即更新、canonical source/signature/managed ownership guard、ShellExecute failure回復 | **implemented** (`a1d83c8`)。missing/stale/invalid signature/ownership外EnhancedはOriginal容量 + recoverable status。Browser focused 5 files / 71 tests、typecheck/lint/build green。WPF external-open/modal-enhancement/modal-interaction focused green、Release 0/0 |
 | WPF Grid/List Enter → Modal | current filtered/sorted orderのprimaryを開く | Grid/List Enter、navigation後closeもcurrent primary itemへfocus、Search/Date/Settings/Delete/Modal input/Landing隔離 | **implemented** (`a1d83c8`, `dbad550`, `452ac02`)。`verify-wpf-gallery-enter-modal.ps1`と関連Modal verifier green。button focusのEnter/Space native activationを維持 |
+| Album v1 / collection | operation API、library/picker、guarded source session、current/outside/missing、Album順Gallery/Modal/Filmstrip、remove/Recycle分離、Recycle成功後cleanup | shared storeとbasic library、create/rename/delete/pin/cover/add/remove、current-only Album順filter/Modal、outside/missing unavailable、catalog復帰、Recycle成功後cleanup | **implemented**。opaque id、revision/lock/atomic/conflict/unknown保持、collision-aware shortcut、Browser隔離E2E 1/1、WPF UI smoke、barrier付き16+16同時writer lost 0、Album 100k store test、WPF exact 100k catalog green |
 
 今回追加分の採用gateはBrowser unit 61 files / 521 tests（3 files / 3 tests skip）、typecheck、production build、lint 0 errors、production Playwright 7/7、WPF Search History focused、Browser/WPF 20+20同時writer、Release build 0 warnings / 0 errors、WPF zoom promotion aggregate + reload soak 53/53、reload 24/24がgreen。WPF zoom/anchorはfocusedとexact 100,000 images / 100 foldersもcurrent mainで再実行した。後続shared-state latency descendantは`-SkipStress` aggregate 51/51とfocused latency 6/6がgreen。さらにdisplayed-asset successorの12 owned feature blobsがcheckpoint `8ff1e52`とcurrent mainでbyte-identicalであり、`-IncludeReloadSoak` aggregate 55/55、`AGGREGATE_EXIT=0`、333,899ms、reload soak 24 cycles / 40,322msがgreen。layout/state/stress実装・verifierは変えていないためexact 100,000/100 folders証拠を継承する。通常Browser/WPF launcherの最終採用は同日のtruth tableに示す。
 
@@ -608,7 +612,6 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | --- | --- | --- | --- |
 | image context menu | なし | なし | **実装確認待ち / pending**。selection rule、keyboard invocation、action availability、focus/Escape、Delete確認を定義 |
 | Ctrl+C画像copy | metadata textのみ | diagnostics/metadata textのみ | **実装確認待ち / pending**。bitmap/fileのどちらか、selection、clipboard failure、text input isolationを定義 |
-| Album / collection | v1 operation API + shared store core、product surfaceなし | Browser同一shared store/mutation core + disabled Album button | **implementation in progress**。identity、membership、rename/delete/add/remove/recent、revision/lock/atomic/conflictは採用済み。library/picker/source session、availability、Modal/Filmstrip、shortcut/focus、Recycle cleanup接続は未完 |
 
 branch、別worktree、未採用commit、テスト単体の存在ではstatusを上げない。今回昇格していないrowは、今後もlocal main source、focused test、必要なruntime/launcherが揃うまでimplementedへ混ぜない。
 
@@ -638,6 +641,7 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | preview/tabs | `src/components/RightPreviewPanel.tsx`, `src/components/BottomPreviewTabs.tsx` | `local-native/PhotoViewer.Wpf/MainWindow.xaml`, `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` |
 | Modal | `src/components/ImageModal.tsx`, `src/components/ModalFilmstrip.tsx`, `src/lib/modalNavigation.ts`, `src/lib/displayedAsset.ts` | `local-native/PhotoViewer.Wpf/MainWindow.xaml`, `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` |
 | Settings/keys | `src/components/SettingsModal.tsx`, `src/lib/keyBindings.ts`, `src/app/api/settings/route.ts` | `local-native/PhotoViewer.Wpf/KeyBindingSettings.cs`, `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` |
+| Album v1 | `src/store/AlbumContext.tsx`, `src/components/AlbumLibrary.tsx`, `src/components/AlbumPicker.tsx`, `src/lib/albums.ts`, `src/lib/albumSource.ts`, `src/app/api/albums/**` | `local-native/PhotoViewer.Wpf/AlbumStore.cs`, `local-native/PhotoViewer.Wpf/AlbumLibraryWindow.cs`, `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` |
 | Favorite/Seen/Recent | `src/store/ImageContext.tsx`, `src/app/api/favorites/route.ts`, `src/app/api/seen/route.ts`, `src/app/api/recent-folders/route.ts`, `src/lib/fileWriteLock.ts`, `src/lib/sharedProjectRoot.ts` | `local-native/PhotoViewer.Wpf/SharedStoreWriter.cs`, `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs`, `local-native/PhotoViewer.Wpf/App.xaml.cs` |
 | Delete/open | `src/app/api/delete/deleteHandler.ts`, `src/app/api/delete/route.ts`, `src/app/api/open/route.ts`, `src/lib/activeImagePath.ts`, `src/lib/favoriteDeleteProtection.ts` | `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` guarded shell/Recycle helpers |
 | Enhancement | `src/lib/enhance/**`, `src/lib/enhance/outputPublish.ts`, `src/app/api/enhance/**`, `src/components/EnhanceQueuePanel.tsx` | `local-native/PhotoViewer.Wpf/MainWindow.xaml.cs` Browser delegation/read-only history |
@@ -649,7 +653,7 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | Contract | Browser gate | WPF gate | Current evidence boundary |
 | --- | --- | --- | --- |
 | static UI guard | `scripts/verify-ui-regression-guard.ps1` | aggregateから同guard | local main記録済みPASS |
-| unit/component | `pnpm test:unit` | headless app smoke群 | Browser current 63 files / 584 tests green、3 files / 3 tests skip at `0802f95`; milestone baseline 61/521も保持 |
+| unit/component | `pnpm test:unit` | headless app smoke群 | Browser current 68 files / 614 tests green、3 files / 3 tests skip。過去milestone snapshotは履歴として保持 |
 | type/lint/build | `pnpm typecheck`, `pnpm lint`, `pnpm build` | `dotnet build -c Release` | Browser typecheck/build green、lint 0 errors（unrelated Claude worktree 1 warning）、WPF 0 warning・0 error |
 | Landing/recent/runtime | `e2e/home.spec.ts`, `verify-browser-runtime.ps1` | landing/recent verifier、launcher freshness | Browser isolated production Playwright 7/7。通常runtime evidenceはtruth tableへ記録 |
 | Grid/List zoom | `ImageGrid.test.tsx`, `Sidebar.test.tsx`, `thumbnailSizing.test.ts`, `e2e/viewer-grid-zoom.spec.ts` | `verify-wpf-gallery-zoom-anchor.ps1`、catalog stress、gallery zoom/scroll/date/layout verifier | Browser/WPFとも20〜600/1列/geometry anchor採用。WPF current aggregate 53/53 + reload 24/24、exact100k/100folder green |
@@ -660,10 +664,11 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | Search History | route/SearchBar tests、実Browser keyboard、API live-lock timeout、同一target FIFO | `verify-wpf-search-history.ps1`, barrier付き`verify-cross-runtime-search-history.ps1` | async UI、input/row keyboard/a11y、raw/normalized上限、U+FEFF/U+0085 trim parity、max50、malformed/future保護、Busy writes 0、20+20実overlap/lost 0、Browser 30並列全200/lost 0 |
 | Favorite/Seen/Recent concurrency | API route tests、2 cross-runtime scripts | same cross-runtime actors | 各20反復green、WinForms actorは含まない |
 | key bindings/accessibility | component tests | `verify-wpf-key-bindings.ps1`等 | WPF editable/reload/reset/100k selection記録済み |
-| reload/state | component hydration/session recovery tests | state/reload aggregate | WPF zoom promotion aggregate + reload 53/53、reload 24/24、後続shared-state latency descendant `-SkipStress` 51/51 green。exact 100k記録も維持 |
+| Album v1 | Album store/source/API/component tests、`e2e/viewer-albums.spec.ts` | `verify-wpf-album-store.ps1`、aggregate、catalog stress | Browser unitを含む614 tests、隔離port 3131 E2E 1/1。Album focused 24/24、同時Browser/WPF 16+16 revision 32/lost 0、WPF UI order/availability/shortcut green |
+| reload/state | component hydration/session recovery tests | state/reload aggregate | current WPF aggregate 56/56、reload 24/24、stale completion 0、CTS 73/73 green。exact 100k記録も維持 |
 | large catalog | Browser 5,000推奨stress | 20,000 aggregate + exact 100,000/100 | WPF exact tail/order/realization/index記録済み |
 | Enhancement isolation | API/isolation tests | passive-isolation checks | passive enqueue/start 0を要求 |
-| Section 14採用/残件 | 14.1はlocal-main commitごとのfocused gate、14.2は専用test未完 | Favorite source確認、Search History、status枠、displayed asset、WPF一覧Enter、Album shared coreを採用。context menu/Ctrl+C/Album UIは未完 | surface単位のstatusを混ぜない |
+| Section 14採用/残件 | 14.1はlocal-main commitごとのfocused gate、14.2は専用test未完 | Favorite source確認、Search History、status枠、displayed asset、WPF一覧Enter、Album v1を採用。context menu/Ctrl+Cは未完 | surface単位のstatusを混ぜない |
 | WinForms | 通常対象外 | 通常対象外 | FROZEN。重大破損/起動不能時だけ限定gateを新設 |
 
 件数はsnapshotであって固定合格値ではない。suiteが増えたら全result 0 failureを要求し、古い件数へ合わせるためtestを削らない。E2Eはunit/componentより狭い。static testはOS Recycle Bin、shell、clipboard、focus、DPI、launcherの実動作を代替しない。
