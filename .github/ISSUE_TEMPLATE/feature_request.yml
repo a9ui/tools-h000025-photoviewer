@@ -1,0 +1,68 @@
+name: Feature request
+description: Propose a focused improvement that preserves PhotoViewer's local-first product contract.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        PhotoViewer is a local-first Windows viewer. Public source does not mean the runtime is
+        supported on a LAN or the Internet. Remote hosting, Cloudflare Tunnel, reverse proxying,
+        account systems, and cloud storage require a separate security architecture and are not
+        ordinary feature requests.
+
+        Do not attach personal images, real user state, credentials, or unredacted local paths.
+
+  - type: checkboxes
+    id: boundaries
+    attributes:
+      label: Product boundary check
+      options:
+        - label: This proposal preserves the `127.0.0.1` local-only Browser boundary.
+          required: true
+        - label: This proposal does not add hard-delete fallback or passive Enhancement work.
+          required: true
+        - label: This proposal does not require deleting user cache or state.
+          required: true
+        - label: I removed personal data, credentials, and unredacted absolute paths.
+          required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Intended surface
+      options:
+        - Browser
+        - WPF
+        - Browser and WPF
+        - Repository, build, or contributor experience
+        - Unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: Explain the workflow problem before proposing the implementation.
+    validations:
+      required: true
+
+  - type: textarea
+    id: outcome
+    attributes:
+      label: Required product result
+      description: Describe observable behavior, state ownership, failure handling, keyboard/accessibility behavior, and parity expectations.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Suggested implementation
+      description: Optional. Prefer a minimal change on current `main` with focused tests.
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Suggested acceptance checks
+      description: Include exact Browser/WPF tests or verifier commands that would prove completion.

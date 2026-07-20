@@ -1,75 +1,92 @@
 # PhotoViewer
 
-PhotoViewer is a local-first Windows-oriented image viewer. This H25 project
-keeps the existing viewer functions and focuses the project on making browsing,
-scanning, thumbnailing, search, modal navigation, and local API behavior as
-light as possible.
+PhotoViewer is a local-first Windows image viewer for large illustration and
+photo folders. It provides a Next.js browser interface and a native .NET 8 WPF
+interface over the same local-first product model: fast scanning, virtualized
+browsing, search, Favorite and Seen state, Albums, Recycle Bin operations, and
+explicit optional enhancement jobs.
 
-## Goal
+> [!IMPORTANT]
+> Publishing this source repository does **not** make PhotoViewer a hosted
+> service. The Browser runtime binds to `127.0.0.1`, the APIs can act on local
+> files selected by the operator, and LAN or Internet exposure is unsupported.
 
-Keep the current features, then improve the experience with repeatable
-measurements:
+## Product surfaces
 
-- launch to first usable screen,
-- scan progress and scan completion,
-- visible thumbnail fill,
-- modal previous/next latency,
-- local API response time,
-- proof that optional heavy jobs never start without explicit user action.
+- **Browser:** Next.js and React, served on IPv4 loopback only.
+- **WPF:** native .NET 8 Windows UI that shares supported local state with the
+  Browser implementation.
+- **WinForms:** preserved as a frozen historical surface. New product features
+  are not added there.
 
-## Workflow
+## Safety invariants
 
-- `PROJECT.md` owns the big goal and roadmap.
-- GitHub owns milestones, issues, PRs, Actions, and code history.
-- SQLite under the Tools `System` folder is Codex's local job ledger.
-- Cursor handles normal implementation issues.
-- Codex handles small edits, GitHub/SQLite control, PR review, CI, and oracle
-  packet preparation.
-- Linear is not used.
+- Source images are not rewritten by normal viewing or metadata extraction.
+- Source deletion uses the Windows Recycle Bin; there is no hard-delete
+  fallback.
+- Ordinary browsing, search, preview, and modal navigation never enqueue an
+  enhancement job or start a worker.
+- Browser file APIs require an active viewer session and the shared loopback
+  Host/Origin guard.
+- User cache and state are migrated non-destructively; malformed or newer shared
+  files are not silently replaced.
 
-## Commands
+The integrated product contract is in
+[`docs/photoviewer-authoritative-spec.md`](docs/photoviewer-authoritative-spec.md).
+
+## Requirements
+
+- Windows 10 or later
+- Node.js 22 recommended (`>=20.9.0` supported by the package metadata)
+- pnpm 11
+- .NET 8 SDK for the WPF application
+
+Optional enhancement backends such as ComfyUI and Real-ESRGAN ncnn-vulkan are
+external local tools. They are not downloaded or started during ordinary
+browsing.
+
+## Browser setup
 
 ```powershell
-pnpm install --frozen-lockfile
-pnpm dev
-powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1
+corepack pnpm install --frozen-lockfile
+corepack pnpm dev
 ```
 
-Default verification runs:
+The development command binds to `127.0.0.1`. For a production build and local
+launcher:
 
 ```powershell
-pnpm test:unit
-pnpm typecheck
-pnpm build
-```
-
-Production launcher commands:
-
-```powershell
+corepack pnpm build
 node .\scripts\prod_launcher.js
 node .\scripts\prod_launcher.js --port 3100
-node .\scripts\prod_launcher.js --port=3100
-node .\scripts\prod_launcher.js --help
 ```
 
-Without `--port`, the launcher keeps the normal behavior of selecting the first
-available port from 3000 through 3999. An explicit port is bound on
-`127.0.0.1` only; invalid or busy explicit ports fail without killing the
-listener or falling back to another port. `--help` and `-h` print usage without
-cleanup, port probing, build, server, ComfyUI, or browser side effects.
+An explicit busy port fails without killing or replacing its listener. The
+launcher may select another loopback port only when no explicit port was
+requested.
 
-## Docs
+## WPF setup
 
-- `docs/ai-implementation-brief.md`: exact read order and non-negotiable build/verification handoff for another AI or team.
-- `docs/browser-feature-contract.md`: normative, implementation-ready Browser product specification.
-- `docs/wpf-product-spec.md`: normative WPF product/state/safety/acceptance specification.
-- `docs/browser-to-wpf-parity-plan.md`: initial gap history, live completion ledger, and remaining slices.
-- `docs/product-review-20260718.md`: current cross-surface review, risk closure, quality assessment, and priorities.
-- `docs/requirements.md`: what this H25 project must preserve and improve.
-- `docs/spec.md`: how measurement and optimization work should proceed.
-- `docs/legacy/`: copied reference material from the previous workspace.
+```powershell
+dotnet build .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj -c Release
+.\start_wpf.bat
+```
 
-WPF focused verification starts with:
+WPF normal browsing does not require the Browser server. Only explicit managed
+Enhancement actions may call the loopback Browser engine.
+
+## Verification
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\verify-project.ps1
+
+dotnet build `
+  .\local-native\PhotoViewer.Wpf\PhotoViewer.Wpf.csproj `
+  -c Release `
+  --nologo
+```
+
+Focused WPF gates include:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-ui-regression-guard.ps1
@@ -77,3 +94,33 @@ powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p0.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1a.ps1
 powershell -ExecutionPolicy Bypass -File .\scripts\verify-wpf-p1b.ps1
 ```
+
+Tests must use disposable fixtures under the system temporary directory. Do not
+use personal image libraries, shared user state, or the normal user-owned port
+3000 as test fixtures.
+
+## Repository publication
+
+The intended public repository name is **`H000025-PhotoViewer`**. Repository
+visibility changes follow
+[`docs/public-repository-policy.md`](docs/public-repository-policy.md) and
+[`docs/publication-runbook.md`](docs/publication-runbook.md). The repository
+must remain private until the source-security, Git-history privacy, license,
+CI, and GitHub-settings gates are all complete.
+
+Public source does not authorize Vercel deployment, Cloudflare Tunnel exposure,
+reverse proxying, or binding PhotoViewer to a non-loopback interface.
+
+## Contributing and security
+
+Read [`CONTRIBUTING.md`](CONTRIBUTING.md) before opening a pull request. Report
+security vulnerabilities through GitHub private vulnerability reporting as
+described in [`SECURITY.md`](SECURITY.md); do not post exploit details, private
+images, credentials, or unredacted absolute paths in a public issue.
+
+## License
+
+A public-source license has not yet been selected. Until a root `LICENSE` file
+is deliberately added by the repository owner, no permission to copy, modify,
+or redistribute this project is granted beyond rights provided by applicable
+law. See [`docs/license-decision.md`](docs/license-decision.md).

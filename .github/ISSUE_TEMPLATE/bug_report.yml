@@ -1,0 +1,85 @@
+name: Bug report
+description: Report a reproducible PhotoViewer defect without exposing personal data.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for the report. Use generated or disposable fixtures whenever possible.
+        Do not attach personal images, real `.cache` or state files, credentials, database files,
+        or screenshots containing private metadata. Replace home-directory and project paths with
+        placeholders such as `<USER_HOME>` and `<PROJECT_ROOT>`.
+
+        Suspected security vulnerabilities belong in private vulnerability reporting, not here.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Privacy and security check
+      options:
+        - label: I removed credentials, personal images, private metadata, and unredacted absolute paths.
+          required: true
+        - label: This is not an undisclosed security vulnerability.
+          required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected surface
+      options:
+        - Browser
+        - WPF
+        - Browser and WPF
+        - Build, test, or repository tooling
+        - Unsure
+    validations:
+      required: true
+
+  - type: input
+    id: revision
+    attributes:
+      label: Revision or version
+      description: Prefer the full Git commit SHA or exact branch revision.
+      placeholder: 40-character commit SHA
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+      description: Describe the observed behavior and why it is incorrect.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Reproduction steps
+      description: Use a disposable TEMP fixture and an isolated Browser port where applicable.
+      placeholder: |
+        1. Create ... under TEMP
+        2. Start ... on an isolated port
+        3. Perform ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Redacted diagnostics
+      description: Include only the smallest relevant log excerpt. Do not paste full state, cache, database, process dump, or personal path data.
+      render: text
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: Checks already run
+      description: List exact commands and results; do not write “all green” without the commands.

@@ -1,0 +1,76 @@
+name: Performance report
+description: Report a measured performance regression with privacy-safe, repeatable evidence.
+title: "[Performance]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use generated fixtures under the system temporary directory. Do not upload a real image
+        library, local database, shared state, cache contents, personal screenshot, or unredacted
+        absolute path. Record before/after numbers from the same machine and test shape when possible.
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: Fixture and privacy check
+      options:
+        - label: The evidence uses generated/disposable data rather than personal media or user state.
+          required: true
+        - label: Machine-specific paths and identifiers are redacted.
+          required: true
+
+  - type: dropdown
+    id: surface
+    attributes:
+      label: Affected operation
+      options:
+        - Browser launch or first usable screen
+        - Scan or metadata extraction
+        - Thumbnail or display decode
+        - Grid/List scrolling or virtualization
+        - Search or filtering
+        - Modal navigation
+        - Shared-state persistence
+        - WPF startup or interaction
+        - Build or test runtime
+        - Other
+    validations:
+      required: true
+
+  - type: input
+    id: revision
+    attributes:
+      label: Exact revision
+      placeholder: 40-character Git commit SHA
+    validations:
+      required: true
+
+  - type: textarea
+    id: fixture
+    attributes:
+      label: Fixture shape
+      description: Record generated item count, folder count, formats, dimensions, cache state, and whether the run was cold or warm.
+    validations:
+      required: true
+
+  - type: textarea
+    id: measurement
+    attributes:
+      label: Measurement and regression
+      description: Include units, repeated runs, p50/p95 or range where useful, and the prior comparison revision.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Exact commands
+      render: powershell
+    validations:
+      required: true
+
+  - type: textarea
+    id: observations
+    attributes:
+      label: Additional observations
+      description: Include CPU, memory, disk, responsiveness, errors, or profiler evidence only when actually measured.
