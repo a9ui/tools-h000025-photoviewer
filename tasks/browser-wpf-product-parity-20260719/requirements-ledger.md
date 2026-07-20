@@ -11,7 +11,7 @@
 | Browserを製品意味の正本にし、WPFをほぼ同機能にする | implemented contract | implemented contract, individual rows remain | `docs/photoviewer-authoritative-spec.md`と本ledgerを同時更新。Browser-only完了は禁止 |
 | 通常launcherが古いbuild/branchを配信しない | provenance launcherあり | provenance launcherあり | `start_viewer.bat` / `start_wpf.bat`で最終HEAD一致をlive確認。port 3000はユーザーruntime |
 | GitHub Actionsなしでもlocal gateとGit/GitHubでversion管理 | implemented local workflow | implemented local workflow | Actionsをgateにせず、focused/full verifier、commit、Draft PR/issue、SQLiteを使う |
-| 古いbranchに埋もれた機能を回収する | audit中 | audit中 | Album branch `codex/album-library`のMVPを発見。blind cherry-pick禁止 |
+| 古いbranchに埋もれた機能を回収する | Album意味監査済み、shared core採用 | shared core採用 | Claude Album MVPをPARTIAL、旧viewer commitをREJECT。blind cherry-pick禁止。`tasks/album-v1-semantic-recovery-20260720/audit.md` |
 | WinFormsは削除せず凍結 | FROZEN | FROZEN | `local-native/PhotoViewer.Native/**`は重大破損/起動不能だけ保守 |
 | private/local製品として運用し、deploymentしない | implemented policy | implemented policy | Vercel/public distributionはscope外。repo visibility変更時は別途security live gate |
 
@@ -103,10 +103,10 @@
 
 | Requirement | Browser | WPF | Current truth / completion gate |
 | --- | --- | --- | --- |
-| folderとは別に任意画像をまとめるAlbum/tag-like collection | pending semantic recovery | pending | 旧branch `codex/album-library` commit `d2a99c4`を発見。current main未採用 |
-| create/rename/delete/pin/cover/recent | old branch MVP only | disabled placeholder | v1 model、shared ownership、UI、migration、focused testsが必要 |
-| selected images add/remove、Album内filter/view/Modal | old branch MVP only | pending | full current catalog identity、missing/moved source表示、bulk semantics |
-| Browser/WPF同時更新でlost updateしない | missing old MVP | missing | 旧`.cache/albums.json` writerはlock/atomic/failure status/testがないため、そのまま採用禁止 |
+| folderとは別に任意画像をまとめるAlbum/tag-like collection | shared model/store/API core implemented、UI pending | shared model/store core implemented、UI pending | `albums.json` v1 contract採用。product surface/source sessionは未完 |
+| create/rename/delete/pin/cover/recent | operation API/store implemented | store operations implemented、disabled placeholder | Browser library/pickerとWPF basic UIへの接続が必要 |
+| selected images add/remove、Album内filter/view/Modal | add/remove/bulk store operationのみ | add/remove/bulk store operationのみ | current/outside/missing availability、GallerySource/ModalSource、Filmstrip、focusを継続実装 |
+| Browser/WPF同時更新でlost updateしない | implemented core | implemented core | shared create-new lock、latest-disk mutation、revision conflict、atomic publish、unknown保持。cross-runtime revision 2→6→7 green |
 
 ## 10. 完了判定
 

@@ -420,7 +420,7 @@ TextBox、ComboBox、DatePicker、Button、Landing、Settings/Delete overlayはg
 
 ### 7.8 WPF right-click / Ctrl+C / Album
 
-現行mainのXAML/code-behindにproduct image context menuはない。Clipboard操作はsafe diagnosticsとPrompt/Negative/PNG metadata textで、画像file/bitmap copyではない。headerのAlbum controlはdisabledで「Album mutation is deferred」。したがってcontext menu、Ctrl+C画像copy、Album/collection本体はSection 14のPENDING。
+現行mainのXAML/code-behindにproduct image context menuはない。Clipboard操作はsafe diagnosticsとPrompt/Negative/PNG metadata textで、画像file/bitmap copyではない。headerのAlbum controlはdisabledで「Album mutation is deferred」。Album v1のshared storage/operation coreはBrowser/WPF双方に存在するが、library/picker/source UIは未実装である。したがってcontext menu、Ctrl+C画像copy、Album product surfaceはSection 14のPENDING。
 
 ## 8. Favorite / Seen契約
 
@@ -608,7 +608,7 @@ local mainの記録済み最終観測値は、cold catalog 3,809ms / metadata 26
 | --- | --- | --- | --- |
 | image context menu | なし | なし | **実装確認待ち / pending**。selection rule、keyboard invocation、action availability、focus/Escape、Delete確認を定義 |
 | Ctrl+C画像copy | metadata textのみ | diagnostics/metadata textのみ | **実装確認待ち / pending**。bitmap/fileのどちらか、selection、clipboard failure、text input isolationを定義 |
-| Album / collection発掘 | product surface/APIなし | disabled Album buttonだけ | **実装確認待ち / pending discovery**。identity、membership、rename/delete、recent、shared ownership、migration/conflictを先に決める |
+| Album / collection | v1 operation API + shared store core、product surfaceなし | Browser同一shared store/mutation core + disabled Album button | **implementation in progress**。identity、membership、rename/delete/add/remove/recent、revision/lock/atomic/conflictは採用済み。library/picker/source session、availability、Modal/Filmstrip、shortcut/focus、Recycle cleanup接続は未完 |
 
 branch、別worktree、未採用commit、テスト単体の存在ではstatusを上げない。今回昇格していないrowは、今後もlocal main source、focused test、必要なruntime/launcherが揃うまでimplementedへ混ぜない。
 
@@ -663,7 +663,7 @@ branch、別worktree、未採用commit、テスト単体の存在ではstatusを
 | reload/state | component hydration/session recovery tests | state/reload aggregate | WPF zoom promotion aggregate + reload 53/53、reload 24/24、後続shared-state latency descendant `-SkipStress` 51/51 green。exact 100k記録も維持 |
 | large catalog | Browser 5,000推奨stress | 20,000 aggregate + exact 100,000/100 | WPF exact tail/order/realization/index記録済み |
 | Enhancement isolation | API/isolation tests | passive-isolation checks | passive enqueue/start 0を要求 |
-| Section 14採用/残件 | 14.1はlocal-main commitごとのfocused gate、14.2は専用test未完 | Favorite source確認、Search History、status枠、displayed asset、WPF一覧Enterを採用。context menu/Ctrl+C/Albumは未完 | surface単位のstatusを混ぜない |
+| Section 14採用/残件 | 14.1はlocal-main commitごとのfocused gate、14.2は専用test未完 | Favorite source確認、Search History、status枠、displayed asset、WPF一覧Enter、Album shared coreを採用。context menu/Ctrl+C/Album UIは未完 | surface単位のstatusを混ぜない |
 | WinForms | 通常対象外 | 通常対象外 | FROZEN。重大破損/起動不能時だけ限定gateを新設 |
 
 件数はsnapshotであって固定合格値ではない。suiteが増えたら全result 0 failureを要求し、古い件数へ合わせるためtestを削らない。E2Eはunit/componentより狭い。static testはOS Recycle Bin、shell、clipboard、focus、DPI、launcherの実動作を代替しない。

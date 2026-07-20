@@ -13,6 +13,15 @@
 
 `local-native/ui-mockup/**`は初期shellの歴史資料であり非正規。そこに残るQuick Search、Today/7d/30d/year、threshold favorite chip、旧sidebar構成を現行仕様として復活させない。視覚QAはreal WPFの`--shot`出力と同一stateの現行Browserを使う。
 
+Album v1はshared storage checkpointまで実装済みである。WPFはBrowserと同じ
+`.cache/albums.json` v1、opaque Album/member id、document/Album revision、
+create/update/delete/add/remove/recent/source-cleanup operation、target-scoped
+create-new lock、latest-on-disk mutation、flush済みtempからのatomic publish、
+malformed/future拒否、unknown-field保持を使う。`verify-wpf-album-store.ps1`は
+Browser→WPF→Browserの同一file interleave、stale revision conflict、residue 0を
+検証する。disabled header buttonはまだproduct surfaceではなく、library/picker、
+Album source navigation、availability、Modal/Filmstrip、shortcut/focusは未実装である。
+
 ## 1. 製品目的と非目標
 
 WPF版PhotoViewerは、Windows上の大量のローカル生成画像を、serverやWebViewなしで高速に検索、比較、評価、整理するnative desktop viewerである。Browser版の見た目を機械的に複製するのではなく、ユーザーが既に覚えた意味と操作結果を維持しながら、native virtualization、Recycle Bin、Explorer連携、低遅延inputを利用する。

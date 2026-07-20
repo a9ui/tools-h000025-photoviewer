@@ -623,6 +623,13 @@ public partial class App : Application
             return;
         }
 
+        int albumStoreSmokeIdx = Array.IndexOf(e.Args, "--album-store-smoke");
+        if (albumStoreSmokeIdx >= 0 && albumStoreSmokeIdx + 1 < e.Args.Length)
+        {
+            CaptureAlbumStoreSmoke(e.Args[albumStoreSmokeIdx + 1], e.Args);
+            return;
+        }
+
         new MainWindow().Show();
     }
 
@@ -658,6 +665,106 @@ public partial class App : Application
         catch (Exception ex)
         {
             result = new { ok = false, message = ex.Message, start };
+        }
+
+        Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
+        File.WriteAllText(resultFullPath, JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true }));
+        Shutdown(ok ? 0 : 1);
+    }
+
+    private void CaptureAlbumStoreSmoke(string resultPath, IReadOnlyList<string> args)
+    {
+        string resultFullPath = Path.GetFullPath(resultPath);
+        string? albumPathValue = ArgValue(args.ToArray(), "--album-path");
+        object result;
+        bool ok = false;
+        try
+        {
+            if (string.IsNullOrWhiteSpace(albumPathValue))
+                throw new ArgumentException("album store smoke requires --album-path");
+            string albumPath = Path.GetFullPath(albumPathValue);
+            string memberPath = Path.GetFullPath(
+                ArgValue(args.ToArray(), "--member-path")
+                ?? Path.Combine(Path.GetDirectoryName(albumPath)!, "outside-member.jpg"));
+            string cleanupMemberPath = Path.Combine(Path.GetDirectoryName(albumPath)!, $"cleanup-{Guid.NewGuid():N}.jpg");
+            AlbumReadResult initial = AlbumStore.Read(albumPath);
+            if (!initial.Supported || initial.Document is null)
+                throw new InvalidDataException(initial.Error ?? "initial Album document was protected");
+
+            string albumId = $"wpf-smoke-{Guid.NewGuid():N}";
+            AlbumMutationResult created = AlbumStore.Create(
+                albumPath,
+                "WPF shared Album",
+                initial.Document.Revision,
+                albumId);
+            AlbumMutationResult added = AlbumStore.AddMembers(
+                albumPath,
+                albumId,
+                [memberPath, cleanupMemberPath],
+                created.Document?.Revision);
+            string? memberId = added.Album?.Members.SingleOrDefault(member => string.Equals(member.ImagePath, memberPath, StringComparison.OrdinalIgnoreCase))?.Id;
+            AlbumMutationResult updated = AlbumStore.Update(
+                albumPath,
+                albumId,
+                added.Document?.Revision,
+                pinned: true,
+                coverMemberId: memberId,
+                updateCover: true);
+            AlbumMutationResult cleaned = AlbumStore.CleanupPaths(
+                albumPath,
+                [cleanupMemberPath],
+                updated.Document?.Revision);
+            AlbumMutationResult stale = AlbumStore.Create(
+                albumPath,
+                "Must conflict",
+                initial.Document.Revision,
+                $"stale-{Guid.NewGuid():N}");
+            AlbumReadResult final = AlbumStore.Read(albumPath);
+            using JsonDocument stored = JsonDocument.Parse(File.ReadAllText(albumPath));
+            bool unknownRootPreserved = !stored.RootElement.TryGetProperty("futureRoot", out _)
+                || stored.RootElement.GetProperty("futureRoot").ValueKind != JsonValueKind.Undefined;
+            bool noResidue = !File.Exists(albumPath + ".lock")
+                && !Directory.EnumerateFiles(Path.GetDirectoryName(albumPath)!, "*.tmp", SearchOption.TopDirectoryOnly)
+                    .Any(path => Path.GetFileName(path).StartsWith(".albums.json.", StringComparison.OrdinalIgnoreCase)
+                        || Path.GetFileName(path).StartsWith("albums-", StringComparison.OrdinalIgnoreCase));
+            ok = created.Ok
+                && added.Ok
+                && updated.Ok
+                && cleaned.Ok
+                && updated.Album?.Pinned == true
+                && updated.Album?.CoverMemberId == memberId
+                && stale.Status == AlbumMutationStatus.Conflict
+                && final.Supported
+                && final.Document?.Revision == initial.Document.Revision + 4
+                && final.Document.Albums.Any(album => album.Id == albumId && album.Members.Count == 1)
+                && unknownRootPreserved
+                && noResidue;
+            result = new
+            {
+                ok,
+                albumPath,
+                albumId,
+                memberPath,
+                initialRevision = initial.Document.Revision,
+                finalRevision = final.Document?.Revision,
+                created = created.Status.ToString(),
+                createdError = created.Error,
+                added = added.Status.ToString(),
+                addedError = added.Error,
+                updated = updated.Status.ToString(),
+                updatedError = updated.Error,
+                cleaned = cleaned.Status.ToString(),
+                cleanedError = cleaned.Error,
+                stale = stale.Status.ToString(),
+                staleError = stale.Error,
+                unknownRootPreserved,
+                noResidue,
+                albumCount = final.Document?.Albums.Count,
+            };
+        }
+        catch (Exception ex)
+        {
+            result = new { ok = false, message = ex.Message, albumPath = albumPathValue };
         }
 
         Directory.CreateDirectory(Path.GetDirectoryName(resultFullPath)!);
