@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Report a security vulnerability privately
-    url: https://github.com/a9ui/H000025-PhotoViewer/security/advisories/new
+    url: https://github.com/a9ui/tools-h000025-photoviewer/security/advisories/new
     about: Do not post exploit details, credentials, personal images, or private paths in a public issue.
   - name: Read the security policy
-    url: https://github.com/a9ui/H000025-PhotoViewer/blob/main/SECURITY.md
+    url: https://github.com/a9ui/tools-h000025-photoviewer/blob/main/SECURITY.md
     about: Review the local-only runtime boundary and privacy-safe reporting rules.
