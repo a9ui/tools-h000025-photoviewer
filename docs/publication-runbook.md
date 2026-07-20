@@ -60,6 +60,9 @@ git log --all --format='%H`t%an`t%ae`t%s' `
   | Set-Content -Encoding utf8 (Join-Path $AuditRoot 'commits.tsv')
 ```
 
+Review every author email in the inventory. A public repository exposes commit
+identity metadata even when the current files are clean.
+
 ## 4. Scan secrets and private paths
 
 Use current supported scanner versions. Keep raw reports under `$AuditRoot`.
@@ -84,13 +87,17 @@ powershell -ExecutionPolicy Bypass `
   -OutputPath (Join-Path $AuditRoot 'public-surface.json')
 ```
 
-Also review GitHub Issues, pull requests, comments, Actions logs, retained
-artifacts, releases, screenshots, and attachments. Repository-local scanners do
-not cover all of those surfaces.
+Also review GitHub Issues, pull requests, reviews, comments, Actions logs,
+retained artifacts, releases, screenshots, and attachments. Repository-local
+scanners do not cover all of those surfaces.
 
 For every candidate, record disposition without copying a secret value into the
 summary. If a credential is real, rotate or revoke it first. Do not rewrite Git
 history without a separate owner-approved plan.
+
+If required refs, logs, artifacts, or private GitHub surfaces cannot be audited,
+direct publication is not green. Use the clean-history fallback or leave the
+repository private.
 
 ## 5. Complete the license gate
 
@@ -101,6 +108,18 @@ exact root `LICENSE` file. Then inventory third-party licenses and decide whethe
 No root `LICENSE` means publication remains NO-GO.
 
 ## 6. Run exact-candidate verification
+
+First make the publication blockers executable:
+
+```powershell
+powershell -ExecutionPolicy Bypass `
+  -File .\scripts\verify-public-surface.ps1 `
+  -FullTree `
+  -RequireLicense `
+  -OutputPath (Join-Path $AuditRoot 'final-public-surface.json')
+```
+
+Then run the product gates:
 
 ```powershell
 corepack pnpm install --frozen-lockfile
@@ -125,6 +144,8 @@ isolated output directory where required.
 
 Wait for the GitHub Actions checks on the exact SHA. Copy the successful check
 names into the repository hardening command; do not infer them from YAML alone.
+Run the scheduled dependency-audit workflow manually for this candidate and
+record the result.
 
 ## 7. Rename while still private
 
@@ -147,14 +168,20 @@ git remote -v
 gh repo view a9ui/H000025-PhotoViewer --json nameWithOwner,visibility,url
 ```
 
-Search tracked references:
+Update maintained references such as `project.toml`, issue-form links, badges,
+and scripts. Historical old-name mentions are allowed only in the publication
+policy and migration runbook.
+
+Enforce the rename result:
 
 ```powershell
-git grep -ni 'tools-h000025-photoviewer'
+powershell -ExecutionPolicy Bypass `
+  -File .\scripts\verify-public-surface.ps1 `
+  -FullTree `
+  -RequireLicense `
+  -ExpectedRepository a9ui/H000025-PhotoViewer `
+  -OutputPath (Join-Path $AuditRoot 'renamed-public-surface.json')
 ```
-
-Update remaining references in a focused commit. Old URLs may redirect after a
-rename, but the maintained tree should use the canonical name.
 
 Rerun Step 6 while the repository remains private.
 
@@ -202,14 +229,16 @@ powershell -ExecutionPolicy Bypass `
   -File .\scripts\harden-github-repository.ps1 `
   -Repository a9ui/H000025-PhotoViewer `
   -RequiredCheck 'Browser verification','WPF Release build' `
+  -ForkApprovalPolicy first_time_contributors `
+  -ArtifactRetentionDays 30 `
   -Apply
 ```
 
 Use the actual successful check names if they differ.
 
 Verify secret scanning, push protection, vulnerability alerts, private
-vulnerability reporting, code scanning where available, read-only workflow
-permissions, and branch protection.
+vulnerability reporting, CodeQL default setup, read-only workflow permissions,
+fork-workflow approval, artifact/log retention, and branch protection.
 
 ## 11. Anonymous verification
 
@@ -225,7 +254,9 @@ Confirm README, LICENSE, SECURITY, issue forms, workflows, and the intended
 source files are readable. Confirm no scanner report, recovery bundle, personal
 image, user state, or local database was published.
 
-Run the final Actions workflow and record the result.
+Run the final Actions workflow and record the result. Confirm CodeQL completed
+for JavaScript/TypeScript, C#, and Actions, or record exact unsupported-language
+or plan limitations instead of silently treating configuration as a clean scan.
 
 ## 12. Clean-history fallback
 
