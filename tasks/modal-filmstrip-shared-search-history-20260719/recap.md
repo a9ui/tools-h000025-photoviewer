@@ -247,7 +247,7 @@ real pending runtime step, not a claimed green result.
 
 Branch/worktree triage used PR disposition, patch equivalence, semantic
 adoption commits, clean status, and ancestor checks. Local branches went from
-91 to 5 and registered worktrees from 56 to 4. The retained branches are
+91 to 5 and registered worktrees from 56 to 3. The retained branches are
 `main`, Draft PR #322, a unique unadopted Album MVP, and dirty-protected
 WinForms/Claude work. No unique or dirty branch was deleted.
 
