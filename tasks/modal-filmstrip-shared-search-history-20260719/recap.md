@@ -197,3 +197,38 @@ head. SQLite improvement item #45 is `done`. The default `origin/main` remains
 old until an explicit merge. GitHub Actions run `29689487462` also completed
 successfully for `14ebe6a...`, but it was supplementary evidence rather than
 the milestone gate. No merge or deployment was performed.
+
+## Completion-audit successor (current local main tree)
+
+The final requirement-by-requirement audit found and closed five proof or
+behavior gaps instead of reusing the historical green result:
+
+- Browser Search History now enters the first/last item from the input with
+  ArrowDown/ArrowUp, cycles, announces the active complete query, moves real
+  focus between row buttons, applies with Enter, and closes/refocuses without
+  immediate reopen on Escape.
+- Browser and WPF reject a query whose raw text is within 32,768 UTF-16 code
+  units but whose comma normalization expands beyond the same bound. Both use
+  one explicit Unicode White_Space + U+FEFF trim table; exact 32,768 remains
+  readable after write, and U+FEFF/U+0085 parity is executable evidence.
+- The cross-runtime verifier now holds both writers behind ready markers,
+  releases one start gate, records both write intervals, and fails unless the
+  loops actually overlap. The current 20+20 run produced 43 final entries,
+  overlap 592ms (a later aggregate observed 668ms), lost 0, Busy 0, and no
+  lock/temp residue.
+- A delayed Search History reload no longer allows Arrow/Enter to select and
+  recommit an invisible stale row removed by another runtime.
+- The lossless cross-runtime verifier caps `Iterations` at 23 because two
+  runtime sets plus three shared identities must fit the 50-entry MRU.
+
+Current Browser evidence is 63 files / 589 tests PASS with 3 files / 3 tests
+skip, focused Search History 33/33, typecheck, Next.js 16.2.10 production build,
+and scoped lint green. A fresh isolated Chromium run at `127.0.0.1:31337`
+passed 1/1 and covered Search History input/row keyboard plus the current
+manual-visible/900ms/hidden-overlay Filmstrip contract; port 3000 was not used.
+
+Current WPF evidence is `verify-wpf-product.ps1 -IncludeReloadSoak` 55/55 in
+462,762ms with reload 24/24, Release build 0 warnings / 0 errors, and the
+strengthened Search History gate included. No source image, user shared state,
+normal port-3000 runtime, WinForms code, deployment, or GitHub Actions gate was
+used.

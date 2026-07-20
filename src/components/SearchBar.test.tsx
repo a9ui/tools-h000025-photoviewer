@@ -127,6 +127,121 @@ describe('SearchBar accessibility', () => {
     expect(historyReads.length).toBeGreaterThanOrEqual(2);
   });
 
+  it('cycles history from the input and announces the active complete query', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    await user.click(input);
+    const history = await screen.findByRole('region', { name: 'Search history' });
+    const first = within(history).getByRole('button', { name: 'Use search cat, dog' });
+    const status = screen.getByRole('status', { name: 'Search history status' });
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(first).toHaveClass('selected');
+    expect(status).toHaveTextContent('Search history 1 of 2: cat, dog');
+    expect(input).toHaveFocus();
+    expect(input).not.toHaveAttribute('aria-activedescendant');
+
+    fireEvent.keyDown(input, { key: 'Escape' });
+    expect(screen.queryByRole('region', { name: 'Search history' })).not.toBeInTheDocument();
+    await user.click(input);
+    const reopenedHistory = await screen.findByRole('region', { name: 'Search history' });
+    const reopenedFirst = within(reopenedHistory).getByRole('button', { name: 'Use search cat, dog' });
+    const reopenedLast = within(reopenedHistory).getByRole('button', { name: 'Use search landscape, night' });
+
+    fireEvent.keyDown(input, { key: 'ArrowUp' });
+    expect(reopenedLast).toHaveClass('selected');
+    expect(status).toHaveTextContent('Search history 2 of 2: landscape, night');
+
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    expect(reopenedFirst).toHaveClass('selected');
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(screen.queryByRole('region', { name: 'Search history' })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+    expect(setSearchQuery).toHaveBeenCalledWith('cat, dog');
+  });
+
+  it('moves real focus between history rows and returns it to the input on Escape', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    await user.click(input);
+    const history = await screen.findByRole('region', { name: 'Search history' });
+    const first = within(history).getByRole('button', { name: 'Use search cat, dog' });
+    const last = within(history).getByRole('button', { name: 'Use search landscape, night' });
+
+    act(() => first.focus());
+    fireEvent.keyDown(first, { key: 'ArrowUp' });
+    expect(last).toHaveFocus();
+    expect(last).toHaveClass('selected');
+
+    fireEvent.keyDown(last, { key: 'ArrowDown' });
+    expect(first).toHaveFocus();
+    fireEvent.keyDown(first, { key: 'Escape' });
+
+    expect(screen.queryByRole('region', { name: 'Search history' })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+    expect(setSearchQuery).not.toHaveBeenCalled();
+  });
+
+  it('applies a focused history row with Enter and restores input focus', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    await user.click(input);
+    const history = await screen.findByRole('region', { name: 'Search history' });
+    const last = within(history).getByRole('button', { name: 'Use search landscape, night' });
+
+    act(() => last.focus());
+    fireEvent.keyDown(last, { key: 'Enter' });
+
+    expect(screen.queryByRole('region', { name: 'Search history' })).not.toBeInTheDocument();
+    expect(input).toHaveFocus();
+    expect(setSearchQuery).toHaveBeenCalledWith('landscape, night');
+  });
+
+  it('does not select or recommit an invisible stale history row while reload is pending', async () => {
+    const user = userEvent.setup();
+    renderSearchBar();
+    const input = screen.getByRole('combobox', { name: 'Search tags' });
+    await user.click(input);
+    await screen.findByRole('region', { name: 'Search history' });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    const fetchMock = vi.mocked(fetch);
+    const previousImplementation = fetchMock.getMockImplementation();
+    if (!previousImplementation) throw new Error('Expected the shared fetch mock');
+    let resolveReload!: (response: Response) => void;
+    const pendingReload = new Promise<Response>((resolve) => {
+      resolveReload = resolve;
+    });
+    fetchMock.mockImplementation((url, init) => {
+      if (String(url) === '/api/search-history' && !init?.method) return pendingReload;
+      return previousImplementation(url, init);
+    });
+
+    await user.click(input);
+    expect(screen.getByRole('region', { name: 'Search history' })).toHaveTextContent('Loading search history...');
+    fireEvent.keyDown(input, { key: 'ArrowDown' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    expect(setSearchQuery).not.toHaveBeenCalled();
+    const historyWritesWhilePending = fetchMock.mock.calls.filter(([url, init]) => (
+      String(url) === '/api/search-history' && init?.method === 'PUT'
+    ));
+    expect(historyWritesWhilePending).toHaveLength(0);
+
+    await act(async () => {
+      resolveReload({
+        ok: true,
+        json: () => Promise.resolve({ ok: true, entries: ['fresh only'] }),
+      } as Response);
+      await pendingReload;
+    });
+    expect(await screen.findByRole('button', { name: 'Use search fresh only' })).toBeInTheDocument();
+  });
+
   it('replaces the complete chips and draft query when a history row is selected', async () => {
     const user = userEvent.setup();
     renderSearchBar('portrait, warm');

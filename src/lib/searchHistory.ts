@@ -44,12 +44,43 @@ export interface SearchHistoryMutationResult {
   error?: string;
 }
 
+function isSearchHistoryTrimCodeUnit(codeUnit: number) {
+  // Explicit Browser/.NET union of Unicode White_Space plus BOM. Keeping this
+  // table shared with SearchHistoryStore avoids runtime-specific trim drift.
+  return (codeUnit >= 0x0009 && codeUnit <= 0x000d)
+    || codeUnit === 0x0020
+    || codeUnit === 0x0085
+    || codeUnit === 0x00a0
+    || codeUnit === 0x1680
+    || (codeUnit >= 0x2000 && codeUnit <= 0x200a)
+    || codeUnit === 0x2028
+    || codeUnit === 0x2029
+    || codeUnit === 0x202f
+    || codeUnit === 0x205f
+    || codeUnit === 0x3000
+    || codeUnit === 0xfeff;
+}
+
+function trimSearchHistoryToken(token: string) {
+  let start = 0;
+  let end = token.length;
+  while (start < end && isSearchHistoryTrimCodeUnit(token.charCodeAt(start))) start += 1;
+  while (end > start && isSearchHistoryTrimCodeUnit(token.charCodeAt(end - 1))) end -= 1;
+  return token.slice(start, end);
+}
+
 export function normalizeSearchHistoryQuery(query: string) {
   return query
     .split(',')
-    .map((token) => token.trim())
+    .map(trimSearchHistoryToken)
     .filter(Boolean)
     .join(', ');
+}
+
+export function isBoundedSearchHistoryQuery(query: string) {
+  if (query.length > MAX_SEARCH_HISTORY_QUERY_LENGTH) return false;
+  const normalized = normalizeSearchHistoryQuery(query);
+  return normalized.length > 0 && normalized.length <= MAX_SEARCH_HISTORY_QUERY_LENGTH;
 }
 
 export function searchHistoryComparisonKey(query: string) {
@@ -81,6 +112,7 @@ function normalizeEntries(entries: readonly string[]) {
   for (const rawEntry of entries) {
     if (rawEntry.length > MAX_SEARCH_HISTORY_QUERY_LENGTH) return null;
     const entry = normalizeSearchHistoryQuery(rawEntry);
+    if (entry.length > MAX_SEARCH_HISTORY_QUERY_LENGTH) return null;
     if (!entry) continue;
     const key = searchHistoryComparisonKey(entry);
     if (keys.has(key)) continue;
@@ -220,8 +252,7 @@ export async function mutateSearchHistory(
   mutation: SearchHistoryMutation,
 ): Promise<SearchHistoryMutationResult> {
   if (mutation.action !== 'clear'
-    && (mutation.query.length > MAX_SEARCH_HISTORY_QUERY_LENGTH
-      || !normalizeSearchHistoryQuery(mutation.query))) {
+    && !isBoundedSearchHistoryQuery(mutation.query)) {
     return {
       ok: false,
       entries: [],

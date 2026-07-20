@@ -59,8 +59,36 @@ internal static class SearchHistoryStore
 
     internal static string NormalizeQuery(string query)
         => string.Join(", ", query
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(static token => !string.IsNullOrWhiteSpace(token)));
+            .Split(',', StringSplitOptions.None)
+            .Select(TrimSearchHistoryToken)
+            .Where(static token => token.Length > 0));
+
+    private static string TrimSearchHistoryToken(string token)
+    {
+        int start = 0;
+        int end = token.Length;
+        while (start < end && IsSearchHistoryTrimCharacter(token[start]))
+            start++;
+        while (end > start && IsSearchHistoryTrimCharacter(token[end - 1]))
+            end--;
+        return token[start..end];
+    }
+
+    private static bool IsSearchHistoryTrimCharacter(char value)
+        // Explicit Browser/.NET union of Unicode White_Space plus BOM. Keep in
+        // sync with searchHistory.ts instead of relying on runtime trim tables.
+        => value is >= '\u0009' and <= '\u000D'
+            or '\u0020'
+            or '\u0085'
+            or '\u00A0'
+            or '\u1680'
+            or >= '\u2000' and <= '\u200A'
+            or '\u2028'
+            or '\u2029'
+            or '\u202F'
+            or '\u205F'
+            or '\u3000'
+            or '\uFEFF';
 
     internal static string ComparisonKey(string query)
     {
@@ -128,6 +156,8 @@ internal static class SearchHistoryStore
                 if (raw.Length > MaxQueryLength)
                     return Malformed("search-history.json contains an oversized entry");
                 string entry = NormalizeQuery(raw);
+                if (entry.Length > MaxQueryLength)
+                    return Malformed("search-history.json contains an oversized normalized entry");
                 if (entry.Length == 0)
                     continue;
                 string key = ComparisonKey(entry);
@@ -190,7 +220,7 @@ internal static class SearchHistoryStore
             if (raw.Length > MaxQueryLength)
                 return new SearchHistoryWriteResult(SearchHistoryWriteStatus.Failed, current.Entries, false, "query is empty or oversized");
             string query = NormalizeQuery(raw);
-            if (query.Length == 0)
+            if (query.Length == 0 || query.Length > MaxQueryLength)
                 return new SearchHistoryWriteResult(SearchHistoryWriteStatus.Failed, current.Entries, false, "query is empty or oversized");
             string key = ComparisonKey(query);
             entries.RemoveAll(entry => string.Equals(ComparisonKey(entry), key, StringComparison.Ordinal));

@@ -1,9 +1,8 @@
 import { NextResponse } from 'next/server';
 
 import {
-  MAX_SEARCH_HISTORY_QUERY_LENGTH,
+  isBoundedSearchHistoryQuery,
   mutateSearchHistory,
-  normalizeSearchHistoryQuery,
   readSearchHistory,
 } from '@/lib/searchHistory';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
@@ -26,8 +25,7 @@ async function requestBody(req: Request) {
 
 function validQuery(value: unknown) {
   return typeof value === 'string'
-    && value.length <= MAX_SEARCH_HISTORY_QUERY_LENGTH
-    && Boolean(normalizeSearchHistoryQuery(value));
+    && isBoundedSearchHistoryQuery(value);
 }
 
 function mutationResponse(result: Awaited<ReturnType<typeof mutateSearchHistory>>) {

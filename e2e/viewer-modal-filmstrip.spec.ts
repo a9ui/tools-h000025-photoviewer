@@ -30,6 +30,7 @@ test.describe('modal filmstrip runtime contract', () => {
   });
 
   test.beforeEach(async ({ page }) => {
+    let searchHistoryEntries = ['cat, dog', 'landscape, night'];
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.route('**/api/recent-folders', async (route) => {
       await route.fulfill({
@@ -82,6 +83,32 @@ test.describe('modal filmstrip runtime contract', () => {
         body: JSON.stringify({ jobs: [] }),
       });
     });
+    await page.route('**/api/search-history', async (route) => {
+      const method = route.request().method();
+      if (method === 'PUT') {
+        const body = await route.request().postDataJSON() as { query?: string };
+        if (body.query) {
+          searchHistoryEntries = [
+            body.query,
+            ...searchHistoryEntries.filter((entry) => entry !== body.query),
+          ];
+        }
+      } else if (method === 'DELETE') {
+        const body = await route.request().postDataJSON() as { query?: string; clear?: boolean };
+        searchHistoryEntries = body.clear
+          ? []
+          : searchHistoryEntries.filter((entry) => entry !== body.query);
+      }
+      await route.fulfill({
+        contentType: 'application/json',
+        body: JSON.stringify({
+          ok: true,
+          entries: searchHistoryEntries,
+          malformed: false,
+          futureVersion: false,
+        }),
+      });
+    });
   });
 
   test.afterAll(async ({ request }) => {
@@ -114,6 +141,33 @@ test.describe('modal filmstrip runtime contract', () => {
     });
 
     await openFixtureFolder(page, fixtureDir);
+
+    const searchInput = page.getByRole('combobox', { name: 'Search tags' });
+    await searchInput.click();
+    const searchHistory = page.getByRole('region', { name: 'Search history' });
+    await expect(searchHistory).toBeVisible();
+    await searchInput.press('ArrowUp');
+    const lastHistoryItem = searchHistory.getByRole('button', { name: 'Use search landscape, night' });
+    await expect(lastHistoryItem).toHaveClass(/selected/);
+    await expect(page.getByRole('status', { name: 'Search history status' }))
+      .toContainText('Search history 2 of 2: landscape, night');
+    await searchInput.press('Enter');
+    await expect(searchHistory).toHaveCount(0);
+    await expect(searchInput).toBeFocused();
+    await expect(page.locator('.search-chip')).toHaveText(['landscape', 'night']);
+
+    await page.getByRole('button', { name: 'Clear all search tags' }).click();
+    await expect(page.locator('.viewer-header .header-stats')).toContainText('120', { timeout: 15_000 });
+    await searchInput.click();
+    await expect(searchHistory).toBeVisible();
+    const firstHistoryItem = searchHistory.getByRole('button', { name: 'Use search landscape, night' });
+    await firstHistoryItem.focus();
+    await firstHistoryItem.press('ArrowDown');
+    await expect(searchHistory.getByRole('button', { name: 'Use search cat, dog' })).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(searchHistory).toHaveCount(0);
+    await expect(searchInput).toBeFocused();
+
     await page.locator('[data-image-primary="true"]').first().dblclick();
 
     const dialog = page.getByRole('dialog', { name: /Image preview:/ });
@@ -124,7 +178,9 @@ test.describe('modal filmstrip runtime contract', () => {
     const filmstripBox = await page.locator('.modal-filmstrip-shell').boundingBox();
     const zoomIndicatorBox = await page.locator('.zoom-indicator').boundingBox();
     if (!imageAreaBox || !filmstripBox || !zoomIndicatorBox) throw new Error('Expected modal layout bounds');
-    expect(filmstripBox.y).toBeGreaterThanOrEqual(imageAreaBox.y + imageAreaBox.height);
+    // CSS grid tracks can land on fractional device pixels. A sub-pixel border
+    // rounding difference is not an overlay; require no whole-pixel intrusion.
+    expect(filmstripBox.y + 1).toBeGreaterThanOrEqual(imageAreaBox.y + imageAreaBox.height);
     expect(zoomIndicatorBox.y).toBeGreaterThan(imageAreaBox.y);
     expect(zoomIndicatorBox.y + zoomIndicatorBox.height).toBeLessThan(filmstripBox.y);
 

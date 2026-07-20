@@ -3009,6 +3009,30 @@ public partial class App : Application
                     && version.TryGetInt32(out int value)
                     && value == 1;
 
+                string boundaryPath = historyPath + ".boundary";
+                string exactLimitQuery = new('x', SearchHistoryStore.MaxQueryLength);
+                string expandingRawQuery = string.Join(',', Enumerable.Repeat("a", 16_384));
+                string expandedQuery = SearchHistoryStore.NormalizeQuery(expandingRawQuery);
+                bool explicitTrimParity = string.Equals(
+                    SearchHistoryStore.NormalizeQuery("\uFEFFcat\uFEFF,\u0085dog\u0085"),
+                    "cat, dog",
+                    StringComparison.Ordinal);
+                SearchHistoryWriteResult exactLimitWrite = SearchHistoryStore.Commit(boundaryPath, exactLimitQuery, 0);
+                SearchHistoryReadResult exactLimitRead = SearchHistoryStore.Read(boundaryPath);
+                string boundaryBeforeRejectedWrite = FileFingerprint(boundaryPath);
+                SearchHistoryWriteResult expandedWrite = SearchHistoryStore.Commit(boundaryPath, expandingRawQuery, 0);
+                SearchHistoryReadResult boundaryAfterRejectedWrite = SearchHistoryStore.Read(boundaryPath);
+                bool normalizedLengthBoundaryProtected = exactLimitWrite.Status == SearchHistoryWriteStatus.Succeeded
+                    && exactLimitRead.Supported
+                    && exactLimitRead.Entries.SequenceEqual([exactLimitQuery])
+                    && expandingRawQuery.Length == SearchHistoryStore.MaxQueryLength - 1
+                    && expandedQuery.Length > SearchHistoryStore.MaxQueryLength
+                    && explicitTrimParity
+                    && expandedWrite.Status == SearchHistoryWriteStatus.Failed
+                    && string.Equals(boundaryBeforeRejectedWrite, FileFingerprint(boundaryPath), StringComparison.Ordinal)
+                    && boundaryAfterRejectedWrite.Supported
+                    && boundaryAfterRejectedWrite.Entries.SequenceEqual([exactLimitQuery]);
+
                 string lockPath = historyPath + ".lock";
                 string historyBeforeBusy = FileFingerprint(historyPath);
                 File.WriteAllText(lockPath, "{\"pid\":999999,\"createdAtUtc\":\"2026-07-19T00:00:00.000Z\"}");
@@ -3070,6 +3094,7 @@ public partial class App : Application
                     && nonAsciiCaseFold
                     && unknownFieldPreserved
                     && versionOne
+                    && normalizedLengthBoundaryProtected
                     && liveLockBusyProtected
                     && cleared
                     && viewerStateSeparated
@@ -3092,6 +3117,8 @@ public partial class App : Application
                     clearAll = cleared,
                     unknownFieldPreserved,
                     versionOne,
+                    normalizedLengthBoundaryProtected,
+                    explicitTrimParity,
                     liveLockBusyProtected,
                     busyWrites = liveLockBusyProtected ? 0 : 1,
                     malformedAndFutureDisplayedEmpty = protectedFilesPreserved,
@@ -3118,20 +3145,31 @@ public partial class App : Application
     private void CaptureCrossRuntimeSearchHistorySmoke(string resultPath, string[] args)
     {
         string? historyPath = ArgValue(args, "--search-history-path");
+        string? startGatePath = ArgValue(args, "--start-gate-path");
+        string? readyPath = ArgValue(args, "--ready-path");
         int iterations = ArgInt(args, "--iterations", 20);
-        if (string.IsNullOrWhiteSpace(historyPath) || iterations < 1)
+        int writeDelayMs = ArgInt(args, "--write-delay-ms", 10);
+        if (string.IsNullOrWhiteSpace(historyPath)
+            || string.IsNullOrWhiteSpace(startGatePath)
+            || string.IsNullOrWhiteSpace(readyPath)
+            || iterations < 1
+            || writeDelayMs < 0
+            || writeDelayMs > 1_000)
         {
             WriteCrossRuntimeSharedStateResult(resultPath, new
             {
                 ok = false,
-                message = "missing --search-history-path or valid --iterations",
+                message = "missing cross-runtime gate paths or invalid iterations/write delay",
                 iterations,
+                writeDelayMs,
             });
             Shutdown(1);
             return;
         }
 
         historyPath = Path.GetFullPath(historyPath);
+        startGatePath = Path.GetFullPath(startGatePath);
+        readyPath = Path.GetFullPath(readyPath);
         Environment.SetEnvironmentVariable("PHOTOVIEWER_WPF_SEARCH_HISTORY_PATH", historyPath);
         ShutdownMode = ShutdownMode.OnExplicitShutdown;
         Dispatcher.InvokeAsync(async () =>
@@ -3139,25 +3177,53 @@ public partial class App : Application
             bool ok = true;
             string? error = null;
             int writes = 0;
+            long? readyAtUnixMs = null;
+            long? gateObservedAtUnixMs = null;
+            long? writeStartedAtUnixMs = null;
+            long? writeCompletedAtUnixMs = null;
             try
             {
                 await Task.Run(() =>
                 {
+                    readyAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    WriteCrossRuntimeSharedStateResult(readyPath, new
+                    {
+                        ok = true,
+                        runtime = "wpf",
+                        readyAtUnixMs,
+                    });
+                    var gateWait = Stopwatch.StartNew();
+                    while (!File.Exists(startGatePath))
+                    {
+                        if (gateWait.Elapsed > TimeSpan.FromSeconds(60))
+                            throw new TimeoutException($"Timed out waiting for cross-runtime start gate: {startGatePath}");
+                        Thread.Sleep(10);
+                    }
+                    gateObservedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+                    writeStartedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+
                     SearchHistoryWriteResult dottedI = SearchHistoryStore.Commit(historyPath, "ＣＡＴ, İ");
                     SearchHistoryWriteResult nonAscii = SearchHistoryStore.Commit(historyPath, "МОСКВА, ΟΣ");
+                    SearchHistoryWriteResult trimParity = SearchHistoryStore.Commit(historyPath, "\uFEFFtrim\uFEFF,\u0085parity\u0085");
                     if (dottedI.Status != SearchHistoryWriteStatus.Succeeded
-                        || nonAscii.Status != SearchHistoryWriteStatus.Succeeded)
+                        || nonAscii.Status != SearchHistoryWriteStatus.Succeeded
+                        || trimParity.Status != SearchHistoryWriteStatus.Succeeded)
                     {
                         throw new InvalidOperationException(
                             $"WPF Unicode search writes failed: dotted-I={dottedI.Status}, non-ASCII={nonAscii.Status}");
                     }
+                    if (writeDelayMs > 0)
+                        Thread.Sleep(writeDelayMs);
                     for (int index = 0; index < iterations; index++)
                     {
                         SearchHistoryWriteResult write = SearchHistoryStore.Commit(historyPath, $"wpf query {index:D2}");
                         if (write.Status != SearchHistoryWriteStatus.Succeeded)
                             throw new InvalidOperationException($"WPF search history write failed at iteration {index}: {write.Status}");
                         writes++;
+                        if (writeDelayMs > 0 && index + 1 < iterations)
+                            Thread.Sleep(writeDelayMs);
                     }
+                    writeCompletedAtUnixMs = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
                 });
             }
             catch (Exception ex)
@@ -3173,6 +3239,11 @@ public partial class App : Application
                 iterations,
                 writes,
                 unicodeWrites = ok,
+                writeDelayMs,
+                readyAtUnixMs,
+                gateObservedAtUnixMs,
+                writeStartedAtUnixMs,
+                writeCompletedAtUnixMs,
                 historyPath,
             });
             Shutdown(ok ? 0 : 1);

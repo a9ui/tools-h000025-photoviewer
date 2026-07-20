@@ -69,12 +69,14 @@ export default function SearchBar() {
   const [selectedHistoryIdx, setSelectedHistoryIdx] = useState(-1);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [historyStatus, setHistoryStatus] = useState('');
+  const [historyNavigationStatus, setHistoryNavigationStatus] = useState('');
   const [draggingIdx, setDraggingIdx] = useState<number | null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number | null>(null);
   const [tagArrangementStatus, setTagArrangementStatus] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const chipRefs = useRef(new Map<number, HTMLSpanElement>());
+  const historyButtonRefs = useRef(new Map<number, HTMLButtonElement>());
   const committedTagsRef = useRef(committedTags);
   const pointerDragRef = useRef<TagPointerDrag | null>(null);
   const desktopDragRef = useRef<TagDesktopDrag | null>(null);
@@ -82,6 +84,7 @@ export default function SearchBar() {
   const dropdownRef = useRef<HTMLDivElement>(null);
   const debounceRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const historyRequestGenerationRef = useRef(0);
+  const suppressNextHistoryOpenRef = useRef(false);
   const lastSentQueryRef = useRef(searchQuery);
   const suggestionListboxId = useId();
   const suggestionStatusId = useId();
@@ -103,6 +106,7 @@ export default function SearchBar() {
     setShowHistory(false);
     setSelectedIdx(-1);
     setSelectedHistoryIdx(-1);
+    setHistoryNavigationStatus('');
     lastSentQueryRef.current = searchQuery;
   }, [searchQuery]);
 
@@ -196,6 +200,7 @@ export default function SearchBar() {
     setShowHistory(true);
     setShowDropdown(false);
     setSelectedHistoryIdx(-1);
+    setHistoryNavigationStatus('');
     setIsLoadingHistory(true);
     try {
       const response = await fetch('/api/search-history', { cache: 'no-store' });
@@ -231,9 +236,11 @@ export default function SearchBar() {
     setShowHistory(false);
     setSelectedIdx(-1);
     setSelectedHistoryIdx(-1);
+    setHistoryNavigationStatus('');
     lastSentQueryRef.current = query;
     setSearchQuery(query);
     void commitSearchHistory(query);
+    if (document.activeElement !== inputRef.current) suppressNextHistoryOpenRef.current = true;
     inputRef.current?.focus();
   }, [commitSearchHistory, setSearchQuery]);
 
@@ -251,6 +258,7 @@ export default function SearchBar() {
       }
       setHistoryEntries(Array.isArray(data.entries) ? data.entries : []);
       setSelectedHistoryIdx(-1);
+      setHistoryNavigationStatus('');
       setHistoryStatus(query ? 'Removed search from history.' : 'Cleared search history.');
     } catch {
       setHistoryStatus('Search history could not be changed.');
@@ -274,6 +282,7 @@ export default function SearchBar() {
     setShowHistory(false);
     setSelectedIdx(-1);
     setSelectedHistoryIdx(-1);
+    setHistoryNavigationStatus('');
     void commitSearchHistory(next.join(', '));
     inputRef.current?.focus();
   }, [commitSearchHistory]);
@@ -460,22 +469,77 @@ export default function SearchBar() {
     }
   };
 
+  const announceHistorySelection = (index: number) => {
+    const query = historyEntries[index];
+    if (!query) return;
+    setHistoryNavigationStatus(`Search history ${index + 1} of ${historyEntries.length}: ${query}`);
+  };
+
+  const moveHistorySelection = (
+    direction: -1 | 1,
+    moveFocus: boolean,
+    originIndex = selectedHistoryIdx,
+  ) => {
+    if (historyEntries.length === 0) return;
+    const lastIndex = historyEntries.length - 1;
+    const nextIndex = originIndex < 0
+      ? direction > 0 ? 0 : lastIndex
+      : (originIndex + direction + historyEntries.length) % historyEntries.length;
+    setSelectedHistoryIdx(nextIndex);
+    announceHistorySelection(nextIndex);
+    if (moveFocus) historyButtonRefs.current.get(nextIndex)?.focus();
+  };
+
+  const handleHistoryRowKeyDown = (
+    event: React.KeyboardEvent<HTMLButtonElement>,
+    query: string,
+    index: number,
+  ) => {
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault();
+      moveHistorySelection(event.key === 'ArrowDown' ? 1 : -1, true, index);
+      return;
+    }
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      selectHistory(query);
+      return;
+    }
+    if (event.key === 'Escape') {
+      event.preventDefault();
+      setShowHistory(false);
+      setSelectedHistoryIdx(-1);
+      setHistoryNavigationStatus('');
+      if (document.activeElement !== inputRef.current) suppressNextHistoryOpenRef.current = true;
+      inputRef.current?.focus();
+    }
+  };
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (showHistory) {
       if (e.key === 'Escape') {
         e.preventDefault();
         setShowHistory(false);
         setSelectedHistoryIdx(-1);
+        setHistoryNavigationStatus('');
+        inputRef.current?.focus();
+        return;
+      }
+      if (isLoadingHistory && (e.key === 'ArrowDown' || e.key === 'ArrowUp' || e.key === 'Enter')) {
+        // The previous disk snapshot is deliberately retained until the new
+        // read resolves, but it must not be keyboard-selectable while hidden.
+        // Otherwise an entry removed by WPF could be invisibly recommitted.
+        e.preventDefault();
         return;
       }
       if (historyEntries.length > 0 && e.key === 'ArrowDown') {
         e.preventDefault();
-        setSelectedHistoryIdx((prev) => Math.min(prev + 1, historyEntries.length - 1));
+        moveHistorySelection(1, false);
         return;
       }
       if (historyEntries.length > 0 && e.key === 'ArrowUp') {
         e.preventDefault();
-        setSelectedHistoryIdx((prev) => Math.max(prev - 1, -1));
+        moveHistorySelection(-1, false);
         return;
       }
       if (e.key === 'Enter' && selectedHistoryIdx >= 0) {
@@ -532,6 +596,7 @@ export default function SearchBar() {
       ) {
         setShowDropdown(false);
         setShowHistory(false);
+        setHistoryNavigationStatus('');
       }
     };
     document.addEventListener('mousedown', handler);
@@ -664,8 +729,13 @@ export default function SearchBar() {
               setShowDropdown(true);
               setSelectedIdx(-1);
               setSelectedHistoryIdx(-1);
+              setHistoryNavigationStatus('');
             }}
             onFocus={() => {
+              if (suppressNextHistoryOpenRef.current) {
+                suppressNextHistoryOpenRef.current = false;
+                return;
+              }
               if (!inputToken.trim()) void reloadSearchHistory();
               else if (suggestions.length > 0) setShowDropdown(true);
             }}
@@ -692,6 +762,7 @@ export default function SearchBar() {
               setInputToken('');
               setShowDropdown(false);
               setShowHistory(false);
+              setHistoryNavigationStatus('');
             }}
             title="Clear search"
             aria-label="Clear all search tags"
@@ -708,7 +779,7 @@ export default function SearchBar() {
         {suggestionStatus}
       </div>
       <div id={historyStatusId} className="search-suggestion-status" role="status" aria-live="polite" aria-label="Search history status">
-        {historyStatus}
+        {[historyStatus, historyNavigationStatus].filter(Boolean).join(' ')}
       </div>
       <div className="search-suggestion-status" role="status" aria-live="polite" aria-atomic="true" aria-label="Search tag arrangement">
         {tagArrangementStatus}
@@ -773,6 +844,10 @@ export default function SearchBar() {
             {!isLoadingHistory && historyEntries.map((query, index) => (
               <div className="search-history-row" key={`${query}-${index}`}>
                 <button
+                  ref={(node) => {
+                    if (node) historyButtonRefs.current.set(index, node);
+                    else historyButtonRefs.current.delete(index);
+                  }}
                   className={`search-history-select ${index === selectedHistoryIdx ? 'selected' : ''}`}
                   type="button"
                   aria-label={`Use search ${query}`}
@@ -781,6 +856,8 @@ export default function SearchBar() {
                   }}
                   onClick={() => selectHistory(query)}
                   onMouseEnter={() => setSelectedHistoryIdx(index)}
+                  onFocus={() => setSelectedHistoryIdx(index)}
+                  onKeyDown={(event) => handleHistoryRowKeyDown(event, query, index)}
                 >
                   {query}
                 </button>

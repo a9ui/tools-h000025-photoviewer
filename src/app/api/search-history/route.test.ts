@@ -44,6 +44,7 @@ afterEach(async () => {
 
 describe('search history shared route', () => {
   it('normalizes complete queries, removes empty tokens, deduplicates NFKC case-insensitively, and promotes repeats', async () => {
+    expect((await PUT(request('PUT', { query: '\uFEFFcat\uFEFF,\u0085dog\u0085' }))).status).toBe(200);
     expect((await PUT(request('PUT', { query: '  ＣＡＴ ,, Dog  ' }))).status).toBe(200);
     expect((await PUT(request('PUT', { query: 'landscape, night' }))).status).toBe(200);
     expect((await PUT(request('PUT', { query: 'cat, dog' }))).status).toBe(200);
@@ -160,10 +161,27 @@ describe('search history shared route', () => {
   }, 5_000);
 
   it('rejects empty and oversized incoming queries without creating shared state', async () => {
+    const expandsPastLimit = Array.from({ length: 16_384 }, () => 'a').join(',');
+    expect(expandsPastLimit).toHaveLength(32_767);
+
     expect((await PUT(request('PUT', { query: ' , , ' }))).status).toBe(400);
     expect((await PUT(request('PUT', { query: 'x'.repeat(32_769) }))).status).toBe(400);
+    expect((await PUT(request('PUT', { query: expandsPastLimit }))).status).toBe(400);
     expect(await mutateSearchHistory(target, { action: 'commit', query: ` ${'x'.repeat(32_768)}` }))
       .toMatchObject({ ok: false, changed: false, malformed: false, futureVersion: false });
+    expect(await mutateSearchHistory(target, { action: 'commit', query: expandsPastLimit }))
+      .toMatchObject({ ok: false, changed: false, malformed: false, futureVersion: false });
     await expect(fs.stat(target)).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('accepts the exact normalized query limit and can read its own write', async () => {
+    const exactLimit = 'x'.repeat(32_768);
+    expect((await PUT(request('PUT', { query: exactLimit }))).status).toBe(200);
+    expect(await GET().then((response) => response.json())).toMatchObject({
+      ok: true,
+      entries: [exactLimit],
+      malformed: false,
+      futureVersion: false,
+    });
   });
 });

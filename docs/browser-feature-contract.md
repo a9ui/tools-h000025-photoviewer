@@ -595,11 +595,11 @@ Style shortcut:
 ### BR-SRC-005 Shared Search History
 
 - Search inputのfocus/click時に`/api/search-history`を毎回再読し、履歴があればnamed `Recent searches` regionを開く。typing中は通常suggestionへ切り替える。
-- 履歴rowはcomplete queryのwhole-query replacementであり、現在のchipへ1 tokenを追加する操作ではない。inputのArrowDown/Up、rowのArrowDown/Up、Enter、Escape、mouse/touchを持つ。
+- 履歴rowはcomplete queryのwhole-query replacementであり、現在のchipへ1 tokenを追加する操作ではない。inputのArrowDown/Up、rowのArrowDown/Up、Enter、Escape、mouse/touchを持つ。disk再読中は旧snapshotのrowを表示・Arrow/Enter選択せず、他runtimeで削除されたqueryを不可視に再commitしない。
 - 確定したquery/tag、履歴選択、入力blurだけをcommitする。debounce途中の各keystrokeと空queryは記録しない。
 - individual DeleteとClear allを持つ。履歴rowはbuttonで、suggestionのcombobox/listbox/option active-descendantとは別surfaceである。
 - shared documentは`.cache/search-history.json` version 1、`entries` MRU最大50、read時optionalの`updatedAtUtc`。正常mutation時はUTC ISO timestampを必ず書く。
-- raw query上限は32,768 UTF-16 code unit。comma tokenをtrimしemptyを除いて`, `で再結合する。identityはNFKC + Browser/WPF共通code-point lowercaseで、U+0130は`i` + combining dotへ展開する。
+- raw queryとcomma正規化後queryの両方を32,768 UTF-16 code unit以下に制限する。comma tokenはBrowser/WPF共通の明示trim集合（Unicode White_Space + U+FEFF BOM）でtrimし、emptyを除いて`, `で再結合する。identityはNFKC + Browser/WPF共通code-point lowercaseで、U+0130は`i` + combining dotへ展開する。
 - unknown root fieldを保持する。50件超の既存entriesはread時に先頭50へcanonicalizeする。missingはempty。malformed/future/read failureはGET 200 + `ok:false`、mutation protectedは409、invalidは400、lock/I/O failureは503。
 - mutationはcreate-new `<target>.lock`、lock内latest read、2秒timeout、30秒stale recovery、temp + atomic replace。timeout時はcurrent queryと既存bytesを変更しない。
 
@@ -2011,7 +2011,7 @@ Desktopで:
 - Closeでcurrent画像をgalleryへreveal。
 - center click chrome、double-click metadata、swipe threshold。
 - filmstripは画像へ重ねず、表示中だけModal main columnの下段を確保して画像viewportを縮める。current optionを1件だけ選択表示し、遠方scrollはviewport windowだけをfetch/renderする。thumbnail clickでその1枚へ移動してedge/center clickへ伝播せず、Delete後は隣接selectedへ一度だけ追従する。show/hide keyとtoolbar操作はclose/reopen/reload後も`pvu_view`から復元し、chrome hidden中は高さ0へ畳んでpointerを受けず画像viewportを全高へ戻す。
-- Modal chromeは操作停止から3秒で自動的に隠れ、Modal内のpointer移動またはkeyboard操作で即時再表示してidle timerを再開する。Delete確認dialog中はchromeを表示したままtimerを停止し、dialog終了後に再開する。center clickによる明示的なhide/showは引き続き有効。
+- Modal chromeのmanual表示は操作停止でも隠れない。center clickでmanual非表示にするとcursorも隠れ、pointer/key操作で約900msだけtransient表示して再び隠れる。manual非表示中の下端hover Filmstripは画像geometryを変えない前面overlayで、下端を離れると畳む。Delete確認中と画像遷移/Delete隣接移動/Original-Enhanced切替後もmanual表示/非表示の所有状態を維持する。
 - zoom倍率indicatorは画像viewportの上側中央へ表示し、上部toolbarと重ならない。Filmstripの開閉で下側へ移動させない。
 
 ### BR-ACC-075 Right preview / tabs
@@ -2175,7 +2175,7 @@ Landing → scan → viewer → filters → zoom → preview → modal → setti
 | Shared file lock | `src/lib/fileWriteLock.test.ts` |
 | Settings shared write safety | `src/app/api/settings/route.test.ts` |
 | Recent folders shared write safety | `src/app/api/recent-folders/route.test.ts` |
-| Shared Search History schema/UI/concurrency | `src/lib/searchHistory.test.ts`, `src/app/api/search-history/route.test.ts`, `src/components/SearchBar.test.tsx`, `scripts/verify-cross-runtime-search-history.ps1` |
+| Shared Search History schema/UI/concurrency | `src/app/api/search-history/route.test.ts`, `src/components/SearchBar.test.tsx`, `src/app/api/crossRuntimeSearchHistory.worker.test.ts`, `scripts/verify-wpf-search-history.ps1`, `scripts/verify-cross-runtime-search-history.ps1` |
 | Favorite merge/view migration | `src/store/ImageContext.test.tsx` |
 | Preview tab reload | `src/lib/previewTabPersistence.test.ts`, `src/store/ImageContext.test.tsx` |
 | Scan cancellation/conflict/recovery | `src/lib/scanRunCoordinator.test.ts`, `src/app/api/scan/route.test.ts`, `src/store/ImageContext.test.tsx` |
