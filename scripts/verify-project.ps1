@@ -38,31 +38,6 @@ try {
     }
   }
 
-  $required = @(
-    "AGENTS.md",
-    "PROJECT.md",
-    "DESIGN.md",
-    "project.toml",
-    "package.json",
-    "src\app\page.tsx",
-    "docs\requirements.md",
-    "docs\spec.md",
-    "tasks\README.md",
-    "tasks\system-migration-20260702-h000025\task.md",
-    "docs\ops\README.md",
-    "docs\ops\agmsg-lanes.md.example",
-    "docs\ops\oracle-lrb-pro.md.example",
-    "docs\ops\cursor-dispatch.md.example",
-    "docs\ops\workspace-hygiene.md.example",
-    "docs\ops\milestone-closeout.md.example"
-  )
-
-  $missing = @($required | Where-Object { -not (Test-Path $_) })
-  if ($missing.Count -gt 0) {
-    [pscustomobject]@{ ok = $false; missing = $missing } | ConvertTo-Json -Depth 5
-    exit 1
-  }
-
   function Read-ProjectFile {
     param([string]$RelativePath)
     Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $Root $RelativePath)
@@ -80,49 +55,102 @@ try {
     }
   }
 
+  $required = @(
+    "README.md",
+    "SECURITY.md",
+    "CONTRIBUTING.md",
+    "AGENTS.md",
+    "PROJECT.md",
+    "DESIGN.md",
+    "START_HERE.md",
+    "project.toml",
+    "package.json",
+    "src\app\page.tsx",
+    "docs\photoviewer-authoritative-spec.md",
+    "docs\browser-feature-contract.md",
+    "docs\wpf-product-spec.md",
+    "docs\public-repository-policy.md",
+    "docs\publication-runbook.md",
+    "docs\license-decision.md",
+    "scripts\verify-public-surface.ps1",
+    "scripts\harden-github-repository.ps1",
+    ".github\workflows\verify.yml"
+  )
+
+  $missing = @($required | Where-Object { -not (Test-Path -LiteralPath (Join-Path $Root $_) -PathType Leaf) })
+  if ($missing.Count -gt 0) {
+    [pscustomobject]@{ ok = $false; missing = $missing } | ConvertTo-Json -Depth 5
+    exit 1
+  }
+
+  $readme = Read-ProjectFile "README.md"
+  Test-TextContains "README.md" $readme @(
+    "local-first",
+    "127.0.0.1",
+    "LAN or Internet exposure is unsupported",
+    "Windows Recycle Bin",
+    "CONTRIBUTING.md",
+    "SECURITY.md",
+    "H000025-PhotoViewer"
+  )
+
+  $security = Read-ProjectFile "SECURITY.md"
+  Test-TextContains "SECURITY.md" $security @(
+    "local-first",
+    "127.0.0.1",
+    "private vulnerability reporting",
+    "LAN or Internet exposure",
+    "personal images",
+    "publication-runbook.md"
+  )
+
   $agents = Read-ProjectFile "AGENTS.md"
   Test-TextContains "AGENTS.md" $agents @(
-    "Feature Switches",
-    "Agmsg: ON",
-    "LRB Oracle: ON",
-    "CursorAgent: ON",
-    "Claude UI: optional",
-    "GrokSwarmSystem: optional",
-    "TaskBarQuota WatchDog: OFF",
-    "Linear: OFF by default",
-    "system-migration-20260702-h000025",
-    "context-budget"
+    "self-contained",
+    "WinForms is frozen",
+    "shell: false",
+    "docs/public-repository-policy.md",
+    "user-owned port 3000"
   )
 
   $project = Read-ProjectFile "PROJECT.md"
   Test-TextContains "PROJECT.md" $project @(
-    "GitHub is the official source of truth",
-    "SQLite is a local ledger",
-    "Large artifacts follow"
+    "Public source does not imply deployment",
+    "127.0.0.1",
+    "Windows Recycle Bin",
+    "H000025-PhotoViewer"
   )
 
-  $design = Read-ProjectFile "DESIGN.md"
-  Test-TextContains "DESIGN.md" $design @(
-    "Human Surface",
-    "Data / State",
-    "Error / Empty / Warning States"
+  $policy = Read-ProjectFile "docs\public-repository-policy.md"
+  Test-TextContains "docs/public-repository-policy.md" $policy @(
+    "source repository",
+    "application runtime",
+    "full-history",
+    "final human approval",
+    "a9ui/H000025-PhotoViewer"
   )
 
-  $opsReadme = Read-ProjectFile "docs\ops\README.md"
-  Test-TextContains "docs/ops/README.md" $opsReadme @(
-    "Ops Examples",
-    "agmsg.md",
-    "oracle.md",
-    "workflow.md"
+  $runbook = Read-ProjectFile "docs\publication-runbook.md"
+  Test-TextContains "docs/publication-runbook.md" $runbook @(
+    "before-public.bundle",
+    "gitleaks",
+    "trufflehog",
+    "gh repo rename",
+    "--accept-visibility-change-consequences"
   )
 
-  $opsAgmsg = Read-ProjectFile "docs\ops\agmsg-lanes.md.example"
-  Test-TextContains "docs/ops/agmsg-lanes.md.example" $opsAgmsg @(
-    "Reply mechanics are lane-specific",
-    "Grok live calls are opt-in",
-    "agmsg-roundtrip-smoke.ps1",
-    "-Lane cursor,claude"
-  )
+  $package = Read-ProjectFile "package.json" | ConvertFrom-Json
+  if ($package.private -ne $true) {
+    throw "package.json must remain private to prevent accidental npm publication"
+  }
+  if ([string]$package.scripts.dev -notmatch "127\.0\.0\.1" -or [string]$package.scripts.start -notmatch "127\.0\.0\.1") {
+    throw "package.json dev/start scripts must bind explicitly to 127.0.0.1"
+  }
+
+  & (Join-Path $Root "scripts\verify-public-surface.ps1")
+  if ($LASTEXITCODE -ne 0) {
+    throw "scripts/verify-public-surface.ps1 failed with exit code $LASTEXITCODE"
+  }
 
   Invoke-Pnpm test:unit
   if (-not $SkipLint) {
@@ -142,7 +170,8 @@ try {
   [pscustomobject]@{
     ok = $true
     checks = @(
-      "required-files",
+      "required-public-files",
+      "public-surface-policy",
       "pnpm test:unit",
       $(if ($SkipLint) { "lint skipped" } else { "pnpm lint" }),
       $(if ($SkipAudit) { "audit skipped" } else { "pnpm audit --audit-level moderate" }),
@@ -151,6 +180,7 @@ try {
       $(if ($Full) { "pnpm test:e2e" } else { "e2e skipped; pass -Full to run" })
     )
   } | ConvertTo-Json -Depth 5
-} finally {
+}
+finally {
   Pop-Location
 }
