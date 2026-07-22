@@ -431,12 +431,21 @@ describe('ImageModal sparse navigation lock', () => {
     render(<ImageModal />);
 
     let menu = openImageActions();
+    const imageArea = screen.getByTestId('modal-image-area');
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(imageArea, 'setPointerCapture', {
+      configurable: true,
+      value: setPointerCapture,
+    });
     expect(screen.getByRole('dialog')).toHaveAttribute('data-manual-chrome', 'visible');
     expect(within(menu).getByRole('menuitem', { name: 'Show Enhanced image' })).toBeDisabled();
     expect(store.resolveModalNavigationTarget).not.toHaveBeenCalled();
     expect(store.setSelectedIndex).not.toHaveBeenCalled();
 
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Favorite +1' }));
+    const favoriteUp = within(menu).getByRole('menuitem', { name: 'Favorite +1' });
+    fireEvent.pointerDown(favoriteUp, { pointerId: 1, pointerType: 'mouse', button: 0 });
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    fireEvent.click(favoriteUp);
     expect(store.cycleFavoriteLevel).toHaveBeenCalledTimes(1);
 
     menu = openImageActions();

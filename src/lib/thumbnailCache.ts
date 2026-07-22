@@ -14,13 +14,16 @@ const DEFAULT_THUMB_CONCURRENCY = Math.max(
   4,
   Math.min(12, typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length)
 );
-export const MAX_THUMB_CONCURRENCY = Math.max(
-  1,
-  Math.min(
-    16,
-    Number.parseInt(process.env.PV_THUMB_CONCURRENCY || String(DEFAULT_THUMB_CONCURRENCY), 10) ||
-      DEFAULT_THUMB_CONCURRENCY
-  )
+export function normalizeThumbConcurrency(raw: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  const safeFallback = Number.isFinite(fallback) ? Math.trunc(fallback) : 2;
+  const resolved = Number.isFinite(parsed) ? parsed : safeFallback;
+  return Math.max(2, Math.min(16, resolved));
+}
+
+export const MAX_THUMB_CONCURRENCY = normalizeThumbConcurrency(
+  process.env.PV_THUMB_CONCURRENCY,
+  DEFAULT_THUMB_CONCURRENCY,
 );
 const WARMUP_RESERVED_VISIBLE_SLOTS = MAX_THUMB_CONCURRENCY >= 6 ? 2 : 1;
 const MAX_WARMUP_WORKERS = Math.max(1, MAX_THUMB_CONCURRENCY - WARMUP_RESERVED_VISIBLE_SLOTS);

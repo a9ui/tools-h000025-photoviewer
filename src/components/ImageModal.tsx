@@ -994,6 +994,7 @@ export default function ImageModal() {
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const target = e.target as HTMLElement;
+    if (target.closest('.modal-context-menu')) return;
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-topbar')) return;
     if (target.closest('.modal-sidebar')) return;
