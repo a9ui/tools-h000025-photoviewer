@@ -83,7 +83,7 @@ try {
   $agents = Read-ProjectFile "AGENTS.md"
   Test-TextContains "AGENTS.md" $agents @(
     "Feature Switches",
-    "Agmsg: ON",
+    "Agmsg: OFF",
     "LRB Oracle: ON",
     "CursorAgent: ON",
     "Claude UI: optional",
