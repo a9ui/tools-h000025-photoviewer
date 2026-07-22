@@ -10,6 +10,7 @@ import {
   ensureThumbnail,
   getDisplayPath,
   getThumbnailPath,
+  selectNextThumbnailQueueIndex,
   selectSupersededWarmupQueueEntries,
 } from './thumbnailCache';
 
@@ -49,6 +50,32 @@ describe('thumbnail queue policy', () => {
       oldVisible,
       oldBackground,
     ], 2)).toEqual([oldBackground, newBackground]);
+  });
+
+  it('skips saturated warmup work so a direct response can use the reserved slot', () => {
+    const warmup = { priority: -1, sequence: 1, warmup: true };
+    const direct = { priority: 0, sequence: 2, warmup: false };
+
+    expect(selectNextThumbnailQueueIndex([warmup, direct], 3, 3)).toBe(1);
+  });
+
+  it('leaves the reserved slot idle when warmup is saturated and no direct work is queued', () => {
+    const warmups = [
+      { priority: 0, sequence: 2, warmup: true },
+      { priority: 1, sequence: 3, warmup: true },
+    ];
+
+    expect(selectNextThumbnailQueueIndex(warmups, 3, 3)).toBe(-1);
+  });
+
+  it('keeps the existing priority policy while the warmup cap has room', () => {
+    const entries = [
+      { priority: 3, sequence: 1, warmup: true },
+      { priority: 1, sequence: 2, warmup: true },
+      { priority: 2, sequence: 3, warmup: false },
+    ];
+
+    expect(selectNextThumbnailQueueIndex(entries, 2, 3)).toBe(1);
   });
 });
 

@@ -4,11 +4,11 @@ import React, { memo, useCallback, useEffect, useMemo, useRef, useState } from '
 import type { ImageFile } from '../lib/types';
 import CachedImage from './CachedImage';
 
-const FILMSTRIP_ITEM_HEIGHT = 76;
+const FILMSTRIP_ITEM_WIDTH = 76;
 const FILMSTRIP_ITEM_GAP = 8;
-const FILMSTRIP_ITEM_PITCH = FILMSTRIP_ITEM_HEIGHT + FILMSTRIP_ITEM_GAP;
+const FILMSTRIP_ITEM_PITCH = FILMSTRIP_ITEM_WIDTH + FILMSTRIP_ITEM_GAP;
 const FILMSTRIP_OVERSCAN_ITEMS = 8;
-const FILMSTRIP_FALLBACK_VIEWPORT_HEIGHT = 720;
+const FILMSTRIP_FALLBACK_VIEWPORT_WIDTH = 720;
 
 export interface ModalFilmstripItem {
   image: ImageFile;
@@ -35,13 +35,13 @@ interface FilmstripWindow {
 
 function getFilmstripWindow(
   total: number,
-  scrollTop: number,
-  viewportHeight: number,
+  scrollLeft: number,
+  viewportWidth: number,
 ): FilmstripWindow {
   if (total <= 0) return { start: 0, end: -1 };
-  const safeHeight = viewportHeight > 0 ? viewportHeight : FILMSTRIP_FALLBACK_VIEWPORT_HEIGHT;
-  const firstVisible = Math.max(0, Math.floor(scrollTop / FILMSTRIP_ITEM_PITCH));
-  const visibleCount = Math.max(1, Math.ceil(safeHeight / FILMSTRIP_ITEM_PITCH));
+  const safeWidth = viewportWidth > 0 ? viewportWidth : FILMSTRIP_FALLBACK_VIEWPORT_WIDTH;
+  const firstVisible = Math.max(0, Math.floor(scrollLeft / FILMSTRIP_ITEM_PITCH));
+  const visibleCount = Math.max(1, Math.ceil(safeWidth / FILMSTRIP_ITEM_PITCH));
   return {
     start: Math.max(0, firstVisible - FILMSTRIP_OVERSCAN_ITEMS),
     end: Math.min(total - 1, firstVisible + visibleCount + FILMSTRIP_OVERSCAN_ITEMS - 1),
@@ -66,15 +66,15 @@ function ModalFilmstrip({
 }: ModalFilmstripProps) {
   const scrollerRef = useRef<HTMLDivElement>(null);
   const [renderWindow, setRenderWindow] = useState<FilmstripWindow>(() => (
-    getFilmstripWindow(total, Math.max(0, activeIndex) * FILMSTRIP_ITEM_PITCH, FILMSTRIP_FALLBACK_VIEWPORT_HEIGHT)
+    getFilmstripWindow(total, Math.max(0, activeIndex) * FILMSTRIP_ITEM_PITCH, FILMSTRIP_FALLBACK_VIEWPORT_WIDTH)
   ));
 
   const updateRenderWindow = useCallback(() => {
     const scroller = scrollerRef.current;
     const next = getFilmstripWindow(
       total,
-      scroller?.scrollTop ?? Math.max(0, activeIndex) * FILMSTRIP_ITEM_PITCH,
-      scroller?.clientHeight ?? FILMSTRIP_FALLBACK_VIEWPORT_HEIGHT,
+      scroller?.scrollLeft ?? Math.max(0, activeIndex) * FILMSTRIP_ITEM_PITCH,
+      scroller?.clientWidth ?? FILMSTRIP_FALLBACK_VIEWPORT_WIDTH,
     );
     setRenderWindow((current) => (
       current.start === next.start && current.end === next.end ? current : next
@@ -87,10 +87,10 @@ function ModalFilmstrip({
       updateRenderWindow();
       return;
     }
-    const viewportHeight = scroller.clientHeight || FILMSTRIP_FALLBACK_VIEWPORT_HEIGHT;
-    scroller.scrollTop = Math.max(
+    const viewportWidth = scroller.clientWidth || FILMSTRIP_FALLBACK_VIEWPORT_WIDTH;
+    scroller.scrollLeft = Math.max(
       0,
-      activeIndex * FILMSTRIP_ITEM_PITCH - (viewportHeight - FILMSTRIP_ITEM_HEIGHT) / 2,
+      activeIndex * FILMSTRIP_ITEM_PITCH - (viewportWidth - FILMSTRIP_ITEM_WIDTH) / 2,
     );
     updateRenderWindow();
   }, [activeIndex, total, updateRenderWindow]);
@@ -161,26 +161,31 @@ function ModalFilmstrip({
         className="modal-filmstrip-scroller"
         role="listbox"
         aria-label="Image filmstrip thumbnails"
-        aria-orientation="vertical"
+        aria-orientation="horizontal"
         onScroll={updateRenderWindow}
         onKeyDown={(event) => {
-          if (!['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) return;
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
           event.preventDefault();
           event.stopPropagation();
-          onNavigate(event.key === 'ArrowUp' || event.key === 'ArrowLeft' ? 'prev' : 'next');
+          onNavigate(event.key === 'ArrowLeft' ? 'prev' : 'next');
         }}
         onWheel={(event) => {
           event.stopPropagation();
+          const scroller = scrollerRef.current;
+          if (!scroller || Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+          event.preventDefault();
+          scroller.scrollLeft += event.deltaY;
+          updateRenderWindow();
         }}
       >
         <div
           className="modal-filmstrip-track"
-          style={{ height: Math.max(FILMSTRIP_ITEM_PITCH, total * FILMSTRIP_ITEM_PITCH) }}
+          style={{ width: Math.max(FILMSTRIP_ITEM_PITCH, total * FILMSTRIP_ITEM_PITCH) }}
         >
           {renderedIndexes.map((logicalIndex) => {
             const item = getItem(logicalIndex);
             const isCurrent = logicalIndex === activeIndex;
-            const positionStyle = { top: logicalIndex * FILMSTRIP_ITEM_PITCH };
+            const positionStyle = { left: logicalIndex * FILMSTRIP_ITEM_PITCH };
             if (!item) {
               return (
                 <div
