@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import fg from 'fast-glob';
 import crypto from 'crypto';
-import { extractSDMetadata } from './pngParser';
+import { extractSDMetadataAsync, PNG_METADATA_PREFIX_BYTES } from './pngParser';
 import type { CacheData, ImageFile, SDMetadata } from './types';
 import { IMAGE_GLOB_EXTENSIONS } from './imageFormats';
 import { basenameFromPath, parseDirSet } from './pathSet';
@@ -17,6 +17,10 @@ const ROOT_FOLDER_KEY = '__ROOT__';
 const OUTSIDE_FOLDER_KEY = '__OUTSIDE__';
 const SCAN_ROOT_KEY = '__SCAN_ROOT__';
 const RECENT_SCAN_TARGET_VERIFY_MS = 48 * 60 * 60 * 1000;
+const MAX_METADATA_READ_CONCURRENCY = Math.max(
+  1,
+  Math.min(16, Number.parseInt(process.env.PV_METADATA_READ_CONCURRENCY ?? '8', 10) || 8),
+);
 
 type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
@@ -434,6 +438,12 @@ export async function scanDirectory(
     });
   }
 
+  const pendingMetadata: Array<{
+    norm: string;
+    mtime: number;
+    size: number;
+    createdAt: number;
+  }> = [];
   for (const entry of allEntries) {
     throwIfScanAborted(options.signal);
     const entryPath = typeof entry === 'string' ? entry : entry.path;
@@ -474,19 +484,39 @@ export async function scanDirectory(
       continue;
     }
 
-    const metadata = extractSDMetadata(norm);
-    throwIfScanAborted(options.signal);
-    cache.files[norm] = { mtime, size, createdAt, metadata };
-    changed = true;
-    newFiles++;
-    processed++;
+    pendingMetadata.push({ norm, mtime, size, createdAt });
+  }
 
-    if (onProgress && (processed % progressStep === 0 || processed === total)) {
-      onProgress(processed, total, newFiles, {
-        stage: 'scanning',
-        message: 'Scanning files...',
-      });
+  const metadataResults: Array<SDMetadata | null> = new Array(pendingMetadata.length);
+  let nextMetadataIndex = 0;
+  const metadataWorker = async () => {
+    const prefixBuffer = Buffer.allocUnsafe(PNG_METADATA_PREFIX_BYTES);
+    while (true) {
+      throwIfScanAborted(options.signal);
+      const index = nextMetadataIndex++;
+      if (index >= pendingMetadata.length) return;
+      metadataResults[index] = await extractSDMetadataAsync(pendingMetadata[index].norm, prefixBuffer);
+      throwIfScanAborted(options.signal);
+      newFiles++;
+      processed++;
+      if (onProgress && (processed % progressStep === 0 || processed === total)) {
+        onProgress(processed, total, newFiles, {
+          stage: 'scanning',
+          message: 'Scanning files...',
+        });
+      }
     }
+  };
+  const metadataWorkerCount = Math.min(MAX_METADATA_READ_CONCURRENCY, pendingMetadata.length);
+  await Promise.all(Array.from({ length: metadataWorkerCount }, () => metadataWorker()));
+  throwIfScanAborted(options.signal);
+
+  for (let index = 0; index < pendingMetadata.length; index++) {
+    const { norm, mtime, size, createdAt } = pendingMetadata[index];
+    cache.files[norm] = { mtime, size, createdAt, metadata: metadataResults[index] };
+  }
+  if (pendingMetadata.length > 0) {
+    changed = true;
   }
 
   for (const p of existingPaths) {
