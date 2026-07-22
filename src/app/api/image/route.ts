@@ -1,5 +1,5 @@
 import { NextRequest } from "next/server";
-import { guardLocalApiRequest } from "@/lib/localApiGuard";
+import { guardLocalImageRequest } from "@/lib/localApiGuard";
 import fs from "fs";
 import path from "path";
 import { Readable } from "stream";
@@ -23,8 +23,10 @@ function getFileResponse(
     headers: {
       "Content-Type": contentType,
       "Cache-Control": cacheControl,
+      "Cross-Origin-Resource-Policy": "same-origin",
       "Content-Length": String(stat.size),
       "Last-Modified": stat.mtime.toUTCString(),
+      "X-Content-Type-Options": "nosniff",
       ETag: `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`,
     },
   });
@@ -99,7 +101,7 @@ export function createImageHandler(
   dependencies: ImageRouteDependencies = defaultDependencies,
 ) {
   return async function imageResponse(request: NextRequest) {
-    const forbidden = guardLocalApiRequest(request);
+    const forbidden = guardLocalImageRequest(request);
     if (forbidden) return forbidden;
 
     const filePath = request.nextUrl.searchParams.get("path");
@@ -113,11 +115,18 @@ export function createImageHandler(
     const indexToken =
       request.nextUrl.searchParams.get("indexToken") || undefined;
 
+    if (!indexToken) {
+      return new Response("Explicit viewer session required", {
+        status: 403,
+        headers: { "Cache-Control": "no-store" },
+      });
+    }
+
     if (!filePath) {
       return new Response("Missing path", { status: 400 });
     }
 
-    if (indexToken && !dependencies.hasIndexSession(indexToken)) {
+    if (!dependencies.hasIndexSession(indexToken)) {
       return new Response("This viewer session expired. Scan the folder set again to refresh it.", {
         status: 410,
         headers: { "Cache-Control": "no-store" },
@@ -130,12 +139,9 @@ export function createImageHandler(
       dependencies.platform,
     );
     if (!indexedPath) {
-      if (indexToken) {
-        return new Response("Image is not in this viewer session", {
-          status: 404,
-        });
-      }
-      return new Response("Image is not in the active index", { status: 403 });
+      return new Response("Image is not in this viewer session", {
+        status: 404,
+      });
     }
 
     const resolved = path.resolve(indexedPath);
