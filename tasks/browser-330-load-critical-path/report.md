@@ -112,6 +112,11 @@ overlap rather than parser behavior.
 
 ## Verification record
 
+- Draft PR: `#331` (`codex/browser-load-critical-path-330` -> `main`), reported
+  mergeable by GitHub.
+- GitHub Actions run `29918286464` did not start any step. Its check annotation
+  says account payment/spending-limit state prevented the job from starting;
+  this is infrastructure state, not a test failure from the patch.
 - `corepack pnpm exec vitest run src/lib/pngParser.test.ts src/lib/indexer.test.ts`
   - passed: 2 files / 17 tests
 - `corepack pnpm exec vitest run` with the four explicitly named

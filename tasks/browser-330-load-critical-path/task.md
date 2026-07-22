@@ -26,7 +26,7 @@ optimization with before/after evidence.
   cause.
 - [x] Focused tests, Browser regression tests, lint, production build, and
   before/after measurements complete.
-- [ ] A PR candidate includes rollback notes and does not deploy.
+- [x] Draft PR #331 includes rollback notes and does not deploy.
 
 ## Non-goals and safety
 
