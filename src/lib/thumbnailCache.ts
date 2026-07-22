@@ -66,6 +66,7 @@ sharp.concurrency(MAX_THUMB_CONCURRENCY);
 sharp.cache({ files: 100, memory: 256 });
 
 let activeThumbJobs = 0;
+let activeWarmupJobs = 0;
 let thumbJobSequence = 0;
 let warmupGeneration = 0;
 
@@ -214,19 +215,36 @@ async function writeCacheAtomically(finalPath: string, write: (tmpPath: string) 
 }
 
 function takeNextThumbTask(): ThumbTask | null {
-  if (thumbQueue.length === 0) return null;
+  const bestIndex = selectNextThumbnailQueueIndex(
+    thumbQueue,
+    activeWarmupJobs,
+    MAX_WARMUP_WORKERS,
+  );
+  if (bestIndex < 0) return null;
 
-  let bestIndex = 0;
-  for (let i = 1; i < thumbQueue.length; i++) {
-    const current = thumbQueue[i];
-    const best = thumbQueue[bestIndex];
+  const [task] = thumbQueue.splice(bestIndex, 1);
+  return task ?? null;
+}
+
+export function selectNextThumbnailQueueIndex(
+  entries: readonly ThumbnailQueuePolicyEntry[],
+  activeWarmups: number,
+  maximumWarmups: number,
+) {
+  let bestIndex = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const current = entries[i];
+    if (current.warmup && activeWarmups >= maximumWarmups) continue;
+    if (bestIndex < 0) {
+      bestIndex = i;
+      continue;
+    }
+    const best = entries[bestIndex];
     if (compareThumbnailQueueEntries(current, best) < 0) {
       bestIndex = i;
     }
   }
-
-  const [task] = thumbQueue.splice(bestIndex, 1);
-  return task ?? null;
+  return bestIndex;
 }
 
 export type ThumbnailQueuePolicyEntry = Pick<ThumbTask, 'priority' | 'sequence' | 'warmup'>;
@@ -273,12 +291,14 @@ function trimSupersededWarmupTasks() {
 
 function promotePendingTask(task: ThumbTask, priority: number, warmup: boolean) {
   if (task.started) return;
+  const wasWarmup = task.warmup;
   if (priority < task.priority) task.priority = priority;
   if (!warmup) {
     task.warmup = false;
   } else if (priority <= 1) {
     task.sequence = thumbJobSequence++;
   }
+  if (wasWarmup && !task.warmup) runNextThumbJob();
 }
 
 function runNextThumbJob() {
@@ -286,13 +306,16 @@ function runNextThumbJob() {
     const next = takeNextThumbTask();
     if (!next) return;
 
+    const startedAsWarmup = next.warmup;
     next.started = true;
     activeThumbJobs += 1;
+    if (startedAsWarmup) activeWarmupJobs += 1;
     void next.run()
       .then(next.resolve)
       .catch(next.reject)
       .finally(() => {
         activeThumbJobs = Math.max(0, activeThumbJobs - 1);
+        if (startedAsWarmup) activeWarmupJobs = Math.max(0, activeWarmupJobs - 1);
         runNextThumbJob();
       });
   }
@@ -534,6 +557,7 @@ export function cancelThumbnailWarmup() {
 
 export function getThumbnailWarmupState(): WarmupState & {
   activeThumbJobs: number;
+  activeWarmupJobs: number;
   pendingThumbs: number;
   queuedThumbJobs: number;
   queuedWarmupJobs: number;
@@ -544,6 +568,7 @@ export function getThumbnailWarmupState(): WarmupState & {
   return {
     ...warmupState,
     activeThumbJobs,
+    activeWarmupJobs,
     pendingThumbs: pendingThumbs.size,
     queuedThumbJobs: thumbQueue.length,
     queuedWarmupJobs: thumbQueue.filter((task) => task.warmup).length,

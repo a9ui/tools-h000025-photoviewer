@@ -2245,7 +2245,7 @@ a { color: inherit; text-decoration: none; }
   min-width: 0;
   min-height: 0;
   display: flex;
-  flex-direction: row;
+  flex-direction: column;
   background: #000;
 }
 
@@ -2353,13 +2353,10 @@ a { color: inherit; text-decoration: none; }
 
 .modal-filmstrip-shell {
   position: relative;
-  order: -1;
   flex: 0 0 104px;
-  width: 104px;
-  min-width: 104px;
-  min-height: 0;
-  height: auto;
-  margin: 14px 6px 14px 10px;
+  min-width: 0;
+  height: 104px;
+  margin: 6px 14px 10px;
   z-index: 12;
   padding: 6px 8px 8px;
   border: 1px solid rgba(255, 255, 255, 0.13);
@@ -2368,20 +2365,16 @@ a { color: inherit; text-decoration: none; }
   box-shadow: 0 10px 32px rgba(0, 0, 0, 0.42);
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  display: flex;
-  flex-direction: column;
-  transition: opacity var(--transition-fast), transform var(--transition-fast), width var(--transition-fast), flex-basis var(--transition-fast), margin var(--transition-fast), padding var(--transition-fast);
+  transition: opacity var(--transition-fast), transform var(--transition-fast), height var(--transition-fast), flex-basis var(--transition-fast), margin var(--transition-fast), padding var(--transition-fast);
   cursor: default;
 }
 
 .modal-filmstrip-shell.is-overlay {
   position: absolute;
-  top: 72px;
+  right: 14px;
   bottom: 10px;
-  left: 10px;
-  width: 104px;
-  min-width: 104px;
-  height: auto;
+  left: 14px;
+  width: auto;
   margin: 0;
   z-index: 28;
   flex: none;
@@ -2395,19 +2388,17 @@ a { color: inherit; text-decoration: none; }
 @keyframes modalFilmstripRise {
   from {
     opacity: 0;
-    transform: translateX(-10px);
+    transform: translateY(10px);
   }
 }
 
 .modal-filmstrip-header {
-  min-height: 38px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  align-content: flex-start;
-  flex-wrap: wrap;
-  gap: 0.3rem;
-  padding: 0 2px 4px;
+  gap: 0.75rem;
+  padding: 0 2px;
   color: rgba(255, 255, 255, 0.58);
   font-size: 0.68rem;
   line-height: 1;
@@ -2429,25 +2420,24 @@ a { color: inherit; text-decoration: none; }
 
 .modal-filmstrip-scroller {
   width: 100%;
-  min-height: 0;
-  height: 100%;
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior-y: contain;
+  height: 72px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
   scrollbar-width: thin;
   scrollbar-color: rgba(129, 140, 248, 0.58) rgba(255, 255, 255, 0.05);
 }
 
 .modal-filmstrip-track {
   position: relative;
-  width: 72px;
+  height: 64px;
 }
 
 .modal-filmstrip-item {
   position: absolute;
-  left: 0;
-  width: 72px;
-  height: 76px;
+  top: 0;
+  width: 76px;
+  height: 64px;
   overflow: hidden;
   border: 2px solid transparent;
   border-radius: 7px;
@@ -2461,7 +2451,7 @@ a { color: inherit; text-decoration: none; }
 .modal-filmstrip-item:focus-visible {
   opacity: 1;
   border-color: rgba(255, 255, 255, 0.48);
-  transform: translateX(1px);
+  transform: translateY(-1px);
 }
 
 .modal-filmstrip-item.is-current {
@@ -2669,15 +2659,14 @@ a { color: inherit; text-decoration: none; }
 
 .modal-body.chrome-hidden .modal-filmstrip-shell.is-layout {
   flex-basis: 0;
-  width: 0;
-  min-width: 0;
-  margin-left: 0;
-  margin-right: 0;
-  padding-left: 0;
-  padding-right: 0;
+  height: 0;
+  margin-top: 0;
+  margin-bottom: 0;
+  padding-top: 0;
+  padding-bottom: 0;
   border-width: 0;
   overflow: hidden;
-  transform: translateX(-8px);
+  transform: translateY(8px);
 }
 
 .modal-body.cursor-hidden,

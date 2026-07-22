@@ -625,7 +625,7 @@ describe('ImageModal sparse navigation lock', () => {
     expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
   });
 
-  it('reveals the vertical filmstrip as a front overlay only inside the left hover zone', async () => {
+  it('reveals the filmstrip as a front overlay only inside the bottom hover zone', async () => {
     vi.useFakeTimers();
     render(<ImageModal />);
     const dialog = screen.getByRole('dialog');
@@ -636,8 +636,8 @@ describe('ImageModal sparse navigation lock', () => {
     fireEvent.pointerMove(dialog, {
       pointerId: 2,
       pointerType: 'mouse',
-      clientX: MODAL_FILMSTRIP_HOVER_ZONE_PX - 1,
-      clientY: 500,
+      clientX: 500,
+      clientY: 1000 - MODAL_FILMSTRIP_HOVER_ZONE_PX + 1,
     });
     const overlayStrip = screen.getByRole('region', { name: 'Image filmstrip' });
     expect(overlayStrip).toHaveClass('is-overlay');

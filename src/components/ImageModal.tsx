@@ -876,9 +876,9 @@ export default function ImageModal() {
     revealChromeForActivity();
     if (event.pointerType === 'touch') return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const distanceFromLeft = event.clientX - rect.left;
-    const isNearLeft = distanceFromLeft >= 0 && distanceFromLeft <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
-    setFilmstripHoverVisible(isNearLeft);
+    const distanceFromBottom = rect.bottom - event.clientY;
+    const isNearBottom = distanceFromBottom >= 0 && distanceFromBottom <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
+    setFilmstripHoverVisible(isNearBottom);
   }, [revealChromeForActivity, selectedIndex, showConfirmDelete]);
 
   const handleModalPointerLeave = useCallback(() => {
