@@ -1,4 +1,3 @@
-import fs from 'fs';
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
 import { getIndex } from '@/lib/indexer';
@@ -7,6 +6,12 @@ import { isKnownEnhancementAdapter } from '@/lib/enhance/adapters';
 import { getComfyUiConfigErrorMessage, getComfyUiConfigStatus } from '@/lib/enhance/adapters/comfyUiConfig';
 import { getNcnnVulkanAvailability } from '@/lib/enhance/adapters/ncnnConfig';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
+import { getEnhanceRoot } from '@/lib/enhance/outputPath';
+import {
+  EnhancementSourcePathError,
+  filterEnhancementJobsBySource,
+  resolveEnhancementSource,
+} from '@/lib/enhance/pathContract';
 import { startEnhancementQueue } from '@/lib/enhance/queue';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from '@/lib/enhance/types';
 
@@ -120,11 +125,14 @@ function parseJobSettings(body: {
 }
 
 export async function GET(request: NextRequest) {
+  const forbidden = guardLocalApiRequest(request);
+  if (forbidden) return forbidden;
+
   const sourceId = request.nextUrl.searchParams.get('sourceId');
   const store = getEnhancementJobStore();
   const jobs = await store.listJobs();
   return NextResponse.json({
-    jobs: sourceId ? jobs.filter((job) => job.sourceId === sourceId) : jobs,
+    jobs: sourceId ? filterEnhancementJobsBySource(jobs, sourceId) : jobs,
   });
 }
 
@@ -217,16 +225,27 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const source = getIndex(body.indexToken).find((image) => image.id.toLowerCase() === body.sourceId?.toLowerCase());
-  if (!source) {
-    return NextResponse.json({ error: 'Source image is not in the active index' }, { status: 404 });
+  let source: Awaited<ReturnType<typeof resolveEnhancementSource>>;
+  try {
+    source = await resolveEnhancementSource(
+      body.sourceId,
+      getIndex(body.indexToken),
+      getEnhanceRoot(),
+    );
+  } catch (error) {
+    if (error instanceof EnhancementSourcePathError) {
+      return NextResponse.json(
+        { error: error.message, code: error.code },
+        { status: error.status },
+      );
+    }
+    throw error;
   }
 
-  const stat = await fs.promises.stat(source.absolutePath);
   let diagnostics = null;
   if (effectiveAdapterId === 'realesrgan-ncnn') {
     const basePreset = ENHANCEMENT_PRESETS.find((preset) => preset.id === body.presetId) ?? SHARP_TEST_PRESET;
-    const sourceMeta = await sharp(source.absolutePath, { failOn: 'none' }).metadata();
+    const sourceMeta = await sharp(source.sourcePath, { failOn: 'none' }).metadata();
     const sourceWidth = sourceMeta.width;
     const sourceHeight = sourceMeta.height;
     const requestedScale = settings.scale ?? basePreset.scale;
@@ -277,14 +296,17 @@ export async function POST(request: NextRequest) {
     }
   }
   const job = await getEnhancementJobStore().createJob({
-    sourceId: source.id,
-    sourcePath: source.absolutePath,
-    sourceSignature: { size: stat.size, mtimeMs: stat.mtimeMs },
+    sourceId: source.sourceId,
+    sourcePath: source.sourcePath,
+    sourceSignature: source.sourceSignature,
     presetId: body.presetId,
     adapterId: effectiveAdapterId,
     ...settings,
   });
   startEnhancementQueue();
 
-  return NextResponse.json({ job, diagnostics }, { status: 202 });
+  return NextResponse.json(
+    { job, diagnostics, sourceRegistration: source.registration },
+    { status: 202 },
+  );
 }

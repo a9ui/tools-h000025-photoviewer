@@ -5,6 +5,11 @@ import type { EnhancementJob, EnhancementJobStoreData, EnhancementPreset, Source
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
 import { getEnhanceRoot, getJobsFilePath, hashPreset } from './outputPath';
 import { recordEnhancementEnqueue } from './isolationMetrics';
+import {
+  enhancementPathsMatch,
+  ManagedEnhancementOutputError,
+  resolveManagedEnhancementOutput,
+} from './pathContract';
 
 const STORE_VERSION = 1;
 
@@ -290,14 +295,24 @@ export class EnhancementJobStore {
         return job;
       }
 
-      const outputRoot = path.resolve(getEnhanceRoot(this.root), 'outputs');
-      const resolvedOutput = path.resolve(job.outputPath);
-      const relative = path.relative(outputRoot, resolvedOutput);
-      if (relative.startsWith('..') || path.isAbsolute(relative)) {
-        throw new Error('Refusing to delete enhancement output outside the managed output cache');
+      let resolvedOutput: string | null = null;
+      try {
+        resolvedOutput = (await resolveManagedEnhancementOutput(
+          job.outputPath,
+          getEnhanceRoot(this.root),
+        )).path;
+      } catch (error) {
+        if (!(error instanceof ManagedEnhancementOutputError)) throw error;
+        if (error.code !== 'OUTPUT_MISSING') {
+          throw new Error(`Refusing to delete enhancement output: ${error.message}`);
+        }
       }
 
-      await fs.promises.rm(resolvedOutput, { force: true });
+      if (resolvedOutput) {
+        // Delete the canonical file that passed the ownership check. A later
+        // junction swap on the persisted lexical path cannot redirect this rm.
+        await fs.promises.rm(resolvedOutput, { force: true });
+      }
       const now = nowIso();
       const updated: EnhancementJob = {
         ...job,
@@ -312,7 +327,11 @@ export class EnhancementJobStore {
       for (let i = 0; i < data.jobs.length; i++) {
         if (i === index) continue;
         const candidateOutputPath = data.jobs[i].outputPath;
-        if (data.jobs[i].status === 'succeeded' && candidateOutputPath && path.resolve(candidateOutputPath) === resolvedOutput) {
+        if (
+          data.jobs[i].status === 'succeeded'
+          && candidateOutputPath
+          && enhancementPathsMatch(candidateOutputPath, job.outputPath)
+        ) {
           data.jobs[i] = {
             ...data.jobs[i],
             status: 'deleted',
