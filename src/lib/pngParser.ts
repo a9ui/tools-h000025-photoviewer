@@ -7,6 +7,9 @@ export interface ParsedMetadata {
   settings: Record<string, string>;
 }
 
+export const PNG_METADATA_PREFIX_BYTES = 4 * 1024;
+const PNG_SIGNATURE = Buffer.from('89504e470d0a1a0a', 'hex');
+
 /**
  * Read only the PNG header chunks (up to IDAT) and extract the
  * tEXt chunk whose keyword is "parameters".
@@ -67,6 +70,70 @@ export function extractSDMetadata(filePath: string): ParsedMetadata | null {
     }
     return null;
   }
+}
+
+/**
+ * Async scan path. The caller supplies one reusable prefix buffer per worker,
+ * so a bounded pool can overlap Windows file I/O without per-image buffers.
+ * Unusual PNG layouts fall back to positioned chunk reads.
+ */
+export async function extractSDMetadataAsync(
+  filePath: string,
+  prefixBuffer: Buffer,
+): Promise<ParsedMetadata | null> {
+  let file: fs.promises.FileHandle | null = null;
+  try {
+    file = await fs.promises.open(filePath, 'r');
+    const { bytesRead } = await file.read(prefixBuffer, 0, prefixBuffer.length, 0);
+    if (bytesRead < PNG_SIGNATURE.length ||
+        !prefixBuffer.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)) return null;
+
+    let offset = PNG_SIGNATURE.length;
+    const fallbackHeader = Buffer.allocUnsafe(8);
+    while (true) {
+      let chunkLength: number;
+      let chunkType: string;
+      if (offset + 8 <= bytesRead) {
+        chunkLength = prefixBuffer.readUInt32BE(offset);
+        chunkType = prefixBuffer.toString('ascii', offset + 4, offset + 8);
+      } else {
+        const headerRead = await file.read(fallbackHeader, 0, fallbackHeader.length, offset);
+        if (headerRead.bytesRead < fallbackHeader.length) return null;
+        chunkLength = fallbackHeader.readUInt32BE(0);
+        chunkType = fallbackHeader.toString('ascii', 4, 8);
+      }
+
+      if (chunkType === 'IDAT') return null;
+      const dataStart = offset + 8;
+      const dataEnd = dataStart + chunkLength;
+      if (chunkType === 'tEXt') {
+        let data: Buffer;
+        if (dataEnd <= bytesRead) {
+          data = prefixBuffer.subarray(dataStart, dataEnd);
+        } else {
+          data = Buffer.allocUnsafe(chunkLength);
+          const dataRead = await file.read(data, 0, chunkLength, dataStart);
+          if (dataRead.bytesRead < chunkLength) return null;
+        }
+        const parsed = parseParametersChunk(data);
+        if (parsed) return parsed;
+      }
+
+      offset = dataEnd + 4;
+    }
+  } catch {
+    return null;
+  } finally {
+    if (file) {
+      try { await file.close(); } catch { /* ignore */ }
+    }
+  }
+}
+
+function parseParametersChunk(data: Buffer): ParsedMetadata | null {
+  const nullIdx = data.indexOf(0);
+  if (nullIdx < 0 || data.toString('ascii', 0, nullIdx) !== 'parameters') return null;
+  return parseSDText(data.toString('utf-8', nullIdx + 1));
 }
 
 /**
