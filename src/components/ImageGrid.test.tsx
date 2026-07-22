@@ -673,7 +673,7 @@ describe("ImageGrid keyboard primary controls", () => {
   });
 
   it("keeps catalog and each Album in separate scroll-memory contexts", async () => {
-    const getSearchScrollPosition = vi.fn(() => null);
+    const getSearchScrollPosition = vi.fn<(key: string) => number | null>(() => null);
     const store = {
       ...createStore(),
       getSearchScrollPosition,
