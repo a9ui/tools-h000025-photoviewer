@@ -26,6 +26,7 @@ function getFileResponse(
       "Cross-Origin-Resource-Policy": "same-origin",
       "Content-Length": String(stat.size),
       "Last-Modified": stat.mtime.toUTCString(),
+      Vary: "Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, Origin",
       "X-Content-Type-Options": "nosniff",
       ETag: `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`,
     },

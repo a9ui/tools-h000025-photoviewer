@@ -65,6 +65,9 @@ describe("image route active-index boundary", () => {
     expect(response.status).toBe(200);
     expect(response.headers.get("content-type")).toBe("image/png");
     expect(response.headers.get("cross-origin-resource-policy")).toBe("same-origin");
+    expect(response.headers.get("vary")).toBe(
+      "Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, Origin",
+    );
     expect(response.headers.get("x-content-type-options")).toBe("nosniff");
     expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([
       0x89, 0x50, 0x4e, 0x47,
