@@ -3,10 +3,11 @@ import { guardLocalImageRequest } from "@/lib/localApiGuard";
 import fs from "fs";
 import path from "path";
 import { Readable } from "stream";
-import { ensureDisplayImage, ensureThumbnail } from "@/lib/thumbnailCache";
+import { ensureDisplayImage, ensureThumbnail, type ImageWorkTiming } from "@/lib/thumbnailCache";
 import { getImageContentType, isSupportedImagePath } from "@/lib/imageFormats";
 import { getIndex, hasIndexSession } from "@/lib/indexer";
 import { findActiveIndexedImagePath } from "@/lib/activeImagePath";
+import { formatServerTiming, isPerfTraceEnabled } from "@/lib/perfTrace";
 
 export const dynamic = "force-dynamic";
 
@@ -14,6 +15,7 @@ function getFileResponse(
   filePath: string,
   contentType: string,
   cacheControl: string,
+  extraHeaders: Record<string, string> = {},
 ) {
   const stat = fs.statSync(filePath);
   const stream = Readable.toWeb(
@@ -29,8 +31,26 @@ function getFileResponse(
       Vary: "Sec-Fetch-Site, Sec-Fetch-Mode, Sec-Fetch-Dest, Origin",
       "X-Content-Type-Options": "nosniff",
       ETag: `"${stat.size}-${Math.trunc(stat.mtimeMs)}"`,
+      ...extraHeaders,
     },
   });
+}
+
+function getImageTimingHeaders(
+  timing: ImageWorkTiming | undefined,
+  routeStartedAt: number,
+): Record<string, string> {
+  if (!timing) return {};
+  return {
+    "Server-Timing": formatServerTiming([
+      ["cache", timing.cacheMs],
+      ["queue", timing.queueMs],
+      ["sharp", timing.sharpMs],
+      ["work", timing.totalMs],
+      ["route", performance.now() - routeStartedAt],
+    ]),
+    "X-PV-Image-Cache": timing.cacheHit ? "hit" : timing.coalesced ? "coalesced" : "miss",
+  };
 }
 
 function parseThumbPriority(request: NextRequest, warmOnly: boolean): number {
@@ -102,6 +122,8 @@ export function createImageHandler(
   dependencies: ImageRouteDependencies = defaultDependencies,
 ) {
   return async function imageResponse(request: NextRequest) {
+    const traceEnabled = isPerfTraceEnabled();
+    const routeStartedAt = traceEnabled ? performance.now() : 0;
     const forbidden = guardLocalImageRequest(request);
     if (forbidden) return forbidden;
 
@@ -157,15 +179,17 @@ export function createImageHandler(
 
     if (display) {
       try {
-        const { displayPath, versionMatched = true } = await ensureDisplayImage(
+        const { displayPath, versionMatched = true, timing } = await ensureDisplayImage(
           resolved,
           priority,
           cacheVersion,
+          traceEnabled,
         );
         return getFileResponse(
           displayPath,
           "image/webp",
           getVersionedCacheControl(hasVersion, versionMatched),
+          getImageTimingHeaders(timing, routeStartedAt),
         );
       } catch {
         return getFileResponse(
@@ -178,16 +202,21 @@ export function createImageHandler(
 
     if (thumb) {
       try {
-        const { thumbPath, versionMatched = true } = await ensureThumbnail(
+        const { thumbPath, versionMatched = true, timing } = await ensureThumbnail(
           resolved,
           priority,
           cacheVersion,
+          false,
+          traceEnabled,
         );
 
         if (warmOnly) {
           return new Response(null, {
             status: 204,
-            headers: { "Cache-Control": "no-store" },
+            headers: {
+              "Cache-Control": "no-store",
+              ...getImageTimingHeaders(timing, routeStartedAt),
+            },
           });
         }
 
@@ -195,6 +224,7 @@ export function createImageHandler(
           thumbPath,
           "image/webp",
           getVersionedCacheControl(hasVersion, versionMatched),
+          getImageTimingHeaders(timing, routeStartedAt),
         );
       } catch {
         if (warmOnly) {

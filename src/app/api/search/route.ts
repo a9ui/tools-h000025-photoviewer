@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { hasIndexSession, searchIndex } from '@/lib/indexer';
+import { hasIndexSession, searchIndex, type SearchTiming } from '@/lib/indexer';
+import { formatServerTiming, isPerfTraceEnabled } from '@/lib/perfTrace';
 
 type SortBy = 'newest' | 'oldest' | 'created-newest' | 'created-oldest' | 'name' | 'random';
 
@@ -23,6 +24,7 @@ function parsePageSize(value: string | null, fallback: number) {
  * Empty query returns the indexed image list for the active filters.
  */
 export async function GET(request: NextRequest) {
+  const traceEnabled = isPerfTraceEnabled();
   const q = request.nextUrl.searchParams.get('q') || '';
   const page = parseNonNegativeInt(request.nextUrl.searchParams.get('page'), 0);
   const size = parsePageSize(request.nextUrl.searchParams.get('size'), 100);
@@ -62,6 +64,12 @@ export async function GET(request: NextRequest) {
       ? sortByParam
       : 'newest';
 
+  const timing: SearchTiming | undefined = traceEnabled ? {
+    cacheHit: false,
+    filterSortMs: 0,
+    pageSliceMs: 0,
+    totalMs: 0,
+  } : undefined;
   const result = searchIndex(
     q,
     page,
@@ -74,7 +82,26 @@ export async function GET(request: NextRequest) {
     hiddenFolders,
     randomSeed,
     indexToken,
+    timing,
   );
 
+  if (timing) {
+    const serializeStartedAt = performance.now();
+    const body = JSON.stringify(result);
+    const serializeMs = performance.now() - serializeStartedAt;
+    return new NextResponse(body, {
+      headers: {
+        'Content-Type': 'application/json',
+        'Server-Timing': formatServerTiming([
+          ['filter', timing.filterSortMs],
+          ['page', timing.pageSliceMs],
+          ['search', timing.totalMs],
+          ['serialize', serializeMs],
+          ['total', timing.totalMs + serializeMs],
+        ]),
+        'X-PV-Search-Cache': timing.cacheHit ? 'hit' : 'miss',
+      },
+    });
+  }
   return NextResponse.json(result);
 }

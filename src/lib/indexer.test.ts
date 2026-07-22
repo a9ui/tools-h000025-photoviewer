@@ -4,7 +4,18 @@ import path from 'path';
 import crypto from 'crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { ImageFile } from './types';
-import { getFolderBuckets, getIndex, getTags, ScanAbortedError, scanDirectory, searchIndex, setIndex } from './indexer';
+import { resolveDerivedCacheRoot } from './derivedCacheRoot';
+import {
+  createScanTiming,
+  getFolderBuckets,
+  getIndex,
+  getTags,
+  ScanAbortedError,
+  scanDirectory,
+  searchIndex,
+  setIndex,
+  type SearchTiming,
+} from './indexer';
 
 const ONE_BY_ONE_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
@@ -13,6 +24,7 @@ const ONE_BY_ONE_PNG = Buffer.from(
 
 const createdRoots: string[] = [];
 const cacheFiles: string[] = [];
+const testCacheRoot = resolveDerivedCacheRoot();
 
 function cacheHash(dirPath: string) {
   return crypto.createHash('md5').update(path.resolve(dirPath).toLowerCase()).digest('hex');
@@ -21,8 +33,8 @@ function cacheHash(dirPath: string) {
 function rememberCacheFiles(dirPath: string) {
   const hash = cacheHash(dirPath);
   cacheFiles.push(
-    path.join(process.cwd(), '.cache', `index_${hash}.json`),
-    path.join(process.cwd(), '.cache', `folders_${hash}.json`)
+    path.join(testCacheRoot, `index_${hash}.json`),
+    path.join(testCacheRoot, `folders_${hash}.json`)
   );
 }
 
@@ -64,6 +76,27 @@ afterEach(() => {
 });
 
 describe('scanDirectory', () => {
+  it('reports path-free scan and search stage timings only through explicit sinks', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'photoviewer-indexer-timing-'));
+    createdRoots.push(root);
+    rememberCacheFiles(root);
+    writePng(path.join(root, 'timed.png'));
+
+    const scanTiming = createScanTiming();
+    const images = await scanDirectory(root, undefined, { timings: scanTiming });
+    const token = setIndex(images, root);
+    const searchTiming: SearchTiming = { cacheHit: false, filterSortMs: 0, pageSliceMs: 0, totalMs: 0 };
+    const result = searchIndex('', 0, 20, 'name', undefined, undefined, undefined, root, undefined, undefined, token, searchTiming);
+
+    expect(scanTiming).toMatchObject({ metadataFileCount: 1, cachedFileCount: 0 });
+    expect(scanTiming.totalMs).toBeGreaterThanOrEqual(0);
+    expect(Object.values(scanTiming).every((value) => typeof value === 'number' && value >= 0)).toBe(true);
+    expect(result.total).toBe(1);
+    expect(searchTiming.totalMs).toBeGreaterThanOrEqual(0);
+    expect(searchTiming.cacheHit).toBe(false);
+    expect(JSON.stringify({ scanTiming, searchTiming })).not.toContain(root);
+  });
+
   it('keeps independent bounded index snapshots for separate viewer folder sets', () => {
     const alpha = makeIndexedImage('set-a\\alpha.png', 1);
     alpha.metadata = { prompt: 'alpha-tag, shared-tag', negativePrompt: '', settings: {} };
@@ -159,7 +192,7 @@ describe('scanDirectory', () => {
     const imagePath = path.join(root, 'abortable.png');
     writePng(imagePath);
     const initial = await scanDirectory(root);
-    const cachePath = path.join(process.cwd(), '.cache', `index_${cacheHash(root)}.json`);
+    const cachePath = path.join(testCacheRoot, `index_${cacheHash(root)}.json`);
     const before = fs.readFileSync(cachePath, 'utf-8');
 
     const future = new Date(Date.now() + 3000);
@@ -282,7 +315,7 @@ describe('scanDirectory', () => {
     writePng(path.join(root, '2026-05-17', 'old.png'));
     expect(await scanDirectory(root)).toHaveLength(1);
 
-    const cachePath = path.join(process.cwd(), '.cache', `index_${cacheHash(root)}.json`);
+    const cachePath = path.join(testCacheRoot, `index_${cacheHash(root)}.json`);
     const before = fs.readFileSync(cachePath, 'utf-8');
 
     fs.renameSync(root, `${root}-offline`);

@@ -22,6 +22,7 @@
     "ncnn:smoke": "node scripts/ncnn_upscale_smoke.js",
     "perf:record": "node scripts/perf/record.mjs",
     "perf:compare": "node scripts/perf/compare.mjs",
+    "perf:critical-path": "node scripts/perf/critical-path.mjs",
     "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,md}\""
   },
   "dependencies": {

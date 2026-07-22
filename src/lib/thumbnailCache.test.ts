@@ -4,7 +4,9 @@ import path from 'path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_THUMB_CONCURRENCY,
   MAX_PENDING_WARM_THUMB_TASKS,
+  SHARP_THREADS_PER_IMAGE,
   compareThumbnailQueueEntries,
   ensureDisplayImage,
   ensureThumbnail,
@@ -16,6 +18,12 @@ import {
 } from './thumbnailCache';
 
 describe('thumbnail queue policy', () => {
+  it('keeps libvips single-threaded inside the separately bounded job pool', () => {
+    expect(SHARP_THREADS_PER_IMAGE).toBe(1);
+    expect(SHARP_THREADS_PER_IMAGE).toBeLessThan(MAX_THUMB_CONCURRENCY);
+    expect(sharp.concurrency()).toBe(SHARP_THREADS_PER_IMAGE);
+  });
+
   it('keeps enough effective concurrency to reserve one slot for direct work', () => {
     expect(normalizeThumbConcurrency('1', 4)).toBe(2);
     expect(normalizeThumbConcurrency('2', 4)).toBe(2);
@@ -98,6 +106,27 @@ describe('thumbnail queue policy', () => {
 });
 
 describe('thumbnail cache', () => {
+  it('reports numeric cache, queue, and Sharp stages without source paths', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-thumb-timing-'));
+    const sourcePath = path.join(root, 'source.png');
+    await sharp({
+      create: {
+        width: 512,
+        height: 384,
+        channels: 4,
+        background: '#335577ff',
+      },
+    }).png().toFile(sourcePath);
+
+    const miss = await ensureThumbnail(sourcePath, 0, undefined, false, true);
+    const hit = await ensureThumbnail(sourcePath, 0, undefined, false, true);
+
+    expect(miss.timing).toMatchObject({ cacheHit: false, coalesced: false });
+    expect(miss.timing?.sharpMs).toBeGreaterThan(0);
+    expect(hit.timing).toMatchObject({ cacheHit: true, coalesced: false, queueMs: 0, sharpMs: 0 });
+    expect(JSON.stringify({ miss: miss.timing, hit: hit.timing })).not.toContain(sourcePath);
+  });
+
   it('computes versioned cache paths without reading the source file', async () => {
     const missingSourcePath = path.join(os.tmpdir(), `pvu-missing-${Date.now()}.png`);
 
