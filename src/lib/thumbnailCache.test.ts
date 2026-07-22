@@ -10,11 +10,21 @@ import {
   ensureThumbnail,
   getDisplayPath,
   getThumbnailPath,
+  normalizeThumbConcurrency,
   selectNextThumbnailQueueIndex,
   selectSupersededWarmupQueueEntries,
 } from './thumbnailCache';
 
 describe('thumbnail queue policy', () => {
+  it('keeps enough effective concurrency to reserve one slot for direct work', () => {
+    expect(normalizeThumbConcurrency('1', 4)).toBe(2);
+    expect(normalizeThumbConcurrency('2', 4)).toBe(2);
+    expect(normalizeThumbConcurrency('16', 4)).toBe(16);
+    expect(normalizeThumbConcurrency('17', 4)).toBe(16);
+    expect(normalizeThumbConcurrency('invalid', 1)).toBe(2);
+    expect(normalizeThumbConcurrency(undefined, 20)).toBe(16);
+  });
+
   it('serves direct image responses before speculative work at the same priority', () => {
     const direct = { priority: 0, sequence: 1, warmup: false };
     const warmup = { priority: 0, sequence: 2, warmup: true };
@@ -66,6 +76,14 @@ describe('thumbnail queue policy', () => {
     ];
 
     expect(selectNextThumbnailQueueIndex(warmups, 3, 3)).toBe(-1);
+  });
+
+  it('preserves a direct slot at the minimum effective concurrency', () => {
+    const warmup = { priority: -1, sequence: 1, warmup: true };
+    const direct = { priority: 0, sequence: 2, warmup: false };
+
+    expect(selectNextThumbnailQueueIndex([warmup, direct], 1, 1)).toBe(1);
+    expect(selectNextThumbnailQueueIndex([warmup], 1, 1)).toBe(-1);
   });
 
   it('keeps the existing priority policy while the warmup cap has room', () => {
