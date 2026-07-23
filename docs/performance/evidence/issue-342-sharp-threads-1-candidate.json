@@ -1,0 +1,5742 @@
+{
+  "schema": "h25.browser-critical-path/v1",
+  "recordedAtUtc": "2026-07-22T20:04:32.672Z",
+  "exactInputs": {
+    "baseSha": "32f3183f0b2e225cbd0456100cd46b7f87bb5f7d",
+    "focusedCandidateSha": "5fe9da971f9df552af242eb4c30c927a219c54ff",
+    "sameOriginCandidateSha": "ac599f19af7d680402045615b11ed59bc8f812ce",
+    "localHead": "40c1fb86e4eb755cbdb1dfe0fa3c95b4960a4f82",
+    "localTree": "81fca5e23885e8f3daef42b3d9e3e9633e0b0499",
+    "workingDiffSha256": "0f6fc041f33e5e1aea541859429445408d305704839a63295454efc91eb543da"
+  },
+  "environment": {
+    "node": "v24.15.0",
+    "platform": "win32",
+    "release": "10.0.26200",
+    "arch": "x64",
+    "cpu": "Intel(R) Core(TM) i7-14700F",
+    "logicalCpuCount": 28,
+    "totalMemoryBytes": 34099961856,
+    "viewport": {
+      "width": 1440,
+      "height": 900
+    }
+  },
+  "fixture": {
+    "fileCount": 10000,
+    "largeImageCount": 96,
+    "rootCount": 2,
+    "totalBytes": 16357536,
+    "dimensions": {
+      "representative": "3072x2048",
+      "compact": "96x64"
+    },
+    "metadata": "deterministic PNG tEXt parameters",
+    "relativeNameSha256": "1e17ba1c3fd037d7214e8ed378f3bd8f1a61383d2ea1ecf4ea6a2c02286e8262",
+    "smallPngSha256": "772f05b206cda9af13692211f3e1ed5471029e4a94de405d67f583ee121729f8",
+    "largePngSha256": "a7db3ca8d88c090a9b0e76e2b410ce8a7315c87656db15e9e536edef3e76f236"
+  },
+  "execution": {
+    "runCountPerCondition": 10,
+    "overheadRuns": 0,
+    "order": "A-B-C / C-B-A alternating",
+    "warmedThumbnailCount": 64
+  },
+  "runs": [
+    {
+      "condition": "A",
+      "iteration": 1,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 573,
+        "shellNavigation": 102,
+        "scanAccept": 937,
+        "scan": 667.3,
+        "scanStreamAfterHeaders": 661.1,
+        "scanWall": 1598.1,
+        "postScan": 129.9,
+        "firstThumbnailPaint": 113.8,
+        "initialThumbnailFill": 195.8,
+        "continuedThumbnailFill": 251.6,
+        "modalFocusedDisplay": 466.7,
+        "totalPerceived": 2948.4,
+        "maxInterPaintGap": 128.9,
+        "responseToPaintMedian": 17.6
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.5,
+          "targetEnumerationMs": 4.1,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 66.8,
+          "filePlanMs": 23.2,
+          "metadataMs": 546.3,
+          "cacheWriteMs": 8.1,
+          "materializeMs": 10.6,
+          "totalMs": 664,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 0.9,
+        "routeMs": 667.3
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 26.6,
+              "max": 26.6
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0.1,
+              "p95": 26.6,
+              "max": 26.6
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.3,
+              "max": 0.3
+            },
+            "total": {
+              "median": 0.3,
+              "p95": 26.8,
+              "max": 26.8
+            }
+          }
+        },
+        "thumb": {
+          "count": 20,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 18,
+              "p95": 161.1,
+              "max": 170.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 13.9,
+              "max": 14.4
+            },
+            "sharp": {
+              "median": 90.5,
+              "p95": 144.7,
+              "max": 158.1
+            },
+            "work": {
+              "median": 104.4,
+              "p95": 244.4,
+              "max": 249.6
+            },
+            "route": {
+              "median": 108.4,
+              "p95": 248.7,
+              "max": 257.5
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 78.6,
+              "p95": 89.9,
+              "max": 89.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 172.6,
+              "p95": 173.1,
+              "max": 173.1
+            },
+            "work": {
+              "median": 251.7,
+              "p95": 262.7,
+              "max": 262.7
+            },
+            "route": {
+              "median": 260.2,
+              "p95": 267.3,
+              "max": 267.3
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5375,
+        "peakWorkingSetBytes": 413003776,
+        "workingSetBytes": 290885632,
+        "readBytes": 18794194,
+        "writeBytes": 1865165
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 1,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 544,
+        "shellNavigation": 104,
+        "scanAccept": 996,
+        "scan": 65.9,
+        "scanStreamAfterHeaders": 0.3,
+        "scanWall": 996.3,
+        "postScan": 107.7,
+        "firstThumbnailPaint": 104.5,
+        "initialThumbnailFill": 169.6,
+        "continuedThumbnailFill": 232.4,
+        "modalFocusedDisplay": 352.8,
+        "totalPerceived": 2256,
+        "maxInterPaintGap": 183,
+        "responseToPaintMedian": 13.8
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 45.2,
+          "targetEnumerationMs": 5.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.2,
+          "totalMs": 63,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.2,
+        "routeMs": 65.9
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.4,
+              "max": 24.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.5,
+              "max": 24.5
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.6,
+              "max": 24.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 23,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 7
+          },
+          "timings": {
+            "cache": {
+              "median": 15.3,
+              "p95": 138.1,
+              "max": 147.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.9
+            },
+            "sharp": {
+              "median": 56.2,
+              "p95": 128.4,
+              "max": 139.6
+            },
+            "work": {
+              "median": 84.7,
+              "p95": 147.2,
+              "max": 229.2
+            },
+            "route": {
+              "median": 88.4,
+              "p95": 151,
+              "max": 237.1
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 83.5,
+              "max": 83.5
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 158.4,
+              "p95": 158.4,
+              "max": 158.4
+            },
+            "work": {
+              "median": 115.5,
+              "p95": 242,
+              "max": 242
+            },
+            "route": {
+              "median": 120.4,
+              "p95": 246.9,
+              "max": 246.9
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3921.9,
+        "peakWorkingSetBytes": 296202240,
+        "workingSetBytes": 204820480,
+        "readBytes": 15506105,
+        "writeBytes": 30377
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 1,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 584,
+        "shellNavigation": 92,
+        "scanAccept": 1002,
+        "scan": 69.2,
+        "scanStreamAfterHeaders": -0.1,
+        "scanWall": 1001.9,
+        "postScan": 111.1,
+        "firstThumbnailPaint": 47.1,
+        "initialThumbnailFill": 63,
+        "continuedThumbnailFill": 49.5,
+        "modalFocusedDisplay": 242.5,
+        "totalPerceived": 1991.5,
+        "maxInterPaintGap": 31.3,
+        "responseToPaintMedian": 24.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.2,
+          "targetEnumerationMs": 5.7,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.3,
+          "totalMs": 65.8,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.4,
+        "routeMs": 69.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 24,
+              "p95": 24,
+              "max": 24
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 24.1,
+              "p95": 24.1,
+              "max": 24.1
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 24.2,
+              "p95": 24.2,
+              "max": 24.2
+            }
+          }
+        },
+        "thumb": {
+          "count": 33,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 33
+          },
+          "timings": {
+            "cache": {
+              "median": 5.9,
+              "p95": 31,
+              "max": 33.4
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 5.9,
+              "p95": 31,
+              "max": 33.4
+            },
+            "route": {
+              "median": 12.4,
+              "p95": 37.5,
+              "max": 40
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "coalesced": 1,
+            "miss": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 10.2,
+              "max": 10.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 123.4,
+              "p95": 123.4,
+              "max": 123.4
+            },
+            "work": {
+              "median": 104.3,
+              "p95": 133.8,
+              "max": 133.8
+            },
+            "route": {
+              "median": 107.7,
+              "p95": 137.1,
+              "max": 137.1
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1671.9,
+        "peakWorkingSetBytes": 289611776,
+        "workingSetBytes": 200765440,
+        "readBytes": 8407385,
+        "writeBytes": 18209
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 2,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 535,
+        "shellNavigation": 100,
+        "scanAccept": 1001,
+        "scan": 68.2,
+        "scanStreamAfterHeaders": 0.6,
+        "scanWall": 1001.6,
+        "postScan": 113.4,
+        "firstThumbnailPaint": 44.9,
+        "initialThumbnailFill": 61.5,
+        "continuedThumbnailFill": 48.8,
+        "modalFocusedDisplay": 217.6,
+        "totalPerceived": 1933.3,
+        "maxInterPaintGap": 32.2,
+        "responseToPaintMedian": 30
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 46.7,
+          "targetEnumerationMs": 5.8,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.9,
+          "totalMs": 65,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.3,
+        "routeMs": 68.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 23.7,
+              "p95": 23.7,
+              "max": 23.7
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 23.7,
+              "p95": 23.7,
+              "max": 23.7
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 23.8,
+              "p95": 23.8,
+              "max": 23.8
+            }
+          }
+        },
+        "thumb": {
+          "count": 33,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 33
+          },
+          "timings": {
+            "cache": {
+              "median": 5.8,
+              "p95": 31,
+              "max": 35.3
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 5.8,
+              "p95": 31,
+              "max": 35.3
+            },
+            "route": {
+              "median": 11.9,
+              "p95": 36.9,
+              "max": 42.5
+            }
+          }
+        },
+        "display": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 1.8,
+              "p95": 1.8,
+              "max": 1.8
+            },
+            "queue": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 117.9,
+              "p95": 117.9,
+              "max": 117.9
+            },
+            "work": {
+              "median": 119.8,
+              "p95": 119.8,
+              "max": 119.8
+            },
+            "route": {
+              "median": 123.4,
+              "p95": 123.4,
+              "max": 123.4
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1671.9,
+        "peakWorkingSetBytes": 289738752,
+        "workingSetBytes": 202137600,
+        "readBytes": 8407385,
+        "writeBytes": 18209
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 2,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 550,
+        "shellNavigation": 107,
+        "scanAccept": 999,
+        "scan": 67.2,
+        "scanStreamAfterHeaders": 0.2,
+        "scanWall": 999.2,
+        "postScan": 113.8,
+        "firstThumbnailPaint": 97,
+        "initialThumbnailFill": 179,
+        "continuedThumbnailFill": 250.9,
+        "modalFocusedDisplay": 415.6,
+        "totalPerceived": 2289.9,
+        "maxInterPaintGap": 133.9,
+        "responseToPaintMedian": 17.4
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 46.2,
+          "targetEnumerationMs": 5.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.7,
+          "totalMs": 64.3,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.2,
+        "routeMs": 67.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.4,
+              "max": 24.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.5,
+              "max": 24.5
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.6,
+              "max": 24.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 25,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 2,
+            "hit": 8
+          },
+          "timings": {
+            "cache": {
+              "median": 15.2,
+              "p95": 110.8,
+              "max": 139.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1.2,
+              "max": 149.4
+            },
+            "sharp": {
+              "median": 56.7,
+              "p95": 148,
+              "max": 218.4
+            },
+            "work": {
+              "median": 78.9,
+              "p95": 242.2,
+              "max": 468.4
+            },
+            "route": {
+              "median": 84.9,
+              "p95": 248.2,
+              "max": 476.6
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 75.5,
+              "max": 75.5
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 148.8,
+              "p95": 148.8,
+              "max": 148.8
+            },
+            "work": {
+              "median": 136.3,
+              "p95": 224.4,
+              "max": 224.4
+            },
+            "route": {
+              "median": 140.6,
+              "p95": 228.8,
+              "max": 228.8
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 4140.6,
+        "peakWorkingSetBytes": 301064192,
+        "workingSetBytes": 205352960,
+        "readBytes": 15778901,
+        "writeBytes": 30845
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 2,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 531,
+        "shellNavigation": 109,
+        "scanAccept": 952,
+        "scan": 641,
+        "scanStreamAfterHeaders": 635,
+        "scanWall": 1587,
+        "postScan": 125,
+        "firstThumbnailPaint": 112.5,
+        "initialThumbnailFill": 194.6,
+        "continuedThumbnailFill": 233.7,
+        "modalFocusedDisplay": 429.2,
+        "totalPerceived": 2862.3,
+        "maxInterPaintGap": 116.7,
+        "responseToPaintMedian": 26
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 64.5,
+          "filePlanMs": 22.8,
+          "metadataMs": 524.2,
+          "cacheWriteMs": 8.8,
+          "materializeMs": 9.5,
+          "totalMs": 636.5,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 2.4,
+        "routeMs": 641
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.6,
+              "max": 24.6
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.6,
+              "max": 24.6
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.8,
+              "max": 24.8
+            }
+          }
+        },
+        "thumb": {
+          "count": 26,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 10
+          },
+          "timings": {
+            "cache": {
+              "median": 17.2,
+              "p95": 122.4,
+              "max": 131
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.2
+            },
+            "sharp": {
+              "median": 56.1,
+              "p95": 138.2,
+              "max": 140.8
+            },
+            "work": {
+              "median": 98.6,
+              "p95": 169.9,
+              "max": 229.5
+            },
+            "route": {
+              "median": 106.7,
+              "p95": 173.6,
+              "max": 236.3
+            }
+          }
+        },
+        "display": {
+          "count": 3,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 89.4,
+              "p95": 89.7,
+              "max": 89.7
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 196.1,
+              "p95": 196.1,
+              "max": 196.1
+            },
+            "work": {
+              "median": 269.5,
+              "p95": 285.6,
+              "max": 285.6
+            },
+            "route": {
+              "median": 277,
+              "p95": 289.7,
+              "max": 289.7
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5484.4,
+        "peakWorkingSetBytes": 384008192,
+        "workingSetBytes": 292966400,
+        "readBytes": 18385133,
+        "writeBytes": 1858847
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 3,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 520,
+        "shellNavigation": 97,
+        "scanAccept": 938,
+        "scan": 638.9,
+        "scanStreamAfterHeaders": 631.9,
+        "scanWall": 1569.9,
+        "postScan": 231.1,
+        "firstThumbnailPaint": 2.4,
+        "initialThumbnailFill": 90.6,
+        "continuedThumbnailFill": 300.3,
+        "modalFocusedDisplay": 385.4,
+        "totalPerceived": 2884.9,
+        "maxInterPaintGap": 101.6,
+        "responseToPaintMedian": 10.7
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.7,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 62.6,
+          "filePlanMs": 24.7,
+          "metadataMs": 523.8,
+          "cacheWriteMs": 9.1,
+          "materializeMs": 9.4,
+          "totalMs": 635.9,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 0.9,
+        "routeMs": 638.9
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 29.1,
+              "max": 29.1
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0.1,
+              "p95": 29.2,
+              "max": 29.2
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 29.3,
+              "max": 29.3
+            }
+          }
+        },
+        "thumb": {
+          "count": 21,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 14,
+            "coalesced": 3,
+            "hit": 4
+          },
+          "timings": {
+            "cache": {
+              "median": 23.5,
+              "p95": 138.5,
+              "max": 143.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.6
+            },
+            "sharp": {
+              "median": 94.3,
+              "p95": 158.1,
+              "max": 171.7
+            },
+            "work": {
+              "median": 99.8,
+              "p95": 282.6,
+              "max": 289
+            },
+            "route": {
+              "median": 104.5,
+              "p95": 286.4,
+              "max": 296.1
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 78.8,
+              "p95": 89.2,
+              "max": 89.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 181.7,
+              "p95": 181.8,
+              "max": 181.8
+            },
+            "work": {
+              "median": 260.7,
+              "p95": 271.4,
+              "max": 271.4
+            },
+            "route": {
+              "median": 268.4,
+              "p95": 276.3,
+              "max": 276.3
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5437.5,
+        "peakWorkingSetBytes": 393011200,
+        "workingSetBytes": 291168256,
+        "readBytes": 18657913,
+        "writeBytes": 1864931
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 3,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 575,
+        "shellNavigation": 96,
+        "scanAccept": 154,
+        "scan": 70.3,
+        "scanStreamAfterHeaders": 0,
+        "scanWall": 154,
+        "postScan": 111,
+        "firstThumbnailPaint": 93.8,
+        "initialThumbnailFill": 160.6,
+        "continuedThumbnailFill": 216.4,
+        "modalFocusedDisplay": 465.9,
+        "totalPerceived": 2283,
+        "maxInterPaintGap": 166.8,
+        "responseToPaintMedian": 16.7
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 49.3,
+          "targetEnumerationMs": 5.8,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.4,
+          "totalMs": 67.3,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.2,
+        "routeMs": 70.3
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.7,
+              "max": 24.7
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.8,
+              "max": 24.8
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.6,
+              "max": 0.6
+            },
+            "total": {
+              "median": 0.6,
+              "p95": 24.9,
+              "max": 24.9
+            }
+          }
+        },
+        "thumb": {
+          "count": 23,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 12,
+            "coalesced": 3,
+            "hit": 8
+          },
+          "timings": {
+            "cache": {
+              "median": 11.2,
+              "p95": 132.5,
+              "max": 137.7
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 46.1,
+              "p95": 126.7,
+              "max": 127.1
+            },
+            "work": {
+              "median": 80.3,
+              "p95": 132.5,
+              "max": 137.7
+            },
+            "route": {
+              "median": 86.5,
+              "p95": 137.9,
+              "max": 145.5
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 87.3,
+              "p95": 99.1,
+              "max": 99.1
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 130.9,
+              "p95": 131.2,
+              "max": 131.2
+            },
+            "work": {
+              "median": 218.2,
+              "p95": 230.4,
+              "max": 230.4
+            },
+            "route": {
+              "median": 225.6,
+              "p95": 234.6,
+              "max": 234.6
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 4109.4,
+        "peakWorkingSetBytes": 336699392,
+        "workingSetBytes": 206598144,
+        "readBytes": 15642902,
+        "writeBytes": 36227
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 3,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 536,
+        "shellNavigation": 105,
+        "scanAccept": 147,
+        "scan": 66.1,
+        "scanStreamAfterHeaders": 0.7,
+        "scanWall": 147.7,
+        "postScan": 115.3,
+        "firstThumbnailPaint": 46.4,
+        "initialThumbnailFill": 62.3,
+        "continuedThumbnailFill": 50,
+        "modalFocusedDisplay": 261.2,
+        "totalPerceived": 1983.3,
+        "maxInterPaintGap": 17.1,
+        "responseToPaintMedian": 32.5
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 45.3,
+          "targetEnumerationMs": 5.5,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.3,
+          "totalMs": 62.7,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.6,
+        "routeMs": 66.1
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 23.9,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 23.9,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 24,
+              "p95": 24,
+              "max": 24
+            }
+          }
+        },
+        "thumb": {
+          "count": 27,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 27
+          },
+          "timings": {
+            "cache": {
+              "median": 12.8,
+              "p95": 30.1,
+              "max": 35.3
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 12.8,
+              "p95": 30.1,
+              "max": 35.3
+            },
+            "route": {
+              "median": 16.8,
+              "p95": 36,
+              "max": 42
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 15.6,
+              "p95": 40.9,
+              "max": 40.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 108.2,
+              "p95": 115.4,
+              "max": 115.4
+            },
+            "work": {
+              "median": 123.8,
+              "p95": 156.4,
+              "max": 156.4
+            },
+            "route": {
+              "median": 127,
+              "p95": 159.6,
+              "max": 159.6
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1750,
+        "peakWorkingSetBytes": 337481728,
+        "workingSetBytes": 202002432,
+        "readBytes": 8543900,
+        "writeBytes": 24059
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 4,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 538,
+        "shellNavigation": 102,
+        "scanAccept": 150,
+        "scan": 68.3,
+        "scanStreamAfterHeaders": -0.5,
+        "scanWall": 149.5,
+        "postScan": 113.5,
+        "firstThumbnailPaint": 46.2,
+        "initialThumbnailFill": 61,
+        "continuedThumbnailFill": 67.1,
+        "modalFocusedDisplay": 284.8,
+        "totalPerceived": 1999.1,
+        "maxInterPaintGap": 32.8,
+        "responseToPaintMedian": 26.1
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 46.5,
+          "targetEnumerationMs": 5.9,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.9,
+          "totalMs": 65.2,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.3,
+        "routeMs": 68.3
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.1,
+              "max": 24.1
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.1,
+              "max": 24.1
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.3,
+              "p95": 24.3,
+              "max": 24.3
+            }
+          }
+        },
+        "thumb": {
+          "count": 26,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 26
+          },
+          "timings": {
+            "cache": {
+              "median": 14.3,
+              "p95": 45.1,
+              "max": 49.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 14.3,
+              "p95": 45.1,
+              "max": 49.6
+            },
+            "route": {
+              "median": 17.7,
+              "p95": 51.3,
+              "max": 57.1
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 17.1,
+              "p95": 27.9,
+              "max": 27.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 125.8,
+              "p95": 130.1,
+              "max": 130.1
+            },
+            "work": {
+              "median": 142.9,
+              "p95": 158,
+              "max": 158
+            },
+            "route": {
+              "median": 146.4,
+              "p95": 164.9,
+              "max": 164.9
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1828.1,
+        "peakWorkingSetBytes": 338219008,
+        "workingSetBytes": 202506240,
+        "readBytes": 8543932,
+        "writeBytes": 24058
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 4,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 566,
+        "shellNavigation": 105,
+        "scanAccept": 995,
+        "scan": 64,
+        "scanStreamAfterHeaders": 1.3,
+        "scanWall": 996.3,
+        "postScan": 115.7,
+        "firstThumbnailPaint": 81.1,
+        "initialThumbnailFill": 129.4,
+        "continuedThumbnailFill": 249.7,
+        "modalFocusedDisplay": 432.1,
+        "totalPerceived": 2231.1,
+        "maxInterPaintGap": 116.6,
+        "responseToPaintMedian": 16.5
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 45.5,
+          "targetEnumerationMs": 3.9,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 8.2,
+          "totalMs": 61.1,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1,
+        "routeMs": 64
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.5,
+              "max": 23.5
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0.1,
+              "p95": 23.6,
+              "max": 23.6
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 23.7,
+              "max": 23.7
+            }
+          }
+        },
+        "thumb": {
+          "count": 20,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 13.7,
+              "p95": 194,
+              "max": 203
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1.6,
+              "max": 11.5
+            },
+            "sharp": {
+              "median": 80,
+              "p95": 161.4,
+              "max": 161.4
+            },
+            "work": {
+              "median": 88.4,
+              "p95": 241.1,
+              "max": 262
+            },
+            "route": {
+              "median": 94.3,
+              "p95": 248.7,
+              "max": 267.7
+            }
+          }
+        },
+        "display": {
+          "count": 3,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 3
+          },
+          "timings": {
+            "cache": {
+              "median": 71.1,
+              "p95": 82.6,
+              "max": 82.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 221.8,
+              "p95": 222.5,
+              "max": 222.5
+            },
+            "work": {
+              "median": 266.2,
+              "p95": 293,
+              "max": 293
+            },
+            "route": {
+              "median": 270.3,
+              "p95": 301.4,
+              "max": 301.4
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3984.4,
+        "peakWorkingSetBytes": 317390848,
+        "workingSetBytes": 200445952,
+        "readBytes": 15915134,
+        "writeBytes": 36695
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 4,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 547,
+        "shellNavigation": 103,
+        "scanAccept": 954,
+        "scan": 647.6,
+        "scanStreamAfterHeaders": 640.6,
+        "scanWall": 1594.6,
+        "postScan": 217.4,
+        "firstThumbnailPaint": 30.9,
+        "initialThumbnailFill": 78.8,
+        "continuedThumbnailFill": 283,
+        "modalFocusedDisplay": 352.9,
+        "totalPerceived": 2920.8,
+        "maxInterPaintGap": 232.7,
+        "responseToPaintMedian": 15.4
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 65,
+          "filePlanMs": 23.6,
+          "metadataMs": 532.1,
+          "cacheWriteMs": 7.9,
+          "materializeMs": 9.1,
+          "totalMs": 644.3,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 0.9,
+        "routeMs": 647.6
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.8,
+              "max": 23.8
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24,
+              "max": 24
+            }
+          }
+        },
+        "thumb": {
+          "count": 24,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 8
+          },
+          "timings": {
+            "cache": {
+              "median": 15.4,
+              "p95": 115.3,
+              "max": 116.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 1
+            },
+            "sharp": {
+              "median": 52.3,
+              "p95": 161.8,
+              "max": 162.6
+            },
+            "work": {
+              "median": 86.8,
+              "p95": 170.7,
+              "max": 272.4
+            },
+            "route": {
+              "median": 94,
+              "p95": 180.2,
+              "max": 281
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 62.7,
+              "max": 62.7
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 169,
+              "p95": 169,
+              "max": 169
+            },
+            "work": {
+              "median": 88.1,
+              "p95": 231.8,
+              "max": 231.8
+            },
+            "route": {
+              "median": 92.4,
+              "p95": 236.1,
+              "max": 236.1
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5578.1,
+        "peakWorkingSetBytes": 385888256,
+        "workingSetBytes": 291762176,
+        "readBytes": 18112151,
+        "writeBytes": 1858379
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 5,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 556,
+        "shellNavigation": 99,
+        "scanAccept": 939,
+        "scan": 627.5,
+        "scanStreamAfterHeaders": 620,
+        "scanWall": 1559,
+        "postScan": 123,
+        "firstThumbnailPaint": 110.9,
+        "initialThumbnailFill": 192.6,
+        "continuedThumbnailFill": 251.7,
+        "modalFocusedDisplay": 427.4,
+        "totalPerceived": 2867.3,
+        "maxInterPaintGap": 116.4,
+        "responseToPaintMedian": 27.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.7,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 63.6,
+          "filePlanMs": 24,
+          "metadataMs": 511.3,
+          "cacheWriteMs": 9,
+          "materializeMs": 9.1,
+          "totalMs": 623.4,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 2.2,
+        "routeMs": 627.5
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.1,
+              "max": 24.1
+            }
+          }
+        },
+        "thumb": {
+          "count": 21,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 14,
+            "coalesced": 3,
+            "hit": 4
+          },
+          "timings": {
+            "cache": {
+              "median": 23.5,
+              "p95": 107.8,
+              "max": 110.3
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1,
+              "max": 23.6
+            },
+            "sharp": {
+              "median": 101.4,
+              "p95": 136.7,
+              "max": 142.7
+            },
+            "work": {
+              "median": 103.3,
+              "p95": 239.1,
+              "max": 245.5
+            },
+            "route": {
+              "median": 109,
+              "p95": 242.8,
+              "max": 252.8
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 75.8,
+              "p95": 86.8,
+              "max": 86.8
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 223.3,
+              "p95": 223.5,
+              "max": 223.5
+            },
+            "work": {
+              "median": 299.3,
+              "p95": 310.5,
+              "max": 310.5
+            },
+            "route": {
+              "median": 306.8,
+              "p95": 314.7,
+              "max": 314.7
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5281.3,
+        "peakWorkingSetBytes": 393031680,
+        "workingSetBytes": 292106240,
+        "readBytes": 18657913,
+        "writeBytes": 1864931
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 5,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 563,
+        "shellNavigation": 99,
+        "scanAccept": 1004,
+        "scan": 70.7,
+        "scanStreamAfterHeaders": 0.6,
+        "scanWall": 1004.6,
+        "postScan": 111.4,
+        "firstThumbnailPaint": 95,
+        "initialThumbnailFill": 160.2,
+        "continuedThumbnailFill": 200.3,
+        "modalFocusedDisplay": 432.4,
+        "totalPerceived": 2210.5,
+        "maxInterPaintGap": 150.7,
+        "responseToPaintMedian": 15
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 49.5,
+          "targetEnumerationMs": 5.9,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.8,
+          "totalMs": 67.8,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.3,
+        "routeMs": 70.7
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 25.1,
+              "max": 25.1
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 25.2,
+              "max": 25.2
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 25.3,
+              "max": 25.3
+            }
+          }
+        },
+        "thumb": {
+          "count": 20,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 1,
+            "hit": 4
+          },
+          "timings": {
+            "cache": {
+              "median": 9.2,
+              "p95": 104.2,
+              "max": 153.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.6,
+              "max": 244.1
+            },
+            "sharp": {
+              "median": 47.3,
+              "p95": 156.7,
+              "max": 202.5
+            },
+            "work": {
+              "median": 73.2,
+              "p95": 261.6,
+              "max": 475
+            },
+            "route": {
+              "median": 76.8,
+              "p95": 268.5,
+              "max": 482.5
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 85.4,
+              "max": 85.4
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 215.7,
+              "p95": 215.7,
+              "max": 215.7
+            },
+            "work": {
+              "median": 199.2,
+              "p95": 301.2,
+              "max": 301.2
+            },
+            "route": {
+              "median": 203.8,
+              "p95": 307.2,
+              "max": 307.2
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 4062.5,
+        "peakWorkingSetBytes": 293433344,
+        "workingSetBytes": 205246464,
+        "readBytes": 15778667,
+        "writeBytes": 30845
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 5,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 542,
+        "shellNavigation": 94,
+        "scanAccept": 1003,
+        "scan": 70.2,
+        "scanStreamAfterHeaders": 1,
+        "scanWall": 1004,
+        "postScan": 111,
+        "firstThumbnailPaint": 44.8,
+        "initialThumbnailFill": 60.6,
+        "continuedThumbnailFill": 49.9,
+        "modalFocusedDisplay": 224.2,
+        "totalPerceived": 1929.5,
+        "maxInterPaintGap": 16.6,
+        "responseToPaintMedian": 21.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.1,
+          "targetEnumerationMs": 6.2,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.9,
+          "totalMs": 67,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.4,
+        "routeMs": 70.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 24.3,
+              "p95": 24.3,
+              "max": 24.3
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 24.4,
+              "p95": 24.4,
+              "max": 24.4
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 24.5,
+              "p95": 24.5,
+              "max": 24.5
+            }
+          }
+        },
+        "thumb": {
+          "count": 33,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 33
+          },
+          "timings": {
+            "cache": {
+              "median": 5.6,
+              "p95": 37.2,
+              "max": 46.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 5.6,
+              "p95": 37.2,
+              "max": 46.9
+            },
+            "route": {
+              "median": 11.4,
+              "p95": 43.5,
+              "max": 53.5
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 30.5,
+              "max": 30.5
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 108.4,
+              "p95": 108.4,
+              "max": 108.4
+            },
+            "work": {
+              "median": 95.7,
+              "p95": 139,
+              "max": 139
+            },
+            "route": {
+              "median": 98.9,
+              "p95": 142.2,
+              "max": 142.2
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1625,
+        "peakWorkingSetBytes": 294199296,
+        "workingSetBytes": 201367552,
+        "readBytes": 8407417,
+        "writeBytes": 18209
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 6,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 549,
+        "shellNavigation": 101,
+        "scanAccept": 1005,
+        "scan": 70.8,
+        "scanStreamAfterHeaders": -0.4,
+        "scanWall": 1004.6,
+        "postScan": 112.4,
+        "firstThumbnailPaint": 44.9,
+        "initialThumbnailFill": 58.9,
+        "continuedThumbnailFill": 66.6,
+        "modalFocusedDisplay": 303.1,
+        "totalPerceived": 1983.5,
+        "maxInterPaintGap": 31.6,
+        "responseToPaintMedian": 21.7
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 49.4,
+          "targetEnumerationMs": 5.9,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.6,
+          "totalMs": 67.8,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.2,
+        "routeMs": 70.8
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.4,
+              "max": 24.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.5,
+              "max": 24.5
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.6,
+              "max": 24.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 26,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 26
+          },
+          "timings": {
+            "cache": {
+              "median": 13.7,
+              "p95": 32.6,
+              "max": 37.8
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 13.7,
+              "p95": 32.6,
+              "max": 37.8
+            },
+            "route": {
+              "median": 16.8,
+              "p95": 38.9,
+              "max": 45.1
+            }
+          }
+        },
+        "display": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 37,
+              "p95": 37,
+              "max": 37
+            },
+            "queue": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 141.9,
+              "p95": 141.9,
+              "max": 141.9
+            },
+            "work": {
+              "median": 179.1,
+              "p95": 179.1,
+              "max": 179.1
+            },
+            "route": {
+              "median": 182.7,
+              "p95": 182.7,
+              "max": 182.7
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1875,
+        "peakWorkingSetBytes": 334376960,
+        "workingSetBytes": 201932800,
+        "readBytes": 8543884,
+        "writeBytes": 24059
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 6,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 570,
+        "shellNavigation": 92,
+        "scanAccept": 1020,
+        "scan": 70,
+        "scanStreamAfterHeaders": 0,
+        "scanWall": 1020,
+        "postScan": 111,
+        "firstThumbnailPaint": 95.4,
+        "initialThumbnailFill": 161.5,
+        "continuedThumbnailFill": 250.4,
+        "modalFocusedDisplay": 432,
+        "totalPerceived": 2282.9,
+        "maxInterPaintGap": 149.2,
+        "responseToPaintMedian": 28
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.2,
+          "targetEnumerationMs": 5.9,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.7,
+          "totalMs": 66.4,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.5,
+        "routeMs": 70
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24,
+              "max": 24
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24,
+              "max": 24
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 0.1,
+              "p95": 24.2,
+              "max": 24.2
+            }
+          }
+        },
+        "thumb": {
+          "count": 21,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 12,
+            "coalesced": 3,
+            "hit": 6
+          },
+          "timings": {
+            "cache": {
+              "median": 17.7,
+              "p95": 126.2,
+              "max": 133.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 46.1,
+              "p95": 132.9,
+              "max": 133.6
+            },
+            "work": {
+              "median": 92.3,
+              "p95": 165.8,
+              "max": 170.7
+            },
+            "route": {
+              "median": 95.4,
+              "p95": 168.8,
+              "max": 176.6
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 96.9,
+              "max": 96.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 228.9,
+              "p95": 228.9,
+              "max": 228.9
+            },
+            "work": {
+              "median": 157.8,
+              "p95": 325.8,
+              "max": 325.8
+            },
+            "route": {
+              "median": 162.2,
+              "p95": 329.9,
+              "max": 329.9
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3875,
+        "peakWorkingSetBytes": 308482048,
+        "workingSetBytes": 205922304,
+        "readBytes": 15779385,
+        "writeBytes": 30845
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 6,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 534,
+        "shellNavigation": 98,
+        "scanAccept": 937,
+        "scan": 634.5,
+        "scanStreamAfterHeaders": 628.2,
+        "scanWall": 1565.2,
+        "postScan": 120.8,
+        "firstThumbnailPaint": 105.8,
+        "initialThumbnailFill": 188.7,
+        "continuedThumbnailFill": 267.1,
+        "modalFocusedDisplay": 431.2,
+        "totalPerceived": 2864.8,
+        "maxInterPaintGap": 216.7,
+        "responseToPaintMedian": 14.4
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.5,
+          "targetEnumerationMs": 3.9,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 63.7,
+          "filePlanMs": 23.1,
+          "metadataMs": 518.5,
+          "cacheWriteMs": 7.7,
+          "materializeMs": 10.1,
+          "totalMs": 629.9,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 2.4,
+        "routeMs": 634.5
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24,
+              "max": 24
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.1,
+              "max": 24.1
+            }
+          }
+        },
+        "thumb": {
+          "count": 22,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 4
+          },
+          "timings": {
+            "cache": {
+              "median": 16.5,
+              "p95": 123.9,
+              "max": 173.1
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1.5,
+              "max": 1.9
+            },
+            "sharp": {
+              "median": 67.4,
+              "p95": 150.5,
+              "max": 152.1
+            },
+            "work": {
+              "median": 76.8,
+              "p95": 256.7,
+              "max": 262.9
+            },
+            "route": {
+              "median": 81.7,
+              "p95": 260.6,
+              "max": 270.3
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 84.2,
+              "p95": 94.9,
+              "max": 94.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 192.5,
+              "p95": 192.6,
+              "max": 192.6
+            },
+            "work": {
+              "median": 276.8,
+              "p95": 287.5,
+              "max": 287.5
+            },
+            "route": {
+              "median": 284.5,
+              "p95": 291.8,
+              "max": 291.8
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5546.9,
+        "peakWorkingSetBytes": 392298496,
+        "workingSetBytes": 292032512,
+        "readBytes": 18521180,
+        "writeBytes": 1864697
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 7,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 542,
+        "shellNavigation": 87,
+        "scanAccept": 89,
+        "scan": 636.2,
+        "scanStreamAfterHeaders": 630.7,
+        "scanWall": 719.7,
+        "postScan": 119.3,
+        "firstThumbnailPaint": 189.1,
+        "initialThumbnailFill": 204.8,
+        "continuedThumbnailFill": 283,
+        "modalFocusedDisplay": 427.4,
+        "totalPerceived": 2934.8,
+        "maxInterPaintGap": 116.4,
+        "responseToPaintMedian": 39.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.7,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 62.8,
+          "filePlanMs": 22.5,
+          "metadataMs": 523.1,
+          "cacheWriteMs": 7.5,
+          "materializeMs": 9.6,
+          "totalMs": 631.8,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 2.4,
+        "routeMs": 636.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.6,
+              "max": 23.6
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.6,
+              "max": 23.6
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 23.7,
+              "max": 23.7
+            }
+          }
+        },
+        "thumb": {
+          "count": 22,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 6
+          },
+          "timings": {
+            "cache": {
+              "median": 20.5,
+              "p95": 115.8,
+              "max": 142.3
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.3
+            },
+            "sharp": {
+              "median": 54.2,
+              "p95": 156.9,
+              "max": 170.5
+            },
+            "work": {
+              "median": 101.6,
+              "p95": 205.5,
+              "max": 278.6
+            },
+            "route": {
+              "median": 108.6,
+              "p95": 213.9,
+              "max": 285.7
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 79.1,
+              "p95": 86.9,
+              "max": 86.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 168.3,
+              "p95": 221.5,
+              "max": 221.5
+            },
+            "work": {
+              "median": 255.2,
+              "p95": 300.8,
+              "max": 300.8
+            },
+            "route": {
+              "median": 262.2,
+              "p95": 304.8,
+              "max": 304.8
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5359.4,
+        "peakWorkingSetBytes": 397148160,
+        "workingSetBytes": 292786176,
+        "readBytes": 18521632,
+        "writeBytes": 1864697
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 7,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 540,
+        "shellNavigation": 98,
+        "scanAccept": 1002,
+        "scan": 70.4,
+        "scanStreamAfterHeaders": 1.4,
+        "scanWall": 1003.4,
+        "postScan": 109.6,
+        "firstThumbnailPaint": 96.6,
+        "initialThumbnailFill": 162.7,
+        "continuedThumbnailFill": 266.3,
+        "modalFocusedDisplay": 369.3,
+        "totalPerceived": 2262,
+        "maxInterPaintGap": 216.3,
+        "responseToPaintMedian": 14.1
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.6,
+          "targetEnumerationMs": 5.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 10,
+          "totalMs": 67.1,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.4,
+        "routeMs": 70.4
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.1,
+              "max": 24.1
+            }
+          }
+        },
+        "thumb": {
+          "count": 22,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 6
+          },
+          "timings": {
+            "cache": {
+              "median": 14.4,
+              "p95": 141.7,
+              "max": 150.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 13.1
+            },
+            "sharp": {
+              "median": 49.4,
+              "p95": 146,
+              "max": 146
+            },
+            "work": {
+              "median": 103.1,
+              "p95": 156.3,
+              "max": 262.4
+            },
+            "route": {
+              "median": 109.8,
+              "p95": 162.5,
+              "max": 269.9
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 83,
+              "max": 83
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 183.6,
+              "p95": 183.6,
+              "max": 183.6
+            },
+            "work": {
+              "median": 155.1,
+              "p95": 266.7,
+              "max": 266.7
+            },
+            "route": {
+              "median": 160.2,
+              "p95": 271.1,
+              "max": 271.1
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3906.3,
+        "peakWorkingSetBytes": 301977600,
+        "workingSetBytes": 205246464,
+        "readBytes": 15642604,
+        "writeBytes": 30611
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 7,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 557,
+        "shellNavigation": 99,
+        "scanAccept": 1001,
+        "scan": 67.8,
+        "scanStreamAfterHeaders": 0.9,
+        "scanWall": 1001.9,
+        "postScan": 111.1,
+        "firstThumbnailPaint": 48,
+        "initialThumbnailFill": 64,
+        "continuedThumbnailFill": 49.1,
+        "modalFocusedDisplay": 271.2,
+        "totalPerceived": 1963.1,
+        "maxInterPaintGap": 16,
+        "responseToPaintMedian": 27.2
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.5,
+          "targetEnumerationMs": 5.5,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 8,
+          "totalMs": 65,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 0.7,
+        "routeMs": 67.8
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 24.8,
+              "max": 24.8
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24.9,
+              "max": 24.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 25,
+              "max": 25
+            }
+          }
+        },
+        "thumb": {
+          "count": 27,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 27
+          },
+          "timings": {
+            "cache": {
+              "median": 18.1,
+              "p95": 41.8,
+              "max": 45.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 18.1,
+              "p95": 41.8,
+              "max": 45.9
+            },
+            "route": {
+              "median": 24,
+              "p95": 46.4,
+              "max": 53
+            }
+          }
+        },
+        "display": {
+          "count": 4,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 4
+          },
+          "timings": {
+            "cache": {
+              "median": 26.8,
+              "p95": 42.6,
+              "max": 42.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 112.1,
+              "p95": 112.9,
+              "max": 112.9
+            },
+            "work": {
+              "median": 139.3,
+              "p95": 155.5,
+              "max": 155.5
+            },
+            "route": {
+              "median": 145.7,
+              "p95": 159,
+              "max": 159
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1593.8,
+        "peakWorkingSetBytes": 332783616,
+        "workingSetBytes": 196911104,
+        "readBytes": 8543932,
+        "writeBytes": 24059
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 8,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 544,
+        "shellNavigation": 90,
+        "scanAccept": 1007,
+        "scan": 75.3,
+        "scanStreamAfterHeaders": 1.3,
+        "scanWall": 1008.3,
+        "postScan": 231.7,
+        "firstThumbnailPaint": 3.4,
+        "initialThumbnailFill": 5.4,
+        "continuedThumbnailFill": 30.7,
+        "modalFocusedDisplay": 233.5,
+        "totalPerceived": 1989.1,
+        "maxInterPaintGap": 15.3,
+        "responseToPaintMedian": 51.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 49.9,
+          "targetEnumerationMs": 6.6,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 10.1,
+          "totalMs": 69.4,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 3.8,
+        "routeMs": 75.3
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 31.2,
+              "p95": 31.2,
+              "max": 31.2
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 31.2,
+              "p95": 31.2,
+              "max": 31.2
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 31.4,
+              "p95": 31.4,
+              "max": 31.4
+            }
+          }
+        },
+        "thumb": {
+          "count": 33,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 33
+          },
+          "timings": {
+            "cache": {
+              "median": 8.4,
+              "p95": 36.5,
+              "max": 41.8
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 8.4,
+              "p95": 36.5,
+              "max": 41.8
+            },
+            "route": {
+              "median": 14.2,
+              "p95": 43.8,
+              "max": 49.8
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 13.1,
+              "max": 13.1
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 123.7,
+              "p95": 123.7,
+              "max": 123.7
+            },
+            "work": {
+              "median": 102.5,
+              "p95": 137,
+              "max": 137
+            },
+            "route": {
+              "median": 106.6,
+              "p95": 140.6,
+              "max": 140.6
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1859.4,
+        "peakWorkingSetBytes": 290627584,
+        "workingSetBytes": 200888320,
+        "readBytes": 8407385,
+        "writeBytes": 18209
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 8,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 570,
+        "shellNavigation": 100,
+        "scanAccept": 999,
+        "scan": 65.6,
+        "scanStreamAfterHeaders": 0.7,
+        "scanWall": 999.7,
+        "postScan": 116.3,
+        "firstThumbnailPaint": 95.6,
+        "initialThumbnailFill": 161.6,
+        "continuedThumbnailFill": 215.6,
+        "modalFocusedDisplay": 426.8,
+        "totalPerceived": 2248.2,
+        "maxInterPaintGap": 182.3,
+        "responseToPaintMedian": 12.4
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 45.6,
+          "targetEnumerationMs": 4.1,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.2,
+          "totalMs": 62.5,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1,
+        "routeMs": 65.6
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.4,
+              "max": 23.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.5,
+              "max": 23.5
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 23.6,
+              "max": 23.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 25,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 12,
+            "coalesced": 4,
+            "hit": 9
+          },
+          "timings": {
+            "cache": {
+              "median": 14.3,
+              "p95": 130.9,
+              "max": 141
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 48,
+              "p95": 115.5,
+              "max": 120.8
+            },
+            "work": {
+              "median": 82,
+              "p95": 135.1,
+              "max": 141
+            },
+            "route": {
+              "median": 86.8,
+              "p95": 139.5,
+              "max": 144.4
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 51.2,
+              "p95": 63,
+              "max": 63
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 128.5,
+              "p95": 129.5,
+              "max": 129.5
+            },
+            "work": {
+              "median": 179.7,
+              "p95": 192.7,
+              "max": 192.7
+            },
+            "route": {
+              "median": 187,
+              "p95": 197.3,
+              "max": 197.3
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3812.5,
+        "peakWorkingSetBytes": 328679424,
+        "workingSetBytes": 200171520,
+        "readBytes": 15506089,
+        "writeBytes": 35993
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 8,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 527,
+        "shellNavigation": 99,
+        "scanAccept": 938,
+        "scan": 657.4,
+        "scanStreamAfterHeaders": 650.8,
+        "scanWall": 1588.8,
+        "postScan": 226.2,
+        "firstThumbnailPaint": 3.6,
+        "initialThumbnailFill": 60.9,
+        "continuedThumbnailFill": 249.2,
+        "modalFocusedDisplay": 474.7,
+        "totalPerceived": 2827.1,
+        "maxInterPaintGap": 133.9,
+        "responseToPaintMedian": 13
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.5,
+          "targetEnumerationMs": 4.1,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 66.3,
+          "filePlanMs": 23.2,
+          "metadataMs": 537.2,
+          "cacheWriteMs": 8,
+          "materializeMs": 10.7,
+          "totalMs": 654.4,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 0.9,
+        "routeMs": 657.4
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 26.8,
+              "max": 26.8
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 26.9,
+              "max": 26.9
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 27,
+              "max": 27
+            }
+          }
+        },
+        "thumb": {
+          "count": 20,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 13.8,
+              "p95": 195.3,
+              "max": 205.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1.5,
+              "max": 46.2
+            },
+            "sharp": {
+              "median": 86.7,
+              "p95": 164.8,
+              "max": 165.3
+            },
+            "work": {
+              "median": 88.8,
+              "p95": 271.2,
+              "max": 276.7
+            },
+            "route": {
+              "median": 93.8,
+              "p95": 274.9,
+              "max": 284.3
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 82.5,
+              "p95": 93.4,
+              "max": 93.4
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 167,
+              "p95": 195.5,
+              "max": 195.5
+            },
+            "work": {
+              "median": 260.5,
+              "p95": 278.1,
+              "max": 278.1
+            },
+            "route": {
+              "median": 265.5,
+              "p95": 285.7,
+              "max": 285.7
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5265.6,
+        "peakWorkingSetBytes": 398954496,
+        "workingSetBytes": 290906112,
+        "readBytes": 18521180,
+        "writeBytes": 1864697
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 9,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 567,
+        "shellNavigation": 97,
+        "scanAccept": 939,
+        "scan": 651.7,
+        "scanStreamAfterHeaders": 645.5,
+        "scanWall": 1584.5,
+        "postScan": 116.5,
+        "firstThumbnailPaint": 111.1,
+        "initialThumbnailFill": 192.7,
+        "continuedThumbnailFill": 265.8,
+        "modalFocusedDisplay": 427,
+        "totalPerceived": 2900.5,
+        "maxInterPaintGap": 115.6,
+        "responseToPaintMedian": 24.9
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.5,
+          "targetEnumerationMs": 3.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 64.7,
+          "filePlanMs": 22.6,
+          "metadataMs": 528.1,
+          "cacheWriteMs": 16.7,
+          "materializeMs": 9.1,
+          "totalMs": 647.8,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 1.9,
+        "routeMs": 651.7
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.4,
+              "max": 23.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 23.4,
+              "max": 23.4
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.3,
+              "p95": 23.6,
+              "max": 23.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 22,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 14,
+            "coalesced": 3,
+            "hit": 5
+          },
+          "timings": {
+            "cache": {
+              "median": 17.1,
+              "p95": 106.9,
+              "max": 112.7
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.4,
+              "max": 1.1
+            },
+            "sharp": {
+              "median": 79.2,
+              "p95": 140,
+              "max": 140.5
+            },
+            "work": {
+              "median": 94.5,
+              "p95": 244.4,
+              "max": 249.5
+            },
+            "route": {
+              "median": 99.5,
+              "p95": 248.2,
+              "max": 256.5
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 71.4,
+              "p95": 81.6,
+              "max": 81.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 180.5,
+              "p95": 216.8,
+              "max": 216.8
+            },
+            "work": {
+              "median": 262.3,
+              "p95": 288.2,
+              "max": 288.2
+            },
+            "route": {
+              "median": 266.2,
+              "p95": 295.4,
+              "max": 295.4
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5125,
+        "peakWorkingSetBytes": 397447168,
+        "workingSetBytes": 292073472,
+        "readBytes": 18657913,
+        "writeBytes": 1864931
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 9,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 547,
+        "shellNavigation": 81,
+        "scanAccept": 1005,
+        "scan": 70.2,
+        "scanStreamAfterHeaders": 0.5,
+        "scanWall": 1005.5,
+        "postScan": 111.5,
+        "firstThumbnailPaint": 95.5,
+        "initialThumbnailFill": 160.5,
+        "continuedThumbnailFill": 250.1,
+        "modalFocusedDisplay": 352.9,
+        "totalPerceived": 2249.6,
+        "maxInterPaintGap": 200,
+        "responseToPaintMedian": 14.5
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 48.6,
+          "targetEnumerationMs": 6,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.7,
+          "totalMs": 67,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.3,
+        "routeMs": 70.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 23.9,
+              "max": 23.9
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 24,
+              "max": 24
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 24.1,
+              "max": 24.1
+            }
+          }
+        },
+        "thumb": {
+          "count": 23,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 13,
+            "coalesced": 3,
+            "hit": 7
+          },
+          "timings": {
+            "cache": {
+              "median": 18.2,
+              "p95": 103.6,
+              "max": 110.7
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 1.6
+            },
+            "sharp": {
+              "median": 48.7,
+              "p95": 141.2,
+              "max": 144.2
+            },
+            "work": {
+              "median": 88.7,
+              "p95": 147.1,
+              "max": 249.4
+            },
+            "route": {
+              "median": 94.5,
+              "p95": 153,
+              "max": 257.8
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "coalesced": 1,
+            "miss": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 81.9,
+              "max": 81.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 151.1,
+              "p95": 151.1,
+              "max": 151.1
+            },
+            "work": {
+              "median": 115.8,
+              "p95": 233.2,
+              "max": 233.2
+            },
+            "route": {
+              "median": 119.9,
+              "p95": 237.3,
+              "max": 237.3
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 3953.1,
+        "peakWorkingSetBytes": 303124480,
+        "workingSetBytes": 204890112,
+        "readBytes": 15506105,
+        "writeBytes": 30377
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 9,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 569,
+        "shellNavigation": 101,
+        "scanAccept": 1003,
+        "scan": 71.7,
+        "scanStreamAfterHeaders": 1.8,
+        "scanWall": 1004.8,
+        "postScan": 111.2,
+        "firstThumbnailPaint": 44.8,
+        "initialThumbnailFill": 59.9,
+        "continuedThumbnailFill": 66.5,
+        "modalFocusedDisplay": 248.2,
+        "totalPerceived": 1981.4,
+        "maxInterPaintGap": 17.1,
+        "responseToPaintMedian": 20.6
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 47.2,
+          "targetEnumerationMs": 5.9,
+          "signatureMs": 0.3,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 10.2,
+          "totalMs": 66.2,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 3.7,
+        "routeMs": 71.7
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 24,
+              "p95": 24,
+              "max": 24
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 24.1,
+              "p95": 24.1,
+              "max": 24.1
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "total": {
+              "median": 24.2,
+              "p95": 24.2,
+              "max": 24.2
+            }
+          }
+        },
+        "thumb": {
+          "count": 37,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 37
+          },
+          "timings": {
+            "cache": {
+              "median": 5.4,
+              "p95": 44.7,
+              "max": 45.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 5.4,
+              "p95": 44.7,
+              "max": 45.2
+            },
+            "route": {
+              "median": 11.3,
+              "p95": 51,
+              "max": 51.6
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "coalesced": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 0.1,
+              "p95": 25.1,
+              "max": 25.1
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 115.2,
+              "p95": 115.2,
+              "max": 115.2
+            },
+            "work": {
+              "median": 109.7,
+              "p95": 140.5,
+              "max": 140.5
+            },
+            "route": {
+              "median": 113.1,
+              "p95": 144.1,
+              "max": 144.1
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1828.1,
+        "peakWorkingSetBytes": 296984576,
+        "workingSetBytes": 200904704,
+        "readBytes": 8407417,
+        "writeBytes": 18209
+      }
+    },
+    {
+      "condition": "C",
+      "iteration": 10,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 531,
+        "shellNavigation": 91,
+        "scanAccept": 1000,
+        "scan": 67.2,
+        "scanStreamAfterHeaders": 0.4,
+        "scanWall": 1000.4,
+        "postScan": 111.6,
+        "firstThumbnailPaint": 48.5,
+        "initialThumbnailFill": 64.4,
+        "continuedThumbnailFill": 65.9,
+        "modalFocusedDisplay": 254.6,
+        "totalPerceived": 1941.3,
+        "maxInterPaintGap": 49.6,
+        "responseToPaintMedian": 28.5
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 46.7,
+          "targetEnumerationMs": 5.4,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.5,
+          "totalMs": 64.2,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.1,
+        "routeMs": 67.2
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 24.5,
+              "p95": 24.5,
+              "max": 24.5
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 24.6,
+              "p95": 24.6,
+              "max": 24.6
+            },
+            "serialize": {
+              "median": 0.2,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 24.8,
+              "p95": 24.8,
+              "max": 24.8
+            }
+          }
+        },
+        "thumb": {
+          "count": 27,
+          "statusErrors": 0,
+          "cache": {
+            "hit": 27
+          },
+          "timings": {
+            "cache": {
+              "median": 11.9,
+              "p95": 30.7,
+              "max": 33.3
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "work": {
+              "median": 11.9,
+              "p95": 30.7,
+              "max": 33.3
+            },
+            "route": {
+              "median": 15.9,
+              "p95": 37,
+              "max": 39.9
+            }
+          }
+        },
+        "display": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1
+          },
+          "timings": {
+            "cache": {
+              "median": 28.3,
+              "p95": 28.3,
+              "max": 28.3
+            },
+            "queue": {
+              "median": 0.1,
+              "p95": 0.1,
+              "max": 0.1
+            },
+            "sharp": {
+              "median": 124.9,
+              "p95": 124.9,
+              "max": 124.9
+            },
+            "work": {
+              "median": 153.3,
+              "p95": 153.3,
+              "max": 153.3
+            },
+            "route": {
+              "median": 156.7,
+              "p95": 156.7,
+              "max": 156.7
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 1796.9,
+        "peakWorkingSetBytes": 332214272,
+        "workingSetBytes": 201564160,
+        "readBytes": 8543884,
+        "writeBytes": 24059
+      }
+    },
+    {
+      "condition": "B",
+      "iteration": 10,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 564,
+        "shellNavigation": 92,
+        "scanAccept": 1000,
+        "scan": 68.8,
+        "scanStreamAfterHeaders": 0.8,
+        "scanWall": 1000.8,
+        "postScan": 124.2,
+        "firstThumbnailPaint": 101.5,
+        "initialThumbnailFill": 167.5,
+        "continuedThumbnailFill": 249.3,
+        "modalFocusedDisplay": 432.7,
+        "totalPerceived": 2288.8,
+        "maxInterPaintGap": 167,
+        "responseToPaintMedian": 14.3
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 47.5,
+          "targetEnumerationMs": 6.3,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 0,
+          "filePlanMs": 0,
+          "metadataMs": 0.1,
+          "cacheWriteMs": 0,
+          "materializeMs": 9.4,
+          "totalMs": 65.9,
+          "cachedFileCount": 10000,
+          "metadataFileCount": 0
+        },
+        "setIndexMs": 1.1,
+        "routeMs": 68.8
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 25.4,
+              "max": 25.4
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 25.4,
+              "max": 25.4
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 25.6,
+              "max": 25.6
+            }
+          }
+        },
+        "thumb": {
+          "count": 21,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 3
+          },
+          "timings": {
+            "cache": {
+              "median": 14.7,
+              "p95": 116.5,
+              "max": 203.1
+            },
+            "queue": {
+              "median": 0,
+              "p95": 1.2,
+              "max": 1.7
+            },
+            "sharp": {
+              "median": 72.3,
+              "p95": 136.5,
+              "max": 145.3
+            },
+            "work": {
+              "median": 85.3,
+              "p95": 234.6,
+              "max": 241.5
+            },
+            "route": {
+              "median": 89,
+              "p95": 240.7,
+              "max": 248.7
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 50,
+              "p95": 84.6,
+              "max": 84.6
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 210.4,
+              "p95": 256.9,
+              "max": 256.9
+            },
+            "work": {
+              "median": 295,
+              "p95": 307.1,
+              "max": 307.1
+            },
+            "route": {
+              "median": 302.6,
+              "p95": 311,
+              "max": 311
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 4093.8,
+        "peakWorkingSetBytes": 309911552,
+        "workingSetBytes": 206360576,
+        "readBytes": 15915134,
+        "writeBytes": 36695
+      }
+    },
+    {
+      "condition": "A",
+      "iteration": 10,
+      "traceEnabled": true,
+      "counts": {
+        "scanResults": 10000,
+        "initialViewport": 6,
+        "initialViewportPainted": 6,
+        "nextViewport": 9,
+        "nextViewportPainted": 9
+      },
+      "timingsMs": {
+        "startup": 534,
+        "shellNavigation": 96,
+        "scanAccept": 938,
+        "scan": 619.9,
+        "scanStreamAfterHeaders": 614.1,
+        "scanWall": 1552.1,
+        "postScan": 120.9,
+        "firstThumbnailPaint": 121.6,
+        "initialThumbnailFill": 187.8,
+        "continuedThumbnailFill": 266.3,
+        "modalFocusedDisplay": 369.3,
+        "totalPerceived": 2832.1,
+        "maxInterPaintGap": 217.2,
+        "responseToPaintMedian": 14.1
+      },
+      "scanBreakdown": {
+        "scan": {
+          "cacheLoadMs": 0.4,
+          "targetEnumerationMs": 3.8,
+          "signatureMs": 0.2,
+          "fileEnumerationMs": 61.7,
+          "filePlanMs": 21.7,
+          "metadataMs": 507.9,
+          "cacheWriteMs": 7.9,
+          "materializeMs": 9.3,
+          "totalMs": 616.9,
+          "cachedFileCount": 0,
+          "metadataFileCount": 10000
+        },
+        "setIndexMs": 0.9,
+        "routeMs": 619.9
+      },
+      "server": {
+        "scan": {
+          "count": 1,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        },
+        "search": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 1,
+            "hit": 1
+          },
+          "timings": {
+            "filter": {
+              "median": 0,
+              "p95": 25.3,
+              "max": 25.3
+            },
+            "page": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "search": {
+              "median": 0,
+              "p95": 25.4,
+              "max": 25.4
+            },
+            "serialize": {
+              "median": 0.1,
+              "p95": 0.2,
+              "max": 0.2
+            },
+            "total": {
+              "median": 0.2,
+              "p95": 25.5,
+              "max": 25.5
+            }
+          }
+        },
+        "thumb": {
+          "count": 21,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 15,
+            "coalesced": 3,
+            "hit": 3
+          },
+          "timings": {
+            "cache": {
+              "median": 15,
+              "p95": 112.7,
+              "max": 170.9
+            },
+            "queue": {
+              "median": 0,
+              "p95": 2.2,
+              "max": 2.8
+            },
+            "sharp": {
+              "median": 81.6,
+              "p95": 143,
+              "max": 156.1
+            },
+            "work": {
+              "median": 87.8,
+              "p95": 239.4,
+              "max": 245.7
+            },
+            "route": {
+              "median": 91.3,
+              "p95": 243,
+              "max": 252.9
+            }
+          }
+        },
+        "display": {
+          "count": 2,
+          "statusErrors": 0,
+          "cache": {
+            "miss": 2
+          },
+          "timings": {
+            "cache": {
+              "median": 71.3,
+              "p95": 91.2,
+              "max": 91.2
+            },
+            "queue": {
+              "median": 0,
+              "p95": 0,
+              "max": 0
+            },
+            "sharp": {
+              "median": 180.2,
+              "p95": 180.4,
+              "max": 180.4
+            },
+            "work": {
+              "median": 251.7,
+              "p95": 271.5,
+              "max": 271.5
+            },
+            "route": {
+              "median": 259.3,
+              "p95": 275.5,
+              "max": 275.5
+            }
+          }
+        },
+        "original": {
+          "count": 0,
+          "statusErrors": 0,
+          "cache": {},
+          "timings": {}
+        }
+      },
+      "client": {
+        "thumbnailPaintCount": 15,
+        "longTaskCount": 0,
+        "longTaskTotalMs": 0,
+        "longTaskMaxMs": null,
+        "consoleErrorCount": 0,
+        "consoleWarningCount": 0
+      },
+      "runtime": {
+        "cpuMs": 5781.3,
+        "peakWorkingSetBytes": 388222976,
+        "workingSetBytes": 289136640,
+        "readBytes": 18521180,
+        "writeBytes": 1864697
+      }
+    }
+  ],
+  "summary": {
+    "A": {
+      "observations": 10,
+      "metrics": {
+        "startup": {
+          "median": 534,
+          "p95": 573,
+          "max": 573
+        },
+        "shellNavigation": {
+          "median": 98,
+          "p95": 109,
+          "max": 109
+        },
+        "scanAccept": {
+          "median": 938,
+          "p95": 954,
+          "max": 954
+        },
+        "scan": {
+          "median": 638.9,
+          "p95": 667.3,
+          "max": 667.3
+        },
+        "scanStreamAfterHeaders": {
+          "median": 631.9,
+          "p95": 661.1,
+          "max": 661.1
+        },
+        "scanWall": {
+          "median": 1569.9,
+          "p95": 1598.1,
+          "max": 1598.1
+        },
+        "postScan": {
+          "median": 123,
+          "p95": 231.1,
+          "max": 231.1
+        },
+        "firstThumbnailPaint": {
+          "median": 110.9,
+          "p95": 189.1,
+          "max": 189.1
+        },
+        "initialThumbnailFill": {
+          "median": 188.7,
+          "p95": 204.8,
+          "max": 204.8
+        },
+        "continuedThumbnailFill": {
+          "median": 265.8,
+          "p95": 300.3,
+          "max": 300.3
+        },
+        "modalFocusedDisplay": {
+          "median": 427.4,
+          "p95": 474.7,
+          "max": 474.7
+        },
+        "totalPerceived": {
+          "median": 2867.3,
+          "p95": 2948.4,
+          "max": 2948.4
+        },
+        "maxInterPaintGap": {
+          "median": 116.7,
+          "p95": 232.7,
+          "max": 232.7
+        },
+        "responseToPaintMedian": {
+          "median": 15.4,
+          "p95": 39.9,
+          "max": 39.9
+        }
+      },
+      "runtime": {
+        "cpuMs": {
+          "median": 5375,
+          "p95": 5781.3,
+          "max": 5781.3
+        },
+        "peakWorkingSetBytes": {
+          "median": 393011200,
+          "p95": 413003776,
+          "max": 413003776
+        },
+        "readBytes": {
+          "median": 18521180,
+          "p95": 18794194,
+          "max": 18794194
+        },
+        "writeBytes": {
+          "median": 1864697,
+          "p95": 1865165,
+          "max": 1865165
+        }
+      }
+    },
+    "B": {
+      "observations": 10,
+      "metrics": {
+        "startup": {
+          "median": 563,
+          "p95": 575,
+          "max": 575
+        },
+        "shellNavigation": {
+          "median": 98,
+          "p95": 107,
+          "max": 107
+        },
+        "scanAccept": {
+          "median": 999,
+          "p95": 1020,
+          "max": 1020
+        },
+        "scan": {
+          "median": 68.8,
+          "p95": 70.7,
+          "max": 70.7
+        },
+        "scanStreamAfterHeaders": {
+          "median": 0.5,
+          "p95": 1.4,
+          "max": 1.4
+        },
+        "scanWall": {
+          "median": 999.7,
+          "p95": 1020,
+          "max": 1020
+        },
+        "postScan": {
+          "median": 111.4,
+          "p95": 124.2,
+          "max": 124.2
+        },
+        "firstThumbnailPaint": {
+          "median": 95.5,
+          "p95": 104.5,
+          "max": 104.5
+        },
+        "initialThumbnailFill": {
+          "median": 161.5,
+          "p95": 179,
+          "max": 179
+        },
+        "continuedThumbnailFill": {
+          "median": 249.3,
+          "p95": 266.3,
+          "max": 266.3
+        },
+        "modalFocusedDisplay": {
+          "median": 426.8,
+          "p95": 465.9,
+          "max": 465.9
+        },
+        "totalPerceived": {
+          "median": 2256,
+          "p95": 2289.9,
+          "max": 2289.9
+        },
+        "maxInterPaintGap": {
+          "median": 166.8,
+          "p95": 216.3,
+          "max": 216.3
+        },
+        "responseToPaintMedian": {
+          "median": 14.5,
+          "p95": 28,
+          "max": 28
+        }
+      },
+      "runtime": {
+        "cpuMs": {
+          "median": 3953.1,
+          "p95": 4140.6,
+          "max": 4140.6
+        },
+        "peakWorkingSetBytes": {
+          "median": 303124480,
+          "p95": 336699392,
+          "max": 336699392
+        },
+        "readBytes": {
+          "median": 15642902,
+          "p95": 15915134,
+          "max": 15915134
+        },
+        "writeBytes": {
+          "median": 30845,
+          "p95": 36695,
+          "max": 36695
+        }
+      }
+    },
+    "C": {
+      "observations": 10,
+      "metrics": {
+        "startup": {
+          "median": 542,
+          "p95": 584,
+          "max": 584
+        },
+        "shellNavigation": {
+          "median": 99,
+          "p95": 105,
+          "max": 105
+        },
+        "scanAccept": {
+          "median": 1001,
+          "p95": 1007,
+          "max": 1007
+        },
+        "scan": {
+          "median": 68.3,
+          "p95": 75.3,
+          "max": 75.3
+        },
+        "scanStreamAfterHeaders": {
+          "median": 0.6,
+          "p95": 1.8,
+          "max": 1.8
+        },
+        "scanWall": {
+          "median": 1001.9,
+          "p95": 1008.3,
+          "max": 1008.3
+        },
+        "postScan": {
+          "median": 111.6,
+          "p95": 231.7,
+          "max": 231.7
+        },
+        "firstThumbnailPaint": {
+          "median": 44.9,
+          "p95": 48.5,
+          "max": 48.5
+        },
+        "initialThumbnailFill": {
+          "median": 61,
+          "p95": 64.4,
+          "max": 64.4
+        },
+        "continuedThumbnailFill": {
+          "median": 49.9,
+          "p95": 67.1,
+          "max": 67.1
+        },
+        "modalFocusedDisplay": {
+          "median": 248.2,
+          "p95": 303.1,
+          "max": 303.1
+        },
+        "totalPerceived": {
+          "median": 1981.4,
+          "p95": 1999.1,
+          "max": 1999.1
+        },
+        "maxInterPaintGap": {
+          "median": 17.1,
+          "p95": 49.6,
+          "max": 49.6
+        },
+        "responseToPaintMedian": {
+          "median": 26.1,
+          "p95": 51.9,
+          "max": 51.9
+        }
+      },
+      "runtime": {
+        "cpuMs": {
+          "median": 1750,
+          "p95": 1875,
+          "max": 1875
+        },
+        "peakWorkingSetBytes": {
+          "median": 296984576,
+          "p95": 338219008,
+          "max": 338219008
+        },
+        "readBytes": {
+          "median": 8407417,
+          "p95": 8543932,
+          "max": 8543932
+        },
+        "writeBytes": {
+          "median": 18209,
+          "p95": 24059,
+          "max": 24059
+        }
+      }
+    }
+  },
+  "diagnosis": {
+    "ranked": [
+      {
+        "stage": "scan",
+        "medianMs": 638.9,
+        "share": 0.223,
+        "dominant": false
+      },
+      {
+        "stage": "startup",
+        "medianMs": 534,
+        "share": 0.186,
+        "dominant": false
+      },
+      {
+        "stage": "continuedThumbnailFill",
+        "medianMs": 265.8,
+        "share": 0.093,
+        "dominant": false
+      },
+      {
+        "stage": "initialThumbnailFill",
+        "medianMs": 188.7,
+        "share": 0.066,
+        "dominant": false
+      },
+      {
+        "stage": "postScan",
+        "medianMs": 123,
+        "share": 0.043,
+        "dominant": false
+      }
+    ],
+    "thresholds": {
+      "scanCacheDeltaMs": 570.1,
+      "thumbnailCacheDeltaMs": 100.5,
+      "scanConfirmed": true,
+      "serverThumbnailConfirmed": false
+    }
+  },
+  "overhead": null,
+  "safety": {
+    "syntheticOsTempOnly": true,
+    "pathsRetainedInArtifact": false,
+    "enhancementJobsExpected": 0,
+    "originalDirtyCheckoutTouched": false
+  }
+}

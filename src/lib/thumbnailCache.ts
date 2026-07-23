@@ -3,9 +3,11 @@ import os from 'os';
 import path from 'path';
 import crypto from 'crypto';
 import sharp from 'sharp';
+import { resolveDerivedCacheRoot } from './derivedCacheRoot';
 
-export const THUMB_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'thumbs');
-export const DISPLAY_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache', 'display');
+const DERIVED_CACHE_ROOT = resolveDerivedCacheRoot();
+export const THUMB_DIR = path.join(/*turbopackIgnore: true*/ DERIVED_CACHE_ROOT, 'thumbs');
+export const DISPLAY_DIR = path.join(/*turbopackIgnore: true*/ DERIVED_CACHE_ROOT, 'display');
 const THUMB_WIDTH = 300;
 const DISPLAY_MAX_SIZE = 2200;
 const RIFF_HEADER = Buffer.from('RIFF');
@@ -14,14 +16,20 @@ const DEFAULT_THUMB_CONCURRENCY = Math.max(
   4,
   Math.min(12, typeof os.availableParallelism === 'function' ? os.availableParallelism() : os.cpus().length)
 );
-export const MAX_THUMB_CONCURRENCY = Math.max(
-  1,
-  Math.min(
-    16,
-    Number.parseInt(process.env.PV_THUMB_CONCURRENCY || String(DEFAULT_THUMB_CONCURRENCY), 10) ||
-      DEFAULT_THUMB_CONCURRENCY
-  )
+export function normalizeThumbConcurrency(raw: string | undefined, fallback: number) {
+  const parsed = Number.parseInt(raw ?? '', 10);
+  const safeFallback = Number.isFinite(fallback) ? Math.trunc(fallback) : 2;
+  const resolved = Number.isFinite(parsed) ? parsed : safeFallback;
+  return Math.max(2, Math.min(16, resolved));
+}
+
+export const MAX_THUMB_CONCURRENCY = normalizeThumbConcurrency(
+  process.env.PV_THUMB_CONCURRENCY,
+  DEFAULT_THUMB_CONCURRENCY,
 );
+// Cross-image work is already parallelized by the bounded thumbnail queue.
+// Keep each libvips operation single-threaded to avoid multiplying both pools.
+export const SHARP_THREADS_PER_IMAGE = 1;
 const WARMUP_RESERVED_VISIBLE_SLOTS = MAX_THUMB_CONCURRENCY >= 6 ? 2 : 1;
 const MAX_WARMUP_WORKERS = Math.max(1, MAX_THUMB_CONCURRENCY - WARMUP_RESERVED_VISIBLE_SLOTS);
 export const MAX_PENDING_WARM_THUMB_TASKS = 1200;
@@ -44,28 +52,43 @@ interface ThumbTask {
   sequence: number;
   warmup: boolean;
   started: boolean;
+  queuedAt: number;
+  startedAt?: number;
+  workMs?: number;
   run: () => Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
   promise: Promise<void>;
 }
 
+export interface ImageWorkTiming {
+  cacheMs: number;
+  queueMs: number;
+  sharpMs: number;
+  totalMs: number;
+  cacheHit: boolean;
+  coalesced: boolean;
+}
+
 type ThumbnailResult = {
   thumbPath: string;
   created: boolean;
   versionMatched?: boolean;
+  timing?: ImageWorkTiming;
 };
 
 type DisplayImageResult = {
   displayPath: string;
   created: boolean;
   versionMatched?: boolean;
+  timing?: ImageWorkTiming;
 };
 
-sharp.concurrency(MAX_THUMB_CONCURRENCY);
+sharp.concurrency(SHARP_THREADS_PER_IMAGE);
 sharp.cache({ files: 100, memory: 256 });
 
 let activeThumbJobs = 0;
+let activeWarmupJobs = 0;
 let thumbJobSequence = 0;
 let warmupGeneration = 0;
 
@@ -214,19 +237,36 @@ async function writeCacheAtomically(finalPath: string, write: (tmpPath: string) 
 }
 
 function takeNextThumbTask(): ThumbTask | null {
-  if (thumbQueue.length === 0) return null;
+  const bestIndex = selectNextThumbnailQueueIndex(
+    thumbQueue,
+    activeWarmupJobs,
+    MAX_WARMUP_WORKERS,
+  );
+  if (bestIndex < 0) return null;
 
-  let bestIndex = 0;
-  for (let i = 1; i < thumbQueue.length; i++) {
-    const current = thumbQueue[i];
-    const best = thumbQueue[bestIndex];
+  const [task] = thumbQueue.splice(bestIndex, 1);
+  return task ?? null;
+}
+
+export function selectNextThumbnailQueueIndex(
+  entries: readonly ThumbnailQueuePolicyEntry[],
+  activeWarmups: number,
+  maximumWarmups: number,
+) {
+  let bestIndex = -1;
+  for (let i = 0; i < entries.length; i++) {
+    const current = entries[i];
+    if (current.warmup && activeWarmups >= maximumWarmups) continue;
+    if (bestIndex < 0) {
+      bestIndex = i;
+      continue;
+    }
+    const best = entries[bestIndex];
     if (compareThumbnailQueueEntries(current, best) < 0) {
       bestIndex = i;
     }
   }
-
-  const [task] = thumbQueue.splice(bestIndex, 1);
-  return task ?? null;
+  return bestIndex;
 }
 
 export type ThumbnailQueuePolicyEntry = Pick<ThumbTask, 'priority' | 'sequence' | 'warmup'>;
@@ -273,12 +313,14 @@ function trimSupersededWarmupTasks() {
 
 function promotePendingTask(task: ThumbTask, priority: number, warmup: boolean) {
   if (task.started) return;
+  const wasWarmup = task.warmup;
   if (priority < task.priority) task.priority = priority;
   if (!warmup) {
     task.warmup = false;
   } else if (priority <= 1) {
     task.sequence = thumbJobSequence++;
   }
+  if (wasWarmup && !task.warmup) runNextThumbJob();
 }
 
 function runNextThumbJob() {
@@ -286,16 +328,42 @@ function runNextThumbJob() {
     const next = takeNextThumbTask();
     if (!next) return;
 
+    const startedAsWarmup = next.warmup;
     next.started = true;
+    next.startedAt = performance.now();
     activeThumbJobs += 1;
+    if (startedAsWarmup) activeWarmupJobs += 1;
     void next.run()
       .then(next.resolve)
       .catch(next.reject)
       .finally(() => {
         activeThumbJobs = Math.max(0, activeThumbJobs - 1);
+        if (startedAsWarmup) activeWarmupJobs = Math.max(0, activeWarmupJobs - 1);
         runNextThumbJob();
       });
   }
+}
+
+function buildImageWorkTiming(
+  requestStartedAt: number,
+  cacheFinishedAt: number,
+  task: ThumbTask | undefined,
+  cacheHit: boolean,
+  coalesced: boolean,
+): ImageWorkTiming {
+  const finishedAt = performance.now();
+  const queueBase = task
+    ? Math.max(coalesced ? requestStartedAt : task.queuedAt, task.queuedAt)
+    : cacheFinishedAt;
+  const queueEnd = task?.startedAt ?? finishedAt;
+  return {
+    cacheMs: Math.max(0, cacheFinishedAt - requestStartedAt),
+    queueMs: task ? Math.max(0, queueEnd - queueBase) : 0,
+    sharpMs: Math.max(0, task?.workMs ?? 0),
+    totalMs: Math.max(0, finishedAt - requestStartedAt),
+    cacheHit,
+    coalesced,
+  };
 }
 
 export async function ensureThumbnail(
@@ -303,19 +371,35 @@ export async function ensureThumbnail(
   priority: number,
   cacheVersion?: string,
   warmup = false,
+  traceTiming = false,
 ): Promise<ThumbnailResult> {
+  const requestStartedAt = traceTiming ? performance.now() : 0;
   ensureThumbDir();
   const thumbPath = await getThumbnailPath(resolved, cacheVersion);
+  let cacheFinishedAt = traceTiming ? performance.now() : 0;
 
   const pending = pendingThumbs.get(thumbPath);
   if (pending) {
     promotePendingTask(pending, priority, warmup);
     await pending.promise;
-    return { thumbPath, created: true };
+    return {
+      thumbPath,
+      created: true,
+      timing: traceTiming
+        ? buildImageWorkTiming(requestStartedAt, cacheFinishedAt, pending, false, true)
+        : undefined,
+    };
   }
 
   if (fs.existsSync(/*turbopackIgnore: true*/ thumbPath) && await isUsableCachedImage(thumbPath)) {
-    return { thumbPath, created: false, versionMatched: true };
+    return {
+      thumbPath,
+      created: false,
+      versionMatched: true,
+      timing: traceTiming
+        ? buildImageWorkTiming(requestStartedAt, performance.now(), undefined, true, false)
+        : undefined,
+    };
   }
 
   if (cacheVersion) {
@@ -331,7 +415,7 @@ export async function ensureThumbnail(
       if (fs.existsSync(/*turbopackIgnore: true*/ currentThumbPath) && await isUsableCachedImage(currentThumbPath)) {
         return { thumbPath: currentThumbPath, created: false, versionMatched: false };
       }
-      return ensureThumbnail(resolved, priority, currentVersion, warmup).then((result) => ({
+      return ensureThumbnail(resolved, priority, currentVersion, warmup, traceTiming).then((result) => ({
         ...result,
         versionMatched: false,
       }));
@@ -339,6 +423,7 @@ export async function ensureThumbnail(
   }
 
   await removeBrokenCacheFile(thumbPath);
+  if (traceTiming) cacheFinishedAt = performance.now();
 
   let resolveTask!: () => void;
   let rejectTask!: (error: unknown) => void;
@@ -353,16 +438,22 @@ export async function ensureThumbnail(
     sequence: thumbJobSequence++,
     warmup,
     started: false,
+    queuedAt: performance.now(),
     resolve: resolveTask,
     reject: rejectTask,
     promise,
     run: async () => {
-      await writeCacheAtomically(thumbPath, async (tmpPath) => {
-        await sharp(resolved, { sequentialRead: true, failOn: 'none' })
-          .resize(THUMB_WIDTH, undefined, { withoutEnlargement: true })
-          .webp({ quality: 72, effort: 2 })
-          .toFile(tmpPath);
-      });
+      const workStartedAt = performance.now();
+      try {
+        await writeCacheAtomically(thumbPath, async (tmpPath) => {
+          await sharp(resolved, { sequentialRead: true, failOn: 'none' })
+            .resize(THUMB_WIDTH, undefined, { withoutEnlargement: true })
+            .webp({ quality: 72, effort: 2 })
+            .toFile(tmpPath);
+        });
+      } finally {
+        task.workMs = performance.now() - workStartedAt;
+      }
     },
   };
 
@@ -377,16 +468,26 @@ export async function ensureThumbnail(
     if (pendingThumbs.get(thumbPath) === task) pendingThumbs.delete(thumbPath);
   }
 
-  return { thumbPath, created: true, versionMatched: true };
+  return {
+    thumbPath,
+    created: true,
+    versionMatched: true,
+    timing: traceTiming
+      ? buildImageWorkTiming(requestStartedAt, cacheFinishedAt, task, false, false)
+      : undefined,
+  };
 }
 
 export async function ensureDisplayImage(
   resolved: string,
   priority: number,
-  cacheVersion?: string
+  cacheVersion?: string,
+  traceTiming = false,
 ): Promise<DisplayImageResult> {
+  const requestStartedAt = traceTiming ? performance.now() : 0;
   ensureDisplayDir();
   const displayPath = await getDisplayPath(resolved, cacheVersion);
+  let cacheFinishedAt = traceTiming ? performance.now() : 0;
 
   const pending = pendingThumbs.get(displayPath);
   if (pending) {
@@ -394,11 +495,24 @@ export async function ensureDisplayImage(
       pending.priority = priority;
     }
     await pending.promise;
-    return { displayPath, created: true };
+    return {
+      displayPath,
+      created: true,
+      timing: traceTiming
+        ? buildImageWorkTiming(requestStartedAt, cacheFinishedAt, pending, false, true)
+        : undefined,
+    };
   }
 
   if (fs.existsSync(/*turbopackIgnore: true*/ displayPath) && await isUsableCachedImage(displayPath)) {
-    return { displayPath, created: false, versionMatched: true };
+    return {
+      displayPath,
+      created: false,
+      versionMatched: true,
+      timing: traceTiming
+        ? buildImageWorkTiming(requestStartedAt, performance.now(), undefined, true, false)
+        : undefined,
+    };
   }
 
   if (cacheVersion) {
@@ -416,7 +530,7 @@ export async function ensureDisplayImage(
       if (fs.existsSync(/*turbopackIgnore: true*/ currentDisplayPath) && await isUsableCachedImage(currentDisplayPath)) {
         return { displayPath: currentDisplayPath, created: false, versionMatched: false };
       }
-      return ensureDisplayImage(resolved, priority, currentVersion).then((result) => ({
+      return ensureDisplayImage(resolved, priority, currentVersion, traceTiming).then((result) => ({
         ...result,
         versionMatched: false,
       }));
@@ -424,6 +538,7 @@ export async function ensureDisplayImage(
   }
 
   await removeBrokenCacheFile(displayPath);
+  if (traceTiming) cacheFinishedAt = performance.now();
 
   let resolveTask!: () => void;
   let rejectTask!: (error: unknown) => void;
@@ -438,16 +553,22 @@ export async function ensureDisplayImage(
     sequence: thumbJobSequence++,
     warmup: false,
     started: false,
+    queuedAt: performance.now(),
     resolve: resolveTask,
     reject: rejectTask,
     promise,
     run: async () => {
-      await writeCacheAtomically(displayPath, async (tmpPath) => {
-        await sharp(resolved, { sequentialRead: true, failOn: 'none' })
-          .resize(DISPLAY_MAX_SIZE, DISPLAY_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
-          .webp({ quality: 86, effort: 2 })
-          .toFile(tmpPath);
-      });
+      const workStartedAt = performance.now();
+      try {
+        await writeCacheAtomically(displayPath, async (tmpPath) => {
+          await sharp(resolved, { sequentialRead: true, failOn: 'none' })
+            .resize(DISPLAY_MAX_SIZE, DISPLAY_MAX_SIZE, { fit: 'inside', withoutEnlargement: true })
+            .webp({ quality: 86, effort: 2 })
+            .toFile(tmpPath);
+        });
+      } finally {
+        task.workMs = performance.now() - workStartedAt;
+      }
     },
   };
 
@@ -461,7 +582,14 @@ export async function ensureDisplayImage(
     if (pendingThumbs.get(displayPath) === task) pendingThumbs.delete(displayPath);
   }
 
-  return { displayPath, created: true, versionMatched: true };
+  return {
+    displayPath,
+    created: true,
+    versionMatched: true,
+    timing: traceTiming
+      ? buildImageWorkTiming(requestStartedAt, cacheFinishedAt, task, false, false)
+      : undefined,
+  };
 }
 
 export function enqueueThumbnails(paths: string[], priority: number) {
@@ -534,6 +662,7 @@ export function cancelThumbnailWarmup() {
 
 export function getThumbnailWarmupState(): WarmupState & {
   activeThumbJobs: number;
+  activeWarmupJobs: number;
   pendingThumbs: number;
   queuedThumbJobs: number;
   queuedWarmupJobs: number;
@@ -544,6 +673,7 @@ export function getThumbnailWarmupState(): WarmupState & {
   return {
     ...warmupState,
     activeThumbJobs,
+    activeWarmupJobs,
     pendingThumbs: pendingThumbs.size,
     queuedThumbJobs: thumbQueue.length,
     queuedWarmupJobs: thumbQueue.filter((task) => task.warmup).length,

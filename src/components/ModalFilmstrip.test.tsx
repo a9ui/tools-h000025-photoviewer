@@ -52,7 +52,7 @@ describe('ModalFilmstrip virtualization', () => {
     expect(current).toHaveAttribute('aria-setsize', '100000');
     expect(onNeedRange).toHaveBeenCalledWith(expect.any(Number), expect.any(Number));
     expect(screen.getByRole('listbox', { name: 'Image filmstrip thumbnails' }))
-      .toHaveAttribute('aria-orientation', 'vertical');
+      .toHaveAttribute('aria-orientation', 'horizontal');
   });
 
   it('selects a visible thumbnail and exposes an accessible collapse shortcut', () => {
@@ -83,9 +83,15 @@ describe('ModalFilmstrip virtualization', () => {
 
     const option = screen.getByRole('option', { name: 'Open image-11.png, image 12 of 40' });
     option.focus();
-    fireEvent.keyDown(option, { key: 'ArrowUp' });
-    fireEvent.keyDown(option, { key: 'ArrowDown' });
+    fireEvent.keyDown(option, { key: 'ArrowLeft' });
+    fireEvent.keyDown(option, { key: 'ArrowRight' });
     expect(onNavigate).toHaveBeenNthCalledWith(1, 'prev');
     expect(onNavigate).toHaveBeenNthCalledWith(2, 'next');
+
+    const listbox = screen.getByRole('listbox', { name: 'Image filmstrip thumbnails' });
+    Object.defineProperty(listbox, 'clientWidth', { configurable: true, value: 240 });
+    listbox.scrollLeft = 0;
+    fireEvent.wheel(listbox, { deltaX: 0, deltaY: 120 });
+    expect(listbox.scrollLeft).toBe(120);
   });
 });

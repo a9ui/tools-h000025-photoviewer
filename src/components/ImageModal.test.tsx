@@ -431,12 +431,21 @@ describe('ImageModal sparse navigation lock', () => {
     render(<ImageModal />);
 
     let menu = openImageActions();
+    const imageArea = screen.getByTestId('modal-image-area');
+    const setPointerCapture = vi.fn();
+    Object.defineProperty(imageArea, 'setPointerCapture', {
+      configurable: true,
+      value: setPointerCapture,
+    });
     expect(screen.getByRole('dialog')).toHaveAttribute('data-manual-chrome', 'visible');
     expect(within(menu).getByRole('menuitem', { name: 'Show Enhanced image' })).toBeDisabled();
     expect(store.resolveModalNavigationTarget).not.toHaveBeenCalled();
     expect(store.setSelectedIndex).not.toHaveBeenCalled();
 
-    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Favorite +1' }));
+    const favoriteUp = within(menu).getByRole('menuitem', { name: 'Favorite +1' });
+    fireEvent.pointerDown(favoriteUp, { pointerId: 1, pointerType: 'mouse', button: 0 });
+    expect(setPointerCapture).not.toHaveBeenCalled();
+    fireEvent.click(favoriteUp);
     expect(store.cycleFavoriteLevel).toHaveBeenCalledTimes(1);
 
     menu = openImageActions();
@@ -625,7 +634,7 @@ describe('ImageModal sparse navigation lock', () => {
     expect(store.setView).toHaveBeenCalledWith({ modalFilmstripOpen: false });
   });
 
-  it('reveals the vertical filmstrip as a front overlay only inside the left hover zone', async () => {
+  it('reveals the filmstrip as a front overlay only inside the bottom hover zone', async () => {
     vi.useFakeTimers();
     render(<ImageModal />);
     const dialog = screen.getByRole('dialog');
@@ -636,8 +645,8 @@ describe('ImageModal sparse navigation lock', () => {
     fireEvent.pointerMove(dialog, {
       pointerId: 2,
       pointerType: 'mouse',
-      clientX: MODAL_FILMSTRIP_HOVER_ZONE_PX - 1,
-      clientY: 500,
+      clientX: 500,
+      clientY: 1000 - MODAL_FILMSTRIP_HOVER_ZONE_PX + 1,
     });
     const overlayStrip = screen.getByRole('region', { name: 'Image filmstrip' });
     expect(overlayStrip).toHaveClass('is-overlay');

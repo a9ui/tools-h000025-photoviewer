@@ -1,10 +1,11 @@
 import { NextRequest } from 'next/server';
 import { guardLocalApiRequest } from '@/lib/localApiGuard';
-import { isScanAbortedError, ScanAbortedError, scanDirectory, setIndex } from '@/lib/indexer';
+import { createScanTiming, isScanAbortedError, ScanAbortedError, scanDirectory, setIndex } from '@/lib/indexer';
 import { cancelThumbnailWarmup } from '@/lib/thumbnailCache';
 import { basenameFromPath, parseDirSet } from '@/lib/pathSet';
 import { canonicalScanFolderSet, reserveScanRun } from '@/lib/scanRunCoordinator';
 import type { ImageFile } from '@/lib/types';
+import { isPerfTraceEnabled, roundPerfMs } from '@/lib/perfTrace';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,6 +16,7 @@ export const dynamic = 'force-dynamic';
  * Stable Diffusion PNG metadata when available, and streams progress via SSE.
  */
 export async function GET(request: NextRequest) {
+  const traceEnabled = isPerfTraceEnabled();
   const forbidden = guardLocalApiRequest(request);
   if (forbidden) return forbidden;
 
@@ -67,6 +69,8 @@ export async function GET(request: NextRequest) {
 
   const stream = new ReadableStream({
     async start(controller) {
+      const routeStartedAt = traceEnabled ? performance.now() : 0;
+      const scanTiming = traceEnabled ? createScanTiming() : undefined;
       const close = () => {
         try {
           controller.close();
@@ -127,7 +131,7 @@ export async function GET(request: NextRequest) {
                   : status?.message,
               });
               enqueue(`data: ${event}\n\n`);
-            }, { forceFull, signal: abortController.signal });
+            }, { forceFull, signal: abortController.signal, timings: scanTiming });
           } catch (err) {
             if (isScanAbortedError(err)) throw err;
             failedRoots.push(`${rootLabel}: ${err instanceof Error ? err.message : String(err)}`);
@@ -158,7 +162,9 @@ export async function GET(request: NextRequest) {
 
         if (abortController.signal.aborted) throw new ScanAbortedError();
         // Store in memory for search
+        const setIndexStartedAt = traceEnabled ? performance.now() : 0;
         const indexToken = setIndex(allImages, canonicalScanFolderSet(dirs));
+        const setIndexMs = traceEnabled ? performance.now() - setIndexStartedAt : 0;
 
         const completeEvent = JSON.stringify({
           type: 'complete',
@@ -170,6 +176,16 @@ export async function GET(request: NextRequest) {
           message: failedRoots.length > 0
             ? `Scan complete with ${failedRoots.length} skipped folder(s). ${allImages.length} images indexed.`
             : `Scan complete. ${allImages.length} images indexed.`,
+          ...(traceEnabled && scanTiming ? {
+            perf: {
+              scan: Object.fromEntries(Object.entries(scanTiming).map(([key, value]) => [
+                key,
+                typeof value === 'number' && key.endsWith('Ms') ? roundPerfMs(value) : value,
+              ])),
+              setIndexMs: roundPerfMs(setIndexMs),
+              routeMs: roundPerfMs(performance.now() - routeStartedAt),
+            },
+          } : {}),
         });
         enqueue(`data: ${completeEvent}\n\n`);
         close();

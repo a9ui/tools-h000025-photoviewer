@@ -39,6 +39,19 @@ function forbiddenResponse() {
   );
 }
 
+function methodNotAllowedResponse() {
+  return Response.json(
+    { error: 'Method not allowed.' },
+    {
+      status: 405,
+      headers: {
+        Allow: 'GET',
+        'Cache-Control': 'no-store',
+      },
+    },
+  );
+}
+
 /**
  * Reject browser and DNS-rebinding requests before a local API reaches any
  * filesystem, shared-state, worker, or OS side effect. Direct loopback clients
@@ -79,6 +92,61 @@ export function guardLocalApiRequest(request: Request): Response | null {
     }
     const originAuthority = parseLocalAuthority(parsedOrigin.host);
     if (!originAuthority || !sameAuthority(originAuthority, hostAuthority)) {
+      return forbiddenResponse();
+    }
+  } catch {
+    return forbiddenResponse();
+  }
+
+  return null;
+}
+
+/**
+ * Preserve the strict local API guard while allowing the browser's normal
+ * same-origin <img> request shape for the read-only image route.
+ */
+export function guardLocalImageRequest(request: Request): Response | null {
+  if (request.method.toUpperCase() !== 'GET') return methodNotAllowedResponse();
+
+  const fetchMode = request.headers.get('sec-fetch-mode')?.toLowerCase();
+  if (fetchMode !== 'no-cors') return guardLocalApiRequest(request);
+
+  let requestUrl: URL;
+  try {
+    requestUrl = new URL(request.url);
+  } catch {
+    return forbiddenResponse();
+  }
+
+  const requestAuthority = parseLocalAuthority(requestUrl.host);
+  const hostHeader = request.headers.get('host');
+  const hostAuthority = hostHeader === null ? null : parseLocalAuthority(hostHeader);
+  // Next normalizes loopback aliases and may omit the original port in its
+  // internal request URL. Treat the browser-supplied Host as authoritative,
+  // while independently requiring both authorities to remain loopback.
+  if (!requestAuthority || !hostAuthority) {
+    return forbiddenResponse();
+  }
+
+  if (request.headers.get('sec-fetch-site')?.toLowerCase() !== 'same-origin') {
+    return forbiddenResponse();
+  }
+  if (request.headers.get('sec-fetch-dest')?.toLowerCase() !== 'image') {
+    return forbiddenResponse();
+  }
+
+  const origin = request.headers.get('origin');
+  if (origin === null) return null;
+
+  try {
+    const parsedOrigin = new URL(origin);
+    const originAuthority = parseLocalAuthority(parsedOrigin.host);
+    if (
+      parsedOrigin.origin !== origin
+      || parsedOrigin.protocol !== requestUrl.protocol
+      || !originAuthority
+      || !sameAuthority(originAuthority, hostAuthority)
+    ) {
       return forbiddenResponse();
     }
   } catch {

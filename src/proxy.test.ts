@@ -31,4 +31,38 @@ describe('local API proxy guard', () => {
       error: 'Forbidden local API request.',
     });
   });
+
+  it('continues a strict same-origin no-cors image request to the image route', () => {
+    const response = proxy(
+      new NextRequest('http://127.0.0.1:3001/api/image?indexToken=idx_current', {
+        headers: {
+          host: '127.0.0.1:3001',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-mode': 'no-cors',
+          'sec-fetch-dest': 'image',
+        },
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get('x-middleware-next')).toBe('1');
+  });
+
+  it('keeps no-cors rejected for every non-image API route', async () => {
+    const response = proxy(
+      new NextRequest('http://127.0.0.1:3001/api/runtime', {
+        headers: {
+          host: '127.0.0.1:3001',
+          'sec-fetch-site': 'same-origin',
+          'sec-fetch-mode': 'no-cors',
+          'sec-fetch-dest': 'image',
+        },
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({
+      error: 'Forbidden local API request.',
+    });
+  });
 });

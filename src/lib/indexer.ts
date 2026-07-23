@@ -7,8 +7,9 @@ import type { CacheData, ImageFile, SDMetadata } from './types';
 import { IMAGE_GLOB_EXTENSIONS } from './imageFormats';
 import { basenameFromPath, parseDirSet } from './pathSet';
 import { shouldReportScanProgress } from './scanProgress';
+import { resolveDerivedCacheRoot } from './derivedCacheRoot';
 
-const CACHE_DIR = path.join(/*turbopackIgnore: true*/ process.cwd(), '.cache');
+const CACHE_DIR = resolveDerivedCacheRoot();
 const CACHE_VERSION = 1;
 const FOLDER_SIGNATURE_CACHE_VERSION = 2;
 const MAX_TAG_RESULTS = 2000;
@@ -234,6 +235,52 @@ export type ScanCallback = (
 export interface ScanOptions {
   forceFull?: boolean;
   signal?: AbortSignal;
+  timings?: ScanTiming;
+}
+
+export interface ScanTiming {
+  cacheLoadMs: number;
+  targetEnumerationMs: number;
+  signatureMs: number;
+  fileEnumerationMs: number;
+  filePlanMs: number;
+  metadataMs: number;
+  cacheWriteMs: number;
+  materializeMs: number;
+  totalMs: number;
+  cachedFileCount: number;
+  metadataFileCount: number;
+}
+
+export interface SearchTiming {
+  cacheHit: boolean;
+  filterSortMs: number;
+  pageSliceMs: number;
+  totalMs: number;
+}
+
+export function createScanTiming(): ScanTiming {
+  return {
+    cacheLoadMs: 0,
+    targetEnumerationMs: 0,
+    signatureMs: 0,
+    fileEnumerationMs: 0,
+    filePlanMs: 0,
+    metadataMs: 0,
+    cacheWriteMs: 0,
+    materializeMs: 0,
+    totalMs: 0,
+    cachedFileCount: 0,
+    metadataFileCount: 0,
+  };
+}
+
+function addScanTiming(
+  timings: ScanTiming | undefined,
+  key: Exclude<keyof ScanTiming, 'cachedFileCount' | 'metadataFileCount'>,
+  startedAt: number,
+) {
+  if (timings) timings[key] += performance.now() - startedAt;
 }
 
 export class ScanAbortedError extends Error {
@@ -260,10 +307,12 @@ export async function scanDirectory(
   onProgress?: ScanCallback,
   options: ScanOptions = {}
 ): Promise<ImageFile[]> {
+  const scanStartedAt = options.timings ? performance.now() : 0;
   throwIfScanAborted(options.signal);
   const normalised = path.resolve(dirPath);
   // Keep mutations private until the scan has completed. An aborted scan must
   // not leak a partial snapshot into the next scan through the memory cache.
+  const cacheLoadStartedAt = options.timings ? performance.now() : 0;
   const cache = cloneCache(loadCache(normalised));
   const folderSignatures = loadFolderSignatures(normalised);
   const nextFolderSignatures: Record<string, string> = {};
@@ -277,6 +326,7 @@ export async function scanDirectory(
     bucket.push(cachedPath);
     cachedByScanKey.set(scanKey, bucket);
   }
+  addScanTiming(options.timings, 'cacheLoadMs', cacheLoadStartedAt);
 
   const scanTargets: ScanTarget[] = [];
   const currentScanKeys = new Set<string>();
@@ -285,6 +335,7 @@ export async function scanDirectory(
   let signatureChanged = false;
   let skippedCachedFiles = 0;
 
+  const targetEnumerationStartedAt = options.timings ? performance.now() : 0;
   const rootStat = fs.statSync(normalised);
   throwIfScanAborted(options.signal);
   if (!rootStat.isDirectory()) {
@@ -306,6 +357,7 @@ export async function scanDirectory(
       failedScanKeys.add(absPath);
     }
   }
+  addScanTiming(options.timings, 'targetEnumerationMs', targetEnumerationStartedAt);
 
   const allEntries: Array<string | { path: string; stats?: fs.Stats }> = [];
   const now = Date.now();
@@ -345,11 +397,13 @@ export async function scanDirectory(
   for (const target of scanTargets) {
     throwIfScanAborted(options.signal);
     currentScanKeys.add(target.key);
+    const signatureStartedAt = options.timings ? performance.now() : 0;
     const { signature: currentSignature, failed: signatureFailed } = await buildScanTargetSignature(
       normalised,
       target,
       options.signal,
     );
+    addScanTiming(options.timings, 'signatureMs', signatureStartedAt);
     throwIfScanAborted(options.signal);
 
     const previousSignature = folderSignatures[target.key];
@@ -379,6 +433,7 @@ export async function scanDirectory(
         : `${escapedTarget}/*.${IMAGE_GLOB_EXTENSIONS}`;
 
     try {
+      const fileEnumerationStartedAt = options.timings ? performance.now() : 0;
       const entries = (await fg(pattern, {
         absolute: true,
         caseSensitiveMatch: false,
@@ -386,6 +441,7 @@ export async function scanDirectory(
         onlyFiles: true,
         followSymbolicLinks: false,
       })) as Array<string | { path: string; stats?: fs.Stats }>;
+      addScanTiming(options.timings, 'fileEnumerationMs', fileEnumerationStartedAt);
       throwIfScanAborted(options.signal);
       allEntries.push(...entries);
       if (!signatureFailed) {
@@ -444,6 +500,7 @@ export async function scanDirectory(
     size: number;
     createdAt: number;
   }> = [];
+  const filePlanStartedAt = options.timings ? performance.now() : 0;
   for (const entry of allEntries) {
     throwIfScanAborted(options.signal);
     const entryPath = typeof entry === 'string' ? entry : entry.path;
@@ -486,6 +543,11 @@ export async function scanDirectory(
 
     pendingMetadata.push({ norm, mtime, size, createdAt });
   }
+  addScanTiming(options.timings, 'filePlanMs', filePlanStartedAt);
+  if (options.timings) {
+    options.timings.cachedFileCount += Math.max(0, allEntries.length - pendingMetadata.length) + skippedCachedFiles;
+    options.timings.metadataFileCount += pendingMetadata.length;
+  }
 
   const metadataResults: Array<SDMetadata | null> = new Array(pendingMetadata.length);
   let nextMetadataIndex = 0;
@@ -508,7 +570,9 @@ export async function scanDirectory(
     }
   };
   const metadataWorkerCount = Math.min(MAX_METADATA_READ_CONCURRENCY, pendingMetadata.length);
+  const metadataStartedAt = options.timings ? performance.now() : 0;
   await Promise.all(Array.from({ length: metadataWorkerCount }, () => metadataWorker()));
+  addScanTiming(options.timings, 'metadataMs', metadataStartedAt);
   throwIfScanAborted(options.signal);
 
   for (let index = 0; index < pendingMetadata.length; index++) {
@@ -527,6 +591,7 @@ export async function scanDirectory(
     }
   }
 
+  const cacheWriteStartedAt = options.timings ? performance.now() : 0;
   if (changed) {
     throwIfScanAborted(options.signal);
     cache.lastScan = new Date().toISOString();
@@ -535,8 +600,13 @@ export async function scanDirectory(
   if (signatureChanged) {
     saveFolderSignatures(normalised, nextFolderSignatures);
   }
+  addScanTiming(options.timings, 'cacheWriteMs', cacheWriteStartedAt);
 
-  return buildImageFiles(cache);
+  const materializeStartedAt = options.timings ? performance.now() : 0;
+  const images = buildImageFiles(cache);
+  addScanTiming(options.timings, 'materializeMs', materializeStartedAt);
+  if (options.timings) options.timings.totalMs += performance.now() - scanStartedAt;
+  return images;
 }
 
 function buildImageFiles(cache: CacheData): ImageFile[] {
@@ -954,18 +1024,24 @@ export function searchIndex(
   dirPath?: string,
   hiddenFolders?: string[],
   randomSeed?: string,
-  indexToken?: string
+  indexToken?: string,
+  timings?: SearchTiming,
 ): { results: ImageFile[]; total: number; page: number; totalPages: number } {
+  const searchStartedAt = timings ? performance.now() : 0;
   const state = getIndexState(indexToken);
   if (!state) return { results: [], total: 0, page: 0, totalPages: 1 };
 
   const key = buildSearchCacheKey(query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
   let filtered = state.searchCache.get(key);
+  if (timings) timings.cacheHit = Boolean(filtered);
   if (!filtered) {
+    const filterStartedAt = timings ? performance.now() : 0;
     filtered = buildFilteredAndSorted(state, query, sortBy, dateFrom, dateTo, dirPath, hiddenFolders, randomSeed);
+    if (timings) timings.filterSortMs += performance.now() - filterStartedAt;
     pushSearchCache(state, key, filtered);
   }
 
+  const pageSliceStartedAt = timings ? performance.now() : 0;
   const pageSize = Number.isFinite(size) ? Math.max(1, Math.trunc(size)) : 100;
   const safePage = Number.isFinite(page) ? Math.max(0, Math.trunc(page)) : 0;
   const total = filtered.length;
@@ -975,6 +1051,10 @@ export function searchIndex(
   const results = favIds
     ? pageResults.map((img) => ({ ...img, isFavorite: favIds.has(img.id) }))
     : pageResults;
+  if (timings) {
+    timings.pageSliceMs += performance.now() - pageSliceStartedAt;
+    timings.totalMs += performance.now() - searchStartedAt;
+  }
 
   return { results, total, page: safePage, totalPages };
 }

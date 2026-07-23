@@ -4,16 +4,35 @@ import path from 'path';
 import sharp from 'sharp';
 import { describe, expect, it } from 'vitest';
 import {
+  MAX_THUMB_CONCURRENCY,
   MAX_PENDING_WARM_THUMB_TASKS,
+  SHARP_THREADS_PER_IMAGE,
   compareThumbnailQueueEntries,
   ensureDisplayImage,
   ensureThumbnail,
   getDisplayPath,
   getThumbnailPath,
+  normalizeThumbConcurrency,
+  selectNextThumbnailQueueIndex,
   selectSupersededWarmupQueueEntries,
 } from './thumbnailCache';
 
 describe('thumbnail queue policy', () => {
+  it('keeps libvips single-threaded inside the separately bounded job pool', () => {
+    expect(SHARP_THREADS_PER_IMAGE).toBe(1);
+    expect(SHARP_THREADS_PER_IMAGE).toBeLessThan(MAX_THUMB_CONCURRENCY);
+    expect(sharp.concurrency()).toBe(SHARP_THREADS_PER_IMAGE);
+  });
+
+  it('keeps enough effective concurrency to reserve one slot for direct work', () => {
+    expect(normalizeThumbConcurrency('1', 4)).toBe(2);
+    expect(normalizeThumbConcurrency('2', 4)).toBe(2);
+    expect(normalizeThumbConcurrency('16', 4)).toBe(16);
+    expect(normalizeThumbConcurrency('17', 4)).toBe(16);
+    expect(normalizeThumbConcurrency('invalid', 1)).toBe(2);
+    expect(normalizeThumbConcurrency(undefined, 20)).toBe(16);
+  });
+
   it('serves direct image responses before speculative work at the same priority', () => {
     const direct = { priority: 0, sequence: 1, warmup: false };
     const warmup = { priority: 0, sequence: 2, warmup: true };
@@ -50,9 +69,64 @@ describe('thumbnail queue policy', () => {
       oldBackground,
     ], 2)).toEqual([oldBackground, newBackground]);
   });
+
+  it('skips saturated warmup work so a direct response can use the reserved slot', () => {
+    const warmup = { priority: -1, sequence: 1, warmup: true };
+    const direct = { priority: 0, sequence: 2, warmup: false };
+
+    expect(selectNextThumbnailQueueIndex([warmup, direct], 3, 3)).toBe(1);
+  });
+
+  it('leaves the reserved slot idle when warmup is saturated and no direct work is queued', () => {
+    const warmups = [
+      { priority: 0, sequence: 2, warmup: true },
+      { priority: 1, sequence: 3, warmup: true },
+    ];
+
+    expect(selectNextThumbnailQueueIndex(warmups, 3, 3)).toBe(-1);
+  });
+
+  it('preserves a direct slot at the minimum effective concurrency', () => {
+    const warmup = { priority: -1, sequence: 1, warmup: true };
+    const direct = { priority: 0, sequence: 2, warmup: false };
+
+    expect(selectNextThumbnailQueueIndex([warmup, direct], 1, 1)).toBe(1);
+    expect(selectNextThumbnailQueueIndex([warmup], 1, 1)).toBe(-1);
+  });
+
+  it('keeps the existing priority policy while the warmup cap has room', () => {
+    const entries = [
+      { priority: 3, sequence: 1, warmup: true },
+      { priority: 1, sequence: 2, warmup: true },
+      { priority: 2, sequence: 3, warmup: false },
+    ];
+
+    expect(selectNextThumbnailQueueIndex(entries, 2, 3)).toBe(1);
+  });
 });
 
 describe('thumbnail cache', () => {
+  it('reports numeric cache, queue, and Sharp stages without source paths', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-thumb-timing-'));
+    const sourcePath = path.join(root, 'source.png');
+    await sharp({
+      create: {
+        width: 512,
+        height: 384,
+        channels: 4,
+        background: '#335577ff',
+      },
+    }).png().toFile(sourcePath);
+
+    const miss = await ensureThumbnail(sourcePath, 0, undefined, false, true);
+    const hit = await ensureThumbnail(sourcePath, 0, undefined, false, true);
+
+    expect(miss.timing).toMatchObject({ cacheHit: false, coalesced: false });
+    expect(miss.timing?.sharpMs).toBeGreaterThan(0);
+    expect(hit.timing).toMatchObject({ cacheHit: true, coalesced: false, queueMs: 0, sharpMs: 0 });
+    expect(JSON.stringify({ miss: miss.timing, hit: hit.timing })).not.toContain(sourcePath);
+  });
+
   it('computes versioned cache paths without reading the source file', async () => {
     const missingSourcePath = path.join(os.tmpdir(), `pvu-missing-${Date.now()}.png`);
 

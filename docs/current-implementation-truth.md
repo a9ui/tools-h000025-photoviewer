@@ -113,7 +113,8 @@ check-count追跡はユーザーが今回gateから明示除外した。
 
 | Capability | Current worktree result | Remaining gate |
 | --- | --- | --- |
-| Browser Modal / Filmstrip / context actions | 左の縦Filmstrip、左端transient rail、右click product menu、Enhanced/Original・Favorite・Album・Filmstrip・metadata・zoom・Recycle action | isolated Browser runtime on port 3001+、console 0、final SHA |
+| Browser Modal / Filmstrip / context actions | 下部横Filmstrip、下端transient overlay、右click product menu、Enhanced/Original・Favorite・Album・Filmstrip・metadata・zoom・Recycle action。Filmstripは画像に重ねず、横scrollをvirtualizeする | private TEMP wide runtimeはpass。narrow visual/console complete、final SHA |
+| Browser focused image scheduling | `PV_THUMB_CONCURRENCY`をeffective 2〜16へclampし、background thumbnail warmupによる全slot占有を防ぐ。queued directはwarmupより先に開始するが、開始済みdirect/Sharp jobはpreemptしない。有限のdirect負荷が収束した後にwarmup queueをdrainする | exact local commit、consolidated GitHub checkpoint |
 | Browser Settings / hover / status border | single scroll owner、backdrop close、visible hover/focus、solid cyan Enhanced border | isolated Browser runtimeとfinal commit |
 | Browser external open security | validated targetをdirect argument vectorで起動しcommand shellを使わないfixを採用 | final normal-scale full/runtime provenance |
 | Browser local API boundary | `dev`/`start`を`127.0.0.1`へ明示bindし、mutating routesをshared Origin/Host guardへ接続 | focused/full guard tests、isolated runtime、final SHA |

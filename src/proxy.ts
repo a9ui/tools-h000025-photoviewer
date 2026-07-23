@@ -1,9 +1,12 @@
 import { type NextRequest, NextResponse } from 'next/server';
 
-import { guardLocalApiRequest } from '@/lib/localApiGuard';
+import { guardLocalApiRequest, guardLocalImageRequest } from '@/lib/localApiGuard';
 
 export function proxy(request: NextRequest) {
-  return guardLocalApiRequest(request) ?? NextResponse.next();
+  const guard = request.nextUrl.pathname === '/api/image'
+    ? guardLocalImageRequest
+    : guardLocalApiRequest;
+  return guard(request) ?? NextResponse.next();
 }
 
 export const config = {

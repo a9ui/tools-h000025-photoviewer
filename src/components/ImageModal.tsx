@@ -876,9 +876,9 @@ export default function ImageModal() {
     revealChromeForActivity();
     if (event.pointerType === 'touch') return;
     const rect = event.currentTarget.getBoundingClientRect();
-    const distanceFromLeft = event.clientX - rect.left;
-    const isNearLeft = distanceFromLeft >= 0 && distanceFromLeft <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
-    setFilmstripHoverVisible(isNearLeft);
+    const distanceFromBottom = rect.bottom - event.clientY;
+    const isNearBottom = distanceFromBottom >= 0 && distanceFromBottom <= MODAL_FILMSTRIP_HOVER_ZONE_PX;
+    setFilmstripHoverVisible(isNearBottom);
   }, [revealChromeForActivity, selectedIndex, showConfirmDelete]);
 
   const handleModalPointerLeave = useCallback(() => {
@@ -994,6 +994,7 @@ export default function ImageModal() {
   const handlePointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === 'mouse' && e.button !== 0) return;
     const target = e.target as HTMLElement;
+    if (target.closest('.modal-context-menu')) return;
     if (target.closest('.zoom-indicator')) return;
     if (target.closest('.modal-topbar')) return;
     if (target.closest('.modal-sidebar')) return;
