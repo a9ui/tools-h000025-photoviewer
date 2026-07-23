@@ -211,3 +211,39 @@ Skill candidate:
 - `next-env.d.ts` is an unrelated generated tracked change in the primary
   worktree. Claude's untracked `local-native/` evidence and the separate
   untracked screenshot worktree artifact were not changed or cleaned.
+
+## 2026-07-23 Browser CI Clear and Restarted-Worker Cancel Contract
+
+- The authenticated ChatGPT Project `Codex用（PhotoViewer）`, using the
+  `非常に高い` reasoning setting, reviewed Browser-head GitHub Actions only.
+  It classified the current Browser blocker, queued run, in-progress run, and
+  repair count as zero. PR #343 head run `29967995088` and merge-main run
+  `29969647499` are the accepted green chain; old #343 red runs are historical,
+  and #338/#340 are superseded. No CI wait/monitor hold remains.
+- A focused-display slot reservation was not adopted. The ordinary modal path
+  measured only 0.3-0.6ms focused queue wait, below the predeclared 75ms / 20%
+  diagnostic gate. The experimental scheduler and harness changes were fully
+  removed before product work continued.
+- Explicit enhancement Cancel now compares a persisted running job's
+  `workerInstanceId` with the current Browser process worker instance. A job
+  owned by a prior process is atomically persisted as `canceled` with
+  `cancelRequested`, `finishedAt`, and `updatedAt`; a same-process worker keeps
+  the existing `running` plus `cancelRequested` path. Passive GET/browse/modal
+  flows still do not recover jobs, write state, or start the worker.
+- The Cancel response shape remains `{ job, interruptWarning }`. For an orphaned
+  persisted run, `job.status` is immediately `canceled`; the next explicit Retry
+  returns a distinct queued job and starts the normal queue.
+- A second `非常に高い` review of the unpublished cancel candidate identified
+  one concrete bundle-boundary risk: a module-local worker instance ID could be
+  evaluated more than once inside one Next.js server process. The finding was
+  adopted. The ID is now stored process-wide through `Symbol.for` and
+  `globalThis`, matching the existing shared-root process-state pattern. The
+  queue claim and Cancel route getter both use that process-wide value; a new
+  process still creates a new value.
+- Verification used OS-TEMP state only: focused enhancement/store/route/path
+  checks 21/21, full Browser unit suite 781 passed / 14 skipped, TypeScript, and
+  the production build all passed. A real `next start` same-process HTTP check
+  observed `running + cancelRequested` with no `finishedAt`, followed by worker
+  transition to `canceled`; module reevaluation kept the same worker ID. The
+  source hash remained unchanged and the existing managed-output root guard
+  stayed green.

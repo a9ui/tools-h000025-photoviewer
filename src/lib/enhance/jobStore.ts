@@ -269,16 +269,35 @@ export class EnhancementJobStore {
     });
   }
 
-  async requestCancel(id: string) {
-    const job = await this.getJob(id);
-    if (!job) return null;
-    if (job.status !== 'queued' && job.status !== 'running') {
-      return job;
-    }
-    if (job.status === 'queued') {
-      return this.updateJob(id, { status: 'canceled', progress: job.progress, cancelRequested: true, finishedAt: nowIso() });
-    }
-    return this.updateJob(id, { cancelRequested: true });
+  async requestCancel(id: string, currentWorkerInstanceId?: string) {
+    return this.enqueueWrite(async () => {
+      const data = await this.read();
+      const index = data.jobs.findIndex((job) => job.id === id);
+      if (index < 0) return null;
+      const job = data.jobs[index];
+      if (job.status !== 'queued' && job.status !== 'running') return job;
+
+      const now = nowIso();
+      const workerIsStale = job.status === 'running'
+        && currentWorkerInstanceId !== undefined
+        && job.workerInstanceId !== currentWorkerInstanceId;
+      const updated: EnhancementJob = job.status === 'queued' || workerIsStale
+        ? {
+          ...job,
+          status: 'canceled',
+          cancelRequested: true,
+          finishedAt: now,
+          updatedAt: now,
+        }
+        : {
+          ...job,
+          cancelRequested: true,
+          updatedAt: now,
+        };
+      data.jobs[index] = updated;
+      await this.writeUnlocked(data);
+      return updated;
+    });
   }
 
   async deleteOutput(id: string) {
