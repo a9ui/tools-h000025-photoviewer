@@ -10,6 +10,7 @@ import {
   LOCATOR_LEASE_DIRECTORY_NAME,
   LocatorLeaseError,
   resolveLocatorLeasePath,
+  validateOpenedLocatorLeaseSnapshot,
 } from './sharedRootLease';
 
 const roots: string[] = [];
@@ -54,6 +55,30 @@ describe('Aibos shared-root locator Win32 lease', () => {
       expect.objectContaining<Partial<LocatorLeaseError>>({ code: 'locator-lease-busy' }),
     );
     writer.close();
+  });
+
+  it('rejects an opened-handle snapshot for a different final lock path', async () => {
+    const directory = await makeLeaseDirectory();
+    const expectedPath = resolveLocatorLeasePath(directory);
+
+    expect(() => validateOpenedLocatorLeaseSnapshot(expectedPath, {
+      finalPath: path.join(path.dirname(expectedPath), 'rebound.lock'),
+      size: BigInt(0),
+    })).toThrowError(
+      expect.objectContaining<Partial<LocatorLeaseError>>({ code: 'locator-lease-path-invalid' }),
+    );
+  });
+
+  it('rejects nonempty contents through the opened native handle without rewriting them', async () => {
+    const directory = await makeLeaseDirectory();
+    await fs.mkdir(directory, { recursive: true });
+    const leasePath = path.join(directory, 'locator.lock');
+    await fs.writeFile(leasePath, 'sentinel', 'utf8');
+
+    expect(() => acquireLocatorReaderLease(directory)).toThrowError(
+      expect.objectContaining<Partial<LocatorLeaseError>>({ code: 'locator-lease-contents-invalid' }),
+    );
+    await expect(fs.readFile(leasePath, 'utf8')).resolves.toBe('sentinel');
   });
 
   it('reports the protocol-global production path without opening it', () => {

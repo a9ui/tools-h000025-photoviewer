@@ -12,7 +12,9 @@ const GENERIC_WRITE = 0x4000_0000;
 const FILE_SHARE_READ = 0x0000_0001;
 const OPEN_ALWAYS = 4;
 const FILE_ATTRIBUTE_NORMAL = 0x0000_0080;
+const FILE_NAME_NORMALIZED = 0;
 const ERROR_SHARING_VIOLATION = 32;
+const INITIAL_FINAL_PATH_CAPACITY = 512;
 
 type NativeHandle = unknown;
 
@@ -27,6 +29,13 @@ interface Win32LeaseApi {
     templateFile: null,
   ) => NativeHandle;
   closeHandle: (handle: NativeHandle) => boolean;
+  getFinalPathNameByHandle: (
+    handle: NativeHandle,
+    filePath: Buffer,
+    filePathLength: number,
+    flags: number,
+  ) => number;
+  getFileSizeEx: (handle: NativeHandle, fileSize: Buffer) => boolean;
   getLastError: () => number;
 }
 
@@ -95,6 +104,16 @@ function getWin32Api(): Win32LeaseApi {
       handleType,
     ]) as Win32LeaseApi['createFile'],
     closeHandle: kernel32.func('__stdcall', 'CloseHandle', 'bool', [handleType]) as Win32LeaseApi['closeHandle'],
+    getFinalPathNameByHandle: kernel32.func('__stdcall', 'GetFinalPathNameByHandleW', 'uint32_t', [
+      handleType,
+      'void *',
+      'uint32_t',
+      'uint32_t',
+    ]) as Win32LeaseApi['getFinalPathNameByHandle'],
+    getFileSizeEx: kernel32.func('__stdcall', 'GetFileSizeEx', 'bool', [
+      handleType,
+      'void *',
+    ]) as Win32LeaseApi['getFileSizeEx'],
     getLastError: kernel32.func('__stdcall', 'GetLastError', 'uint32_t', []) as Win32LeaseApi['getLastError'],
   };
   return win32Api;
@@ -108,6 +127,71 @@ function invalidHandleValue() {
 function isWithin(root: string, candidate: string) {
   const relative = path.relative(root, candidate);
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
+}
+
+function normalizeWin32FinalPath(candidate: string) {
+  const uncPrefix = '\\\\?\\UNC\\';
+  const devicePrefix = '\\\\?\\';
+  const normalized = candidate.toLowerCase().startsWith(uncPrefix.toLowerCase())
+    ? `\\\\${candidate.slice(uncPrefix.length)}`
+    : candidate.toLowerCase().startsWith(devicePrefix.toLowerCase())
+      ? candidate.slice(devicePrefix.length)
+      : candidate;
+  return path.resolve(normalized);
+}
+
+function readOpenedLeaseHandleSnapshot(api: Win32LeaseApi, handle: NativeHandle) {
+  let capacity = INITIAL_FINAL_PATH_CAPACITY;
+  let pathBuffer = Buffer.alloc(capacity * 2);
+  let pathLength = api.getFinalPathNameByHandle(handle, pathBuffer, capacity, FILE_NAME_NORMALIZED);
+  if (pathLength >= capacity) {
+    capacity = pathLength + 1;
+    pathBuffer = Buffer.alloc(capacity * 2);
+    pathLength = api.getFinalPathNameByHandle(handle, pathBuffer, capacity, FILE_NAME_NORMALIZED);
+  }
+  if (pathLength === 0 || pathLength >= capacity) {
+    const win32Error = api.getLastError();
+    throw new LocatorLeaseError(
+      'locator-lease-unavailable',
+      `Could not verify the opened locator lease path (Win32 ${win32Error}).`,
+      win32Error,
+    );
+  }
+
+  const sizeBuffer = Buffer.alloc(8);
+  if (!api.getFileSizeEx(handle, sizeBuffer)) {
+    const win32Error = api.getLastError();
+    throw new LocatorLeaseError(
+      'locator-lease-unavailable',
+      `Could not verify the opened locator lease size (Win32 ${win32Error}).`,
+      win32Error,
+    );
+  }
+
+  return {
+    finalPath: normalizeWin32FinalPath(pathBuffer.toString('utf16le', 0, pathLength * 2)),
+    size: sizeBuffer.readBigInt64LE(),
+  };
+}
+
+export function validateOpenedLocatorLeaseSnapshot(
+  expectedPath: string,
+  snapshot: { finalPath: string; size: bigint },
+) {
+  const comparableFinal = process.platform === 'win32'
+    ? snapshot.finalPath.toLowerCase()
+    : snapshot.finalPath;
+  const comparableExpected = process.platform === 'win32'
+    ? expectedPath.toLowerCase()
+    : expectedPath;
+  if (comparableFinal !== comparableExpected || snapshot.size !== BigInt(0)) {
+    throw new LocatorLeaseError(
+      comparableFinal !== comparableExpected ? 'locator-lease-path-invalid' : 'locator-lease-contents-invalid',
+      comparableFinal !== comparableExpected
+        ? 'The Aibos shared-root locator lease file identity is invalid.'
+        : 'The Aibos shared-root locator lease file must stay empty.',
+    );
+  }
 }
 
 function nearestExistingDirectory(candidate: string) {
@@ -221,17 +305,7 @@ function acquireLocatorLease(mode: 'reader' | 'writer', leaseDirectory?: string)
 
   const lease = new LocatorLease(leasePath, mode, handle, api.closeHandle);
   try {
-    const finalLeasePath = fs.realpathSync.native(leasePath);
-    const comparableFinal = process.platform === 'win32' ? finalLeasePath.toLowerCase() : finalLeasePath;
-    const comparableExpected = process.platform === 'win32' ? leasePath.toLowerCase() : leasePath;
-    if (comparableFinal !== comparableExpected || fs.statSync(leasePath).size !== 0) {
-      throw new LocatorLeaseError(
-        comparableFinal !== comparableExpected ? 'locator-lease-path-invalid' : 'locator-lease-contents-invalid',
-        comparableFinal !== comparableExpected
-          ? 'The Aibos shared-root locator lease file identity is invalid.'
-          : 'The Aibos shared-root locator lease file must stay empty.',
-      );
-    }
+    validateOpenedLocatorLeaseSnapshot(leasePath, readOpenedLeaseHandleSnapshot(api, handle));
     return lease;
   } catch (error) {
     lease.close();
