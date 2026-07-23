@@ -187,9 +187,10 @@ describe('H25 locator lease real-process matrix', () => {
       mode: 'replace', locatorPath: run.locatorPath, sharedDataRoot: run.replacementRoot, leaseDirectory: run.leaseDirectory,
     })).toMatchObject({ ok: true, acquired: false, errorCode: 'locator-lease-busy', locatorChanged: false });
     await release(second);
+    const canonicalReplacementRoot = await fs.realpath(run.replacementRoot);
     expect(writeSharedRootLocator({
       mode: 'replace', locatorPath: run.locatorPath, sharedDataRoot: run.replacementRoot, leaseDirectory: run.leaseDirectory,
-    })).toMatchObject({ ok: true, acquired: true, locatorChanged: true, resolvedRoot: run.replacementRoot });
+    })).toMatchObject({ ok: true, acquired: true, locatorChanged: true, resolvedRoot: canonicalReplacementRoot });
     expect((await fs.stat(path.join(run.leaseDirectory, 'locator.lock'))).size).toBe(0);
   });
 
