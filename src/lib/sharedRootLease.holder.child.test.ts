@@ -19,6 +19,18 @@ function isStrictChild(root: string, candidate: string) {
   return Boolean(relative) && !relative.startsWith('..') && !path.isAbsolute(relative);
 }
 
+async function canonicalizePath(candidate: string) {
+  let existing = path.resolve(candidate);
+  const missingSegments: string[] = [];
+  while (!await fs.stat(existing).then(() => true).catch(() => false)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) throw new Error('Path has no existing ancestor.');
+    missingSegments.unshift(path.basename(existing));
+    existing = parent;
+  }
+  return path.resolve(await fs.realpath(existing), ...missingSegments);
+}
+
 describe.runIf(enabled)('H25 shared-root reader lease child', () => {
   it('holds the production reader lease until the release signal', { timeout: 25_000 }, async () => {
     const runRoot = requiredPath('H25_RUN_ROOT');
@@ -28,12 +40,13 @@ describe.runIf(enabled)('H25 shared-root reader lease child', () => {
     const readyPath = requiredPath('H25_READY_PATH');
     const releasePath = requiredPath('H25_RELEASE_PATH');
     const resultPath = requiredPath('H25_RESULT_PATH');
-    const tempRoot = await fs.realpath(os.tmpdir());
-    const canonicalRunRoot = await fs.realpath(runRoot);
+    const tempRoot = await canonicalizePath(os.tmpdir());
+    const canonicalRunRoot = await canonicalizePath(runRoot);
 
     expect(isStrictChild(tempRoot.toLowerCase(), canonicalRunRoot.toLowerCase())).toBe(true);
     for (const candidate of [locatorPath, legacyRoot, leaseDirectory, readyPath, releasePath, resultPath]) {
-      expect(isStrictChild(canonicalRunRoot.toLowerCase(), candidate.toLowerCase())).toBe(true);
+      const canonicalCandidate = await canonicalizePath(candidate);
+      expect(isStrictChild(canonicalRunRoot.toLowerCase(), canonicalCandidate.toLowerCase())).toBe(true);
     }
 
     const activation = activateSharedRoot({ locatorPath, legacyRoot, leaseDirectory });

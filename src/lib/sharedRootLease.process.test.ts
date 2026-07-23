@@ -1,5 +1,5 @@
 import { type ChildProcess, spawn } from 'child_process';
-import { promises as fs } from 'fs';
+import fsSync, { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -196,7 +196,7 @@ describe('H25 locator lease real-process matrix', () => {
   it('reports the protocol-global production lease path described by the vendored fixture', () => {
     const lease = locatorFixture.locatorLease;
     expect(resolveLocatorLeasePath()).toBe(path.join(
-      os.tmpdir(),
+      fsSync.realpathSync.native(os.tmpdir()),
       ...lease.directory.relativeSegments,
       lease.identity.fileName,
     ));

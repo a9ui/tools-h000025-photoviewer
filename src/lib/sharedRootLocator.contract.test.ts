@@ -201,7 +201,7 @@ describe(`generated ${locatorFixture.contractId} fixture`, () => {
       leaseDirectory: path.join(runRoot, 'leases'),
     });
     result.lease?.close();
-    expect(result).toMatchObject({ status: 'LegacyFallback', root: legacyRoot });
+    expect(result).toMatchObject({ status: 'LegacyFallback', root: await fs.realpath(legacyRoot) });
   });
 
   it.each(locatorFixture.cases as LocatorCase[])('$id', async (testCase) => {
@@ -210,7 +210,10 @@ describe(`generated ${locatorFixture.contractId} fixture`, () => {
     if (testCase.expected.status === 'Unavailable') {
       expect(result).toMatchObject({ root: null, errorCode: testCase.expected.errorCode });
     } else {
-      expect(result.root).toBe(testCase.expected.root === 'data' ? dataRoot : legacyRoot);
+      const expectedRoot = await fs.realpath(
+        testCase.expected.root === 'data' ? dataRoot : legacyRoot,
+      );
+      expect(result.root).toBe(expectedRoot);
     }
 
     const leasePath = path.join(leaseDirectory, 'locator.lock');

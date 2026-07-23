@@ -1,4 +1,4 @@
-import { promises as fs } from 'fs';
+import fsSync, { promises as fs } from 'fs';
 import os from 'os';
 import path from 'path';
 
@@ -58,7 +58,11 @@ describe('Aibos shared-root locator Win32 lease', () => {
 
   it('reports the protocol-global production path without opening it', () => {
     const leasePath = resolveLocatorLeasePath();
-    expect(leasePath).toBe(path.join(os.tmpdir(), LOCATOR_LEASE_DIRECTORY_NAME, 'locator.lock'));
+    expect(leasePath).toBe(path.join(
+      fsSync.realpathSync.native(os.tmpdir()),
+      LOCATOR_LEASE_DIRECTORY_NAME,
+      'locator.lock',
+    ));
   });
 
   it('rejects an override directory that resolves outside OS TEMP', () => {

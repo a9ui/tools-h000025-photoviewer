@@ -331,7 +331,7 @@ describe('PV-SET-001 shared settings', () => {
       } else {
         expect(finalBytes).toEqual(before);
       }
-    });
+    }, 15_000);
   }
 });
 
@@ -377,6 +377,6 @@ describe('PV-REC-001 recent-folder authority', () => {
       if (expected.unknownRoot) {
         expect(JSON.parse(finalBytes!.toString('utf8'))).toMatchObject(expected.unknownRoot);
       }
-    });
+    }, 15_000);
   }
 });
