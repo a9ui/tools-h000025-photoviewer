@@ -35,6 +35,10 @@ export function resetEnhancementQueueForTests() {
   recoveredInterruptedJobs = false;
 }
 
+export async function waitForEnhancementQueueForTests() {
+  await queuePromise;
+}
+
 async function runQueue() {
   const store = getEnhancementJobStore();
   if (!recoveredInterruptedJobs) {

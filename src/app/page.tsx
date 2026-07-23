@@ -20,6 +20,7 @@ import { appendDirSet, formatDirSet, parseDirSet, removeFromDirSet, summarizeDir
 import { migrateLegacyPhotoviewerState } from '../lib/localStorageMigration';
 import {
   mergeRecentFolderMemories,
+  isSharedRecentFoldersAuthoritative,
   normalizeRecentFolderMemory,
   rememberRecentFolderSet,
   sharedRecentToLocalMemory,
@@ -66,6 +67,8 @@ function ViewerApp() {
   const [bulkDeleteMessage, setBulkDeleteMessage] = useState('');
   const [recentDirs, setRecentDirs] = useState<string[]>([]);
   const [lastDirSet, setLastDirSet] = useState('');
+  const folderMemoryRevisionRef = useRef(0);
+  const observedInitialDirPathRef = useRef(false);
   const [pasteFolders, setPasteFolders] = useState('');
   const [scanNotice, setScanNotice] = useState('');
   const openFolderSetRef = useRef<HTMLButtonElement>(null);
@@ -142,35 +145,39 @@ function ViewerApp() {
     if (localLastDirSet) setLastDirSet(localLastDirSet);
 
     const initializeFolderMemory = async () => {
+      const hydrationRevision = folderMemoryRevisionRef.current;
       let activeRecentDirs = localRecentDirs;
       let activeLastDirSet = localLastDirSet;
-      const hasLocalFolderMemory = activeRecentDirs.length > 0 || Boolean(activeLastDirSet);
+      let sharedAuthoritative = false;
 
-      if (!hasLocalFolderMemory) {
-        try {
-          const sharedRes = await fetch('/api/recent-folders', { cache: 'no-store' });
-          const sharedData = sharedRes.ok ? await sharedRes.json() : null;
-          if (sharedData?.ok && !sharedData.malformed && sharedData.recent) {
-            const sharedMemory = normalizeRecentFolderMemory(
-              sharedRecentToLocalMemory(sharedData.recent)
-            );
-            if (sharedMemory.recentDirs.length > 0 || sharedMemory.lastDirSet) {
-              activeRecentDirs = sharedMemory.recentDirs;
-              activeLastDirSet = sharedMemory.lastDirSet;
-              setRecentDirs(activeRecentDirs);
-              if (activeLastDirSet) setLastDirSet(activeLastDirSet);
-              try {
-                localStorage.setItem('pvu_recent_dirs', JSON.stringify(activeRecentDirs));
-                if (activeLastDirSet) localStorage.setItem('pvu_last_dir_set', activeLastDirSet);
-              } catch {
-                // ignore localStorage write errors
-              }
-            }
+      try {
+        const sharedRes = await fetch('/api/recent-folders', { cache: 'no-store' });
+        const sharedData = sharedRes.ok ? await sharedRes.json() : null;
+        if (sharedData?.recent
+          && !sharedData.malformed
+          && isSharedRecentFoldersAuthoritative(Boolean(sharedData.ok), Boolean(sharedData.exists))) {
+          const sharedMemory = normalizeRecentFolderMemory(
+            sharedRecentToLocalMemory(sharedData.recent)
+          );
+          if (folderMemoryRevisionRef.current !== hydrationRevision) return;
+          sharedAuthoritative = true;
+          activeRecentDirs = sharedMemory.recentDirs;
+          activeLastDirSet = sharedMemory.lastDirSet;
+          setRecentDirs(activeRecentDirs);
+          setLastDirSet(activeLastDirSet);
+          try {
+            localStorage.setItem('pvu_recent_dirs', JSON.stringify(activeRecentDirs));
+            if (activeLastDirSet) localStorage.setItem('pvu_last_dir_set', activeLastDirSet);
+            else localStorage.removeItem('pvu_last_dir_set');
+          } catch {
+            // ignore localStorage write errors
           }
-        } catch {
-          // Shared recent folders are best-effort and must not block legacy/local restore.
         }
+      } catch {
+        // Missing or protected shared state falls back to browser-local memory.
       }
+
+      if (folderMemoryRevisionRef.current !== hydrationRevision) return;
 
       let serverLegacyAlreadyImported = false;
       try {
@@ -181,7 +188,9 @@ function ViewerApp() {
       void fetch('/api/legacy-state', { cache: 'no-store' })
         .then((res) => res.ok ? res.json() : null)
         .then((data) => {
-          if (!data) return;
+          if (!data
+            || sharedAuthoritative
+            || folderMemoryRevisionRef.current !== hydrationRevision) return;
           const legacyMemory = normalizeRecentFolderMemory({
             recentDirs: data.recentDirs,
             lastDirSet: data.lastDirSet,
@@ -215,12 +224,18 @@ function ViewerApp() {
   }, []);
 
   useEffect(() => {
+    if (observedInitialDirPathRef.current) {
+      folderMemoryRevisionRef.current += 1;
+    } else {
+      observedInitialDirPathRef.current = true;
+    }
     rememberLastDirSet(dirPath);
   }, [dirPath, rememberLastDirSet]);
 
   const rememberRecentDir = useCallback((dir: string) => {
     const normalized = normalizeRecentFolderMemory({ lastDirSet: dir }).lastDirSet;
     if (!normalized) return;
+    folderMemoryRevisionRef.current += 1;
     rememberLastDirSet(normalized);
     setRecentDirs((prev) => {
       const next = rememberRecentFolderSet({

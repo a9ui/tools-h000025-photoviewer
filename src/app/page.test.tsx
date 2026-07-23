@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -141,5 +141,79 @@ describe('landing scan cancellation focus', () => {
     expect(mocks.setDirPath).not.toHaveBeenCalled();
     expect(mocks.fetch).not.toHaveBeenCalled();
     expect(snapshotFolderMemory()).toEqual(folderMemoryBeforeCancel);
+  });
+
+  it('does not let delayed shared hydration overwrite a newer completed scan', async () => {
+    let resolveShared: ((response: { ok: boolean; json: () => Promise<unknown> }) => void) | undefined;
+    mocks.fetch.mockImplementation((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === '/api/recent-folders' && !init?.method) {
+        return new Promise((resolve) => { resolveShared = resolve; });
+      }
+      return Promise.resolve({ ok: true, json: async () => ({}) });
+    });
+    mocks.useImageStore.mockReturnValue({
+      phase: 'landing',
+      dirPath: 'C:/images',
+      setDirPath: mocks.setDirPath,
+      startScan: mocks.startScan,
+      cancelScan: mocks.cancelScan,
+      scanProgress: null,
+      scanError: null,
+      dismissScanError: vi.fn(),
+      searchTotal: 0,
+      searchResults: [],
+      totalIndexed: 0,
+      searchQuery: '',
+      setPhase: vi.fn(),
+      view: baseView,
+      setView: vi.fn(),
+      selectedIds: [],
+      deleteImage: vi.fn(async () => false),
+      cycleFavoriteLevel: vi.fn(),
+      decreaseFavoriteLevel: vi.fn(),
+      selectedIndex: null,
+      keyBindings: { deleteImage: 'Delete', toggleFavorite: 'f', decreaseFavorite: 'd' },
+      confirmBeforeDelete: true,
+      setConfirmBeforeDelete: vi.fn(),
+      restoreLastClosedPreview: vi.fn(),
+      setShowSettings: vi.fn(),
+      favorites: {},
+      showFavOnly: false,
+      showUnfavOnly: false,
+      favoriteFilterLevels: [],
+      showEnhancedOnly: false,
+      enhancedSourceIds: {},
+    });
+
+    const user = userEvent.setup();
+    render(<App />);
+    await waitFor(() => expect(resolveShared).toBeTypeOf('function'));
+    await user.click(screen.getByRole('button', { name: 'Open folder set' }));
+    const scanOptions = mocks.startScan.mock.calls[0]?.[0] as { onComplete: (dir: string) => void };
+    act(() => scanOptions.onComplete('C:/new'));
+    await waitFor(() => expect(localStorage.getItem('pvu_last_dir_set')).toBe('C:/new'));
+
+    await act(async () => {
+      resolveShared?.({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          exists: true,
+          malformed: false,
+          recent: {
+            version: 1,
+            lastFolderSet: ['C:/stale'],
+            recentFolderSets: [['C:/stale']],
+            updatedAtUtc: '2026-07-23T00:00:00.000Z',
+          },
+        }),
+      });
+      await Promise.resolve();
+    });
+
+    expect(localStorage.getItem('pvu_last_dir_set')).toBe('C:/new');
+    expect(JSON.parse(localStorage.getItem('pvu_recent_dirs') ?? '[]')).toContain('C:/new');
+    expect(JSON.parse(localStorage.getItem('pvu_recent_dirs') ?? '[]')).not.toContain('C:/stale');
   });
 });

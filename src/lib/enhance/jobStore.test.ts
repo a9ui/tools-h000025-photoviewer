@@ -1,13 +1,21 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { EnhancementJobStore, setEnhancementJobStoreForTests } from './jobStore';
 import { getEnhancementOutputPath, hashPreset } from './outputPath';
-import { isEnhancementQueueRunning, resetEnhancementQueueForTests, startEnhancementQueue } from './queue';
+import { isEnhancementQueueRunning, resetEnhancementQueueForTests, startEnhancementQueue, waitForEnhancementQueueForTests } from './queue';
 import { getEnhancementIsolationMetrics, resetEnhancementIsolationMetricsForTests } from './isolationMetrics';
 import { ENHANCEMENT_PRESETS, SHARP_TEST_PRESET } from './types';
+
+const previousEnhanceRoot = process.env.PVU_ENHANCE_ROOT;
+
+afterEach(async () => {
+  await waitForEnhancementQueueForTests();
+  if (previousEnhanceRoot === undefined) delete process.env.PVU_ENHANCE_ROOT;
+  else process.env.PVU_ENHANCE_ROOT = previousEnhanceRoot;
+});
 
 async function waitFor(
   predicate: () => Promise<boolean>,
@@ -67,6 +75,7 @@ describe('enhancement job store', () => {
 
   it('keeps ordinary reads idle and counts only explicit enhancement work', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-isolation-'));
+    process.env.PVU_ENHANCE_ROOT = root;
     const store = new EnhancementJobStore(root);
     setEnhancementJobStoreForTests(store);
     const sourcePath = path.join(root, 'source.png');
@@ -179,6 +188,7 @@ describe('enhancement job store', () => {
 
   it('runs a sharp test job and writes a separate output file', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-run-'));
+    process.env.PVU_ENHANCE_ROOT = root;
     const store = new EnhancementJobStore(root);
     setEnhancementJobStoreForTests(store);
     const sourcePath = path.join(root, 'source.png');

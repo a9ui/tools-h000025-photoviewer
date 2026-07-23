@@ -103,7 +103,6 @@ describe('recent folders route write safety', () => {
 
   it.each([
     ['invalid JSON', '{not-json'],
-    ['invalid version', JSON.stringify({ version: 2 })],
     ['invalid folder set', JSON.stringify({ version: 1, lastFolderSet: [7] })],
   ])('reports and preserves malformed shared state: %s', async (_name, malformed) => {
     await fs.writeFile(target, malformed, 'utf8');
@@ -113,6 +112,22 @@ describe('recent folders route write safety', () => {
     const putResponse = await PUT(putRequest(JSON.stringify({ lastDirSet: 'E:\\new' })));
     expect(putResponse.status).toBe(409);
     expect(await fs.readFile(target, 'utf8')).toBe(malformed);
+  });
+
+  it('reports and preserves a future schema without misclassifying it as malformed', async () => {
+    const future = JSON.stringify({ version: 2, futureRoot: { keep: true } });
+    await fs.writeFile(target, future, 'utf8');
+
+    const getResponse = await GET();
+    expect(await getResponse.json()).toMatchObject({
+      ok: false,
+      malformed: false,
+      futureVersion: true,
+      protected: true,
+    });
+    const putResponse = await PUT(putRequest(JSON.stringify({ lastDirSet: 'E:\\new' })));
+    expect(putResponse.status).toBe(409);
+    expect(await fs.readFile(target, 'utf8')).toBe(future);
   });
 
   it('serializes concurrent folder-set merges without losing either update', async () => {

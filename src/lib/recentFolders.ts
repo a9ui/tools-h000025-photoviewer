@@ -14,6 +14,20 @@ export type RecentFolderMemory = {
 
 export const MAX_RECENT_FOLDER_SETS = 12;
 
+/** A supported existing shared document is authoritative, including an explicit empty set. */
+export function isSharedRecentFoldersAuthoritative(readOk: boolean, exists: boolean) {
+  return readOk && exists;
+}
+
+export function selectRecentFolderSet(
+  readOk: boolean,
+  exists: boolean,
+  sharedFolderSet: readonly string[],
+  localFolderSet: readonly string[],
+) {
+  return [...(isSharedRecentFoldersAuthoritative(readOk, exists) ? sharedFolderSet : localFolderSet)];
+}
+
 function normalizeFolderSet(value: unknown): string[] {
   if (Array.isArray(value)) {
     return parseDirSet(value.filter((item): item is string => typeof item === 'string').join('\n'));
