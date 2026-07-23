@@ -5,6 +5,7 @@ import path from 'path';
 import { withFileWriteLock } from '@/lib/fileWriteLock';
 import { guardLocalApiRequest } from '@/lib/localApiGuard';
 import { hasKeyBindingConflicts, normalizeKeyBinding } from '@/lib/keyBindings';
+import { encodeBoundedJson, readStrictUtf8File, SharedJsonBytesError } from '@/lib/sharedJson';
 import { resolveSharedCachePath } from '@/lib/sharedProjectRoot';
 import type { AppSettings, KeyBindings } from '@/lib/types';
 import { DEFAULT_KEY_BINDINGS } from '@/lib/types';
@@ -20,6 +21,11 @@ const MAX_KEY_BINDING_LENGTH = 64;
 const SAFE_MIGRATION_KEYS = ['b', 'g', 'v', 'y', 'j', 'k', 'l', 'n', 'm', 'q', 'w', 'x', 'c', 'z', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12'] as const;
 const FILMSTRIP_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.toggleFilmstrip, ...SAFE_MIGRATION_KEYS] as const;
 const ADD_TO_ALBUM_MIGRATION_KEYS = [DEFAULT_KEY_BINDINGS.addToAlbum, ...SAFE_MIGRATION_KEYS.filter((key) => key !== DEFAULT_KEY_BINDINGS.addToAlbum)] as const;
+const SUPPORTED_INCOMING_KEYS = new Set([
+  'confirmBeforeDelete',
+  'keyBindings',
+  'thumbnailStatusBorders',
+]);
 
 function settingsPath() {
   return resolveSharedCachePath('settings.json', process.env.PVU_SETTINGS_PATH);
@@ -43,6 +49,7 @@ function validateKeyBindings(value: unknown): value is Partial<KeyBindings> & Se
 
 function validateStoredDocument(value: unknown): value is SettingsDocument {
   if (!isObject(value)) return false;
+  if (Object.hasOwn(value, 'version') && value.version !== 1) return false;
   if (Object.hasOwn(value, 'confirmBeforeDelete') && typeof value.confirmBeforeDelete !== 'boolean') {
     return false;
   }
@@ -119,25 +126,53 @@ async function readSettings(): Promise<
       document: SettingsDocument;
       settings: AppSettings;
       malformed: false;
+      futureVersion: false;
+      protected: false;
+      exists: boolean;
+      confirmBeforeDeleteAuthority: 'local' | 'shared';
     }
   | {
       ok: false;
       document: SettingsDocument;
       settings: AppSettings;
-      malformed: true;
+      malformed: boolean;
+      futureVersion: boolean;
+      protected: true;
+      exists: true;
+      confirmBeforeDeleteAuthority: 'fail-safe';
       error: string;
     }
 > {
   const target = settingsPath();
   try {
-    const raw = await fs.readFile(target, 'utf8');
+    const raw = await readStrictUtf8File(target);
     const parsed: unknown = JSON.parse(raw);
+    if (isObject(parsed)
+      && typeof parsed.version === 'number'
+      && Number.isInteger(parsed.version)
+      && parsed.version > 1) {
+      return {
+        ok: false,
+        document: {},
+        settings: publicSettings({}),
+        malformed: false,
+        futureVersion: true,
+        protected: true,
+        exists: true,
+        confirmBeforeDeleteAuthority: 'fail-safe',
+        error: 'settings.json uses a future schema version.',
+      };
+    }
     if (!validateStoredDocument(parsed)) {
       return {
         ok: false,
         document: {},
         settings: publicSettings({}),
         malformed: true,
+        futureVersion: false,
+        protected: true,
+        exists: true,
+        confirmBeforeDeleteAuthority: 'fail-safe',
         error: 'settings.json does not match the supported schema.',
       };
     }
@@ -146,6 +181,10 @@ async function readSettings(): Promise<
       document: parsed,
       settings: publicSettings(parsed),
       malformed: false,
+      futureVersion: false,
+      protected: false,
+      exists: true,
+      confirmBeforeDeleteAuthority: typeof parsed.confirmBeforeDelete === 'boolean' ? 'shared' : 'local',
     };
   } catch (error) {
     if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') {
@@ -154,6 +193,10 @@ async function readSettings(): Promise<
         document: {},
         settings: publicSettings({}),
         malformed: false,
+        futureVersion: false,
+        protected: false,
+        exists: false,
+        confirmBeforeDeleteAuthority: 'local',
       };
     }
     return {
@@ -161,6 +204,10 @@ async function readSettings(): Promise<
       document: {},
       settings: publicSettings({}),
       malformed: true,
+      futureVersion: false,
+      protected: true,
+      exists: true,
+      confirmBeforeDeleteAuthority: 'fail-safe',
       error: error instanceof Error ? error.message : String(error),
     };
   }
@@ -169,6 +216,9 @@ async function readSettings(): Promise<
 function validateIncomingDocument(value: unknown): { ok: true; update: SettingsDocument } | { ok: false; error: string } {
   if (!isObject(value)) {
     return { ok: false, error: 'Request body must be an object.' };
+  }
+  if (Object.keys(value).some((key) => !SUPPORTED_INCOMING_KEYS.has(key))) {
+    return { ok: false, error: 'Request body contains an unsupported setting.' };
   }
   if (Object.hasOwn(value, 'confirmBeforeDelete') && typeof value.confirmBeforeDelete !== 'boolean') {
     return { ok: false, error: 'confirmBeforeDelete must be a boolean.' };
@@ -212,7 +262,13 @@ function mergeThumbnailStatusBorders(currentValue: unknown, incomingValue: unkno
     const currentPreference = isObject(current[status]) ? current[status] : {};
     const incomingPreference = isObject(incoming[status]) ? incoming[status] : {};
     if (Object.hasOwn(current, status) || Object.hasOwn(incoming, status)) {
-      merged[status] = { ...currentPreference, ...incomingPreference };
+      merged[status] = {
+        ...currentPreference,
+        ...incomingPreference,
+        ...(typeof incomingPreference.color === 'string'
+          ? { color: incomingPreference.color.toLowerCase() }
+          : {}),
+      };
     }
   }
   return merged;
@@ -222,9 +278,10 @@ async function writeSettings(document: SettingsDocument) {
   const target = settingsPath();
   const dir = path.dirname(target);
   const temp = path.join(dir, `settings-${process.pid}-${Date.now()}.tmp`);
+  const bytes = encodeBoundedJson(document);
   await fs.mkdir(dir, { recursive: true });
   try {
-    await fs.writeFile(temp, `${JSON.stringify(document, null, 2)}\n`, 'utf8');
+    await fs.writeFile(temp, bytes);
     await fs.rename(temp, target);
   } finally {
     await fs.unlink(temp).catch(() => {});
@@ -236,6 +293,10 @@ export async function GET() {
   return NextResponse.json({
     ...result.settings,
     malformed: result.malformed,
+    futureVersion: result.futureVersion,
+    protected: result.protected,
+    exists: result.exists,
+    confirmBeforeDeleteAuthority: result.confirmBeforeDeleteAuthority,
     error: result.ok ? undefined : result.error,
   });
 }
@@ -264,7 +325,10 @@ export async function PUT(request: Request) {
             ok: false,
             error: 'Shared settings JSON is malformed; refusing to overwrite it.',
             ...current.settings,
-            malformed: true,
+            malformed: current.malformed,
+            futureVersion: current.futureVersion,
+            protected: true,
+            confirmBeforeDeleteAuthority: current.confirmBeforeDeleteAuthority,
           },
           { status: 409 },
         );
@@ -272,14 +336,19 @@ export async function PUT(request: Request) {
 
       const incomingBindings = isObject(incoming.update.keyBindings) ? incoming.update.keyBindings : {};
       const currentBindings = isObject(current.document.keyBindings) ? current.document.keyBindings : {};
+      const hasBindings = Object.hasOwn(current.document, 'keyBindings') || Object.hasOwn(incoming.update, 'keyBindings');
       const hasIncomingStatusBorders = Object.hasOwn(incoming.update, 'thumbnailStatusBorders');
       const updated: SettingsDocument = {
         ...current.document,
         ...incoming.update,
-        keyBindings: {
-          ...currentBindings,
-          ...incomingBindings,
-        },
+        ...(hasBindings
+          ? {
+              keyBindings: {
+                ...currentBindings,
+                ...incomingBindings,
+              },
+            }
+          : {}),
         ...(hasIncomingStatusBorders
           ? {
               thumbnailStatusBorders: mergeThumbnailStatusBorders(current.document.thumbnailStatusBorders, incoming.update.thumbnailStatusBorders),
@@ -297,11 +366,29 @@ export async function PUT(request: Request) {
           { status: 409 },
         );
       }
-      await writeSettings(updated);
+      try {
+        await writeSettings(updated);
+      } catch (error) {
+        if (error instanceof SharedJsonBytesError && error.code === 'too-large') {
+          return NextResponse.json({
+            ok: false,
+            error: error.message,
+            ...current.settings,
+            malformed: false,
+            futureVersion: false,
+            protected: true,
+            confirmBeforeDeleteAuthority: current.confirmBeforeDeleteAuthority,
+          }, { status: 409 });
+        }
+        throw error;
+      }
       return NextResponse.json({
         ok: true,
         ...publicSettings(updated),
         malformed: false,
+        futureVersion: false,
+        protected: false,
+        confirmBeforeDeleteAuthority: typeof updated.confirmBeforeDelete === 'boolean' ? 'shared' : 'local',
       });
     });
   } catch (error) {

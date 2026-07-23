@@ -1,7 +1,7 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import sharp from 'sharp';
 import { EnhancementJobStore, setEnhancementJobStoreForTests } from './jobStore';
 import { getEnhancementIsolationMetrics, resetEnhancementIsolationMetricsForTests } from './isolationMetrics';
@@ -9,7 +9,16 @@ import {
   isEnhancementQueueRunning,
   resetEnhancementQueueForTests,
   startEnhancementQueue,
+  waitForEnhancementQueueForTests,
 } from './queue';
+
+const previousEnhanceRoot = process.env.PVU_ENHANCE_ROOT;
+
+afterEach(async () => {
+  await waitForEnhancementQueueForTests();
+  if (previousEnhanceRoot === undefined) delete process.env.PVU_ENHANCE_ROOT;
+  else process.env.PVU_ENHANCE_ROOT = previousEnhanceRoot;
+});
 
 describe('enhancement queue', () => {
   beforeEach(() => {
@@ -19,6 +28,7 @@ describe('enhancement queue', () => {
 
   it('starts only one worker loop when startEnhancementQueue is called repeatedly', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-queue-single-'));
+    process.env.PVU_ENHANCE_ROOT = root;
     const store = new EnhancementJobStore(root);
     setEnhancementJobStoreForTests(store);
     const sourcePath = path.join(root, 'source.png');

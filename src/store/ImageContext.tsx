@@ -1499,7 +1499,8 @@ export function ImageProvider({ children }: { children: ReactNode }) {
           setKeyBindingsState({ ...DEFAULT_KEY_BINDINGS, ...data.keyBindings });
         }
         if (confirmDeleteMutationGenerationRef.current === confirmDeleteGeneration
-          && typeof data.confirmBeforeDelete === 'boolean') {
+          && typeof data.confirmBeforeDelete === 'boolean'
+          && data.confirmBeforeDeleteAuthority !== 'local') {
           setConfirmBeforeDeleteState(data.confirmBeforeDelete);
         }
         if (thumbnailStatusBordersMutationGenerationRef.current === thumbnailStatusBordersGeneration) {

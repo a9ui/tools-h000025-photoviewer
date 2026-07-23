@@ -14,7 +14,17 @@ afterEach(async () => {
 
 async function makeProject(root: string) {
   await fs.mkdir(path.join(root, 'local-native'), { recursive: true });
+  await fs.mkdir(path.join(root, '.cache'), { recursive: true });
   await fs.writeFile(path.join(root, 'project.toml'), '[project]\n', 'utf8');
+}
+
+async function makeResolutionOptions(root: string) {
+  const locatorDirectory = path.join(root, 'locator');
+  await fs.mkdir(locatorDirectory, { recursive: true });
+  return {
+    locatorPath: path.join(locatorDirectory, 'shared-root.v1.json'),
+    leaseDirectory: path.join(root, 'leases'),
+  };
 }
 
 describe('shared project root resolution', () => {
@@ -23,10 +33,13 @@ describe('shared project root resolution', () => {
     roots.push(project);
     await makeProject(project);
     await fs.mkdir(path.join(project, '.git'));
+    const options = await makeResolutionOptions(project);
 
     expect(resolveSharedProjectRoot(path.join(project, 'local-native'))).toBe(project);
     expect(resolveSharedCachePath('favorites.json', path.join(project, 'override.json')))
       .toBe(path.join(project, 'override.json'));
+    expect(resolveSharedCachePath('favorites.json', undefined, project, options))
+      .toBe(path.join(project, '.cache', 'favorites.json'));
   });
 
   it('routes a linked worktree cache back to the main checkout', async () => {
@@ -40,17 +53,18 @@ describe('shared project root resolution', () => {
     await fs.mkdir(linkedGitDir, { recursive: true });
     await fs.writeFile(path.join(worktree, '.git'), `gitdir: ${linkedGitDir}\n`, 'utf8');
     await fs.writeFile(path.join(linkedGitDir, 'commondir'), '../..\n', 'utf8');
+    const options = await makeResolutionOptions(fixture);
 
     expect(resolveSharedProjectRoot(worktree)).toBe(main);
-    expect(resolveSharedCachePath('favorites.json', undefined, worktree))
+    expect(resolveSharedCachePath('favorites.json', undefined, worktree, options))
       .toBe(path.join(main, '.cache', 'favorites.json'));
-    expect(resolveSharedCachePath('seen.json', undefined, worktree))
+    expect(resolveSharedCachePath('seen.json', undefined, worktree, options))
       .toBe(path.join(main, '.cache', 'seen.json'));
-    expect(resolveSharedCachePath('recent-folders.json', undefined, worktree))
+    expect(resolveSharedCachePath('recent-folders.json', undefined, worktree, options))
       .toBe(path.join(main, '.cache', 'recent-folders.json'));
-    expect(resolveSharedCachePath('settings.json', undefined, worktree))
+    expect(resolveSharedCachePath('settings.json', undefined, worktree, options))
       .toBe(path.join(main, '.cache', 'settings.json'));
-    expect(resolveSharedCachePath('enhance', undefined, worktree))
+    expect(resolveSharedCachePath('enhance', undefined, worktree, options))
       .toBe(path.join(main, '.cache', 'enhance'));
   });
 });

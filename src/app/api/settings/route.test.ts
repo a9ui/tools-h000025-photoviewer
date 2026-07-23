@@ -245,6 +245,8 @@ describe('settings route write safety', () => {
     ['invalid JSON', '{'],
     ['array body', JSON.stringify([])],
     ['empty body', JSON.stringify({})],
+    ['future request version', JSON.stringify({ version: 2, confirmBeforeDelete: false })],
+    ['unknown request field', JSON.stringify({ futureSetting: true, confirmBeforeDelete: false })],
     ['invalid confirmation', JSON.stringify({ confirmBeforeDelete: 'no' })],
     ['invalid bindings map', JSON.stringify({ keyBindings: [] })],
     ['invalid binding value', JSON.stringify({ keyBindings: { nextImage: 7 } })],
