@@ -8,7 +8,21 @@ import fs from 'fs';
 
 let queuePromise: Promise<void> | null = null;
 let recoveredInterruptedJobs = false;
-const workerInstanceId = `enhance-worker-${process.pid}-${Date.now()}`;
+const PROCESS_WORKER_INSTANCE_ID = Symbol.for('h25.enhancement-worker-instance.v1');
+
+type GlobalWithEnhancementWorker = typeof globalThis & {
+  [PROCESS_WORKER_INSTANCE_ID]?: string;
+};
+
+function getOrCreateWorkerInstanceId() {
+  const processGlobal = globalThis as GlobalWithEnhancementWorker;
+  const existing = processGlobal[PROCESS_WORKER_INSTANCE_ID];
+  if (existing) return existing;
+
+  const created = `enhance-worker-${process.pid}-${Date.now()}`;
+  processGlobal[PROCESS_WORKER_INSTANCE_ID] = created;
+  return created;
+}
 
 function presetForJob(job: EnhancementJob): EnhancementPreset {
   if (job.preset) return job.preset;
@@ -20,6 +34,10 @@ function presetForJob(job: EnhancementJob): EnhancementPreset {
 
 export function isEnhancementQueueRunning() {
   return queuePromise !== null;
+}
+
+export function getEnhancementWorkerInstanceId() {
+  return getOrCreateWorkerInstanceId();
 }
 
 export function startEnhancementQueue() {
@@ -47,7 +65,7 @@ async function runQueue() {
   }
 
   while (true) {
-    const job = await store.claimNextQueuedJob(workerInstanceId);
+    const job = await store.claimNextQueuedJob(getEnhancementWorkerInstanceId());
     if (!job) return;
 
     const adapter = await getEnhancementAdapter(job.adapterId);

@@ -302,6 +302,55 @@ describe('enhancement job store', () => {
     });
   });
 
+  it('atomically cancels a running job owned by a different worker instance', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-cancel-stale-worker-'));
+    const store = new EnhancementJobStore(root);
+    const sourcePath = path.join(root, 'source.png');
+    fs.writeFileSync(sourcePath, 'original');
+
+    const job = await store.createJob({
+      sourceId: sourcePath,
+      sourcePath,
+      sourceSignature: { size: 8, mtimeMs: 123 },
+    });
+    const claimed = await store.claimNextQueuedJob('worker-before-restart');
+    const canceled = await store.requestCancel(job.id, 'worker-after-restart');
+    const persisted = await store.getJob(job.id);
+
+    expect(canceled).toMatchObject({
+      id: job.id,
+      status: 'canceled',
+      cancelRequested: true,
+      workerInstanceId: 'worker-before-restart',
+      runId: claimed?.runId,
+    });
+    expect(canceled?.finishedAt).toBeTruthy();
+    expect(canceled?.updatedAt).toBe(canceled?.finishedAt);
+    expect(persisted).toEqual(canceled);
+  });
+
+  it('keeps a live same-process running job active while requesting cancellation', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-cancel-live-worker-'));
+    const store = new EnhancementJobStore(root);
+    const sourcePath = path.join(root, 'source.png');
+    fs.writeFileSync(sourcePath, 'original');
+
+    const job = await store.createJob({
+      sourceId: sourcePath,
+      sourcePath,
+      sourceSignature: { size: 8, mtimeMs: 123 },
+    });
+    await store.claimNextQueuedJob('worker-live');
+    const requested = await store.requestCancel(job.id, 'worker-live');
+
+    expect(requested).toMatchObject({
+      status: 'running',
+      cancelRequested: true,
+      workerInstanceId: 'worker-live',
+    });
+    expect(requested?.finishedAt).toBeUndefined();
+  });
+
   it('claims only live queued jobs without reviving canceled jobs', async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pvu-enhance-claim-'));
     const store = new EnhancementJobStore(root);

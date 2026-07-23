@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { requestComfyUiInterrupt } from '@/lib/enhance/adapters/comfyUiClient';
 import { requestNcnnVulkanCancel } from '@/lib/enhance/adapters/ncnnProcessRegistry';
 import { getEnhancementJobStore } from '@/lib/enhance/jobStore';
+import { getEnhancementWorkerInstanceId } from '@/lib/enhance/queue';
 import { guardLocalApiRequest } from '@/lib/localApiGuard';
 
 export const dynamic = 'force-dynamic';
@@ -12,7 +13,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
   if (forbidden) return forbidden;
 
   const { id } = await params;
-  const job = await getEnhancementJobStore().requestCancel(id);
+  const job = await getEnhancementJobStore().requestCancel(id, getEnhancementWorkerInstanceId());
   if (!job) {
     return NextResponse.json({ error: 'Job not found' }, { status: 404 });
   }

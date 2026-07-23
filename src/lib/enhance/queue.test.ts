@@ -1,11 +1,12 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import sharp from 'sharp';
 import { EnhancementJobStore, setEnhancementJobStoreForTests } from './jobStore';
 import { getEnhancementIsolationMetrics, resetEnhancementIsolationMetricsForTests } from './isolationMetrics';
 import {
+  getEnhancementWorkerInstanceId,
   isEnhancementQueueRunning,
   resetEnhancementQueueForTests,
   startEnhancementQueue,
@@ -24,6 +25,15 @@ describe('enhancement queue', () => {
   beforeEach(() => {
     resetEnhancementIsolationMetricsForTests();
     resetEnhancementQueueForTests();
+  });
+
+  it('keeps the worker instance id stable when the queue module is reevaluated in the same process', async () => {
+    const workerId = getEnhancementWorkerInstanceId();
+
+    vi.resetModules();
+    const reevaluatedQueue = await import('./queue');
+
+    expect(reevaluatedQueue.getEnhancementWorkerInstanceId()).toBe(workerId);
   });
 
   it('starts only one worker loop when startEnhancementQueue is called repeatedly', async () => {
